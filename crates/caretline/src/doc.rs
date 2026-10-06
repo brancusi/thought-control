@@ -7,7 +7,7 @@
 //! the same way a remote edit does.
 
 use crate::buffer::{BlockLine, Buffer};
-use crate::{Command, Motion, Outcome, Pos};
+use crate::{Command, Motion, Outcome, Pos, Stop};
 use std::collections::HashSet;
 
 /// Where a view draws, in cells.
@@ -62,9 +62,21 @@ pub enum Refused {
 }
 
 /// What an edit changed, for rebasing the other views: the blocks as they were, by identity.
+/// `None`: nothing to follow (a motion, or no other view to rebase), so a rebase only clamps.
 pub struct Edit<Id> {
-    before: Vec<(Id, String)>,
+    before: Option<Vec<(Id, String)>>,
 }
+
+impl<Id> Edit<Id> {
+    /// An edit that moves nothing.
+    pub fn none() -> Self {
+        Edit { before: None }
+    }
+}
+
+/// The caret stops of a view as its host draws it (the host's own wrap, markers and folds), for
+/// motion. Called only for motion commands, so typing never lays the document out.
+pub type HostStops<'a, L> = &'a mut dyn FnMut(&[L], &View<<L as BlockLine>::Id>) -> Vec<Stop>;
 
 /// A laid-out row of a view: the block, the bytes it draws and the cell its text starts at.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -110,8 +122,34 @@ impl<L: BlockLine> Doc<L> {
         self.buf.changed_at
     }
 
+    /// The host committed what changed (saved it): `changed_at` starts over.
+    pub fn mark_committed(&mut self) {
+        self.buf.changed_at = None;
+    }
+
     pub fn lines(&self) -> &[L] {
         &self.buf.lines
+    }
+
+    /// The blocks, for the host's own bookkeeping (what it saved, what it shows beside them).
+    /// Views aren't rebased: a change to text or shape that other views must follow goes
+    /// through [`Doc::external_edit`].
+    pub fn lines_mut(&mut self) -> &mut Vec<L> {
+        self.rev += 1;
+        &mut self.buf.lines
+    }
+
+    /// The pending deletes, for the host's own bookkeeping (a line re-created under a new id
+    /// leaves its old one to delete).
+    pub fn deleted_mut(&mut self) -> &mut Vec<L::Id> {
+        &mut self.buf.deleted
+    }
+
+    /// `view`'s selection, ordered (start, end), when it has one inside the doc.
+    pub fn selection(&self, view: &View<L::Id>) -> Option<(Pos, Pos)> {
+        let a = view.anchor?;
+        let ok = |p: Pos| self.buf.lines.get(p.line).is_some_and(|l| p.byte <= l.text.len() && l.text.is_char_boundary(p.byte));
+        (a != view.caret && ok(a) && ok(view.caret)).then(|| if a < view.caret { (a, view.caret) } else { (view.caret, a) })
     }
 
     /// Bumped by every change: a view drawn at an older rev re-lays out.
@@ -172,20 +210,72 @@ impl<L: BlockLine> Doc<L> {
     }
 
     fn snapshot(&self) -> Edit<L::Id> {
-        Edit { before: self.buf.lines.iter().map(|l| (l.id.clone(), l.text.clone())).collect() }
+        Edit { before: Some(self.buf.lines.iter().map(|l| (l.id.clone(), l.text.clone())).collect()) }
+    }
+
+    /// Blocks removed by edits and not committed yet (the host's next save deletes them).
+    pub fn deleted(&self) -> &[L::Id] {
+        &self.buf.deleted
+    }
+
+    fn load(&mut self, view: &View<L::Id>) {
+        self.buf.caret = view.caret;
+        self.buf.anchor = view.anchor;
+        self.buf.goal_col = view.goal;
+    }
+
+    fn store(&self, view: &mut View<L::Id>) {
+        view.caret = self.clamp(self.buf.caret);
+        view.anchor = self.buf.anchor.map(|a| self.clamp(a));
+        view.goal = self.buf.goal_col;
+    }
+
+    /// Run the buffer's own rules at `view`'s caret, for what [`Command`] doesn't name (a paste
+    /// of parsed lines, a marker click, a recovery step). Refused on a read-only view; the
+    /// returned [`Edit`] rebases the doc's other views.
+    pub fn edit_at<R>(&mut self, view: &mut View<L::Id>, f: impl FnOnce(&mut Buffer<L>) -> R) -> Result<(R, Edit<L::Id>), Refused> {
+        if view.read_only {
+            return Err(Refused::ReadOnly);
+        }
+        let edit = self.snapshot();
+        self.load(view);
+        let r = f(&mut self.buf);
+        self.store(view);
+        self.rev += 1;
+        Ok((r, edit))
+    }
+
+    /// The buffer at `view`'s caret, for what reads or moves without editing (the selection,
+    /// a word or block selected). Works on a read-only view; editing here is a host bug.
+    pub fn at<R>(&mut self, view: &mut View<L::Id>, f: impl FnOnce(&mut Buffer<L>) -> R) -> R {
+        let rev = self.buf.content_rev();
+        self.load(view);
+        let r = f(&mut self.buf);
+        self.store(view);
+        debug_assert_eq!(rev, self.buf.content_rev(), "Doc::at edited the doc: use Doc::edit_at");
+        r
     }
 
     /// Run `cmd` at `view`'s caret. Editing commands on a read-only view are refused and change
     /// nothing. The returned [`Edit`] rebases the doc's other views ([`Doc::rebase`]); hosts use
     /// [`Doc::apply_and_rebase`], which does both.
     pub fn apply(&mut self, view: &mut View<L::Id>, cmd: Command, width_of: &dyn Fn(&L) -> usize) -> Result<(Outcome, Edit<L::Id>), Refused> {
+        let _ = width_of;
+        self.apply_core(view, cmd, None, true)
+    }
+
+    /// [`Doc::apply`] with the host's layout for motion ([`HostStops`]).
+    pub fn apply_with(&mut self, view: &mut View<L::Id>, cmd: Command, stops: HostStops<'_, L>) -> Result<(Outcome, Edit<L::Id>), Refused> {
+        self.apply_core(view, cmd, Some(stops), true)
+    }
+
+    fn apply_core(&mut self, view: &mut View<L::Id>, cmd: Command, stops: Option<HostStops<'_, L>>, want_edit: bool) -> Result<(Outcome, Edit<L::Id>), Refused> {
         if view.read_only && edits(&cmd) {
             return Err(Refused::ReadOnly);
         }
-        let edit = self.snapshot();
-        self.buf.caret = view.caret;
-        self.buf.anchor = view.anchor;
-        self.buf.goal_col = view.goal;
+        // (A motion moves no text: nothing for another view to follow.)
+        let edit = if want_edit && edits(&cmd) { self.snapshot() } else { Edit::none() };
+        self.load(view);
         // A kind or depth change (Tab, ⇧Tab, a marker deleted, ⌃T) never moves another line:
         // every block keeps the blank line it had. (Enter leaving a list isn't one of them: its
         // paragraph takes a paragraph's blank line.)
@@ -194,22 +284,20 @@ impl<L: BlockLine> Doc<L> {
         let out = match cmd {
             Command::Backspace | Command::Delete => {
                 let before = self.buf.near_caret();
-                let out = self.run(cmd, width_of, view);
+                let out = self.run(cmd, stops, view);
                 self.buf.pin_near(&before);
                 out
             }
             Command::Indent | Command::Outdent | Command::TaskCycle => {
                 let gaps = self.buf.gaps();
-                let out = self.run(cmd, width_of, view);
+                let out = self.run(cmd, stops, view);
                 self.buf.pin_gaps(&gaps);
                 out
             }
-            _ => self.run(cmd, width_of, view),
+            _ => self.run(cmd, stops, view),
         };
         // (Undo puts back the caret of whoever made that step: inside this doc, on a boundary.)
-        view.caret = self.clamp(self.buf.caret);
-        view.anchor = self.buf.anchor.map(|a| self.clamp(a));
-        view.goal = self.buf.goal_col;
+        self.store(view);
         if edits(&cmd) {
             self.rev += 1;
         }
@@ -305,7 +393,27 @@ impl<L: BlockLine> Doc<L> {
     where
         L::Id: 'v,
     {
-        let (out, edit) = self.apply(acting, cmd, width_of)?;
+        let _ = width_of;
+        self.apply_and_rebase_core(acting, others, cmd, None)
+    }
+
+    /// [`Doc::apply_and_rebase`] with the host's layout for motion ([`HostStops`]).
+    pub fn apply_and_rebase_with<'v>(&mut self, acting: &mut View<L::Id>, others: impl IntoIterator<Item = &'v mut View<L::Id>>, cmd: Command, stops: HostStops<'_, L>) -> Result<Outcome, Refused>
+    where
+        L::Id: 'v,
+    {
+        self.apply_and_rebase_core(acting, others, cmd, Some(stops))
+    }
+
+    fn apply_and_rebase_core<'v>(&mut self, acting: &mut View<L::Id>, others: impl IntoIterator<Item = &'v mut View<L::Id>>, cmd: Command, stops: Option<HostStops<'_, L>>) -> Result<Outcome, Refused>
+    where
+        L::Id: 'v,
+    {
+        // With no other view, nothing to rebase: skip the snapshot (a copy of every block's text,
+        // on every key).
+        let mut others = others.into_iter().peekable();
+        let want = others.peek().is_some();
+        let (out, edit) = self.apply_core(acting, cmd, stops, want)?;
         for v in others {
             self.rebase(v, &edit);
         }
@@ -352,7 +460,8 @@ impl<L: BlockLine> Doc<L> {
             return Pos::default();
         }
         let find = |id: &L::Id| lines.iter().position(|l| &l.id == id);
-        let Some((id, old)) = edit.before.get(p.line) else { return self.clamp(Pos { line: lines.len() - 1, byte: usize::MAX }) };
+        let Some(before) = &edit.before else { return self.clamp(p) };
+        let Some((id, old)) = before.get(p.line) else { return self.clamp(Pos { line: lines.len() - 1, byte: usize::MAX }) };
         match find(id) {
             Some(i) => {
                 let new = &lines[i].text;
@@ -369,7 +478,7 @@ impl<L: BlockLine> Doc<L> {
             }
             None => {
                 // Gone (joined into the block above, deleted): the nearest surviving block before.
-                for (oid, _) in edit.before[..p.line].iter().rev() {
+                for (oid, _) in before[..p.line].iter().rev() {
                     if let Some(i) = find(oid) {
                         return self.clamp(Pos { line: i, byte: usize::MAX });
                     }
@@ -452,7 +561,7 @@ impl<L: BlockLine> Doc<L> {
         }
     }
 
-    fn run(&mut self, cmd: Command, width_of: &dyn Fn(&L) -> usize, view: &View<L::Id>) -> Outcome {
+    fn run(&mut self, cmd: Command, stops: Option<HostStops<'_, L>>, view: &View<L::Id>) -> Outcome {
         let b = &mut self.buf;
         match cmd {
             Command::Newline => b.newline(),
@@ -489,13 +598,13 @@ impl<L: BlockLine> Doc<L> {
             }
             Command::Undo => return if b.undo() { Outcome::Restored } else { Outcome::Nothing("nothing to undo") },
             Command::Redo => return if b.redo() { Outcome::Restored } else { Outcome::Nothing("nothing to redo") },
-            Command::Move { motion, select } => self.motion(motion, select, width_of, view),
+            Command::Move { motion, select } => self.motion(motion, select, stops, view),
         }
         Outcome::Done
     }
 
     /// A caret motion over the view's own layout (its width, its folds).
-    fn motion(&mut self, m: Motion, select: bool, _width_of: &dyn Fn(&L) -> usize, view: &View<L::Id>) {
+    fn motion(&mut self, m: Motion, select: bool, stops: Option<HostStops<'_, L>>, view: &View<L::Id>) {
         let collapse = if select { None } else { self.buf.selection() };
         self.buf.select(select);
         if let Some((s, e)) = collapse {
@@ -516,15 +625,18 @@ impl<L: BlockLine> Doc<L> {
             }
             self.buf.goal_col = None;
         }
-        let stops: Vec<crate::Stop> = self
-            .layout(view)
-            .chunk_by(|a, b| a.line == b.line)
-            .flat_map(|rows| {
-                let i = rows[0].line;
-                let ranges: Vec<(usize, usize)> = rows.iter().map(|r| (r.start, r.end)).collect();
-                crate::note_stops(i, &self.buf.lines[i].text, &ranges, 0, rows[0].x)
-            })
-            .collect();
+        let stops: Vec<Stop> = match stops {
+            Some(f) => f(&self.buf.lines, view),
+            None => self
+                .layout(view)
+                .chunk_by(|a, b| a.line == b.line)
+                .flat_map(|rows| {
+                    let i = rows[0].line;
+                    let ranges: Vec<(usize, usize)> = rows.iter().map(|r| (r.start, r.end)).collect();
+                    crate::note_stops(i, &self.buf.lines[i].text, &ranges, 0, rows[0].x)
+                })
+                .collect(),
+        };
         if stops.is_empty() {
             return;
         }

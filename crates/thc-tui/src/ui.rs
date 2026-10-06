@@ -249,7 +249,7 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
     // A link's title under the pointer underlines in accent: a click follows it (sidebar.md §7).
     if let (Some((hx, hy)), true) = (app.hover, app.overlay.is_none() && app.prompt.is_none()) {
         if let Some((line, byte, false)) = crate::doc_ui::hit_rows(app, &render.doc_hits, hx, hy) {
-            let text = &app.doc.as_ref().unwrap().lines[line].text;
+            let text = &app.doc.as_ref().unwrap().lines()[line].text;
             if let Some(r) = crate::doc_app::link_title_range(text, byte) {
                 let accent = app.theme.s(Token::Accent).fg;
                 let buf = f.buffer_mut();
@@ -922,11 +922,11 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             crate::doc::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
             crate::doc::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
-        let failed = d.lines.iter().any(|l| l.save_error.is_some());
-        let late = d.lines.iter().any(|l| l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3));
+        let failed = d.lines().iter().any(|l| l.save_error.is_some());
+        let late = d.lines().iter().any(|l| l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
-        let blank = d.lines.iter().all(|l| l.text.trim().is_empty());
+        let blank = d.lines().iter().all(|l| l.text.trim().is_empty());
         let save: (String, Token, bool) = if app.doc_first_ever && blank && app.doc_write {
             ("just type".into(), Token::Muted, false)
         } else if failed {
@@ -4311,7 +4311,7 @@ mod render_tests {
     fn state(app: &App) -> String {
         format!("{:?}", (
             app.view, app.cursor, app.scroll, &app.selected, app.screen_width,
-            app.doc.as_ref().map(|d| (&d.lines, d.caret, d.anchor, d.goal_col, d.scroll)),
+            app.doc.as_ref().map(|d| (d.lines().to_vec(), d.view.caret, d.view.anchor, d.view.goal, d.scroll)),
             &app.collapsed, &app.scope_override, app.focus_mode, app.show_detail,
         ))
     }
@@ -4336,12 +4336,12 @@ mod render_tests {
                 app.set_view(if document { View::Journal } else { View::Inbox });
                 if document {
                     let doc = app.doc.as_mut().unwrap();
-                    doc.lines = vec![
+                    *doc.lines_mut() = vec![
                         crate::doc::Line::new(0, thc_core::outline::Kind::Para, "A wide 字 and a wrapped paragraph. ".repeat(8).as_str()),
                         crate::doc::Line::new(0, thc_core::outline::Kind::Task, "A task"),
                     ];
-                    doc.caret = crate::doc::Pos { line: 1, byte: 3 };
-                    doc.anchor = Some(crate::doc::Pos { line: 0, byte: 0 });
+                    doc.view.caret = crate::doc::Pos { line: 1, byte: 3 };
+                    doc.view.anchor = Some(crate::doc::Pos { line: 0, byte: 0 });
                 }
                 for focus in [false, true] {
                     app.focus_mode = focus;
@@ -4412,12 +4412,12 @@ mod render_tests {
         app.toast = None;
         app.set_view(View::Journal);
         let doc = app.doc.as_mut().unwrap();
-        doc.lines = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "A long paragraph 字".repeat(20).as_str())];
-        doc.caret = crate::doc::Pos::default();
+        *doc.lines_mut() = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "A long paragraph 字".repeat(20).as_str())];
+        doc.view.caret = crate::doc::Pos::default();
         update_frame(&mut app, Rect::new(0, 0, 120, 40));
         assert!(!render(&app, (120, 40)).doc_hits.is_empty());
         // A shorter replacement would panic if the old byte ranges were used.
-        app.doc.as_mut().unwrap().lines[0].text = "字".into();
+        app.doc.as_mut().unwrap().lines_mut()[0].text = "字".into();
         assert!(render(&app, (120, 40)).doc_hits.is_empty());
         update_frame(&mut app, Rect::new(0, 0, 120, 40));
         assert!(!render(&app, (120, 40)).doc_hits.is_empty());
@@ -4425,7 +4425,7 @@ mod render_tests {
         update_frame(&mut app, Rect::new(0, 0, 100, 32));
         assert!(!render(&app, (100, 32)).doc_hits.is_empty());
         // Same length and caret, different fold membership, also needs preparation.
-        app.doc.as_mut().unwrap().lines[0].folded = true;
+        { let d = app.doc.as_mut().unwrap(); let id = d.lines()[0].id.clone(); d.view.folds.insert(id); }
         assert!(render(&app, (100, 32)).doc_hits.is_empty());
     }
 
@@ -4458,8 +4458,8 @@ mod render_tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, vec![b'a'; bytes]).unwrap();
             let doc = app.doc.as_mut().unwrap();
-            doc.lines = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")];
-            doc.caret = crate::doc::Pos::default();
+            *doc.lines_mut() = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")];
+            doc.view.caret = crate::doc::Pos::default();
             app.doc_write = false;
             update_frame(app, Rect::new(0, 0, 120, 40));
         }
@@ -4588,7 +4588,7 @@ mod render_tests {
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
         app.set_view(View::Journal);
-        app.doc.as_mut().unwrap().lines[0].text = "call due:+2h".into();
+        app.doc.as_mut().unwrap().lines_mut()[0].text = "call due:+2h".into();
         app.doc.as_mut().unwrap().touch_content();
         app.doc_write = true;
         let device = app.vault.device.clone();

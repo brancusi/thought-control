@@ -252,29 +252,18 @@ pub struct Doc {
     pub target: Target,
     /// The document's root node (None: a journal day not created yet; its first save makes it).
     pub root: Option<String>,
-    /// The lines, caret, selection, pending deletes and undo: caretline's buffer, whose rules
-    /// edit it (`d.lines`, `d.caret`, `d.newline()` read through Deref).
-    pub buf: Buffer<Line>,
+    /// The lines, pending deletes and undo: caretline's doc, whose rules edit it, shared by
+    /// every view of the page or day.
+    pub engine: caretline::Doc<Line>,
+    /// Where you are in it: caret, selection, goal column, folds (the main column's view).
+    pub view: caretline::View<String>,
     /// The first visual row on screen.
     pub scroll: usize,
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
     last_saved: HashMap<String, Line>,
-    wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
-}
-
-impl std::ops::Deref for Doc {
-    type Target = Buffer<Line>;
-    fn deref(&self) -> &Buffer<Line> {
-        &self.buf
-    }
-}
-
-impl std::ops::DerefMut for Doc {
-    fn deref_mut(&mut self) -> &mut Buffer<Line> {
-        &mut self.buf
-    }
+    pub(crate) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
 }
 
 impl Doc {
@@ -285,12 +274,13 @@ impl Doc {
             l.saved_after = place(l.depth, &before).1;
             before.push((l.depth, l.id.clone()));
         }
-        Doc { target, root, buf: Buffer::new(lines), scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
+        let view = caretline::View::new(caretline::Rect::default());
+        Doc { target, root, engine: caretline::Doc::new(lines), view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
     pub fn revision(&self) -> u64 {
-        self.buf.content_rev().wrapping_add(self.host_revision)
+        self.engine.rev().wrapping_add(self.host_revision)
     }
 
     /// Invalidate content-derived inputs after a local edit or deferred remote text.
@@ -298,20 +288,119 @@ impl Doc {
         self.host_revision = self.host_revision.wrapping_add(1);
     }
 
+    pub fn lines(&self) -> &[Line] {
+        self.engine.lines()
+    }
+
+    /// The lines, for thc's own bookkeeping (save state, meta). Views aren't rebased.
+    pub fn lines_mut(&mut self) -> &mut Vec<Line> {
+        self.engine.lines_mut()
+    }
+
+    /// The caret's line.
     pub fn line(&self) -> &Line {
-        &self.buf.lines[self.buf.caret.line]
+        &self.lines()[self.view.caret.line]
+    }
+
+    /// The selection, ordered (start, end), when there is one.
+    pub fn selection(&self) -> Option<(Pos, Pos)> {
+        self.engine.selection(&self.view)
+    }
+
+    /// Run caretline's buffer rules at the caret (what `Command` doesn't name). The main view
+    /// is never read-only.
+    pub fn edit<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
+        self.engine.edit_at(&mut self.view, f).map(|(r, _)| r).expect("the main view edits")
+    }
+
+    /// The buffer at the caret, reading or selecting.
+    pub fn at<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
+        self.engine.at(&mut self.view, f)
+    }
+
+    pub fn insert(&mut self, s: &str) {
+        self.edit(|b| b.insert(s));
+    }
+
+    pub fn newline(&mut self) {
+        self.edit(|b| b.newline());
+    }
+
+    pub fn delete_selection(&mut self) -> bool {
+        self.edit(|b| b.delete_selection())
+    }
+
+    pub fn paste_lines(&mut self, pasted: Vec<(usize, Kind, Option<String>, String)>) {
+        self.edit(|b| b.paste_lines(pasted));
+    }
+
+    /// A click on a task's box: its next status.
+    pub fn task_box(&mut self, line: usize) -> &'static str {
+        self.edit(|b| b.task_box(line))
+    }
+
+    /// One undo step before recovered lines go back in (recover.rs), or an attachment.
+    pub fn begin_recovery(&mut self) {
+        self.edit(|b| b.begin_recovery());
+    }
+
+    /// A note patched in from elsewhere: undo leaves it.
+    pub fn mark_arrived(&mut self, id: &str) {
+        let id = id.to_string();
+        self.at(|b| b.mark_arrived(&id));
+    }
+
+    pub fn select(&mut self, select: bool) {
+        self.at(|b| b.select(select));
+    }
+
+    pub fn select_word(&mut self, p: Pos) {
+        self.at(|b| b.select_word(p));
+    }
+
+    pub fn select_note(&mut self, line: usize) {
+        self.at(|b| b.select_note(line));
+    }
+
+    pub fn selected_parts(&mut self) -> Vec<(usize, String)> {
+        self.at(|b| b.selected_parts())
+    }
+
+    pub fn undo_depth(&self) -> usize {
+        self.engine.undo_depth()
+    }
+
+    pub fn effective_gap(&self, i: usize) -> bool {
+        self.engine.effective_gap(i)
+    }
+
+    #[cfg(test)]
+    pub fn default_gap(&self, i: usize) -> bool {
+        self.engine.default_gap(i)
+    }
+
+    #[cfg(test)]
+    pub fn gaps(&self) -> HashMap<String, bool> {
+        self.engine.gaps()
+    }
+
+    /// How many lines nest under line `i`.
+    pub fn descendants(&self, i: usize) -> usize {
+        let lines = self.lines();
+        lines[i + 1..].iter().take_while(|l| l.depth > lines[i].depth).count()
     }
 
     /// Put the caret at the end of the document's last line, or on a fresh line when the last
     /// line has text (a journal day: ready to type).
     pub fn caret_to_end(&mut self, fresh_line: bool) {
-        if self.buf.lines.is_empty() || (fresh_line && !self.buf.lines.last().unwrap().text.is_empty()) {
-            let depth = 0;
-            self.buf.lines.push(Line::new(depth, Kind::Para, ""));
+        let lines = self.engine.lines();
+        if lines.is_empty() || (fresh_line && !lines.last().unwrap().text.is_empty()) {
+            self.engine.lines_mut().push(Line::new(0, Kind::Para, ""));
             self.touch_content();
         }
-        let i = self.buf.lines.len() - 1;
-        self.buf.caret = Pos { line: i, byte: self.buf.lines[i].text.len() };
+        let i = self.lines().len() - 1;
+        self.view.caret = Pos { line: i, byte: self.lines()[i].text.len() };
+        self.view.anchor = None;
     }
 
     /// Undo one step. A line coming back while its delete is still pending is still in the
@@ -326,25 +415,31 @@ impl Doc {
     }
 
     fn step(&mut self, f: fn(&mut Buffer<Line>) -> bool) -> bool {
-        let pending: std::collections::HashSet<String> = self.buf.deleted.iter().cloned().collect();
-        let here: std::collections::HashSet<String> = self.buf.lines.iter().map(|l| l.id.clone()).collect();
-        if !f(&mut self.buf) {
-            return false;
-        }
-        for l in self.buf.lines.iter_mut().filter(|l| pending.contains(&l.id) && !here.contains(&l.id)) {
-            if let Some(s) = self.last_saved.get(&l.id) {
-                l.base = s.base.clone();
-                l.saved = s.saved.clone();
-                l.saved_parent = s.saved_parent.clone();
-                l.saved_after = s.saved_after.clone();
-                l.saved_kind = s.saved_kind;
-                l.saved_status = s.saved_status.clone();
-                l.saved_gap = s.saved_gap;
-            }
-            l.is_new = false;
-            l.saving_since = None;
-        }
-        true
+        let last_saved = &self.last_saved;
+        self.engine
+            .edit_at(&mut self.view, |b| {
+                let pending: std::collections::HashSet<String> = b.deleted.iter().cloned().collect();
+                let here: std::collections::HashSet<String> = b.lines.iter().map(|l| l.id.clone()).collect();
+                if !f(b) {
+                    return false;
+                }
+                for l in b.lines.iter_mut().filter(|l| pending.contains(&l.id) && !here.contains(&l.id)) {
+                    if let Some(s) = last_saved.get(&l.id) {
+                        l.base = s.base.clone();
+                        l.saved = s.saved.clone();
+                        l.saved_parent = s.saved_parent.clone();
+                        l.saved_after = s.saved_after.clone();
+                        l.saved_kind = s.saved_kind;
+                        l.saved_status = s.saved_status.clone();
+                        l.saved_gap = s.saved_gap;
+                    }
+                    l.is_new = false;
+                    l.saving_since = None;
+                }
+                true
+            })
+            .map(|(r, _)| r)
+            .expect("the main view edits")
     }
 }
 
@@ -400,7 +495,7 @@ impl Doc {
         // A note is at most one deeper than the note above it (an empty line isn't a note): an
         // edit that removed or flattened a parent leaves no gap the vault can't hold (fuzz).
         let mut above: Option<usize> = None;
-        for l in self.buf.lines.iter_mut() {
+        for l in self.engine.lines_mut().iter_mut() {
             if l.text.trim().is_empty() {
                 continue;
             }
@@ -410,14 +505,15 @@ impl Doc {
             }
             above = Some(l.depth);
         }
-        let caret = self.buf.caret.line;
+        let caret = self.view.caret.line;
         // A saved note emptied to nothing (and left) goes: an empty line isn't a note, and an
         // empty node kept its old place, which other notes were then placed after (fuzz). The
         // line stays as a plain empty line; its children are placed by this save before the
         // delete runs (deletes go last).
-        for (i, l) in self.buf.lines.iter_mut().enumerate() {
+        let mut emptied = Vec::new();
+        for (i, l) in self.engine.lines_mut().iter_mut().enumerate() {
             if !l.is_new && l.text.trim().is_empty() && (all || i != caret) && !l.conflict {
-                self.buf.deleted.push(std::mem::replace(&mut l.id, new_id()));
+                emptied.push(std::mem::replace(&mut l.id, new_id()));
                 l.is_new = true;
                 l.text.clear();
                 l.saved = None;
@@ -430,11 +526,12 @@ impl Doc {
                 l.remote_text = None;
             }
         }
+        self.engine.deleted_mut().extend(emptied);
         let mut ops = Vec::new();
         let mut parsed = Vec::new();
         let mut afters = HashMap::new();
         let mut present: Vec<(usize, String)> = Vec::new();
-        for (i, l) in self.buf.lines.iter().enumerate() {
+        for (i, l) in self.engine.lines().iter().enumerate() {
             let skip = !all && i == caret;
             let (parent, after) = place(l.depth, &present);
             if l.is_new {
@@ -485,11 +582,11 @@ impl Doc {
                 ops.push(BlockOp::Status { id: l.id.clone(), status: l.status.clone().unwrap(), rev: None });
             }
         }
-        for id in self.buf.deleted.drain(..) {
+        for id in std::mem::take(self.engine.deleted_mut()).into_iter() {
             ops.push(BlockOp::Delete { id, rev: None });
         }
         let sent = Sent {
-            lines: self.buf.lines.iter().map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
+            lines: self.engine.lines().iter().map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
             created: ops.iter().filter_map(|o| if let BlockOp::Create { id, .. } = o { Some(id.clone()) } else { None }).collect(),
         };
         SavePlan { ops, parsed, afters, sent }
@@ -511,7 +608,7 @@ impl Doc {
         let (moved_text, moved_status): (std::collections::HashSet<String>, std::collections::HashSet<String>) = {
             let mut t = std::collections::HashSet::new();
             let mut st = std::collections::HashSet::new();
-            for l in &self.buf.lines {
+            for l in self.engine.lines() {
                 if let Some((text, status)) = sent.lines.get(&l.id) {
                     if *text != l.text {
                         t.insert(l.id.clone());
@@ -524,14 +621,14 @@ impl Doc {
             (t, st)
         };
         for r in results {
-            let Some(i) = self.buf.lines.iter().position(|l| l.id == r.id) else {
+            let Some(i) = self.engine.lines().iter().position(|l| l.id == r.id) else {
                 // Made by this save, gone from the buffer since: the vault has it now, so it goes.
-                if r.state == "ok" && sent.created.contains(&r.id) && !self.buf.deleted.contains(&r.id) {
-                    self.buf.deleted.push(r.id.clone());
+                if r.state == "ok" && sent.created.contains(&r.id) && !self.engine.deleted().contains(&r.id) {
+                    self.engine.deleted_mut().push(r.id.clone());
                 }
                 continue;
             };
-            let l = &mut self.buf.lines[i];
+            let l = &mut self.engine.lines_mut()[i];
             l.saving_since = None;
             match r.state {
                 "ok" => {
@@ -567,8 +664,8 @@ impl Doc {
                     l.take_fields(b, today);
                     if parsed.contains(&l.id) && l.id != caret_id && !moved_text.contains(&l.id) && b.text.len() < l.text.len() {
                         l.text = b.text.clone();
-                        if self.buf.caret.line == i {
-                            self.buf.caret.byte = self.buf.caret.byte.min(l.text.len());
+                        if self.view.caret.line == i {
+                            self.view.caret.byte = self.view.caret.byte.min(l.text.len());
                         }
                     }
                     if parsed.contains(&l.id) && l.meta != had_meta && !l.meta.is_empty() {
@@ -614,32 +711,14 @@ impl Doc {
     /// What ⌘C copies (editing.md §5): inside one note its plain text; across notes Markdown,
     /// the first note with its marker only when the selection includes the note's start, and
     /// every later note with its marker and indent. Empty: nothing selected.
-    pub fn copy_text(&self) -> String {
-        let parts = self.selected_parts();
-        match parts.len() {
-            0 => String::new(),
-            1 => parts[0].1.clone(),
-            _ => {
-                let md = markdown(&parts.iter().map(|(i, t)| (&self.buf.lines[*i], t.as_str())).collect::<Vec<_>>());
-                // One trailing newline goes; a boundary at the end (an empty last note) stays.
-                let md = md.strip_suffix('\n').unwrap_or(&md);
-                let from_start = self.selection().is_some_and(|(s, _)| s.byte == 0);
-                if from_start || self.buf.lines[parts[0].0].kind == Kind::Para {
-                    return md.to_string();
-                }
-                // The first note from the middle: its text without the marker.
-                let (first, rest) = md.split_once('\n').unwrap_or((md, ""));
-                let t = first.trim_start();
-                let t = t.strip_prefix("- ").unwrap_or(t);
-                let t = ["[ ] ", "[x] ", "[/] ", "[w] ", "[-] "].iter().find_map(|c| t.strip_prefix(c)).unwrap_or(t);
-                format!("{t}\n{rest}")
-            }
-        }
+    pub fn copy_text(&mut self) -> String {
+        self.engine.copy(&self.view)
     }
 }
 
 /// Lines as Markdown (copy): the same form `thc edit` writes, fields re-attached with absolute
 /// dates. Each entry is a line and the part of its text that's selected.
+#[cfg(test)]
 pub fn markdown(parts: &[(&Line, &str)]) -> String {
     let blocks: Vec<(&caretline::Block<String>, &str, &str)> = parts.iter().map(|(l, t)| (&l.block, *t, l.fields.as_str())).collect();
     caretline::markdown::to_markdown(&blocks)
@@ -650,26 +729,31 @@ pub fn markdown(parts: &[(&Line, &str)]) -> String {
 impl Doc {
     /// The wrap of line `i` at `w` columns, cached by (text, width).
     pub fn rows_of(&mut self, i: usize, w: usize) -> Vec<(usize, usize)> {
-        use std::hash::{Hash, Hasher};
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        self.buf.lines[i].text.hash(&mut h);
-        let key = (h.finish(), w);
-        if let Some(r) = self.wraps.get(&key) {
-            return r.clone();
-        }
-        // A code block never wraps: one row per line (it scrolls sideways instead, §3.2).
-        let r = if self.buf.lines[i].kind == Kind::Para && self.buf.lines[i].text.starts_with("```") {
-            wrap(&self.buf.lines[i].text, usize::MAX / 2)
-        } else {
-            wrap_with(&self.buf.lines[i].text, w, width(&self.buf.lines[i].text[..crate::doc_ui::marker_len(&self.buf.lines[i])]))
-        };
-        if self.wraps.len() > 20_000 {
-            self.wraps.clear();
-        }
-        self.wraps.insert(key, r.clone());
-        r
+        let Doc { engine, wraps, .. } = self;
+        rows(wraps, &engine.lines()[i], w)
     }
+}
 
+/// The wrap of a line at `w` columns, cached by (text, width).
+pub fn rows(wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, l: &Line, w: usize) -> Vec<(usize, usize)> {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    l.text.hash(&mut h);
+    let key = (h.finish(), w);
+    if let Some(r) = wraps.get(&key) {
+        return r.clone();
+    }
+    // A code block never wraps: one row per line (it scrolls sideways instead, §3.2).
+    let r = if l.kind == Kind::Para && l.text.starts_with("```") {
+        wrap(&l.text, usize::MAX / 2)
+    } else {
+        wrap_with(&l.text, w, width(&l.text[..crate::doc_ui::marker_len(l)]))
+    };
+    if wraps.len() > 20_000 {
+        wraps.clear();
+    }
+    wraps.insert(key, r.clone());
+    r
 }
 
 #[cfg(test)]
@@ -678,26 +762,26 @@ mod tests {
 
     fn doc(lines: &[(usize, Kind, &str)]) -> Doc {
         let mut d = Doc::new(Target::Journal { date: chrono::NaiveDate::from_ymd_opt(2026, 10, 4).unwrap() }, None, &[], chrono::NaiveDate::from_ymd_opt(2026, 10, 4).unwrap());
-        d.lines = lines.iter().map(|(dep, k, t)| Line::new(*dep, *k, t)).collect();
+        *d.lines_mut() = lines.iter().map(|(dep, k, t)| Line::new(*dep, *k, t)).collect();
         d
     }
 
     fn texts(d: &Doc) -> Vec<String> {
-        d.lines.iter().map(|l| format!("{}{:?} {}", " ".repeat(l.depth), l.kind, l.text)).collect()
+        d.lines().iter().map(|l| format!("{}{:?} {}", " ".repeat(l.depth), l.kind, l.text)).collect()
     }
 
     #[test]
     fn typing_splitting_and_merging() {
         let mut d = doc(&[(0, Kind::Para, "")]);
         d.insert("Hello world");
-        d.caret.byte = 5;
+        d.view.caret.byte = 5;
         d.newline(); // a line break in the paragraph
         assert_eq!(texts(&d), ["Para Hello\n world"]);
         d.newline(); // a blank line: two notes
         assert_eq!(texts(&d), ["Para Hello", "Para  world"]);
-        d.backspace(); // at the start of a paragraph: join, the break kept
+        d.edit(|b| b.backspace()); // at the start of a paragraph: join, the break kept
         assert_eq!(texts(&d), ["Para Hello\n world"]);
-        assert_eq!(d.caret, Pos { line: 0, byte: 6 });
+        assert_eq!(d.view.caret, Pos { line: 0, byte: 6 });
         assert!(d.undo());
         assert_eq!(texts(&d), ["Para Hello", "Para  world"]);
         assert!(d.redo());
@@ -708,38 +792,38 @@ mod tests {
     fn list_forms_and_nesting() {
         let mut d = doc(&[(0, Kind::Para, "")]);
         d.insert("- ");
-        assert_eq!(d.lines[0].kind, Kind::Bullet);
+        assert_eq!(d.lines()[0].kind, Kind::Bullet);
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
-        assert!(d.nest(1));
+        assert!(d.edit(|b| b.nest(1)));
         d.newline();
         d.newline(); // an empty item ends the list: an empty paragraph line
         assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Para "]);
-        d.caret = Pos { line: 0, byte: 4 };
-        assert_eq!(d.task_cycle(), "task");
-        assert_eq!(d.task_cycle(), "done");
-        assert_eq!(d.lines[0].status.as_deref(), Some("done"));
+        d.view.caret = Pos { line: 0, byte: 4 };
+        assert_eq!(d.edit(|b| b.task_cycle()), "task");
+        assert_eq!(d.edit(|b| b.task_cycle()), "done");
+        assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
     }
 
     #[test]
     fn numbered_items_continue() {
         let mut d = doc(&[(0, Kind::Bullet, "1. First")]);
-        d.caret.byte = d.lines[0].text.len();
+        d.view.caret.byte = d.lines()[0].text.len();
         d.newline();
-        assert_eq!(d.lines[1].text, "2. ");
+        assert_eq!(d.lines()[1].text, "2. ");
     }
 
     #[test]
     fn move_with_children_and_selection_delete() {
         let mut d = doc(&[(0, Kind::Bullet, "A"), (1, Kind::Bullet, "A1"), (0, Kind::Bullet, "B")]);
-        d.caret = Pos { line: 2, byte: 0 };
-        d.move_line(-1).unwrap();
+        d.view.caret = Pos { line: 2, byte: 0 };
+        d.edit(|b| b.move_line(-1)).unwrap();
         assert_eq!(texts(&d), ["Bullet B", "Bullet A", " Bullet A1"]);
-        assert_eq!(d.caret.line, 0);
-        assert!(d.move_line(-1).is_err());
-        d.caret = Pos { line: 0, byte: 1 };
-        d.anchor = Some(Pos { line: 2, byte: 1 });
+        assert_eq!(d.view.caret.line, 0);
+        assert!(d.edit(|b| b.move_line(-1)).is_err());
+        d.view.caret = Pos { line: 0, byte: 1 };
+        d.view.anchor = Some(Pos { line: 2, byte: 1 });
         d.delete_selection();
         assert_eq!(texts(&d), ["Bullet B1"]);
     }
@@ -787,8 +871,8 @@ mod tests {
     fn save_plan_places_new_lines() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
         let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[], today);
-        d.lines = vec![Line::new(0, Kind::Bullet, "A"), Line::new(1, Kind::Task, "A1"), Line::new(0, Kind::Para, "")];
-        d.caret = Pos { line: 2, byte: 0 };
+        *d.lines_mut() = vec![Line::new(0, Kind::Bullet, "A"), Line::new(1, Kind::Task, "A1"), Line::new(0, Kind::Para, "")];
+        d.view.caret = Pos { line: 2, byte: 0 };
         let p = d.plan_save(false);
         let creates: Vec<(String, Option<String>, Option<String>)> = p
             .ops
@@ -800,7 +884,7 @@ mod tests {
             .collect();
         assert_eq!(creates.len(), 2, "the empty caret line isn't a node yet");
         assert_eq!(creates[0], ("A".into(), None, None));
-        assert_eq!(creates[1].1, Some(d.lines[0].id.clone()), "A1 under A");
+        assert_eq!(creates[1].1, Some(d.lines()[0].id.clone()), "A1 under A");
     }
 
     /// Characters as people see them (jank A1–A6): width matches ratatui's per-cluster
@@ -818,13 +902,13 @@ mod tests {
             assert_eq!(next_char(&s, 1), 1 + g.len(), "→ over {g:?}");
             assert_eq!(prev_char(&s, 1 + g.len()), 1, "← over {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
-            d.caret = Pos { line: 0, byte: d.lines[0].text.len() };
-            d.backspace();
-            assert_eq!(d.lines[0].text, "a", "⌫ removes all of {g:?}");
+            d.view.caret = Pos { line: 0, byte: d.lines()[0].text.len() };
+            d.edit(|b| b.backspace());
+            assert_eq!(d.lines()[0].text, "a", "⌫ removes all of {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
-            d.caret = Pos { line: 0, byte: 1 };
-            d.delete_forward();
-            assert_eq!(d.lines[0].text, "a", "⌦ removes all of {g:?}");
+            d.view.caret = Pos { line: 0, byte: 1 };
+            d.edit(|b| b.delete_forward());
+            assert_eq!(d.lines()[0].text, "a", "⌦ removes all of {g:?}");
         }
         // Wrapping counts clusters and never cuts one: 5 families are 10 columns.
         let five = family.repeat(5);
@@ -841,21 +925,21 @@ mod tests {
     #[test]
     fn task_cycle_and_marker_steps() {
         let mut d = doc(&[(0, Kind::Para, "call")]);
-        assert_eq!(d.task_cycle(), "task");
-        assert_eq!(d.task_cycle(), "done");
-        assert_eq!(d.task_cycle(), "text");
-        assert_eq!((d.lines[0].kind, d.lines[0].status.as_deref()), (Kind::Para, None));
-        d.task_cycle();
-        d.caret = Pos { line: 0, byte: 0 };
-        d.backspace();
-        assert_eq!((d.lines[0].kind, d.lines[0].status.as_deref()), (Kind::Bullet, None));
-        d.backspace();
-        assert_eq!((d.lines[0].kind, d.lines[0].text.as_str()), (Kind::Para, "call"));
+        assert_eq!(d.edit(|b| b.task_cycle()), "task");
+        assert_eq!(d.edit(|b| b.task_cycle()), "done");
+        assert_eq!(d.edit(|b| b.task_cycle()), "text");
+        assert_eq!((d.lines()[0].kind, d.lines()[0].status.as_deref()), (Kind::Para, None));
+        d.edit(|b| b.task_cycle());
+        d.view.caret = Pos { line: 0, byte: 0 };
+        d.edit(|b| b.backspace());
+        assert_eq!((d.lines()[0].kind, d.lines()[0].status.as_deref()), (Kind::Bullet, None));
+        d.edit(|b| b.backspace());
+        assert_eq!((d.lines()[0].kind, d.lines()[0].text.as_str()), (Kind::Para, "call"));
         let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
-        d.anchor = Some(Pos { line: 0, byte: 0 });
-        d.caret = Pos { line: 2, byte: 1 };
-        d.task_cycle();
-        assert!(d.lines.iter().all(|l| l.kind == Kind::Task), "{:?}", texts(&d));
+        d.view.anchor = Some(Pos { line: 0, byte: 0 });
+        d.view.caret = Pos { line: 2, byte: 1 };
+        d.edit(|b| b.task_cycle());
+        assert!(d.lines().iter().all(|l| l.kind == Kind::Task), "{:?}", texts(&d));
     }
 
     /// Enter is a line break in a paragraph; a blank line splits it (writing.md A2–A4); ⌫ at a
@@ -863,7 +947,7 @@ mod tests {
     #[test]
     fn paragraphs_are_plain_text() {
         let mut d = doc(&[(0, Kind::Para, "")]);
-        d.caret = Pos { line: 0, byte: 0 };
+        d.view.caret = Pos { line: 0, byte: 0 };
         d.insert("one");
         d.newline();
         d.insert("two");
@@ -875,16 +959,16 @@ mod tests {
         d.insert("two");
         assert_eq!(texts(&d), ["Para one", "Para two"], "A3: two notes");
         let mut d = doc(&[(0, Kind::Para, "abcdef")]);
-        let id = d.lines[0].id.clone();
-        d.caret = Pos { line: 0, byte: 3 };
+        let id = d.lines()[0].id.clone();
+        d.view.caret = Pos { line: 0, byte: 3 };
         d.newline();
         d.newline();
         assert_eq!(texts(&d), ["Para abc", "Para def"], "A4: a split");
-        assert_eq!(d.lines[0].id, id, "the first part keeps the id");
-        d.caret = Pos { line: 1, byte: 0 };
-        d.backspace();
+        assert_eq!(d.lines()[0].id, id, "the first part keeps the id");
+        d.view.caret = Pos { line: 1, byte: 0 };
+        d.edit(|b| b.backspace());
         assert_eq!(texts(&d), ["Para abc\ndef"], "A5: a join keeps the break");
-        assert_eq!(d.lines[0].id, id);
+        assert_eq!(d.lines()[0].id, id);
         let mut d = doc(&[(0, Kind::Para, "")]);
         d.insert("intro");
         d.newline();
@@ -893,15 +977,15 @@ mod tests {
         }
         assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "a marker on a later line starts an item");
         d.newline();
-        assert_eq!(d.lines[2].kind, Kind::Bullet, "A6: the next item");
+        assert_eq!(d.lines()[2].kind, Kind::Bullet, "A6: the next item");
         d.newline();
-        assert_eq!((d.lines[2].kind, d.lines[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
+        assert_eq!((d.lines()[2].kind, d.lines()[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
         let mut d = doc(&[(0, Kind::Para, "")]);
         for c in ["[", " ", "]", " ", "call"] {
             d.insert(c);
         }
         d.newline();
-        assert_eq!((d.lines[1].kind, d.lines[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
+        assert_eq!((d.lines()[1].kind, d.lines()[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
         let mut d = doc(&[(0, Kind::Para, "")]);
         for c in ["#", " ", "Title"] {
             d.insert(c);

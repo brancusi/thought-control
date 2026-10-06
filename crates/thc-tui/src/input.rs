@@ -306,7 +306,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
         match at {
             Some(Click::Meta { line, field }) => {
                 let Some(d) = app.doc.as_mut() else { return };
-                let Some(l) = d.lines.get(line) else { return };
+                let Some(l) = d.lines().get(line) else { return };
                 let id = l.id.clone();
                 match field {
                     "open" => app.doc_open(),
