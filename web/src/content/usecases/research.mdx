@@ -1,0 +1,60 @@
+---
+title: Research notes with links
+who: a researcher
+blurb: Pages that link to each other, backlinks for free, and queries over everything.
+icon: book
+order: 4
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+You're reading about replicated logs. Each paper gets a line in the journal the day you read it, with a `[[link]]` to the idea it touches: `[[Replay ordering]]`, `[[Tombstones]]`. Typing `[[` offers the pages you have; a new name makes the page when the line saves. You misspell one as `[[Tombstoens]]` and thc offers the page you meant before it makes a second one.
+
+A week later you open `¶ Replay ordering`. Your own notes are at the top. Under them, *linked from* lists every journal line that mentions it, with its day. You didn't file anything; the links did.
+
+For the long write-up you switch on Focus, and the screen is just the column of text, the date and a word count.
+
+<TuiFrame name="page" caption="A page with its tasks, and the lines that link to it underneath." />
+
+## The commands
+
+Capture as you read:
+
+```sh
+$ thc add "Paper: CRDTs for outlines, see [[Replay ordering]] #paper"
+added 2p7vh   Paper: CRDTs for outlines, see [[Replay ordering]] #paper  in today's journal
+$ thc todo "Reread section 4 of the tombstones paper" -t paper --sched sat
+```
+
+Bring in an outline you drafted elsewhere:
+
+```sh
+$ thc import - --page "Replay ordering" < outline.md
+imported 3 nodes under ¶ Replay ordering · tx SNK244 · thc undo --tx SNK244 reverts all of it
+```
+
+Find things:
+
+```sh
+$ thc search tombstones
+$ thc show gcqh0                         # a page, its children and its backlinks
+gcqh0   Replay ordering
+  dp87y   Open questions
+  linked from
+    2p7vh   Paper: CRDTs for outlines, see [[Replay ordering]] #paper  in today's journal
+$ thc q '#paper created>=-2w sort:date'
+$ thc q 'ancestor:( text:Replay ) status:open'
+```
+
+Write:
+
+```sh
+$ thc p "Replay ordering"                # open the page to write in
+```
+
+Inside, a click on a link follows it (so does <kbd>⌃O</kbd> with the cursor in one), <kbd>⌃O</kbd> anywhere jumps to any page or day by name, and <kbd>⌥Z</kbd> toggles Focus. `:focus planner` adds a month calendar and the links beside the text.
+
+## Why thc fits
+
+- **Links do the filing.** Write where you are; the page collects its mentions on its own.
+- **Plain text all the way down.** Paste Markdown in, copy Markdown out, and `thc export` writes a folder Obsidian can read.
+- **Questions, not folders.** A query finds the open threads under a topic, or what you read in the last two weeks, without a tagging scheme decided in advance.

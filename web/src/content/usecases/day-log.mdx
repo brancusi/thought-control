@@ -1,0 +1,57 @@
+---
+title: A developer's day log
+who: a developer
+blurb: Write the day as it happens. Tasks fall out of the prose and turn up in Today.
+icon: clock
+order: 1
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+It's 9:10 and the coffee is still hot. You open a terminal pane next to your editor and type `thc j`. Today's journal opens with the caret on a fresh line, and nothing else asks for your attention.
+
+You write the standup notes as a paragraph. Halfway through you remember the flaky login test, so you start a line with `[ ] `, add `due:fri !high #work`, and keep going. The tokens underline while you type; when you leave the line, `due fri · !high` slides into the quiet column on the right. Later, a note about the token parser needs to mention `due:` itself, so you put it in quotes and it stays a word.
+
+At 11 you press <kbd>Esc</kbd>. Today shows the login test under *Next 7 days*, next to a reminder you set last week. <kbd>x</kbd> marks the morning's small task done. <kbd>⌥Z</kbd> back in the journal hides everything but your words for the long afternoon write-up.
+
+<TuiFrame name="devlog" caption="A working day: a note, tasks with a due date and a priority, a link to the release checklist." />
+
+At six, before you close the pane, you look at what the agent did while you were in meetings.
+
+## The commands
+
+```sh
+$ thc j                          # today, caret at the end
+$ thc add "Standup: auth refactor is close, PR up after lunch #work"
+added 5ghwy   Standup: auth refactor is close, PR up after lunch #work  in today's journal
+$ thc todo "Fix flaky login test" --due fri -p high -t work
+added 750tz   [ ] Fix flaky login test  due fri · !high · in today's journal
+$ thc add 'Parser: "due:" inside quotes stays text'
+added 50n5d   Parser: "due:" inside quotes stays text  in today's journal
+```
+
+Midday, from any shell:
+
+```sh
+$ thc today
+$ thc agenda --days 7
+Fri Oct 9 · fri
+  750tz   [ ] Fix flaky login test  due fri · !high · in today's journal
+  pd0s6   [ ] Ship release notes  fri 16:00 · in today's journal
+```
+
+End of day:
+
+```sh
+$ thc q 'done>=today'            # what got finished
+$ thc log --by claude --since 1d # what the agent touched
+$ thc review                     # accept or revert, oldest first
+Review · 2 changes by claude · oldest first
+...
+$ thc j yesterday                # if you need to look back
+```
+
+## Why thc fits
+
+- **The log is the to-do list.** You don't switch to a task app to make a task; you write `[ ]` in the middle of a thought, and Today finds it.
+- **It lives where you already are.** A pane in your terminal, one keystroke from your editor, with keys that match your shell.
+- **Nothing slips past you.** Agent changes wait in the review lane until you've seen them, and every write is undoable.

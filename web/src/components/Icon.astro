@@ -1,0 +1,35 @@
+---
+// Single-stroke line icons on a 24 grid: 1px, round caps, never filled. One per feature group.
+interface Props { name: string; size?: number; label?: string }
+const { name, size = 28, label } = Astro.props;
+const P: Record<string, string> = {
+  pen: 'M4 20l1-4L16 5l3 3L8 19zM14 7l3 3M4 20h16',
+  capture: 'M4 13v6h16v-6M8 13h8M12 3v10M8.5 9.5L12 13l3.5-3.5',
+  views: 'M3 5h18v14H3zM3 9h18M6.5 7h.01M9 13h9M9 16h6M6 13h.01M6 16h.01',
+  vault: 'M8 4H5v16h3M16 4h3v16h-3M12 10.5a1.5 1.5 0 1 0 0 3a1.5 1.5 0 1 0 0-3',
+  agent: 'M12 3l7 9l-7 9l-7-9zM12 8v8M9 12h6',
+  history: 'M4 12a8 8 0 1 0 2.4-5.7M4 4v4h4M12 8v4l3 2',
+  sync: 'M5 9a7 7 0 0 1 12.5-3M19 4v4h-4M19 15a7 7 0 0 1-12.5 3M5 20v-4h4',
+  live: 'M12 12h.01M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8',
+  bell: 'M6 16V11a6 6 0 0 1 12 0v5l2 2H4zM10 20h4',
+  repeat: 'M4 10V8a3 3 0 0 1 3-3h11M15 2l3 3l-3 3M20 14v2a3 3 0 0 1-3 3H6M9 22l-3-3l3-3',
+  image: 'M3 5h18v14H3zM3 16l5-5l4 4l3-3l6 6M15.5 8.5h.01',
+  mouse: 'M7 9a5 5 0 0 1 10 0v6a5 5 0 0 1-10 0zM12 4v5',
+  key: 'M3 7h18v10H3zM6 10h1M9 10h1M12 10h1M15 10h1M18 10h0M7 14h10',
+  board: 'M3 4h18v16H3zM9 4v16M15 4v16M5 7h2M11 7h2M17 7h2M5 10h2M11 10h2',
+  theme: 'M12 3a9 9 0 1 0 0 18zM12 3a9 9 0 0 1 0 18',
+  update: 'M12 21a9 9 0 1 1 0-18a9 9 0 0 1 0 18zM12 16V8M8.5 11.5L12 8l3.5 3.5',
+  link: 'M10 14a4 4 0 0 0 5.7 0l3-3a4 4 0 0 0-5.7-5.7L12 6.3M14 10a4 4 0 0 0-5.7 0l-3 3a4 4 0 0 0 5.7 5.7l1-1',
+  query: 'M3 5h18l-7 8v6l-4 2v-8z',
+  search: 'M10.5 17a6.5 6.5 0 1 0 0-13a6.5 6.5 0 0 0 0 13zM15.5 15.5L21 21',
+  terminal: 'M3 5h18v14H3zM7 10l3 2.5L7 15M12 15h5',
+  clock: 'M12 21a9 9 0 1 1 0-18a9 9 0 0 1 0 18zM12 7v5l3.5 2',
+  bug: 'M9 7a3 3 0 0 1 6 0M8 10h8v5a4 4 0 0 1-8 0zM12 10v9M4 12h4M16 12h4M5 18l3-2M19 18l-3-2M5 7l3 2M19 7l-3 2',
+  book: 'M4 5a2 2 0 0 1 2-2h14v16H6a2 2 0 0 0-2 2zM4 21a2 2 0 0 1 2-2h14M9 7h7',
+  team: 'M9 11a3 3 0 1 0 0-6a3 3 0 0 0 0 6zM3 20a6 6 0 0 1 12 0M16 5a3 3 0 0 1 0 6M18 20a6 6 0 0 0-3-5.2',
+};
+const d = P[name] ?? P.pen;
+---
+<svg class="ico" viewBox="0 0 24 24" width={size} height={size} role={label ? 'img' : undefined} aria-label={label} aria-hidden={label ? undefined : 'true'}>
+  <path d={d} />
+</svg>

@@ -1,0 +1,178 @@
+---
+title: Writing
+description: How the editor turns plain text into notes, tasks and dates, and how to stay out of its way.
+order: 3
+group: Guide
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+The journal and every page open as a plain-text document. You type, and `thc` keeps track of
+the structure for you.
+
+```sh
+$ thc j               # today's journal, cursor on a fresh line at the end
+$ thc j fri           # or yesterday, or 2026-10-02
+$ thc p "Q4 Planning" # a page, by title or id
+```
+
+## How the text becomes notes
+
+| You write | It's |
+|---|---|
+| A paragraph (lines with no blank line between) | One note. <kbd>Enter</kbd> inside it is just a line break |
+| A blank line | The end of a note. The next text starts a new one |
+| `- milk` | A list item (one note). <kbd>Enter</kbd> continues the list |
+| `1. first` | A numbered item. <kbd>Enter</kbd> makes `2. ` |
+| `[ ] call` / `[x] call` | A task, open or done |
+| `# Title`, `## Section` | A heading |
+| Indented items | Children of the item above |
+| `> quote`, fenced code, `---` | A quote, a code block, a rule |
+
+**Blank lines are yours.** The blank lines you type stay exactly where they are when a line
+changes kind (a task, back to text, nested with <kbd>Tab</kbd>), so the text never jumps. They're
+saved with the note, and `thc edit`, `thc import` and the Markdown export keep them.
+
+Each note has its own identity, dates and history, and you never see that machinery. Delete the
+`[ ]` and it's plain text again, because what you see is the truth.
+
+A few edges that behave the way your fingers expect:
+
+- <kbd>Enter</kbd> on an empty list item ends the list.
+- <kbd>Backspace</kbd> at the start of a paragraph joins it to the one above. On a task it takes
+  the box off, then the bullet.
+- <kbd>⇧Enter</kbd> (or <kbd>⌃J</kbd>) breaks a line without leaving the item.
+- Long lines in a code block don't wrap. They end in `→` and scroll sideways while you're in them.
+- Emoji, flags, accents and CJK are single characters: one arrow press, one backspace.
+
+## Dates, tags and priority, inline
+
+Type them anywhere on a line:
+
+| Token | Means |
+|---|---|
+| `due:fri`, `due:2026-10-10`, `due:"nov 1 9am"` | A hard deadline |
+| `sched:mon` | When you plan to start. It shows in Today from then |
+| `at:"tue 2pm"` | An event at a time, with no task box |
+| `every:2w`, `every:weekday`, `every!:1mo` | Repeats. `!` counts from when you finish |
+| `!high` `!med` `!low` | Priority |
+| `#tag` | A tag. It stays in the text |
+| `[[Page]]` | A link. A new name creates the page |
+
+While you type, tokens are underlined, and the right column previews what they'll set
+(`due fri · !high ✓`), or says what it couldn't read. When you leave the line, the dates and
+priority move into that quiet column. Type a new token to change one, or click it.
+
+**Quoted text is never a token.** Inside "double quotes" or `backticks`, nothing is read as a
+date, priority, tag or link. That's how you write *about* the syntax:
+
+<TuiFrame name="tokens" caption="The quoted due:fri stays text. The bare due:fri, !high and #lisbon set fields." />
+
+**Two of the same token on one line** (`!high … !low`): the last one counts. The earlier one
+stays as plain words, and the hint says `2 priorities · using !low`.
+
+The full grammar, with every date form, is in [Capture syntax](../capture-syntax/).
+
+## Links
+
+Type `[[` and a picker offers pages and days as you type. <kbd>Enter</kbd> or <kbd>Tab</kbd>
+links the one you chose; a page is only made when you pick a new name. Case doesn't matter:
+`[[lisbon]]` links your `Lisbon`. A near miss (`[[Lisbn]]`) offers the page you probably meant,
+and <kbd>⌃O</kbd> takes it before any new page is made.
+
+A click on a link goes there, and <kbd>Esc</kbd> comes back. To edit one, click its `[[` or `]]`, <kbd>⌥</kbd>-click it, or arrow into it. With the cursor in a link, <kbd>⌃O</kbd> goes there. Under every page, **linked from** lists the
+lines that mention it. Under a journal day, **also today** lists what's due today elsewhere, and
+ticking a box there completes it where it lives.
+
+<TuiFrame name="link" caption="[[ opens the picker: pages and days, as you type." />
+
+## Tasks with notes become pages
+
+A task with notes under it is an issue, and it opens as its own page: <kbd>Enter</kbd> on it in
+a list, or <kbd>⌃O</kbd> on its line. The task line is the header (its box, who owns it,
+priority, when it was opened) and its notes are the body. Write there to add findings.
+<kbd>Esc</kbd> goes back where you came from.
+
+## The keys you need
+
+| Key | Does |
+|---|---|
+| Just type | Write |
+| <kbd>Enter</kbd> | A new line. Twice: a new note. In a list: the next item |
+| <kbd>Tab</kbd> / <kbd>⇧Tab</kbd> | Indent / outdent a list item |
+| <kbd>⌃T</kbd> | Text → task → done → text, on the line you're on (just that line, even inside a paragraph) or every selected line |
+| <kbd>⌥↑</kbd> / <kbd>⌥↓</kbd> | Move the line, with its children |
+| <kbd>⇧</kbd> + arrows | Select |
+| <kbd>⌘←</kbd> <kbd>⌘→</kbd> / <kbd>⌥←</kbd> <kbd>⌥→</kbd> | Line start or end / by word (<kbd>⌃A</kbd> <kbd>⌃E</kbd> work too) |
+| <kbd>⌘⌫</kbd> / <kbd>⌥⌫</kbd> | Delete to the line start / a word |
+| <kbd>⌘C</kbd> / <kbd>⌘X</kbd> (or <kbd>⌃C</kbd> / <kbd>⌃X</kbd>) | Copy / cut, as Markdown |
+| <kbd>⌘A</kbd> (or <kbd>⌥A</kbd>) | Select all |
+| <kbd>⌘V</kbd> or <kbd>⌃V</kbd> | Paste. Screenshots too |
+| <kbd>⌥V</kbd> | Make the next paste plain text |
+| <kbd>⌘Z</kbd> / <kbd>⇧⌘Z</kbd> (or <kbd>⌃Z</kbd> / <kbd>⌃Y</kbd>) | Undo / redo |
+| <kbd>[[</kbd> | Link a page |
+| <kbd>⌃O</kbd> | Open the link under the cursor, or go to any page or day |
+| <kbd>⌃P</kbd> / <kbd>⌃N</kbd> | Previous / next day |
+| <kbd>Esc</kbd> | Save and go back: to the list or view you came from, else Today |
+| <kbd>⌃Q</kbd> | Quit. Everything is already saved |
+| <kbd>F1</kbd> | Every key, for right here |
+
+The <kbd>⌘</kbd> keys need a terminal that sends them: kitty does, and WezTerm does after
+`thc setup wezterm --yes`. Every one has a <kbd>⌃</kbd> or <kbd>⌥</kbd> twin that works
+anywhere. More in [Keys](../keys/).
+
+**Paste Markdown** from anywhere and it becomes notes: headings, lists, tasks, quotes and code,
+as one undo step. Copy gives clean Markdown back.
+
+## Screenshots and files
+
+A note can carry an image or a file.
+
+- **Paste a screenshot:** copy one (<kbd>⌃⇧⌘4</kbd> on a Mac), then <kbd>⌘V</kbd> or
+  <kbd>⌃V</kbd> while writing. It's attached as its own line, and <kbd>⌃Z</kbd> undoes it. Text
+  pastes exactly as before.
+- **Drag a file** onto the terminal and it's attached at once. The bar says
+  `attached shot.png · ⌃Z keep the path`: <kbd>⌃Z</kbd> turns it back into the path as text,
+  and again removes that. Press <kbd>⌥V</kbd> before dragging to paste the path instead.
+- **From the command line:** `thc attach <id> shot.png --caption "after the fix"`.
+- **Find them later:** every attachment is also an item of its own, so `thc q is:image` lists your images and `thc show <id>` says which notes use one.
+
+An attachment shows as a chip, `▣ caption · 1280×720 · ⌃O open`. Moving onto it never opens it:
+a click puts the cursor there and <kbd>Enter</kbd> starts a new line after it. <kbd>⌃O</kbd> or a
+double-click opens it in your viewer. In WezTerm, iTerm2, kitty and Ghostty, an image
+also draws under its chip, sized to the text column. Over SSH, or with `images = "chips"` under
+`[tui]`, you get the chip alone.
+
+Underneath, the file is copied into the vault's `files/` folder and the note's text is a
+Markdown image line, so it syncs with the vault and the export reads it. Files over 20 MB are
+refused (a vault setting, `[attachments] max_mb`).
+
+## Saving, undo and other devices
+
+- **Saving is automatic:** when you leave a note, after a short pause, and when you leave or
+  quit. If a save is slow the footer says `◌ saving…`, and if one fails, `not saved · :retry`.
+- **Undo** (<kbd>⌃Z</kbd>) works across saves. Each page and day remembers where your cursor was.
+- **A crash or a closed window never loses what you typed.**
+- **If an agent or another device changes the note you're in,** `thc` tells you at once and
+  applies it when you move off. It never rewrites the text under your cursor. If you both
+  changed it, both versions are kept and marked `≠`: compare them and choose
+  (<kbd>1</kbd> keep yours, <kbd>2</kbd> keep theirs, <kbd>b</kbd> both).
+
+## Focus
+
+<kbd>⌥Z</kbd> hides everything but your words and the date. `thc j` opens this way;
+`thc j --no-focus` opens the full screen.
+
+`:focus` lets you choose what stays: the keys footer, the day strip, a month calendar, the dates
+column, today's other tasks, links, a word count, a clock, dimming, typewriter scrolling. Three
+starting points: `bare` (only your text), `writer` (the default: the date, the day strip, the
+footer and a word count) and `planner` (adds dates, a month beside the text, today's tasks and a
+clock). <kbd>Enter</kbd> in the panel saves your choice. You can also type it:
+`:focus planner`, `:focus +month -footer`.
+
+<TuiFrame name="focus" caption="Focus, writer preset: the day, the strip of days, and your words." />
+
+## Your $EDITOR
+
+Prefer vim, Helix or Emacs for a long piece? From a list, <kbd>e</kbd> opens the selected note
+in `$EDITOR` and <kbd>E</kbd> the whole page. From the shell, `thc edit <id>`. The note ids ride
+along at the end of each line, so whatever you change maps back to the right notes when you save.

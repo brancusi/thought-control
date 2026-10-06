@@ -1,0 +1,124 @@
+---
+// Every page: the TUI header (tabs on a rule, the ember under the current one), the status-bar
+// footer, and the keyboard: 1–6 switch pages as in thc, ? shows the keys, t toggles the theme.
+import '@fontsource/ibm-plex-mono/400.css';
+import '@fontsource/ibm-plex-mono/400-italic.css';
+import '@fontsource/ibm-plex-mono/600.css';
+import '../styles/site.css';
+import { u } from '../lib/url';
+import { version } from '../lib/version';
+
+interface Props { title: string; description: string; tab?: string }
+const { title, description, tab } = Astro.props;
+const tabs = [
+  { k: '1', id: 'home', label: 'home', href: u('') },
+  { k: '2', id: 'features', label: 'features', href: u('features/') },
+  { k: '3', id: 'use', label: 'use cases', href: u('use-cases/') },
+  { k: '4', id: 'docs', label: 'docs', href: u('docs/') },
+  { k: '5', id: 'changelog', label: 'changelog', href: u('changelog/') },
+  { k: '6', id: 'hood', label: 'under the hood', short: 'internals', href: u('under-the-hood/') },
+];
+const full = title === 'thought-central' ? 'thought-central · a notebook in your terminal' : `${title} · thought-central`;
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>{full}</title>
+  <meta name="description" content={description} />
+  <meta property="og:title" content={full} />
+  <meta property="og:description" content={description} />
+  <meta name="theme-color" content="#1b1916" />
+  <link rel="icon" href={u('favicon.svg')} type="image/svg+xml" />
+  <script is:inline>
+    try { const t = localStorage.getItem('thc-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+</head>
+<body>
+  <header class="top wrap">
+    <div class="top__row">
+      <a class="mark" href={u('')} aria-label="thought-central home"><span class="b">[</span><span class="d">•</span><span class="b">]</span> thought-central</a>
+      <nav class="tabs" aria-label="Site">
+        {tabs.map((t) => (
+          <a href={t.href} data-key={t.k} aria-current={tab === t.id ? 'page' : undefined}><span class="k">{t.k}</span>{t.short ? <><span class="long">{t.label}</span><span class="short">{t.short}</span></> : t.label}</a>
+        ))}
+      </nav>
+      <span class="top__right"><button class="theme-toggle" type="button" data-theme-toggle aria-label="Toggle light and dark">◐ theme</button></span>
+    </div>
+    <div class="rule" aria-hidden="true"><span class="rule__bar"></span></div>
+  </header>
+
+  <main class="wrap">
+    <slot />
+  </main>
+
+  <footer class="bar wrap">
+    <div class="bar__row">
+      <span>thc {version && <span>{version}</span>} · local-first · plain text · <span class="live">for terminals</span></span>
+      <span><kbd>1</kbd>–<kbd>6</kbd> pages · <kbd>t</kbd> theme · <kbd>?</kbd> keys</span>
+    </div>
+    <div class="bar__row" style="margin-top:6px">
+      <span class="dim">macOS today. The CLI is the interface; the TUI drives it; agents use it too.</span>
+      <span><a href="https://github.com/brancusi/thought-central-releases/releases">releases</a></span>
+    </div>
+  </footer>
+
+  <div class="keys-help" hidden data-keys-help>
+    <b>keys</b>, as in thc
+    <table>
+      <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>home · features · use cases · docs · changelog · under the hood</td></tr>
+      <tr><td><kbd>t</kbd></td><td>light or dark</td></tr>
+      <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>scroll</td></tr>
+      <tr><td><kbd>g</kbd> <kbd>G</kbd></td><td>top · bottom</td></tr>
+      <tr><td><kbd>?</kbd> <kbd>Esc</kbd></td><td>this · close</td></tr>
+    </table>
+  </div>
+
+  <script>
+    // The ember bar sits under the current tab, as in the TUI header.
+    const bar = document.querySelector<HTMLElement>('.rule__bar');
+    const place = () => {
+      const cur = document.querySelector<HTMLElement>('.tabs a[aria-current="page"]');
+      const rule = document.querySelector<HTMLElement>('.rule');
+      if (!bar || !rule) return;
+      if (!cur) { bar.style.width = '0'; return; }
+      const r = cur.getBoundingClientRect(), p = rule.getBoundingClientRect();
+      const k = cur.querySelector<HTMLElement>('.k');
+      const kw = k && getComputedStyle(k).display !== 'none' ? k.getBoundingClientRect().width : 0;
+      bar.style.left = `${r.left - p.left + kw}px`;
+      bar.style.width = `${r.width - kw}px`;
+    };
+    place();
+    addEventListener('resize', place);
+    document.querySelector('.tabs')?.addEventListener('scroll', place);
+    document.querySelector<HTMLElement>('.tabs a[aria-current="page"]')?.scrollIntoView({ inline: 'center', block: 'nearest' });
+    document.fonts?.ready.then(place);
+
+    const root = document.documentElement;
+    const toggle = () => {
+      const dark = root.dataset.theme ? root.dataset.theme === 'dark' : !matchMedia('(prefers-color-scheme: light)').matches;
+      root.dataset.theme = dark ? 'light' : 'dark';
+      try { localStorage.setItem('thc-theme', root.dataset.theme); } catch {}
+    };
+    document.querySelector('[data-theme-toggle]')?.addEventListener('click', toggle);
+
+    // Keys: the site is driven like thc. Never while typing in a field.
+    const help = document.querySelector<HTMLElement>('[data-keys-help]');
+    let g = 0;
+    addEventListener('keydown', (e) => {
+      const t = e.target as HTMLElement;
+      if (e.metaKey || e.ctrlKey || e.altKey || t.closest('input, textarea, [contenteditable]')) return;
+      const link = document.querySelector<HTMLAnchorElement>(`.tabs a[data-key="${e.key}"]`);
+      if (link) { location.href = link.href; return; }
+      if (e.key === 't') toggle();
+      else if (e.key === '?') { if (help) help.hidden = !help.hidden; }
+      else if (e.key === 'Escape') { if (help) help.hidden = true; }
+      else if (e.key === 'j') scrollBy({ top: 80 });
+      else if (e.key === 'k') scrollBy({ top: -80 });
+      else if (e.key === 'G') scrollTo({ top: document.body.scrollHeight });
+      else if (e.key === 'g') { if (Date.now() - g < 500) scrollTo({ top: 0 }); g = Date.now(); }
+    });
+  </script>
+</body>
+</html>

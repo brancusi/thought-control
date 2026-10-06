@@ -1,0 +1,50 @@
+---
+import Base from '../layouts/Base.astro';
+import Icon from '../components/Icon.astro';
+import { getCollection, render } from 'astro:content';
+import { u } from '../lib/url';
+import TuiFrame from '../components/TuiFrame.astro';
+// A real frame under the groups where one shows the feature best.
+const frame: Record<string, [string, string]> = {
+  '01-writing': ['journal', 'A day in the journal: a paragraph, then a task with a date, a priority and a tag.'],
+  '02-capture': ['tokens', 'Tokens are read as you type. Quoted, they stay text.'],
+  '03-views': ['vaults', 'Today across three vaults: every line ends with its vault, in its colour.'],
+  '04-queries': ['search', 'Search: pages, tags and notes for one word.'],
+  '06-agents': ['review', "The review lane: an agent's change waits for a (accept) or u (undo)."],
+  '07-history': ['log', 'The Log: every transaction, by whom, from which device.'],
+  '08-sync': ['compare', 'Two devices edited the same note: both versions are kept, and you choose.'],
+  '13-keys': ['leader', 'space opens the which-key menu.'],
+};
+const groups = (await getCollection('features')).sort((a, b) => a.data.order - b.data.order);
+const bodies = await Promise.all(groups.map(async (g) => ({ g, Content: (await render(g)).Content })));
+---
+<Base title="Features" description="Everything thc does: writing, capture, views and queries, vaults, agents, history, sync, reminders, screenshots, keys and more." tab="features">
+  <header class="page-head">
+    <p class="muted kicker">features · {groups.length} groups</p>
+    <h1>Everything it does</h1>
+    <p class="lede">Every feature here ships today. The <a href={u('changelog/')}>changelog</a> says when each one landed.</p>
+  </header>
+  <div class="grid g4">
+    {groups.map((g) => (
+      <a class="cell" href={`#${g.id}`}><Icon name={g.data.icon} /><h3>{g.data.title}</h3><p>{g.data.blurb}</p></a>
+    ))}
+  </div>
+  {bodies.map(({ g, Content }, i) => (
+    <section class="feature prose" id={g.id}>
+      <div class="sec"><span class="n">{String(i + 1).padStart(2, '0')}</span> {g.data.title}</div>
+      <div class="feature__body">
+        <aside><Icon name={g.data.icon} size={40} /><p class="muted">{g.data.blurb}</p></aside>
+        <div><Content />{frame[g.id] && <TuiFrame name={frame[g.id][0]} caption={frame[g.id][1]} />}</div>
+      </div>
+    </section>
+  ))}
+</Base>
+<style>
+  .page-head { padding: clamp(40px, 7vw, 80px) 0 32px; }
+  .kicker { font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; }
+  .feature { scroll-margin-top: 24px; }
+  .feature__body { display: grid; grid-template-columns: 200px minmax(0, 1fr); gap: 40px; }
+  .feature__body aside { color: var(--accent); }
+  .feature__body aside p { font-size: 13px; }
+  @media (max-width: 820px) { .feature__body { grid-template-columns: 1fr; gap: 8px; } .feature__body aside p { display: none; } }
+</style>

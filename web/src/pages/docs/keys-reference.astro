@@ -1,0 +1,13 @@
+---
+// Generated: src/generated/keys.md is `thc keys --markdown` (npm run gen), rendered as is.
+import Docs from '../../layouts/Docs.astro';
+import { marked } from 'marked';
+import keys from '../../generated/keys.md?raw';
+import ver from '../../generated/version.txt?raw';
+const titles: Record<string, string> = { global: 'Everywhere', leader: 'The space leader', list: 'In lists', write: 'While writing', overlay: 'In overlays' };
+const html = await marked.parse(keys.replace(/^### `([^`]+)`/gm, (_m, c) => `### ${titles[c] ?? c} <span class="muted">· ${c}</span>`));
+---
+<Docs title="Every key" description={`Every binding in thc, generated from ${ver.trim()} with thc keys --markdown. The footer, F1, the palette and this page all read the same table.`} slug="keys-reference">
+  <p>Remap any of them in <code>[keys.&lt;context&gt;]</code> in your config, then check with <code>thc keys --conflicts</code>.</p>
+  <Fragment set:html={html} />
+</Docs>

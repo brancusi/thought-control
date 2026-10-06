@@ -1,0 +1,206 @@
+---
+title: Every view
+description: The seven views along the top, what each is for, and how to make Today your own.
+order: 4
+group: Guide
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+`thc` with no arguments opens the app. Seven views sit along the top. Press <kbd>1</kbd>–<kbd>7</kbd>,
+<kbd>Tab</kbd> and <kbd>⇧Tab</kbd> to step through them, or click a tab. The bottom row always
+shows the keys that work right now. <kbd>F1</kbd> (or <kbd>?</kbd> outside writing) shows all
+of them.
+
+```
+ [•] personal   Today   Inbox 2   Tasks   Pages   Journal   Search   Log 1
+```
+
+## 1 · Today
+
+**What needs you now**, from every page, every day and every vault:
+
+- **Overdue** (red)
+- **Today**: due, scheduled, or a reminder firing
+- **Doing**
+- **Next 7 days**
+- **Done today**
+
+| Do | Key |
+|---|---|
+| Mark done | <kbd>x</kbd> |
+| Change the due / scheduled date | <kbd>d</kbd> / <kbd>s</kbd> |
+| Set the priority | <kbd>p</kbd>, then <kbd>h</kbd> <kbd>m</kbd> <kbd>l</kbd> |
+| Tag | <kbd>#</kbd> |
+| Move it somewhere | <kbd>m</kbd> |
+| Open it where it lives | <kbd>Enter</kbd> |
+| Add something | <kbd>a</kbd> |
+| Today ⇄ agenda (a week, by day) | <kbd>w</kbd> |
+| The day or week before / after | <kbd>[</kbd> <kbd>]</kbd> / <kbd>&#123;</kbd> <kbd>&#125;</kbd> |
+| Snooze or acknowledge a reminder | <kbd>z</kbd> / <kbd>Z</kbd> |
+| Choose which vaults it shows | <kbd>*</kbd>, or click the scope in the header |
+| See how it's built | <kbd>?</kbd> |
+
+When a reminder fires while you're in `thc`, a toast offers `x done  z snooze  Z ack`. From the
+shell, `thc today` and `thc agenda --days 7` print the same thing, and `--why` says why each
+row is there (`← scheduled · repeating`).
+
+<TuiFrame name="today" caption="Today: what's due now, then the next seven days, then what you finished." />
+
+**Across vaults, every line says where it's from.** With more than one vault, each row ends with
+its vault's name in that vault's colour, and the header says which vaults Today covers
+(`Today · all vaults (3)`). Press <kbd>*</kbd> to choose: all vaults, just this one, or a checkbox
+per vault. The choice is for this device; <kbd>s</kbd> in the picker makes it the default
+everywhere.
+
+<TuiFrame name="vaults" caption="Today across three vaults: each line ends with its vault, in its colour." />
+
+<TuiFrame name="scope" caption="* chooses which vaults Today shows on this device." />
+
+**Every view explains itself.** <kbd>?</kbd> on Today, Inbox, Tasks or a saved view shows how
+it's built: each section, how many it holds, its query, and what that means with the dates
+filled in. <kbd>e</kbd> edits it in your editor (as `Title · query` lines), <kbd>c</kbd> copies it
+as a new view, and <kbd>r</kbd> puts a built-in one back. <kbd>?</kbd> again shows the keys.
+
+<TuiFrame name="recipe" caption="? on Today: each section with its count, its query, and what it means with the dates filled in." />
+
+**Lists keep their order.** Clicking, opening and coming back never reshuffle a list. A task
+you finish stays where it is, dimmed, until you come back to the view (or press <kbd>⌃L</kbd>),
+and something an agent adds appears without moving your selection. Only a sort change
+reorders on screen.
+
+## 2 · Inbox
+
+Things captured without a home: from `thc add --inbox`, from agents, or from the `drop/` folder
+in your vault (save a `.md` or `.txt` file there from your phone, and each paragraph or list
+item becomes an inbox item). Triage each
+one with <kbd>m</kbd> (move to a page or day), <kbd>t</kbd> (make it a task), <kbd>d</kbd> (give
+it a date), <kbd>x</kbd> (done) or <kbd>D</kbd> (delete). The cursor moves on after each, so
+triage is fast.
+
+## 3 · Tasks
+
+Every open task, filtered by a query. Press <kbd>f</kbd> (or <kbd>/</kbd>) and type, for example
+`status:open #work due<=+7d sort:due`. Saved views sit on a row under <kbd>1</kbd>–<kbd>9</kbd>.
+At 120 columns the list becomes a table with due, scheduled, priority, where and who. Press
+<kbd>,</kbd> to change the sort. <kbd>Esc</kbd> closes the filter without wiping your query.
+
+The language is the same everywhere: here, in `thc q`, and in saved views. See
+[Query language](../query-language/).
+
+<TuiFrame name="tasks" caption="Tasks, filtered by a query, with saved views on the row above." />
+
+## 4 · Pages
+
+Your pages, with how many open items each has. Type to find one; <kbd>Enter</kbd> (or
+<kbd>→</kbd>, or a double-click) opens it in the editor. Pages are made by linking
+(`[[Name]]`) or from the finder (`+ new page`).
+
+<kbd>4</kbd> always shows this list, never a page. The cursor rests on the page you opened last,
+so <kbd>4</kbd> <kbd>Enter</kbd> reopens it, and <kbd>Esc</kbd> in a page comes back here.
+
+**Back and forward.** <kbd>⌘[</kbd> and <kbd>⌘]</kbd> (or <kbd>⌃⌥←</kbd> / <kbd>⌃⌥→</kbd> in any terminal) move
+through the places you've been, like a browser: pages, days, views and vaults, with the cursor
+where you left it. `:history` lists them, and a click goes there. <kbd>Esc</kbd> is different: it
+goes **up**, to where you started (after following three links, <kbd>Esc</kbd> returns to the list
+or day you began on, while <kbd>⌘[</kbd> goes to the page before).
+
+In a terminal 120 columns or wider, a page has a **rail** of your pages on its left (recent
+first, then A–Z, with open counts): click one to switch. A journal day gets a rail of days.
+Narrower, a crumb (`¶ Pages › Health`) sits above the title instead. `page_rail = false` under
+`[tui]` turns the rail off.
+
+<TuiFrame name="pages" caption="The pages finder: type to narrow, Enter to open." />
+
+## 5 · Journal
+
+One page per day, opened as a document you write in (see [Writing](../writing/)). The strip
+under the date jumps between days: <kbd>⌃P</kbd> / <kbd>⌃N</kbd>, or click a day. **Also
+today**, at the bottom, shows what's due today from other pages.
+
+## 6 · Search
+
+Full text across pages, tags and notes, as you type. <kbd>Enter</kbd> opens the match in
+context. From the shell: `thc search "lisbon deposit"`.
+
+<TuiFrame name="search" caption="Search: every page, tag and note, as you type." />
+
+## 7 · Log
+
+Every change, newest first: who made it (`you`, `◆ claude`), when, and what. <kbd>u</kbd> undoes
+the selected change, as a new change: nothing is erased. <kbd>@</kbd> cycles whose changes you
+see, and <kbd>R</kbd> rewinds a note to how it was.
+
+<kbd>r</kbd> switches to the **review lane**, where agents' changes wait for you: <kbd>a</kbd>
+accept, <kbd>u</kbd> undo, <kbd>A</kbd> accept all. See [Agents](../agents/).
+
+<TuiFrame name="log" caption="The Log: every change, who made it, and one key to undo it." />
+
+## Views with sections
+
+Today, Agenda, Inbox and Tasks are **built-in views made of sections**, each section a query.
+`thc view ls` lists them with your own. Today, as shipped:
+
+| Section | Query |
+|---|---|
+| Overdue | `is:overdue status:open` |
+| Today | `(sched<=today or due=today or is:alert) status:open -is:overdue` |
+| Doing | `status:doing` |
+| Next 7 days | `happens<=+7d happens>today status:open` |
+| Done today | `done>=today` |
+
+Make it yours. Sections are given in order, and replace the old ones:
+
+```sh
+$ thc view set today --section Due 'due<=today status:open' \
+                     --section Waiting 'status:waiting'
+$ thc view reset today              # back to the built-in
+```
+
+Or keep Today and make another:
+
+```sh
+$ thc view copy today acme-today
+$ thc view set acme-today --scope vault:acme
+$ thc q @acme-today
+```
+
+`--scope` sets the vaults every section reads (`vault:*`, `vault:(a or b)`). Today and Agenda
+read every vault by default; see [Vaults](../vaults/).
+
+**Plain saved views** are one query with a name:
+
+```sh
+$ thc view add work 'status:open #work sort:due' --tasks 1   # also slot 1 on the Tasks row
+$ thc q @work due<=+3d                                       # views compose with more terms
+$ thc view rm work                                           # thc undo brings it back
+```
+
+Views sync like notes, and undo like any write.
+
+## Around the edges
+
+- **The detail pane** (<kbd>&#92;</kbd>, at 120+ columns): everything about the selected item, plus
+  its history and links.
+- **Contexts** (<kbd>C</kbd>, or `thc context work`): show only what matches a saved view, for
+  example only `#work` while you're at work. It's always named in the header while it's on, so
+  nothing is ever hidden without you knowing. It's local to this device and never synced.
+- **Vaults** (<kbd>V</kbd>): switch between [vaults](../vaults/), each with its own colour.
+- **Focus** (<kbd>⌥Z</kbd> while writing): hides everything but your words. Choose what stays with
+  `:focus`.
+- **The leader** (<kbd>Space</kbd>, in any list): a panel shows every command, grouped by what
+  it does. <kbd>space</kbd> <kbd>g</kbd> go, <kbd>space</kbd> <kbd>f</kbd> find,
+  <kbd>space</kbd> <kbd>n</kbd> new, <kbd>space</kbd> <kbd>t</kbd> toggle,
+  <kbd>space</kbd> <kbd>v</kbd> saved views. You never need to remember a key: press
+  <kbd>Space</kbd> and read. <kbd>⌫</kbd> steps back, <kbd>Esc</kbd> closes. While writing,
+  Space is just a space.
+- **Help** (<kbd>F1</kbd>, or <kbd>?</kbd> in lists): the keys for exactly where you are,
+  grouped. <kbd>?</kbd> <kbd>?</kbd> shows every key everywhere.
+- **The palette** (<kbd>:</kbd>, or <kbd>space</kbd> <kbd>space</kbd>): every command by name,
+  with its key. Type a few letters and press <kbd>Enter</kbd>.
+
+<TuiFrame name="leader" caption="Space opens the leader: every command, grouped, one letter each." />
+
+When two devices changed the same note before they synced, the header says so
+(`≠ 2 conflicts`). <kbd>c</kbd> on the row compares the two versions; you choose.
+
+<TuiFrame name="conflict" caption="Two versions of one note, both kept. You decide which stays." />

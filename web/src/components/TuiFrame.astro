@@ -1,0 +1,17 @@
+---
+// A real thc frame, rendered by `thc tui` as HTML from a seeded sample vault (scripts/renders.sh).
+// Both themes are embedded; the page's theme shows one. The font scales so the frame fits.
+interface Props { name: string; caption?: string; title?: string }
+const { name, caption, title = 'thc' } = Astro.props;
+const frames = import.meta.glob('../renders/*.html', { query: '?raw', import: 'default', eager: true }) as Record<string, string>;
+const dark = frames[`../renders/${name}-ember-dark.html`];
+const light = frames[`../renders/${name}-ember-light.html`];
+if (!dark || !light) throw new Error(`TuiFrame: no render "${name}" (npm run renders)`);
+const cols = Math.max(...dark.replace(/<[^>]*>/g, '').replace(/&[a-z]+;|&#\d+;/g, 'x').split('\n').map((l) => [...l].length));
+---
+<figure class="tui" style={`--cols:${cols}`}>
+  <div class="tui__bar" aria-hidden="true"><i></i><i></i><i></i><span>{title}</span></div>
+  <div class="tui__screen" data-frame="dark" style="--tui-bg:#1b1916;background:#1b1916" set:html={dark} />
+  <div class="tui__screen" data-frame="light" style="background:#f7f3ec" set:html={light} />
+  {caption && <figcaption>{caption}</figcaption>}
+</figure>

@@ -1,0 +1,41 @@
+---
+// The loop, in single strokes: you and your agents write to one append-only log; every device
+// and screen reads it back. 1px lines, nothing filled.
+---
+<figure class="loop">
+  <svg class="art" viewBox="0 0 720 250" role="img" aria-labelledby="loop-t">
+    <title id="loop-t">You and your agents both write to one append-only log. Replay turns it into what every screen shows. Other devices sync the same folder.</title>
+    <defs><marker id="lp" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto"><path d="M1 1L9 5L1 9" class="art" /></marker></defs>
+    <!-- you -->
+    <rect x="20" y="40" width="150" height="62" rx="4" />
+    <text x="36" y="66" class="t">you</text>
+    <text x="36" y="86">thc j · thc add</text>
+    <!-- agent -->
+    <rect x="20" y="148" width="150" height="62" rx="4" />
+    <text x="36" y="174" class="t">◆ your agents</text>
+    <text x="36" y="194">--json · --key</text>
+    <!-- log -->
+    <rect x="275" y="80" width="185" height="94" rx="4" class="e" />
+    <text x="291" y="106" class="t">the log</text>
+    <text x="291" y="126">append-only</text>
+    <text x="291" y="144">one line per change</text>
+    <text x="291" y="162" class="e">nothing overwritten</text>
+    <path d="M170 71 C 220 71, 220 110, 271 112" marker-end="url(#lp)" />
+    <path d="M170 179 C 220 179, 220 140, 271 138" marker-end="url(#lp)" />
+    <!-- screens -->
+    <rect x="550" y="40" width="150" height="62" rx="4" />
+    <text x="566" y="66" class="t">Today, Tasks…</text>
+    <text x="566" y="86">replayed, live</text>
+    <rect x="550" y="148" width="150" height="62" rx="4" stroke-dasharray="3 4" />
+    <text x="566" y="174" class="t">your other Mac</text>
+    <text x="566" y="194">any folder sync</text>
+    <path d="M460 112 C 505 110, 495 71, 546 71" marker-end="url(#lp)" />
+    <path d="M460 138 C 505 140, 495 179, 546 179" stroke-dasharray="3 4" marker-end="url(#lp)" />
+    <text x="275" y="200">an agent's change waits</text>
+    <text x="275" y="216">for your accept</text>
+  </svg>
+</figure>
+<style>
+  .loop { margin: 0; }
+  .loop svg { display: block; width: 100%; height: auto; }
+</style>

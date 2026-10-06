@@ -1,0 +1,15 @@
+/target
+# local dev vault and caches (data lives outside the repo)
+/vault
+/.thc-cache
+# a project config anywhere in the tree (tests and scratch runs make them)
+.thc.toml
+.thc-cache/
+.DS_Store
+*.swp
+
+# release builds
+/dist
+/.cache
+/out/
+.wrangler/

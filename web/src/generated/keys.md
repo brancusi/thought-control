@@ -1,0 +1,375 @@
+### `global`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `*` | scope | `view.scope` |  |
+| `⌘[` `⌃⌥←` | back | `nav.back` |  |
+| `⌘]` `⌃⌥→` | forward | `nav.forward` |  |
+| `1` | Today | `go.today` |  |
+| `2` | Inbox | `go.inbox` |  |
+| `3` | Tasks | `go.tasks` |  |
+| `4` | Pages | `go.pages` |  |
+| `5` | Journal | `go.journal` |  |
+| `6` | Search | `go.search` |  |
+| `7` | Log | `go.log` |  |
+| `Tab` | next view | `view.next` |  |
+| `⇧Tab` | previous view | `view.prev` |  |
+| `?` `F1` | keys | `help.context` |  |
+| `:` | commands | `palette.open` |  |
+| `⌃O` | open | `finder.open` |  |
+| `/` | filter pages | `pages.filter` | pages_index |
+| `/` | search | `search.find` |  |
+| `f` | filter | `tasks.filter` |  |
+| `\` | detail | `pane.detail_toggle` |  |
+| `⌃W` | next pane | `pane.next` |  |
+| `C` | context | `context.toggle` |  |
+| `T` | today's journal | `go.journal_today` |  |
+| `g d` | go to date | `go.date` |  |
+| `u` `U` | undo | `undo` |  |
+| `q` | back | `back` | can_back |
+| `q` `⌃C` `⌃Q` | quit | `quit` |  |
+| `⌃L` |  | `redraw` |  |
+
+### `leader`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `space space` | commands | `palette.open` |  |
+| `space f p` | page or day | `finder.open` |  |
+| `space f d` `space g d` | day | `go.date` |  |
+| `space f t` | tag | `find.tag` |  |
+| `space f s` | search everything | `search.find` |  |
+| `space g t` | Today | `go.today` |  |
+| `space g i` | Inbox | `go.inbox` |  |
+| `space g k` | Tasks | `go.tasks` |  |
+| `space g p` | Pages | `go.pages` |  |
+| `space g v` | Vaults | `vault.picker` |  |
+| `space g h` | history | `nav.history` |  |
+| `space g j` | Journal | `go.journal` |  |
+| `space g s` | Search | `go.search` |  |
+| `space g l` | Log | `go.log` |  |
+| `space g g` | today's journal | `go.journal_today` |  |
+| `space n p` | page | `page.new` |  |
+| `space n c` | capture here | `capture.here` |  |
+| `space n i` | to inbox | `capture.inbox` |  |
+| `space t f` | focus | `focus.toggle` |  |
+| `space t F` | focus elements | `focus.overlay` |  |
+| `space t c` | context | `context.toggle` |  |
+| `space t d` | detail pane | `pane.detail_toggle` |  |
+| `space t i` | ids | `ids.toggle` |  |
+| `space t s` | sort | `tasks.sort_cycle` | view_tasks |
+| `space t w` | agenda | `today.agenda_toggle` | view_today |
+| `space t v` | by vault | `today.by_vault` | view_today |
+| `space v 1` | view 1 | `view.slot.1` |  |
+| `space v 2` | view 2 | `view.slot.2` |  |
+| `space v 3` | view 3 | `view.slot.3` |  |
+| `space v 4` | view 4 | `view.slot.4` |  |
+| `space v 5` | view 5 | `view.slot.5` |  |
+| `space v 6` | view 6 | `view.slot.6` |  |
+| `space v 7` | view 7 | `view.slot.7` |  |
+| `space v 8` | view 8 | `view.slot.8` |  |
+| `space v 9` | view 9 | `view.slot.9` |  |
+| `space v s` | save this filter | `view.save` |  |
+| `space v e` | edit views | `views.edit` |  |
+| `space c` | compare | `node.compare` | any_conflict |
+| `space r` | review lane | `review.lane_open` | to_review |
+| `space u` | update thc | `update` | update_available |
+| `space e` | $EDITOR | `node.edit_external` |  |
+| `space E` | $EDITOR page | `doc.edit_external` |  |
+| `space q` | quit | `quit` |  |
+| `space ?` | every key | `help.all` |  |
+| `space a` | about · what's new | `about` |  |
+
+### `list`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `V` | vaults | `vault.picker` |  |
+| `j` `↓` | down | `cursor.down` |  |
+| `k` `↑` | up | `cursor.up` |  |
+| `g g` `Home` | top | `cursor.top` |  |
+| `G` `End` | bottom | `cursor.bottom` |  |
+| `⌃D` | half page down | `cursor.half_down` |  |
+| `⌃U` | half page up | `cursor.half_up` |  |
+| `PgDn` | page down | `cursor.page_down` |  |
+| `PgUp` | page up | `cursor.page_up` |  |
+| `Enter` `→` | open | `open` |  |
+| `Esc` `h` `←` | back | `back` |  |
+| `h` `←` | fold | `fold.close` | foldable |
+| `l` `→` | unfold | `fold.open` | foldable |
+| `x` | done | `node.done` | node_is_task |
+| `X` | reopen | `node.reopen` | node_is_task |
+| `t` | task | `node.task_toggle` | has_node |
+| `S space` | todo | `node.status.todo` | has_node |
+| `S /` | doing | `node.status.doing` | has_node |
+| `S w` | waiting | `node.status.waiting` | has_node |
+| `S x` | done | `node.status.done` | has_node |
+| `S -` | cancelled | `node.status.cancelled` | has_node |
+| `d` | due | `node.due` | has_node |
+| `s` | scheduled | `node.scheduled` | has_node |
+| `p h` | high | `node.priority.high` | has_node |
+| `p m` | med | `node.priority.med` | has_node |
+| `p l` | low | `node.priority.low` | has_node |
+| `p -` | none | `node.priority.none` | has_node |
+| `#` | tags | `node.tags` | has_node |
+| `i` | edit text | `node.text` | has_node |
+| `m` | move | `node.move` | has_node |
+| `D` | delete | `node.delete` | has_node |
+| `r` | skip | `node.skip` | node_repeats |
+| `z` | snooze | `node.snooze` | node_has_alert |
+| `Z` | ack | `node.ack` | node_has_alert |
+| `c` | compare | `node.compare` |  |
+| `e` | $EDITOR | `node.edit_external` | has_node |
+| `E` | $EDITOR page | `doc.edit_external` |  |
+| `L` | history | `node.history` |  |
+| `y` | copy id | `node.copy_id` | has_node |
+| `Y` | copy full id | `node.copy_full_id` | has_node |
+| `space` | leader | `leader` |  |
+| `a` | add | `capture.here` |  |
+| `A` | inbox | `capture.inbox` |  |
+
+### `today`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `x` | done | `node.done` | node_is_task |
+| `a` | add | `capture.here` |  |
+| `w` | agenda | `today.agenda_toggle` |  |
+| `space` | leader | `leader` |  |
+| `v` | done today | `today.show_done` |  |
+| `[` | day | `day.prev` |  |
+| `]` | day | `day.next` |  |
+| `{` | week | `week.prev` |  |
+| `}` | week | `week.next` |  |
+
+### `inbox`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `m` | move | `node.move` | has_node |
+| `t` | task | `node.task_toggle` | has_node |
+| `d` | date | `node.due` | has_node |
+| `x` | done | `node.done` | node_is_task |
+| `D` | delete | `node.delete` | has_node |
+
+### `tasks`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `f` | filter | `tasks.filter` |  |
+| `,` | sort | `tasks.sort_cycle` |  |
+| `x` | done | `node.done` | node_is_task |
+| `space` | leader | `leader` |  |
+
+### `pages`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `.` | ids | `ids.toggle` |  |
+| `Enter` | open | `open` | pages_index |
+| `/` | filter | `pages.filter` | pages_index |
+
+### `journal`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `[` | day | `day.prev` |  |
+| `]` | day | `day.next` |  |
+| `{` | week | `week.prev` |  |
+| `}` | week | `week.next` |  |
+| `.` | ids | `ids.toggle` |  |
+
+### `search`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Enter` `→` | open | `open` |  |
+| `/` | search | `search.find` |  |
+
+### `log`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `a` | accept | `review.accept` | lane_on |
+| `u` | undo | `review.undo` | lane_on |
+| `A` | accept all | `review.accept_all` | lane_on |
+| `r` | all changes | `log.lane_toggle` |  |
+| `u` | undo tx | `log.undo_tx` | log_all |
+| `@` | actor | `log.actor_cycle` |  |
+| `R` | rewind | `node.rewind` | node_log |
+| `Enter` | open | `open` | log_browse |
+
+### `toast.alert`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `x` | done | `toast.done` |  |
+| `z` | snooze | `toast.snooze` |  |
+| `Z` | ack | `toast.ack` |  |
+
+### `toast.agent`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `L` | review | `review.last_agent_tx` |  |
+| `u` | undo | `undo` |  |
+
+### `toast.confirm`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `u` | undo | `undo` |  |
+
+### `write`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `⌃T` `⌃Enter` | task | `doc.task_cycle` |  |
+| `⌃O` `⌥Enter` | open | `doc.open` |  |
+| `⌃P` `⌥[` | day | `doc.day_prev` |  |
+| `⌃N` `⌥]` | day | `doc.day_next` |  |
+| `Esc` | done | `doc.done` |  |
+| `⌘Z` `⌃Z` | undo | `doc.undo` |  |
+| `⇧⌘Z` `⌃Y` `⌃R` | redo | `doc.redo` |  |
+| `F1` `⌥?` | keys | `help.context` |  |
+| `⌃Q` | quit | `quit` |  |
+| `⌘C` `⌃C` | copy | `clip.copy` |  |
+| `⌘X` `⌃X` | cut | `clip.cut` |  |
+| `⌥V` | plain paste | `paste.plain_next` |  |
+| `⌘A` `⌥A` | select all | `select.all` |  |
+| `⌃J` `⇧Enter` | line break | `line.soft_break` |  |
+| `Enter` | new line · twice: new note | `line.newline` |  |
+| `Tab` | indent | `line.indent` |  |
+| `⇧Tab` | outdent | `line.outdent` |  |
+| `⌥↑` | move line | `line.move_up` |  |
+| `⌥↓` | move line | `line.move_down` |  |
+| `⌥Z` | focus | `focus.toggle` |  |
+| `⌥T` | today | `go.journal_today` |  |
+| `⌘[` `⌃⌥←` | back | `nav.back` |  |
+| `⌘]` `⌃⌥→` | forward | `nav.forward` |  |
+| `⌥1` | Today | `go.today` |  |
+| `⌥2` | Inbox | `go.inbox` |  |
+| `⌥3` | Tasks | `go.tasks` |  |
+| `⌥4` | Pages | `go.pages` |  |
+| `⌥5` | Journal | `go.journal` |  |
+| `⌥6` | Search | `go.search` |  |
+| `⌥7` | Log | `go.log` |  |
+| `⌥:` | commands | `palette.open` |  |
+| `⌫` | delete back | `edit.backspace` |  |
+| `⌥⌫` `⌃⌫` `⌃W` | delete word · to end | `edit.delete_word` |  |
+| `Del` `⌃D` | delete forward | `edit.delete_forward` |  |
+| `⌃K` | delete word · to end | `edit.kill_to_end` |  |
+| `⌘⌫` `⌃U` | delete to start | `edit.kill_to_start` |  |
+| `←` `⇧←` | move (⇧ selects) | `move.left` |  |
+| `→` `⇧→` | move (⇧ selects) | `move.right` |  |
+| `⌥←` `⌥⇧←` `⌥B` | by word (⇧ selects) | `move.word_left` |  |
+| `⌥→` `⌥⇧→` `⌥F` | by word (⇧ selects) | `move.word_right` |  |
+| `↑` `⇧↑` | move (⇧ selects) | `move.up` |  |
+| `↓` `⇧↓` | move (⇧ selects) | `move.down` |  |
+| `⌃↑` `⌃⇧↑` | by note (⇧ selects) | `move.para_up` |  |
+| `⌃↓` `⌃⇧↓` | by note (⇧ selects) | `move.para_down` |  |
+| `PgUp` `⇧PgUp` | by page (⇧ selects) | `move.page_up` |  |
+| `PgDn` `⇧PgDn` | by page (⇧ selects) | `move.page_down` |  |
+| `⌘←` `⇧⌘←` `Home` `⇧Home` `⌃A` | line start · end (⇧ selects) | `move.home` |  |
+| `⌘→` `⇧⌘→` `End` `⇧End` `⌃E` | line start · end (⇧ selects) | `move.end` |  |
+| `⌘↑` `⇧⌘↑` `⌃Home` `⌃⇧Home` | to the start or end (⇧ selects) | `move.doc_start` |  |
+| `⌘↓` `⇧⌘↓` `⌃End` `⌃⇧End` | to the start or end (⇧ selects) | `move.doc_end` |  |
+| `⌘V` `⌃V` | paste (screenshots too) | `clip.paste_system` |  |
+
+### `link`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `↑` `⌃P` | choose | `link.prev` |  |
+| `↓` `⌃N` | choose | `link.next` |  |
+| `Enter` `Tab` | link | `link.insert` |  |
+| `Esc` | close | `link.close` |  |
+
+### `prompt`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Enter` | save | `prompt.submit` |  |
+| `Esc` `⌃C` | cancel | `prompt.cancel` |  |
+
+### `palette`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Enter` | run | `palette.run` |  |
+| `Tab` | complete | `palette.complete` |  |
+| `Esc` `⌃C` |  | `palette.close` |  |
+| `↓` `⌃N` |  | `palette.next` |  |
+| `↑` `⌃P` |  | `palette.prev` |  |
+
+### `finder`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `↑` `⌃P` | choose | `finder.prev` |  |
+| `↓` `⌃N` | choose | `finder.next` |  |
+| `Enter` | go | `finder.go` |  |
+| `Esc` | close | `finder.close` |  |
+
+### `vaults`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `↑` | choose | `vaults.prev` |  |
+| `↓` | choose | `vaults.next` |  |
+| `Enter` | switch | `vaults.switch` |  |
+| `n` | new vault | `vaults.new` |  |
+| `Esc` | close | `vaults.close` |  |
+
+### `capture`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Enter` | save | `capture.save` |  |
+| `Tab` | target | `capture.target_next` |  |
+| `⇧Tab` |  | `capture.target_prev` |  |
+| `Esc` `⌃C` |  | `capture.close` |  |
+
+### `move`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Enter` | move | `move.go` |  |
+| `1` `2` `3` | recent | `move.recent` |  |
+| `↓` `Tab` |  | `move.next` |  |
+| `↑` `⇧Tab` |  | `move.prev` |  |
+| `Esc` |  | `move.close` |  |
+
+### `compare`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `1` | keep current | `compare.keep_current` | compare_text |
+| `2` | keep other | `compare.keep_other` | compare_text |
+| `b` | both | `compare.both` | compare_text |
+| `e` | $EDITOR | `compare.edit` | compare_text |
+| `Enter` | ok | `compare.ok` | compare_move |
+| `1` | keep here | `compare.keep_here` | compare_rehomed |
+| `2` | delete | `compare.delete` | compare_rehomed |
+| `Esc` | later | `compare.later` |  |
+
+### `focus`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `1` `2` `3` | preset | `focus.preset` |  |
+| `Enter` | save | `focus.save` |  |
+| `Esc` `⌃C` | close | `focus.close` |  |
+
+### `help`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `?` | every key | `help.all` |  |
+| `Esc` | close | `help.close` |  |
+
+### `notes`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `Esc` | close | `notes.close` |  |

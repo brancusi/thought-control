@@ -1,0 +1,79 @@
+---
+// A terminal that types. Lines starting with "$ " are typed a character at a time; the rest
+// appear as output. Without JS (or with reduced motion) every line is simply there.
+interface Line { t: string; c?: string }  // c: a class for output colour (accent, done, agent, muted)
+interface Props { lines: Line[]; title?: string }
+const { lines, title = '~ zsh' } = Astro.props;
+---
+<figure class="typer" data-typer>
+  <div class="tui__bar" aria-hidden="true"><i></i><i></i><i></i><span>{title}</span></div>
+  <pre class="typer__body" aria-label="An example terminal session">{lines.map((l) =>
+    l.t.startsWith('$ ')
+      ? <div class="ln cmd" data-cmd={l.t.slice(2)}><span class="sh">$ </span><span class="tx">{l.t.slice(2)}</span></div>
+      : <div class={`ln out ${l.c ?? ''}`}>{l.t || ' '}</div>
+  )}<div class="ln cur"><span class="sh">$ </span><span class="caret"></span></div></pre>
+</figure>
+
+<style>
+  .typer { margin: 0; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; background: var(--surface); }
+  .typer__body { margin: 0; border: 0; border-radius: 0; background: transparent; font-size: 13.5px; line-height: 1.65; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .ln.out { color: var(--muted); }
+  .ln.accent { color: var(--accent); }
+  .ln.done { color: var(--done); }
+  .ln.agent { color: var(--agent); }
+  .ln.today { color: var(--today); }
+</style>
+
+<script>
+  // Rebuild the session line by line: commands type out, output appears, the caret waits on a
+  // fresh prompt. The static HTML (every line) stays for no-JS and reduced motion.
+  // Replay only on wide screens, with motion allowed. Everywhere else the finished session
+  // (rendered statically) simply stays.
+  const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches || !matchMedia('(min-width: 900px)').matches;
+  for (const el of document.querySelectorAll<HTMLElement>('[data-typer]')) {
+    if (reduce) continue;
+    const body = el.querySelector<HTMLElement>('.typer__body')!;
+    const script = [...body.querySelectorAll<HTMLElement>('.ln:not(.cur)')].map((l) => ({
+      cmd: l.classList.contains('cmd') ? l.dataset.cmd ?? '' : null,
+      text: l.textContent ?? '',
+      cls: l.className,
+    }));
+    // Hold the full session's height, so the page never jumps while it types.
+    const hold = () => { body.style.minHeight = ''; body.style.minHeight = `${body.offsetHeight}px`; };
+    hold();
+    const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
+    const caret = () => Object.assign(document.createElement('span'), { className: 'caret' });
+    const prompt = () => {
+      const d = document.createElement('div');
+      d.className = 'ln cmd';
+      d.innerHTML = '<span class="sh">$ </span><span class="tx"></span>';
+      d.appendChild(caret());
+      return d;
+    };
+    const run = async () => {
+      body.textContent = '';
+      for (const s of script) {
+        if (s.cmd !== null) {
+          const p = prompt();
+          body.appendChild(p);
+          const tx = p.querySelector<HTMLElement>('.tx')!;
+          await sleep(550);
+          for (const ch of s.cmd) { tx.textContent += ch; await sleep(16 + Math.random() * 42); }
+          await sleep(320);
+          p.querySelector('.caret')?.remove();
+        } else {
+          const o = document.createElement('div');
+          o.className = s.cls;
+          o.textContent = s.text;
+          body.appendChild(o);
+          await sleep(110);
+        }
+      }
+      body.appendChild(prompt());
+      await sleep(7000);
+      run();
+    };
+    // Show the finished session first; replay it a moment after it comes into view.
+    new IntersectionObserver((es, o) => { if (es.some((e) => e.isIntersecting)) { o.disconnect(); setTimeout(run, 1400); } }).observe(el);
+  }
+</script>

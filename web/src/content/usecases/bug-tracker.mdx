@@ -1,0 +1,70 @@
+---
+title: A bug tracker with screenshots
+who: a maintainer
+blurb: File a bug with a screenshot in it, see the image in the terminal, let an agent read it.
+icon: bug
+order: 6
+---
+
+A layout glitch shows up in the settings screen. You take a screenshot (<kbd>⌃⇧⌘4</kbd>), switch to the thc pane, and file it in one line. <kbd>Enter</kbd> on the new issue opens it as a document: the task line on top, an empty body below. You write two lines of steps and press <kbd>⌘V</kbd>. The screenshot attaches as its own line, and in WezTerm, iTerm2, kitty or Ghostty it draws right there under its chip, sized to the column.
+
+The agent you hand it to doesn't need eyes on your screen. `thc show --json` gives it the image's path, size and dimensions, so it opens the file itself, reproduces the bug, and writes what it found under the issue, with a screenshot of the fix next to yours.
+
+## The commands
+
+The project vault sends captures to the issues page (`[capture] target = "¶ Issues"` in its `settings.toml`):
+
+```sh
+$ thc todo "Settings panel overlaps the footer at 80 columns" -p high -t layout
+added 4mzq2   [ ] Settings panel overlaps the footer at 80 columns  !high · in Issues
+```
+
+Attach from the command line, if the screenshot is already a file:
+
+```sh
+$ thc attach 4mzq2 overlap.png --caption "80 columns"
+attached files/2026/10/mwxqh-overlap.png · 1280×720 · 240 KB under 4mzq2
+```
+
+What the agent reads:
+
+```sh
+$ thc show 4mzq2 --json --depth 1
+```
+
+```json
+{
+  "short": "4mzq2",
+  "text": "Settings panel overlaps the footer at 80 columns",
+  "status": "todo",
+  "priority": "high",
+  "attachments": [{
+    "path": "files/2026/10/mwxqh-overlap.png",
+    "caption": "80 columns",
+    "mime": "image/png", "bytes": 245760, "w": 1280, "h": 720,
+    "missing": false
+  }]
+}
+```
+
+The agent works it, and attaches its evidence the same way:
+
+```sh
+$ export THC_ACTOR=claude
+$ thc set 4mzq2 status=doing owner=claude --expect status=todo
+$ thc add --plain --under 4mzq2 "Cause: the footer height isn't subtracted below 90 columns."
+$ thc attach 4mzq2 after.png --caption "after the fix"
+$ thc done 4mzq2
+```
+
+You check it: the issue waits in `is:to-review`, the two screenshots sit side by side in its body, and <kbd>a</kbd> in the review lane closes it.
+
+```sh
+$ thc doctor        # a missing file, or one nothing refers to, shows up here
+```
+
+## Why thc fits
+
+- **The screenshot lives with the bug.** It's a file in the vault and a Markdown line in the note: it syncs, exports and survives any tool.
+- **You see it where you work.** Inline images in the terminals that can draw them, a clickable chip everywhere else, and a plain chip over SSH.
+- **Agents get the evidence, not a description of it.** The JSON hands them the file, and their own attachments come back signed.

@@ -1,0 +1,6 @@
+{
+  // thc's public site on Cloudflare (static assets). Deploy: npm run build && npx wrangler deploy
+  "name": "thought-central",
+  "compatibility_date": "2026-10-01",
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" }
+}

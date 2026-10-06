@@ -1,0 +1,89 @@
+thought control: a CLI-first, local-first stash for notes, todos and dates
+
+Usage: thc [OPTIONS] [COMMAND]
+
+Commands:
+  init          Create a vault (default ./vault) and a .thc.toml pointing at it
+  add           Capture text into today's journal (inline fields like due:fri, #tag, !high are parsed)
+  todo          Create a task
+  remind        Create a reminder: a task with a scheduled time and an alert at that time
+  done          Complete nodes (repeating nodes advance to their next date)
+  reopen        Reopen completed nodes
+  skip          Skip the current occurrence of a repeating node
+  set           Set properties: thc set <id> due=fri priority=high client=acme (empty value unsets)
+  text          Replace a node's text
+  tag           Add or remove tags: thc tag <id> work +urgent -someday
+  link          Link two nodes: thc link <a> <b> --rel blocks  (a blocks b). Rels: blocks, relates, or your own
+  attach        Attach files (screenshots, logs) to a note: copied into the vault's files/ and added as an image line under it (attachments.md)
+  unlink        Remove a link (all relations between a and b unless --rel is given)
+  prime         Session briefing for an agent: current state, then the rules (~15 lines)
+  team          Start, inspect, or stop this project's team
+  role          Built-in team role cards
+  instructions  The agent guide built into the binary: thc instructions [topic|all]
+  keys          The TUI's keymap: every key by context (--json for the table, --markdown for the guide's tables, --conflicts for what a remap would be refused for). --edit opens your config at a generated, commented list of every binding to remap
+  setup         Install or refresh agent files (skill, AGENTS.md block, optional hook) from this binary
+  schema        JSON Schema of a command's input and output (`thc schema --all` for code generation)
+  rm            Delete nodes (and their children). Reversible with `thc restore` or `thc undo`
+  restore       Restore deleted nodes
+  mv            Move a node
+  show          Show a node with its children, properties, backlinks and alerts (default: today's journal)
+  edit          Edit a node and its children in $EDITOR (default: today's journal)
+  journal       Show a journal day (default today)
+  today         Overdue, due/scheduled today, and today's alerts
+  agenda        Upcoming days
+  inbox         Root items with no page or journal
+  page          Pages
+  pages         List pages (alias for `page ls`)
+  search        Full-text search
+  q             Query: thc q 'status:open due<=+3d #work sort:due'
+  alert         Alerts (reminders attached to nodes)
+  history       Change history of a node
+  log           Recent changes, grouped by transaction
+  undo          Undo a transaction (default: the most recent one), or bulk-revert an agent's changes
+  apply         Apply a JSONL batch of operations as one transaction (all or nothing). `-` reads stdin
+  import        Import an outline (`- item`, indented children; capture syntax works) as one transaction
+  parse         Preview what a capture would save (the daemon/TUI/ThoughtBar lenient parser). Writes nothing
+  context       A view applied by default to your listings and captures (local, never synced). `thc context work`, `thc context none`, or no argument for the status
+  view          Saved views: named queries (`thc q @work`). They sync like notes and undo like any write
+  config        Settings in effect, layered (yours, the vault's settings.toml, your per-vault override), with where each came from
+  vault         Vaults: one per project. No argument: the current vault and why (vaults.md)
+  review        Review what agents changed: accept or revert, oldest first
+  diff          Field-level changes to a node since a time or transaction
+  rewind        Set a node back to how it was at a time or right after a transaction (`<tx>^`: before it)
+  conflict      Unresolved concurrent-edit conflicts
+  export        Write the Markdown export (vault/export), or print a JSON snapshot with --json
+  ingest        Turn files in vault/drop/ into inbox items
+  doctor        Check the vault and local store. `--fix` previews repairs (days or tags made twice on two devices, empty tags); add `--yes` to write them as one transaction
+  update        Update thc to the latest release (verified), restarting the daemon on it
+  rebuild       Rebuild the local store by replaying the event log
+  j             Write in a journal day (today by default): the TUI, caret on a fresh line at the end. `thc j yesterday`, `thc j fri`, `thc j 2026-10-02`
+  p             Write in a page (by title or ID): the TUI, caret at the start of its first line
+  tui           Open the terminal UI (also the default when `thc` runs with no arguments in a terminal)
+  daemon        The background daemon: live updates, alerts, other devices' changes (optional)
+  next          The next task to pick up: the first ready, unowned task in queue order on the work board
+  board         The resolved project work board and why it was chosen
+  msg           Send an addressed note, or mark messages read
+  msgs          List addressed messages (read-only)
+  watch         Stream addressed messages and newly ready routed tasks (read-only)
+  shot          Capture a macOS screen area and attach it (default: today's journal)
+  help          Print this message or the help of the given subcommand(s)
+
+Options:
+      --json                  Machine-readable JSON output (and JSON errors on stderr)
+      --vault <DIR>           Vault directory (default: nearest .thc.toml, then ~/.config/thought/config.toml)
+      --board <BOARD>         Project work board, independent of the capture vault: <vault>[:¶ Page]
+      --actor <NAME>          Who is acting: "human", or an agent name like "claude" (recorded on every write) [env: THC_ACTOR=]
+      --dry-run               Print the ops a write would emit, without writing
+      --limit <LIMIT>         Maximum items in listings [default: 50]
+      --fields [<a,b,c>]      Only these node fields in JSON output (implies --json). With no value, list the fields
+      --if-match <REV>        Write only if the node is unchanged since this rev (every node's JSON has `rev`); else exit 4
+      --expect <FIELD=VALUE>  Write only if the node's field has this value, e.g. status=todo (repeatable); else exit 4
+      --context <NAME>        Apply this context to this command (`none` turns one off). JSON and agents only get a context when they ask: this flag or THC_CONTEXT
+      --readonly              Refuse every write in this process, whoever the actor is (also THC_READONLY=1)
+  -y, --yes                   Confirm: skip prompts, and run a verb your policy marks `confirm`. For an agent it means "I asked the human and they said yes"
+  -h, --help                  Print help
+  -V, --version               Print version
+
+Capture syntax (add/todo/remind): due:fri  sched:mon  at:"tue 2pm"  every:2w  !high  #tag  [[Page]]
+Query syntax (q):  status:open  due<=+3d  #work  -#someday  is:overdue  under:<id>  sort:due  (a or b)
+Exit codes: 0 ok, 1 error, 2 usage, 3 not found, 4 conflict, 5 ambiguous id, 6 validation

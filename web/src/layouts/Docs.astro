@@ -1,0 +1,42 @@
+---
+// The docs shell: a sidebar of the guide by group, the page, and previous/next.
+import Base from './Base.astro';
+import { getCollection } from 'astro:content';
+import { u } from '../lib/url';
+
+interface Props { title: string; description: string; slug: string }
+const { title, description, slug } = Astro.props;
+const docs = (await getCollection('docs')).map((d) => ({ slug: d.id, title: d.data.title, group: d.data.group, order: d.data.order }));
+docs.push({ slug: 'keys-reference', title: 'Every key', group: 'Reference', order: 30 });
+docs.sort((a, b) => a.order - b.order);
+const groups = ['Start', 'Guide', 'Reference'];
+const i = docs.findIndex((d) => d.slug === slug);
+const prev = i > 0 ? docs[i - 1] : null;
+const next = i >= 0 && i < docs.length - 1 ? docs[i + 1] : null;
+---
+<Base title={title} description={description} tab="docs">
+  <div class="docs">
+    <nav aria-label="Docs">
+      <a href={u('docs/')} aria-current={slug === '' ? 'page' : undefined}>overview</a>
+      {groups.map((g) => (
+        <>
+          <h4>{g}</h4>
+          {docs.filter((d) => d.group === g).map((d) => (
+            <a href={u(`docs/${d.slug}/`)} aria-current={d.slug === slug ? 'page' : undefined}>{d.title}</a>
+          ))}
+        </>
+      ))}
+    </nav>
+    <article class="prose">
+      <h1>{title}</h1>
+      <p class="lede">{description}</p>
+      <slot />
+      {(prev || next) && (
+        <div class="pager">
+          {prev ? <a href={u(`docs/${prev.slug}/`)}>← {prev.title}</a> : <span />}
+          {next ? <a href={u(`docs/${next.slug}/`)}>{next.title} →</a> : <span />}
+        </div>
+      )}
+    </article>
+  </div>
+</Base>

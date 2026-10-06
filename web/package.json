@@ -1,0 +1,20 @@
+{
+  "name": "thc-web",
+  "private": true,
+  "type": "module",
+  "version": "0.0.1",
+  "scripts": {
+    "dev": "astro dev",
+    "build": "astro build",
+    "preview": "astro preview",
+    "renders": "bash scripts/renders.sh",
+    "gen": "bash scripts/gen.sh"
+  },
+  "dependencies": {
+    "@astrojs/markdown-remark": "^7.3.1",
+    "@astrojs/mdx": "^8.0.2",
+    "@fontsource/ibm-plex-mono": "^5.3.0",
+    "astro": "^7.3.5",
+    "marked": "^18.1.0"
+  }
+}

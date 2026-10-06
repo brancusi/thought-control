@@ -1,0 +1,92 @@
+---
+title: Your first ten minutes
+description: Nine short steps from install to trusting it, about a minute each.
+order: 2
+group: Start
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+Nine short steps, from install to "I trust this". Each takes about a minute.
+
+## 1. Install
+
+```sh
+$ curl -fsSL https://github.com/brancusi/thought-central-releases/releases/latest/download/install.sh | sh
+```
+
+Your notes folder is `~/thought`, the `thc` command is on your PATH, and a small background
+service keeps reminders and live updates running. Open a new terminal window so the command is
+found. ([More on what it sets up](../install/).)
+
+## 2. Write
+
+```sh
+$ thc j
+```
+
+You're in today's journal, and the cursor is ready. **Just type.** <kbd>Enter</kbd> starts a new
+line in the same paragraph, and a blank line starts a new note. There's no save key: the footer
+says `autosaved`, and it means it.
+
+`thc j` opens in Focus: the date, the days around it, your words, and a footer with the keys you need. Everything
+else is one key away.
+
+## 3. Make a task
+
+Type `[ ] call the dentist`, or write the line and press <kbd>⌃T</kbd>. Press <kbd>⌃T</kbd>
+again and it's done. Once more and it's plain text again.
+
+## 4. Give it a date
+
+Add `due:fri` to the line. While you type it, it's underlined, and the right-hand column
+previews what it will set. When you move off the line, the date tucks into that quiet column:
+`due fri`. Try `sched:mon`, `!high`, `every:2w` or `#health` too.
+
+<TuiFrame name="journal" caption="A day in the journal. The line being written shows its tokens; the lines above have folded theirs into the right-hand column." />
+
+## 5. Link a page
+
+Type `[[` and start a name: `[[Lisbon`. Pick a page from the list, or finish the name and type
+`]]`. If the page doesn't exist yet, it does now. Put the cursor on the link and press
+<kbd>⌃O</kbd> to go there. A near miss (`[[Lisbn]]`) offers the page you probably meant.
+
+## 6. Look at Today
+
+Press <kbd>Esc</kbd>. It saves, and you're on **Today**: what's overdue, due today, scheduled
+and coming up, from every page and day. <kbd>x</kbd> marks the selected row done, <kbd>d</kbd>
+changes its date, and <kbd>Enter</kbd> opens it where it lives.
+
+<TuiFrame name="today" caption="Today pulls tasks from every page and day. The ◆ claude row was added by an agent." />
+
+Now press <kbd>Space</kbd>. A panel lists everything you can do from here, grouped: <kbd>g</kbd>
+to go somewhere, <kbd>f</kbd> to find, <kbd>n</kbd> for something new. It's the one key to
+remember when you forget the others.
+
+## 7. Find anything
+
+Press <kbd>6</kbd> for Search and type. Search covers pages, tags and every note, and
+<kbd>Enter</kbd> opens the match where it lives. <kbd>⌃O</kbd> from anywhere jumps to a page or
+day by name.
+
+## 8. Let an agent help, and review what it did
+
+```sh
+$ thc setup claude --user
+```
+
+Now Claude Code knows `thc`. Ask it to "add the three follow-ups from this call to my notes".
+Its changes are signed `◆ claude`. In the TUI, press <kbd>7</kbd> for the Log, then
+<kbd>r</kbd>: the review lane shows each change, with <kbd>a</kbd> to accept and <kbd>u</kbd> to
+undo.
+
+<TuiFrame name="review" caption="The review lane: an agent's change, waiting for you." />
+
+## 9. Stay current
+
+`thc` updates itself. When a new version is out, the footer says so. Type `:update` and it's
+back in a moment, exactly where you were.
+
+---
+
+That's it. From here: [how writing works](../writing/), [every view](../views/), and
+[the keys you'll use](../keys/).

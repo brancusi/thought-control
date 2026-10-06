@@ -1,0 +1,71 @@
+---
+title: An agent's task board
+who: a team of agents
+blurb: A project vault with an issues board. Agents claim, work and finish; you review.
+icon: board
+order: 2
+---
+import TuiFrame from '../../components/TuiFrame.astro';
+
+This is how thc is built with its own agents.
+
+The project has its own vault, picked up from a `.thc.toml` in the repo. Its `settings.toml` sends captures to a page called `¶ Issues`, and a saved view, `@issues`, lays that page out as a board: Todo, Doing, Waiting, To review.
+
+You file an issue in one line between two other things. An agent starting a session runs `thc prime`, asks `thc next` for the top ready task (in the order you put them on the page, skipping anything blocked), and claims it with a guarded write. A second agent reaching for the same item gets exit `4` and moves on. The first one writes what it finds under the issue, one note per finding, and marks it done. It can't accept its own work: the issue sits in *To review* until you look.
+
+## The commands
+
+You, filing:
+
+```sh
+$ thc todo "Export drops nested tags" -p high -t export
+added 7gthv   [ ] Export drops nested tags  !high · in Issues
+```
+
+The agent, working:
+
+```sh
+$ export THC_ACTOR=claude
+$ thc next
+7gthv   [ ] Export drops nested tags  !high · in Issues
+  from ¶ Issues · claim: thc set 7gthv status=doing owner=claude --expect status=todo --vault ~/thought-vaults/acme-site
+$ thc set 7gthv status=doing owner=claude --expect status=todo
+updated 7gthv   [/] Export drops nested tags  !high · in Issues
+$ thc add --plain --under 7gthv "Reproduced: tags under a heading are dropped. Cause: export walks one level."
+added 917ff   Reproduced: tags under a heading are dropped. Cause: export walks one level.  ◆ claude · in Export drops nested tags
+$ thc done 7gthv
+done 7gthv   [x] Export drops nested tags  !high · in Issues
+```
+
+Another agent, a moment too late:
+
+```sh
+$ thc set 7gthv status=doing owner=codex --expect status=todo --json
+{"error":{"kind":"stale","message":"expected status=todo, found doing · nothing written", …}}
+$ echo $?
+4
+```
+
+You, reviewing:
+
+```sh
+$ thc q is:to-review
+7gthv   [x] Export drops nested tags  !high · in Issues
+$ thc review
+Review · 3 changes by claude · oldest first
+...
+```
+
+Or in the app: <kbd>7</kbd>, then <kbd>r</kbd>. <kbd>a</kbd> accepts, <kbd>u</kbd> undoes.
+
+<TuiFrame name="review" caption="The review lane: an agent's change, waiting for you." />
+
+## A whole team
+
+`thc team up pm engineer designer --agent claude` starts one agent per role, each briefed for its job with `thc prime --role` and picking only work routed to it with `thc next --role`. They talk through the board (`thc msg designer "…" --on 7gthv`), and nobody starts until you've accepted the lead's first plan. [More in the agents guide](../docs/agents/#a-team-of-agents).
+
+## Why thc fits
+
+- **No new tool for the agents.** They already know a CLI; this one has `--json`, stable exit codes and guarded writes, which is all a board needs.
+- **Claims can't race.** `--expect` makes the claim atomic across agents and devices.
+- **You stay the reviewer.** Every write is signed, *To review* is derived from the log, and any of it undoes in one step.

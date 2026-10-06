@@ -1,0 +1,17 @@
+---
+import { INSTALL } from '../lib/version';
+---
+<div class="install">
+  <code><span class="sh">$</span>{INSTALL}</code>
+  <button type="button" data-copy={INSTALL} aria-label="Copy the install command">copy</button>
+</div>
+<p class="install-note">macOS. Puts <code>thc</code> on your PATH, makes your first vault, starts the background daemon and sets up agent skills. Every download is checked before it's installed.</p>
+<script>
+  for (const b of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+    b.addEventListener('click', async () => {
+      try { await navigator.clipboard.writeText(b.dataset.copy ?? ''); b.textContent = 'copied ✓'; }
+      catch { const c = b.previousElementSibling; if (c) getSelection()?.selectAllChildren(c); b.textContent = 'select ⌘C'; }
+      setTimeout(() => (b.textContent = 'copy'), 1600);
+    });
+  }
+</script>

@@ -1,0 +1,106 @@
+---
+import Base from '../layouts/Base.astro';
+import Typer from '../components/Typer.astro';
+import TuiFrame from '../components/TuiFrame.astro';
+import Install from '../components/Install.astro';
+import Icon from '../components/Icon.astro';
+import Loop from '../components/Loop.astro';
+import { getCollection } from 'astro:content';
+import { u } from '../lib/url';
+
+const features = (await getCollection('features')).sort((a, b) => a.data.order - b.data.order);
+const uses = (await getCollection('usecases')).sort((a, b) => a.data.order - b.data.order);
+const session = [
+  { t: '$ thc add "Call the landlord about the deposit due:fri !high #lisbon"' },
+  { t: "added m2xp6   [ ] Call the landlord about the deposit #lisbon  due fri · !high · in today's journal", c: 'done' },
+  { t: '$ THC_ACTOR=claude thc todo "Summarize the reading list" --due tomorrow' },
+  { t: "added hew72   [ ] Summarize the reading list  due tomorrow · ◆ claude · in today's journal", c: 'agent' },
+  { t: "$ thc q 'status:open due<=+7d' --fields short,due --json | jq -c .items" },
+  { t: '[{"short":"hew72","due":"2026-10-04"},{"short":"m2xp6","due":"2026-10-09"}]' },
+  { t: '$ thc review' },
+  { t: 'Review · 1 change by claude · oldest first' },
+  { t: '1  D8S2FX  ◆ claude · Oct 3 10:42 · this device', c: 'agent' },
+  { t: '   + hew72  [ ] Summarize the reading list' },
+  { t: 'thc review accept 1 · thc review revert 1', c: 'muted' },
+];
+---
+<Base title="thought-central" description="A notebook in your terminal, shared with your agents. Plain text, local-first, an append-only log. Notes, tasks, dates and reminders for people who live in a shell." tab="home">
+  <section class="hero">
+    <p class="eyebrow muted">thc · thought control</p>
+    <h1>A notebook in your terminal<span class="caret" aria-hidden="true"></span></h1>
+    <p class="lede">
+      Write in plain text. Capture from anywhere. <strong>Share it with your agents</strong>, who use
+      the same commands you do and sign everything they touch. It all lives on your machine, in an <strong>append-only log</strong> you can read, sync and rewind.
+    </p>
+    <Install />
+  </section>
+
+  <section class="demo">
+    <Typer lines={session} />
+    <TuiFrame name="journal" caption="thc j: today's journal. A paragraph is a note; [ ] makes a task; due:tue, !high and #lisbon are read as you type." />
+  </section>
+
+  <div class="sec"><span class="n">01</span> why</div>
+  <div class="grid why" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))">
+    <div class="cell"><Icon name="pen" /><h3>Plain text, with structure</h3><p>A page is a buffer you just type into. Markdown markers make tasks, lists and headings; the marker is the truth. No modes, no forms.</p></div>
+    <div class="cell"><Icon name="agent" /><h3>Agents as colleagues</h3><p><code>--json</code> everywhere, stable exit codes, idempotent keys, guarded writes. Every agent change is attributed and waits in a review lane.</p></div>
+    <div class="cell"><Icon name="history" /><h3>Nothing is ever overwritten</h3><p>One JSON line per change, per device. Undo anything, see any node's history, ask what a page looked like last Tuesday.</p></div>
+    <div class="cell"><Icon name="vault" /><h3>Yours, locally</h3><p>No account and no server. A vault is a folder: sync it with anything. Conflicts keep both versions, and you choose.</p></div>
+  </div>
+
+  <div class="sec"><span class="n">02</span> the loop</div>
+  <Loop />
+
+  <div class="sec"><span class="n">03</span> a look around</div>
+  <div class="gallery">
+    <TuiFrame name="today" caption="Today: overdue, due, scheduled and alerting, across every vault you use." />
+    <TuiFrame name="link" caption="[[ links any page or day. A new title makes the page." />
+    <TuiFrame name="leader" caption="space opens a which-key menu. Every key is in one table: F1, the palette and thc keys all read it." />
+    <TuiFrame name="review" caption="The review lane: what an agent changed, waiting for a or u." />
+  </div>
+
+  <div class="sec"><span class="n">04</span> everything it does</div>
+  <div class="grid g4">
+    {features.map((f) => (
+      <a class="cell" href={u(`features/#${f.id}`)}><Icon name={f.data.icon} /><h3>{f.data.title}</h3><p>{f.data.blurb}</p></a>
+    ))}
+  </div>
+  <p class="more"><a href={u('features/')}>every feature, in detail →</a></p>
+
+  <div class="sec"><span class="n">05</span> how people use it</div>
+  <div class="grid">
+    {uses.map((c) => (
+      <a class="cell" href={u(`use-cases/#${c.id}`)}><Icon name={c.data.icon} /><h3>{c.data.title}</h3><p>{c.data.blurb}</p></a>
+    ))}
+  </div>
+
+  <div class="sec"><span class="n">06</span> start</div>
+  <div class="start">
+    <pre class="ascii" aria-hidden="true">{`  ┌──────────────────────────┐
+  │  [•]  thought-central    │
+  │                          │
+  │  $ thc j▮                │
+  └──────────────────────────┘`}</pre>
+    <div>
+      <p class="lede">One line to install, then <code>thc j</code> and start typing. The <a href={u('docs/first-ten-minutes/')}>first ten minutes</a> walk you through the rest.</p>
+      <Install />
+    </div>
+  </div>
+</Base>
+
+<style>
+  .hero { padding: clamp(48px, 9vw, 110px) 0 40px; }
+  .eyebrow { font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 1.2rem; }
+  .hero h1 { font-size: clamp(32px, 6.4vw, 64px); letter-spacing: -0.03em; line-height: 1.05; max-width: 16ch; }
+  .hero h1 .caret { width: 0.5em; height: 0.9em; margin-left: 0.15em; vertical-align: -0.08em; }
+  .hero .lede { margin: 1.6rem 0 2rem; }
+  .hero .install { max-width: 860px; }
+  .demo { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-top: 24px; }
+  @media (min-width: 1000px) { .demo { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; } }
+  .gallery { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
+  .more { margin-top: 1rem; }
+  .more a { color: var(--muted); }
+  .start { display: grid; gap: 32px; grid-template-columns: minmax(0, 1fr); align-items: center; }
+  @media (min-width: 900px) { .start { grid-template-columns: auto minmax(0, 1fr); } }
+  .ascii { background: none; border: 0; color: var(--muted); font-size: 14px; padding: 0; margin: 0; }
+</style>

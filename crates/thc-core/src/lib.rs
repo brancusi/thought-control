@@ -1,0 +1,44 @@
+//! thc-core: model, event log, merge/replay, SQLite store and query compiler for `thc`.
+
+pub mod alerts;
+pub mod board;
+pub mod builder;
+pub mod attach;
+pub mod ocr;
+mod attachment_media;
+mod attachment_thumbnail;
+pub mod capture;
+pub mod context;
+pub mod dates;
+pub mod edit;
+pub mod error;
+pub mod event;
+pub mod export;
+pub mod federated;
+pub mod group;
+pub mod hlc;
+pub mod id;
+pub mod ingest;
+pub mod log;
+pub mod model;
+pub mod messages;
+pub mod ord;
+pub mod outline;
+pub mod policy;
+pub mod proto;
+pub mod query;
+pub mod recur;
+pub mod registry;
+pub mod release;
+pub mod repair;
+pub mod sandbox;
+pub mod tui_config;
+pub mod review;
+pub mod settings;
+pub mod status;
+pub mod store;
+pub mod vault;
+pub mod views;
+pub mod why;
+
+pub use error::ThcError;

@@ -1,0 +1,10 @@
+# Every `cargo test` (and anything else cargo runs) has THC_TEST=1: thc refuses paths under the
+# real home or /Applications and real launchctl/open/osascript (thc_core::sandbox). In-process
+# tests can't take a scratch HOME, so their config and cache dirs point into target/thc-test (the
+# one allowed place under the home, for a checkout that lives there). Spawned thc processes get
+# a full scratch HOME from crates/thc/tests/common. Run ./target/debug/thc directly for real use.
+[env]
+THC_TEST = { value = "1", force = false }
+THC_TEST_ALLOW = { value = "target/thc-test", relative = true }
+THC_CONFIG_DIR = { value = "target/thc-test/config", relative = true }
+XDG_CACHE_HOME = { value = "target/thc-test/cache", relative = true }

@@ -1,0 +1,154 @@
+name: thc release
+
+# Push a tag like v0.7.0 to build thc (the CLI, TUI and daemon) for macOS
+# and publish it to the public releases repo as its latest release:
+#   thc-<v>-<target>.tar.gz (+ .sha256)   one per target
+#   latest.json                           version, notes, per-target url / sha256 / ed25519 sig
+#   install.sh                            curl … | sh
+# `thc update`, the daemon's check and install.sh read latest.json from
+# releases/latest/download/latest.json. Manual runs build and verify without publishing.
+#
+# Secrets: CLI_UPDATE_KEY (the ed25519 update key; its public half is crates/thc/update_key.pub),
+# RELEASES_TOKEN. Builds aren't Apple-signed: installs go through curl or Homebrew (no Gatekeeper
+# quarantine); integrity is the sha256 plus the ed25519 manifest signature.
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  RELEASES_REPO: brancusi/thought-central-releases
+  TARGETS: aarch64-apple-darwin x86_64-apple-darwin
+
+jobs:
+  release:
+    runs-on: macos-15
+    environment: release      # holds the signing and publishing secrets; limited to v* tags
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+
+      - name: No conflict markers
+        # A cherry-pick conflict committed with its markers must never reach a tag (v0.7.2).
+        run: |
+          if git grep -nE '^(<<<<<<< |>>>>>>> |=======$)' -- ':!*.md'; then
+            echo "conflict markers in tracked files" >&2; exit 1
+          fi
+
+      - name: Version
+        id: v
+        run: |
+          v="$(cat VERSION)"
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then
+            [[ "${GITHUB_REF#refs/tags/v}" == "$v" ]] || { echo "Tag ${GITHUB_REF#refs/tags/} doesn't match VERSION ($v)." >&2; exit 1; }
+            echo "publish=1" >> "$GITHUB_OUTPUT"
+          fi
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "VERSION isn't x.y.z: $v" >&2; exit 1; }
+          echo "version=$v" >> "$GITHUB_OUTPUT"
+
+      - uses: dtolnay/rust-toolchain@89b12181fb390509a0842a86cc55eeb8eb928c1d # stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2
+
+      - name: Canary (nothing outside the scratch roots may change)
+        run: touch "$RUNNER_TEMP/canary"
+
+      - name: Tests
+        run: cargo test --workspace
+
+      - name: Tests wrote nothing in the real HOME
+        # THC_TEST=1 makes thc refuse real paths; this catches anything else a test might do.
+        run: |
+          bad=0
+          for d in "$HOME/thought" "$HOME/.config/thought" "$HOME/.local/bin" "$HOME/Library/LaunchAgents" "$HOME/.claude" "$HOME/.codex" "$HOME/.cache/thc"; do
+            [[ -e "$d" ]] || continue
+            changed="$(find "$d" -newer "$RUNNER_TEMP/canary" 2>/dev/null | head -5)"
+            [[ -z "$changed" ]] || { echo "changed during tests: $changed" >&2; bad=1; }
+          done
+          # A project config in a shared folder captures every command run under it.
+          for f in /.thc.toml /tmp/.thc.toml /private/tmp/.thc.toml /var/tmp/.thc.toml "$TMPDIR/.thc.toml" "$HOME/.thc.toml"; do
+            [[ -e "$f" ]] && { echo "stray project config: $f" >&2; bad=1; }
+          done
+          exit $bad
+
+      - name: Build
+        run: |
+          for t in $TARGETS; do cargo build --release -p thc --target "$t"; done
+
+      - name: Update key matches the binary
+        env:
+          CLI_UPDATE_KEY: ${{ secrets.CLI_UPDATE_KEY }}
+          PUBLISH: ${{ steps.v.outputs.publish }}
+        run: |
+          if [[ -z "$CLI_UPDATE_KEY" ]]; then
+            [[ -z "$PUBLISH" ]] || { echo "CLI_UPDATE_KEY isn't set: can't sign a release." >&2; exit 1; }
+            echo "No CLI_UPDATE_KEY: building unsigned (manual run)."; exit 0
+          fi
+          # A key that doesn't match the built-in public key would publish updates nobody can install.
+          [[ "$(target/aarch64-apple-darwin/release/thc release-tool public)" == "$(tr -d '[:space:]' < crates/thc/update_key.pub)" ]] \
+            || { echo "CLI_UPDATE_KEY doesn't match crates/thc/update_key.pub" >&2; exit 1; }
+
+      - name: Package, sign and write latest.json
+        env:
+          CLI_UPDATE_KEY: ${{ secrets.CLI_UPDATE_KEY }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          v="$VERSION"
+          mkdir -p dist
+          host=target/aarch64-apple-darwin/release/thc
+          entries=""
+          for t in $TARGETS; do
+            name="thc-$v-$t.tar.gz"
+            tar -czf "dist/$name" -C "target/$t/release" thc
+            sha=$(shasum -a 256 "dist/$name" | awk '{print $1}')
+            echo "$sha  $name" > "dist/$name.sha256"
+            sig=""
+            if [[ -n "$CLI_UPDATE_KEY" ]]; then
+              sig=$("$host" release-tool sign "$v" "$t" "$sha")
+              echo "$sig" > "dist/$name.sig"
+            fi
+            url="https://github.com/$RELEASES_REPO/releases/download/v$v/$name"
+            entries="$entries\"$t\":{\"url\":\"$url\",\"sha256\":\"$sha\",\"sig\":\"$sig\"},"
+          done
+          # Notes: the newest section of RELEASE_NOTES.md (up to the next **x.y.z** heading).
+          notes=$(awk 'NR==1 && /^\*\*/ {next} /^\*\*[0-9]/ {exit} {print}' RELEASE_NOTES.md | sed '/./,$!d')
+          python3 - "$v" "{${entries%,}}" "$notes" > dist/latest.json <<'PY'
+          import json, sys
+          v, targets, notes = sys.argv[1], json.loads(sys.argv[2]), sys.argv[3]
+          print(json.dumps({"version": v, "notes": notes.strip(), "targets": targets}, indent=2))
+          PY
+          cp tools/install.sh dist/install.sh
+          if [[ -n "$CLI_UPDATE_KEY" ]]; then "$host" release-tool verify dist/latest.json dist; fi
+          ls -l dist
+
+      - name: Smoke test
+        env:
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          bin="$GITHUB_WORKSPACE/target/aarch64-apple-darwin/release/thc"
+          [[ "$("$bin" --version)" == "thc $VERSION" ]]
+          # First run in an empty HOME: setup makes a vault, the CLI works with no config.
+          export HOME="$RUNNER_TEMP/home" THC_SETUP_LOGIN=skip THC_NO_UPDATE_CHECK=1
+          mkdir -p "$HOME"
+          (cd / && "$bin" setup --all --yes && "$bin" add "smoke test" && "$bin" --json today > /dev/null)
+          echo "    ok: thc runs, sets up and writes from an empty HOME"
+
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: thc-${{ steps.v.outputs.version }}
+          path: dist/*
+
+      - name: Publish
+        if: steps.v.outputs.publish == '1'
+        env:
+          GH_TOKEN: ${{ secrets.RELEASES_TOKEN }}
+          VERSION: ${{ steps.v.outputs.version }}
+        run: |
+          v="$VERSION"
+          printf '%s\n' "$(jq -r .notes dist/latest.json)" > "$RUNNER_TEMP/notes.md"
+          gh release create "v$v" dist/* --repo "$RELEASES_REPO" --title "thc $v" \
+            --notes-file "$RUNNER_TEMP/notes.md" --latest

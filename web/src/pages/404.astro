@@ -1,0 +1,17 @@
+---
+import Base from '../layouts/Base.astro';
+import { u } from '../lib/url';
+---
+<Base title="Not found" description="No such page.">
+  <section class="nf">
+    <pre class="shell"><code><span class="l-cmd"><span class="l-ps">$ </span>thc show this-page</span>
+<span class="l-out">{'{"error":{"kind":"not_found","message":"no node \\"this-page\\""}}'}</span>
+<span class="l-com"># exit 3</span>
+<span class="l-cmd"><span class="l-ps">$ </span><span class="caret"></span></span></code></pre>
+    <p class="lede">Nothing here. Try <a href={u('')}>home</a>, the <a href={u('docs/')}>docs</a>, or press <kbd>1</kbd>.</p>
+  </section>
+</Base>
+<style>
+  .nf { padding: clamp(48px, 10vw, 120px) 0; max-width: 720px; }
+  .nf pre { font-size: 14px; }
+</style>
