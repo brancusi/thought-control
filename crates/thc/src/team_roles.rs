@@ -95,7 +95,17 @@ pub fn prime(ctx: &mut Ctx, role: &str) -> Result<()> {
 /// Shell-quote names: a vault or actor name must never turn a suggested claim into a command.
 pub fn claim(board: &Board, id: &str, actor: &str) -> String {
     let quote = |s: &str| if s.chars().all(|c| c.is_ascii_alphanumeric() || "-_./".contains(c)) { s.to_string() } else { format!("'{}'", s.replace('\'', "'\\''")) };
-    format!("thc set {} status=doing {} --expect status=todo --vault {}", quote(id), quote(&format!("owner={actor}")), quote(&board.path.to_string_lossy()))
+    format!("thc set {} status=doing {} --expect status=todo --vault {}", quote(id), quote(&format!("owner={actor}")), quote(&vault_arg(board)))
+}
+
+/// The board's vault name when `--vault <name>` resolves back to the same vault (shorter, and it
+/// keeps home paths out of screenshots); otherwise its absolute path.
+fn vault_arg(board: &Board) -> String {
+    let same = |p: &std::path::Path| std::fs::canonicalize(p).ok().zip(std::fs::canonicalize(&board.path).ok()).is_some_and(|(a, b)| a == b);
+    match thc_core::vault::Paths::resolve(Some(std::path::Path::new(&board.vault))) {
+        Ok(p) if same(&p.vault) => board.vault.clone(),
+        _ => board.path.to_string_lossy().into_owned(),
+    }
 }
 
 /// Only a human acceptance of the current completion releases a fresh board. Reopening,

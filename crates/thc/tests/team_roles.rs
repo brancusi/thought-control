@@ -104,7 +104,8 @@ fn role_prime_appends_project_rules_and_uses_the_board_queue() {
     assert_eq!(prime["card"]["project"][0], "Use scratch HOME for every test.");
     let next: Vec<_> = prime["next"].as_array().unwrap().iter().map(|n| n["text"].as_str().unwrap()).collect();
     assert_eq!(next, ["Build the board", "Unrouted"]);
-    assert!(prime["claim"].as_str().unwrap().contains("--vault"));
+    // The registered name, not the board's absolute path.
+    assert!(prime["claim"].as_str().unwrap().ends_with("--vault board"), "{}", prime["claim"]);
     for k in ["messages", "team", "rules"] { assert!(prime[k].is_array()); }
     let human = v.cmd().env("THC_ACTOR", "codex-engineer-2").args(["prime", "--role", "engineer"]).output().unwrap();
     assert!(human.status.success());
