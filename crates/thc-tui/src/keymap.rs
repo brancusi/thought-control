@@ -344,6 +344,7 @@ impl When {
 #[derive(Clone, Debug)]
 #[allow(dead_code)]
 pub struct Binding {
+    pub remapped: bool,
     pub ctx: Ctx,
     pub keys: &'static str,
     pub action: &'static str,
@@ -356,10 +357,10 @@ pub struct Binding {
 
 macro_rules! b {
     ($ctx:ident, $keys:expr, $action:expr, $when:ident, $label:expr, $group:expr) => {
-        Binding { ctx: Ctx::$ctx, keys: $keys, action: $action, when: When::$when, label: $label, group: $group, footer: None }
+        Binding { remapped: false, ctx: Ctx::$ctx, keys: $keys, action: $action, when: When::$when, label: $label, group: $group, footer: None }
     };
     ($ctx:ident, $keys:expr, $action:expr, $when:ident, $label:expr, $group:expr, $rank:expr) => {
-        Binding { ctx: Ctx::$ctx, keys: $keys, action: $action, when: When::$when, label: $label, group: $group, footer: Some($rank) }
+        Binding { remapped: false, ctx: Ctx::$ctx, keys: $keys, action: $action, when: When::$when, label: $label, group: $group, footer: Some($rank) }
     };
 }
 
@@ -874,7 +875,7 @@ pub fn remap(mut t: Vec<Binding>, keys: Option<&toml::Table>) -> (Vec<Binding>, 
     let Some(keys) = keys else { return (t, problems) };
     let actions: Vec<&'static str> = {
         let mut v: Vec<&'static str> = t.iter().map(|b| b.action).collect();
-        v.extend(["page.new", "daemon.start", "update", "changes", "about", "focus.overlay", "mouse.toggle", "no_op"]);
+        v.extend(["page.new", "daemon.start", "update", "changes", "about", "focus.overlay", "mouse.toggle", "keys.remap", "no_op"]);
         v.sort();
         v.dedup();
         v
@@ -952,6 +953,7 @@ pub fn remap(mut t: Vec<Binding>, keys: Option<&toml::Table>) -> (Vec<Binding>, 
             t.insert(
                 at,
                 Binding {
+                    remapped: true,
                     ctx,
                     keys: leak(k),
                     action: leak(action),
@@ -1295,7 +1297,7 @@ pub fn help(app: &App, ctxs: &[Ctx]) -> Vec<(&'static str, Vec<(String, String)>
                 seen.push(keys.clone());
                 // Sequences under one prefix share a row: `S  status: space / w x -`,
                 // `space g  go: t i k p j s l d g`.
-                if keys.len() >= 2 {
+                if keys.len() >= 2 && !b.remapped {
                     let head_keys = &keys[..keys.len() - 1];
                     if let Some(word) = group_name(head_keys).filter(|w| *w != "leader" && !(*w == "go" && head_keys.len() == 1)) {
                         let head = display_seq(head_keys);
@@ -1313,13 +1315,13 @@ pub fn help(app: &App, ctxs: &[Ctx]) -> Vec<(&'static str, Vec<(String, String)>
                 if words.is_empty() {
                     continue;
                 }
-                let shown = display_seq(&keys);
+                let shown = format!("{}{}", display_seq(&keys), if b.remapped { "•" } else { "" });
                 match rows.iter_mut().find(|(g, w, _)| *g == b.group && w == words) {
                     Some((_, _, acts)) => {
                         // ⌘ and its twin on one action: `⌘C ⌃C`, ⌘ first.
                         if let Some((_, k)) = acts.iter_mut().find(|(a, k)| *a == b.action && cmd != k.starts_with('⌘') && !k.contains(' ')) {
                             *k = if cmd { format!("{shown} {k}") } else { format!("{k} {shown}") };
-                        } else if !acts.iter().any(|(a, k)| *a == b.action && !(k.len() == 1 && shown.len() == 1 && k.chars().all(|c| c.is_ascii_digit()))) {
+                        } else if b.remapped || !acts.iter().any(|(a, k)| *a == b.action && !(k.len() == 1 && shown.len() == 1 && k.chars().all(|c| c.is_ascii_digit()))) {
                             acts.push((b.action, shown));
                         }
                     }
@@ -1452,6 +1454,7 @@ pub fn run(app: &mut App, action: &str) -> bool {
         }
         // Palette-only actions (no key by default).
         "page.new" => app.prompt = Some((PromptKind::NewPage, LineInput::default())),
+        "keys.remap" => crate::runtime_effects::dispatch(app, crate::update::Msg::RemapKeys),
         "daemon.start" => app.start_daemon(),
         "update" => app.start_update(),
         "changes" | "about" => crate::about::open(app),

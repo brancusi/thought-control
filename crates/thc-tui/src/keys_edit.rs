@@ -7,6 +7,55 @@
 use std::collections::{HashMap, HashSet};
 use std::path::Path;
 
+/// Shared CLI/TUI editor round-trip. The TUI restores the terminal before calling this.
+pub fn edit(context: Option<&str>) -> anyhow::Result<String> {
+    let file = thc_core::vault::global_config_path().ok_or_else(|| anyhow::anyhow!("no config path (HOME isn't set)"))?;
+    let old = std::fs::read_to_string(&file).unwrap_or_default();
+    let next = with_block(&old, &crate::keys_json());
+    if let Some(c) = context {
+        if line_of_context(&next, c).is_none() {
+            return Err(thc_core::error::invalid(format!("no keys context {c:?} · global, list, today, inbox, tasks, pages, journal, search, log, write")));
+        }
+    }
+    if let Some(d) = file.parent() {
+        std::fs::create_dir_all(d)?;
+    }
+    if next != old {
+        std::fs::write(&file, &next)?;
+    }
+    let line = context.and_then(|c| line_of_context(&next, c)).or_else(|| next.lines().position(|l| l == BEGIN).map(|i| i + 1)).unwrap_or(1);
+    let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
+    let at = if ["vi", "vim", "nvim", "nano", "micro", "emacs", "kak", "hx"].iter().any(|e| editor.split_whitespace().next().is_some_and(|x| x.ends_with(e))) { format!(" +{line}") } else { String::new() };
+    let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor}{at} \"$1\"")).arg("thc-keys").arg(&file).status()?;
+    if !status.success() {
+        anyhow::bail!("editor exited with {status}");
+    }
+    let text = std::fs::read_to_string(&file)?;
+    let problems = validate(&file, &text);
+    if problems.is_empty() {
+        Ok(format!("keys ok · {} remapped · {}", remapped(&text), thc_core::vault::tilde(&file)))
+    } else {
+        Err(thc_core::error::invalid(format!("{} · thc keys --edit to fix", problems.join(" · "))))
+    }
+}
+
+/// Runtime-only change detection; rendering and update never read config files.
+#[derive(Default)]
+pub(crate) struct Watch(Vec<(std::path::PathBuf, Option<(std::time::SystemTime, u64)>)>);
+
+impl Watch {
+    pub(crate) fn changed(&mut self, vault: &Path) -> bool {
+        let files = thc_core::vault::global_config_path().into_iter().chain([vault.join("settings.toml")]);
+        let next = files.map(|path| {
+            let stamp = std::fs::metadata(&path).ok().and_then(|m| m.modified().ok().map(|at| (at, m.len())));
+            (path, stamp)
+        }).collect();
+        if self.0 == next { return false; }
+        self.0 = next;
+        true
+    }
+}
+
 pub const BEGIN: &str = "# ── Keys (thc keys --edit) ─────────────────────────────────────────────────────";
 pub const END: &str = "# ── end of keys ───────────────────────────────────────────────────────────────";
 

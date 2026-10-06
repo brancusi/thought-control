@@ -27,11 +27,14 @@ pub(crate) enum Msg {
     PageIdsPersisted { result: Result<(), String> },
     Copy { text: String, notice: String },
     ClipboardResult { result: Result<(), String>, notice: String, at: Instant },
+    RemapKeys,
+    KeysEdited { result: Result<String, String>, at: Instant },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     WritePageIds { visible: bool },
     WriteClipboard { text: String, notice: String },
+    EditKeys,
 }
 
 pub(crate) struct DocumentFields<'a> {
@@ -109,6 +112,14 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
         // still takes effect. The explicit result can be recorded/replayed.
         Msg::PageIdsPersisted { result: _ } => {}
         Msg::Copy { text, notice } => return vec![Effect::WriteClipboard { text, notice }],
+        Msg::RemapKeys => return vec![Effect::EditKeys],
+        Msg::KeysEdited { result, at } => {
+            let (kind, token, text) = match result {
+                Ok(text) => (ToastKind::Info, Token::Muted, text),
+                Err(error) => (ToastKind::Error, Token::Overdue, error),
+            };
+            *state.toast = Some(Toast { kind, parts: vec![(text, token)], at });
+        }
         Msg::ClipboardResult { result, notice, at } => {
             let (kind, token, text) = match result {
                 Ok(()) => (ToastKind::Info, Token::Muted, notice),
@@ -210,6 +221,21 @@ mod tests {
         );
         assert!(page_ids);
         assert_eq!(toast.unwrap().parts, vec![("IDs shown · . to hide".into(), Token::Muted)]);
+    }
+
+    #[test]
+    fn remap_requests_only_emit_an_effect_until_the_editor_result_arrives() {
+        let mut scroll = 0;
+        let mut doc_scroll = 0;
+        let mut toast = None;
+        assert_eq!(apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::RemapKeys), vec![Effect::EditKeys]);
+        assert!(toast.is_none());
+        let at = Instant::now();
+        apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::KeysEdited { result: Ok("keys ok · 1 remapped".into()), at });
+        let success = toast.take().unwrap();
+        assert_eq!((success.kind, success.parts, success.at), (ToastKind::Info, vec![("keys ok · 1 remapped".into(), Token::Muted)], at));
+        apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::KeysEdited { result: Err("line 2: invalid key".into()), at });
+        assert_eq!(toast.unwrap().kind, ToastKind::Error);
     }
 
     #[test]

@@ -342,7 +342,20 @@ fn remaps_from_the_config() {
     assert!(j["bindings"].as_array().unwrap().iter().any(|b| b["context"] == "list" && b["keys"] == "C-x" && b["action"] == "node.done"));
     // Help shows the remapped key.
     let f = run("3??");
-    assert!(f.contains("⌃X"), "{f}");
+    assert!(f.contains("⌃X•"), "{f}");
+    assert!(f.contains("remap any key: :remap · thc keys --edit"), "{f}");
+}
+
+#[test]
+fn help_marks_an_added_key_even_when_the_default_is_still_bound() {
+    let v = V::new("remap-alias");
+    let cfg = v.root.join("cfg");
+    std::fs::create_dir_all(&cfg).unwrap();
+    std::fs::write(cfg.join("config.toml"), "[keys.list]\n\"C-x\" = \"node.done\"\n").unwrap();
+    let o = v.cmd(&[("THC_CONFIG_DIR", cfg.to_str().unwrap()), ("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "3??")], &["tui"]);
+    assert!(o.status.success());
+    let frame = String::from_utf8_lossy(&o.stdout);
+    assert!(frame.contains("⌃X•"), "{frame}");
 }
 
 #[test]

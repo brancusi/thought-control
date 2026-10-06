@@ -3436,7 +3436,7 @@ fn help_targets(render: &mut RenderOutput, rect: Rect, lines: &[Line]) {
         let y = rect.y + i as u16;
         let Some(first) = l.spans.first() else { continue };
         // A group's title, or a row with no one key to run (`click drag`): text.
-        match (l.spans.len() >= 2).then(|| first.content.trim().split(' ').next().and_then(key_of)).flatten() {
+        match (l.spans.len() >= 2).then(|| first.content.trim().split(' ').next().and_then(|key| key_of(key.trim_end_matches('•')))).flatten() {
             Some((code, mods)) => target(render, rect.x, rect.right(), y, Click::Key(code, mods)),
             None => inert(render, rect, y),
         }
@@ -4070,13 +4070,13 @@ fn draw_help(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, al
         }
         cols[ci].push(g);
     }
-    let tall = (cols.iter().map(|c| c.iter().map(|(_, r)| r.len() + 2).sum::<usize>()).max().unwrap_or(0) + 2) as u16;
+    let tall = (cols.iter().map(|c| c.iter().map(|(_, r)| r.len() + 2).sum::<usize>()).max().unwrap_or(0) + 3) as u16;
     let r = at(area, (area.width.saturating_sub(6)).min(84), (area.height.saturating_sub(4)).min(tall.max(8)), 2);
     f.render_widget(Clear, r);
     set_overlay(render, r);
     // Keys that don't fit scroll, and the border says so: nothing is clipped silently.
-    let visible = r.height.saturating_sub(2);
-    let max_scroll = tall.saturating_sub(2).saturating_sub(visible);
+    let visible = r.height.saturating_sub(3);
+    let max_scroll = tall.saturating_sub(3).saturating_sub(visible);
     render.help_max_scroll = max_scroll;
     let scroll = scroll.min(max_scroll);
     let more = scroll < max_scroll;
@@ -4107,10 +4107,16 @@ fn draw_help(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, al
                 lines.push(Line::from(vec![Span::styled(format!("{k:<width$}", width = kw), th.s(Token::Text)), Span::styled(v, th.s(Token::Muted))]));
             }
         }
-        let rect = Rect { x: inner.x + half * ci as u16, y: inner.y, width: half, height: inner.height };
+        let rect = Rect { x: inner.x + half * ci as u16, y: inner.y, width: half, height: inner.height.saturating_sub(1) };
         let lines: Vec<Line<'static>> = lines.into_iter().skip(scroll as usize).collect();
         help_targets(render, rect, &lines);
         f.render_widget(Paragraph::new(lines), rect);
+    }
+    if inner.height > 0 {
+        let footer = Rect { y: inner.bottom() - 1, height: 1, ..inner };
+        let text = if inner.width >= 39 { "remap any key: :remap · thc keys --edit" } else { ":remap · thc keys --edit" };
+        target(render, footer.x, footer.right(), footer.y, Click::Action("keys.remap"));
+        f.render_widget(Paragraph::new(truncate_str(text, footer.width as usize, th.glyphs().ellipsis)).style(th.s(Token::Muted)), footer);
     }
 }
 
