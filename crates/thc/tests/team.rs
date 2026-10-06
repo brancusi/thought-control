@@ -14,6 +14,14 @@ struct Project {
     shims: PathBuf,
 }
 impl Project {
+    fn profile(&self, text: &str) {
+        use std::io::Write;
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(self.root.join(".thc.toml"))
+            .unwrap();
+        writeln!(file, "{text}").unwrap();
+    }
     fn new(name: &str) -> Self {
         let root = common::root().join(name);
         let home = root.join("home");
@@ -120,8 +128,17 @@ def out(v): print(json.dumps({'result':v}))
 if tool=='herdr':
  if args[:2]==['agent','list']: out({'agents':state['agents']})
  elif args[:2]==['pane','list']: out({'panes':state['panes']+[{'pane_id':'w1:unowned'}]})
+ elif args[:2]==['tab','create']:
+  pane='w1:p'+str(state['next']);state['next']+=1
+  tab=1+max([p.get('tab_id',0) for p in state['panes']]+[0]);created={'pane_id':pane,'terminal_id':'term_'+pane,'tab_id':tab,'left_col':0,'top_row':0,'size':{'rows':120,'cols':180}};state['panes'].append(created);save();out({'root_pane':created,'tab':{'tab_id':'w1:t'+str(tab)}})
  elif args[:2]==['pane','split']:
-  pane='w1:p'+str(state['next']);state['next']+=1;created={'pane_id':pane,'terminal_id':'term_'+pane};state['panes'].append(created);save();out({'pane':created})
+  pane='w1:p'+str(state['next']);state['next']+=1;created={'pane_id':pane,'terminal_id':'term_'+pane}
+  parent=next((p for p in state['panes'] if p['pane_id']==args[2]),None)
+  if parent and 'size' in parent:
+   created=json.loads(json.dumps(parent));ratio=float(args[args.index('--ratio')+1]) if '--ratio' in args else 0.5
+   axis='cols' if args[args.index('--direction')+1]=='right' else 'rows';position='left_col' if axis=='cols' else 'top_row'
+   before=parent['size'][axis];parent['size'][axis]=max(1,int((before-1)*ratio));created['size'][axis]=before-1-parent['size'][axis];created[position]=parent[position]+parent['size'][axis]+1;created.update({'pane_id':pane,'terminal_id':'term_'+pane})
+  state['panes'].append(created);save();out({'pane':created})
  elif args[:2]==['agent','start']:
   if os.environ.get('TEAM_FAIL_START'): print('start failed',file=sys.stderr);sys.exit(1)
   state['agents'].append({'name':args[2],'pane_id':args[args.index('--pane')+1],'agent_status':'idle'});save();out({})
@@ -136,10 +153,11 @@ else:
    tab=1+max([p.get('tab_id',0) for p in state['panes']]+[0]);created={'tab_id':tab,'left_col':0,'top_row':0,'size':{'rows':120,'cols':120}}
   else:
    parent=next(p for p in state['panes'] if p['pane_id']==int(args[args.index('--pane-id')+1]));created=json.loads(json.dumps(parent))
-   percent=int(args[args.index('--percent')+1])
-   if '--right' in args: created['left_col']=49;created['size']['cols']=71
+   percent=int(args[args.index('--percent')+1]) if '--percent' in args else None
+   if '--right' in args:
+    n=int(args[args.index('--cells')+1]) if '--cells' in args else max(1,(parent['size']['cols']-1)*percent//100);parent['size']['cols']-=n+1;created['size']['cols']=n;created['left_col']=parent['left_col']+parent['size']['cols']+1
    else:
-    n=max(1,(parent['size']['rows']-1)*percent//100);parent['size']['rows']-=n+1;created['size']['rows']=n;created['top_row']=parent['top_row']+parent['size']['rows']+1
+    n=int(args[args.index('--cells')+1]) if '--cells' in args else max(1,(parent['size']['rows']-1)*percent//100);parent['size']['rows']-=n+1;created['size']['rows']=n;created['top_row']=parent['top_row']+parent['size']['rows']+1
   created.update({'pane_id':pane,'tty_name':'/fake/tty'+str(pane)});state['panes'].append(created);save();print(pane)
  elif args[1]=='adjust-pane-size':
   current=next(p for p in state['panes'] if p['pane_id']==int(args[args.index('--pane-id')+1]));delta=int(args[args.index('--amount')+1])*(1 if args[-1]=='Down' else -1)
@@ -160,9 +178,341 @@ else:
         }
     }
 }
+
+#[test]
+fn configured_roster_launches_mixed_agents_counts_and_native_models() {
+    let p = Project::new("team-profile-models");
+    p.board();
+    std::fs::write(
+        p.config.join("config.toml"),
+        "[actors.codex-engineer-4]\nallow=['team']\n[team]\nmax_agents=7\n",
+    )
+    .unwrap();
+    p.profile(
+        r#"
+[[team.roster]]
+role = "pm"
+agent = "claude"
+model = "claude-opus-5-5"
+[[team.roster]]
+role = "designer"
+agent = "claude"
+model = "claude-opus-5-5"
+[[team.roster]]
+role = "engineer"
+agent = "claude"
+model = "claude-opus-5-5"
+[[team.roster]]
+role = "merger"
+agent = "claude"
+model = "claude-opus-5-5"
+[[team.roster]]
+role = "reviewer"
+agent = "claude"
+model = "claude-haiku-4-5-20251001"
+[[team.roster]]
+role = "engineer"
+agent = "codex"
+model = "gpt-6.1-sol"
+count = 2
+"#,
+    );
+    let result = good(p.herdr().args(["--json", "team", "up"]).output().unwrap());
+    let members = result["team"].as_array().unwrap();
+    assert_eq!(members.len(), 7);
+    assert_eq!(members[5]["actor"], "codex-engineer");
+    assert_eq!(members[6]["actor"], "codex-engineer-2");
+    assert_eq!(members[4]["model"], "claude-haiku-4-5-20251001");
+    assert_eq!(result["model_passed"], true);
+    let starts: Vec<_> = p
+        .log()
+        .into_iter()
+        .filter(|c| c["args"][1] == "start")
+        .collect();
+    assert_eq!(starts.len(), 7);
+    assert_eq!(
+        &starts[0]["args"].as_array().unwrap()[7..],
+        &[json!("--"), json!("--model"), json!("claude-opus-5-5")]
+    );
+    let codex = starts
+        .iter()
+        .find(|c| c["args"][2] == "codex-engineer-2")
+        .unwrap();
+    assert_eq!(
+        &codex["args"].as_array().unwrap()[7..],
+        &[json!("--"), json!("-m"), json!("gpt-6.1-sol")]
+    );
+    assert!(
+        starts
+            .iter()
+            .all(|c| !c["args"].to_string().contains("Coordinate only through"))
+    );
+    assert_eq!(p.run(&["team", "ls"])["team"][6]["model"], "gpt-6.1-sol");
+}
+
+#[test]
+fn configured_roster_overrides_and_dry_run_do_not_launch_or_save() {
+    let p = Project::new("team-profile-overrides");
+    p.board();
+    p.profile(
+        r#"
+[[team.roster]]
+role="reviewer"
+agent="claude"
+model="haiku"
+[[team.roster]]
+role="engineer"
+agent="codex"
+model="gpt"
+count=2
+"#,
+    );
+    let result = p.run(&[
+        "--dry-run",
+        "team",
+        "up",
+        "--agent",
+        "engineer=claude",
+        "--model",
+        "m's model",
+    ]);
+    assert_eq!(
+        result["team"][0]["role"], "reviewer",
+        "configured outline order is preserved"
+    );
+    assert_eq!(result["team"][2]["actor"], "claude-engineer-2");
+    assert!(
+        result["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|c| c["command"].as_str().unwrap().contains("'m'\\''s model'"))
+    );
+    assert!(p.log().is_empty());
+    assert!(
+        p.run(&["team", "ls"])["team"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+    let explicit = p.run(&["--dry-run", "team", "up", "pm", "--agent", "codex"]);
+    assert_eq!(explicit["team"].as_array().unwrap().len(), 1);
+    assert_eq!(explicit["team"][0]["actor"], "codex-pm");
+    assert!(explicit["team"][0]["model"].is_null());
+}
+
+#[test]
+fn invalid_profiles_refuse_before_hosts_or_board_creation() {
+    for (label, body, hint) in [
+        (
+            "zero",
+            "[[team.roster]]\nrole='engineer'\nagent='codex'\ncount=0",
+            "count must be positive",
+        ),
+        (
+            "limit",
+            "[[team.roster]]\nrole='engineer'\nagent='codex'\ncount=99",
+            "max_agents",
+        ),
+        (
+            "unsafe",
+            "[[team.roster]]\nrole='engineer'\nagent='codex'\nmodel='--yolo'",
+            "permission prompts",
+        ),
+        (
+            "typo",
+            "[[team.roster]]\nrole='engineer'\nagent='codex'\ncout=2",
+            "unknown field",
+        ),
+        ("empty", "[team]\nroster=[]", "at least one"),
+    ] {
+        let p = Project::new(&format!("team-profile-invalid-{label}"));
+        std::fs::write(p.root.join(".thc.toml"), body).unwrap();
+        let output = p
+            .herdr()
+            .args(["--json", "team", "up", "--new-board", "invalid-profile"])
+            .output()
+            .unwrap();
+        assert_eq!(
+            output.status.code(),
+            Some(6),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains(hint),
+            "{label}: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(
+            p.log().is_empty(),
+            "{label} contacted host before validating"
+        );
+        assert!(!p.home.join("thought-vaults").exists());
+    }
+    let p = Project::new("team-profile-missing");
+    p.board();
+    let output = p.cmd().args(["--json", "team", "up"]).output().unwrap();
+    assert_eq!(output.status.code(), Some(6));
+    assert!(String::from_utf8_lossy(&output.stderr).contains("no team roster"));
+}
 fn good(o: Output) -> Value {
     assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     serde_json::from_slice(&o.stdout).unwrap()
+}
+
+#[test]
+fn profile_layout_creates_balanced_columns_and_pins_pm_on_both_hosts() {
+    for host in ["herdr", "wezterm"] {
+        let p = Project::new(&format!("team-profile-layout-{host}"));
+        p.board();
+        p.profile(
+            r#"
+[team.layout]
+columns=3
+pm="bottom-right"
+tab="team"
+[[team.roster]]
+role="pm"
+agent="claude"
+[[team.roster]]
+role="engineer"
+agent="codex"
+count=5
+"#,
+        );
+        let mut command = if host == "herdr" {
+            p.herdr()
+        } else {
+            let mut command = p.cmd();
+            command.env("WEZTERM_PANE", "77");
+            command
+        };
+        let result = good(command.args(["--json", "team", "up"]).output().unwrap());
+        let state: Value =
+            serde_json::from_slice(&std::fs::read(p.root.join("host-state.json")).unwrap())
+                .unwrap();
+        let panes = state["panes"].as_array().unwrap();
+        assert_eq!(panes.len(), 6);
+        let pm = panes
+            .iter()
+            .find(|p| {
+                let id = p["pane_id"]
+                    .as_str()
+                    .map(str::to_string)
+                    .unwrap_or_else(|| p["pane_id"].to_string());
+                Some(id.as_str()) == result["team"][0]["pane"].as_str()
+            })
+            .unwrap();
+        let columns: std::collections::BTreeSet<_> = panes
+            .iter()
+            .map(|p| p["left_col"].as_u64().unwrap())
+            .collect();
+        assert_eq!(columns.len(), 3);
+        assert_eq!(pm["left_col"].as_u64().unwrap(), *columns.last().unwrap());
+        assert!(pm["top_row"].as_u64().unwrap() > 0, "PM is the bottom row");
+        let widths: Vec<_> = panes
+            .iter()
+            .map(|p| p["size"]["cols"].as_u64().unwrap())
+            .collect();
+        assert!(
+            widths.iter().max().unwrap() - widths.iter().min().unwrap() <= 2,
+            "{host}: {widths:?}"
+        );
+        let heights: Vec<_> = panes
+            .iter()
+            .map(|p| p["size"]["rows"].as_u64().unwrap())
+            .collect();
+        assert!(
+            heights.iter().max().unwrap() - heights.iter().min().unwrap() <= 1,
+            "{host}: {heights:?}"
+        );
+        let log = p.log();
+        if host == "herdr" {
+            let tabs: Vec<_> = log
+                .iter()
+                .filter(|c| c["args"][0] == "tab" && c["args"][1] == "create")
+                .collect();
+            assert_eq!(tabs.len(), 1);
+            assert!(tabs[0]["args"].to_string().contains("--no-focus"));
+            assert!(
+                tabs[0]["args"]
+                    .to_string()
+                    .contains("THC_ACTOR=codex-engineer")
+            );
+            assert!(
+                log.iter()
+                    .filter(|c| c["args"][0] == "pane" && c["args"][1] == "split")
+                    .all(|c| c["args"][2].as_str().unwrap().starts_with("w1:p"))
+            );
+        } else {
+            assert_eq!(log.iter().filter(|c| c["args"][1] == "spawn").count(), 1);
+            assert!(
+                log.iter()
+                    .any(|c| c["args"][1] == "set-tab-title" && c["args"][4] == "team")
+            );
+        }
+        assert_eq!(p.run(&["--yes", "team", "down"])["closed"], 6);
+        let closes: Vec<_> = p
+            .log()
+            .into_iter()
+            .filter(|c| matches!(c["args"][1].as_str(), Some("close" | "kill-pane")))
+            .collect();
+        assert_eq!(closes.len(), 6);
+        assert!(
+            closes
+                .iter()
+                .all(|c| !c["args"].to_string().contains("unowned")
+                    && !c["args"].to_string().contains("999"))
+        );
+    }
+}
+
+#[test]
+fn profile_permission_modes_are_human_only_and_separate_from_prompt() {
+    let p = Project::new("team-profile-permissions");
+    p.board();
+    p.profile(
+        r#"
+[[team.roster]]
+role="reviewer"
+agent="claude"
+model="haiku"
+permission_mode="manual"
+"#,
+    );
+    let denied = p
+        .herdr()
+        .args(["--json", "--dry-run", "team", "up"])
+        .output()
+        .unwrap();
+    assert_eq!(denied.status.code(), Some(6));
+    assert!(
+        String::from_utf8_lossy(&denied.stderr).contains("agents cannot choose a permission mode")
+    );
+    assert!(p.log().is_empty());
+    good(
+        p.herdr()
+            .env("THC_ACTOR", "human")
+            .args(["--json", "team", "up"])
+            .output()
+            .unwrap(),
+    );
+    let start = p
+        .log()
+        .into_iter()
+        .find(|c| c["args"][1] == "start")
+        .unwrap();
+    assert_eq!(
+        &start["args"].as_array().unwrap()[7..],
+        &[
+            json!("--"),
+            json!("--model"),
+            json!("haiku"),
+            json!("--permission-mode"),
+            json!("manual")
+        ]
+    );
 }
 
 #[test]

@@ -273,6 +273,7 @@ fn output_for(cmd: &str) -> Value {
             "ok":{"type":"boolean"},"dry_run":{"type":"boolean"},"project":{"type":"string"},
             "board":board_schema(),"host":{"enum":["herdr","wezterm","printed"]},
             "closed":{"type":"integer"},"model_passed":{"type":"boolean"},
+            "layout":{"type":["object","null"],"properties":{"columns":{"type":"integer"},"tab":{"type":"string"},"pm":{"type":["string","null"]}}},
             "member":{"type":"object"},"removed":{"type":"string"},"command":{"type":"string"},
             "agents":{"type":"array"},"claims":{"type":"array"},
             "team":{"type":"array","items":{"type":"object","properties":{

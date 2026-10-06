@@ -5,6 +5,8 @@ use crate::{
     team_host::{self, Host},
     team_launch::{self, Launcher},
 };
+#[path = "team_profile.rs"]
+mod profile;
 #[path = "team_member.rs"]
 mod team_member;
 use anyhow::Result;
@@ -19,9 +21,9 @@ use thc_core::{board::Board, error::invalid, vault::Vault};
 
 #[derive(clap::Subcommand, Debug)]
 pub enum TeamCmd {
-    /// Start one agent per role (herdr first, then WezTerm, otherwise print commands).
+    /// Start the configured roster, or one agent per listed role.
     Up {
-        #[arg(required = true, num_args = 1..)]
+        #[arg(num_args = 0..)]
         roles: Vec<String>,
         /// Agent for everyone, or ROLE=AGENT (repeatable).
         #[arg(long, action = clap::ArgAction::Append)]
@@ -295,11 +297,7 @@ fn members(
             default = choice.clone();
         }
     }
-    let max = thc_core::settings::load(None)
-        .get("team.max_agents")
-        .and_then(|v| v.as_integer())
-        .filter(|n| *n > 0)
-        .unwrap_or(6) as usize;
+    let max = profile::max_agents();
     if roles.len() > max {
         return Err(invalid(format!("team exceeds max_agents ({max})")));
     }
@@ -356,7 +354,8 @@ fn up(
             "this project already has team panes · thc team ls or thc team down first",
         ));
     }
-    // Keep the lead on the left while preserving the other roles' supplied order.
+    let profile = profile::load(root)?;
+    // Explicit roles retain their existing lead-left layout unless a layout is configured.
     let roles: Vec<_> = roles
         .iter()
         .filter(|r| matches!(r.as_str(), "pm" | "lead"))
@@ -370,7 +369,62 @@ fn up(
     let host = team_host::detect();
     let actor = crate::parse_actor(cli.actor.as_deref());
     let who = actor.name.as_deref().unwrap_or(&actor.kind);
-    let planned = members(&roles, agents, model, &host, who)?;
+    let mut modes = BTreeMap::new();
+    let planned = if roles.is_empty() {
+        let mut planned = Vec::new();
+        let mut names = std::collections::BTreeSet::new();
+        for entry in profile::entries(&profile, agents, model)? {
+            if entry.permission_mode.is_some() && actor.kind == "agent" {
+                return Err(invalid(
+                    "agents cannot choose a permission mode · run this profile yourself, or omit permission_mode",
+                ));
+            }
+            for _ in 0..entry.count {
+                let (mut member, launcher) = members(
+                    &[entry.role.clone()],
+                    &[entry.agent.clone()],
+                    entry.model.as_deref(),
+                    &host,
+                    who,
+                )?
+                .remove(0);
+                let base = member.actor.clone();
+                let mut suffix = 2;
+                while names.contains(&member.actor) {
+                    member.actor = format!("{base}-{suffix}");
+                    suffix += 1;
+                }
+                if member.actor.len() > 32 {
+                    return Err(invalid("team actor name exceeds 32 characters"));
+                }
+                names.insert(member.actor.clone());
+                modes.insert(member.actor.clone(), entry.permission_mode.clone());
+                planned.push((member, launcher));
+            }
+        }
+        planned
+    } else {
+        members(&roles, agents, model, &host, who)?
+    };
+    // Validate all native options before preparing a board or opening a pane.
+    for (m, launcher) in &planned {
+        team_launch::options(
+            &m.agent,
+            launcher,
+            m.model.as_deref(),
+            modes.get(&m.actor).and_then(|m| m.as_deref()),
+        )?;
+        if host == Host::Herdr && !team_launch::HERDR_KINDS.contains(&m.agent.as_str()) {
+            return Err(invalid(format!(
+                "herdr has no agent kind {} · thc team agents",
+                m.agent
+            )));
+        }
+    }
+    let total = planned.len();
+    let layout = profile
+        .layout
+        .or_else(|| roles.is_empty().then(profile::Layout::default));
     let plain: Vec<_> = planned.iter().map(|(m, _)| m.clone()).collect();
     let context = team_host::context(&host);
     if host == Host::Herdr {
@@ -398,6 +452,18 @@ fn up(
         .map(|p| format!("{}:¶ {}", board.path.display(), p.title))
         .unwrap_or_else(|| board.path.display().to_string());
     if !cli.json {
+        if let Some(layout) = &layout {
+            out.line(format!(
+                "layout · {} · {} columns{}",
+                layout.tab,
+                layout.columns.min(total),
+                if layout.pm.is_some() {
+                    " · pm bottom-right"
+                } else {
+                    ""
+                }
+            ));
+        }
         out.line(format!(
             "team up · board {}{} · {}",
             board.vault,
@@ -419,18 +485,22 @@ fn up(
         board,
         host: host.clone(),
         context,
-        members: Vec::new(),
+        members: plain.clone(),
     };
-    if host == Host::Herdr {
-        if model.is_some() {
-            if !cli.json {
-                out.line("model not passed: herdr starts the agent itself");
-            }
-        }
-    }
     let mut commands = Vec::new();
     let mut panes = Vec::new();
-    for (mut m, launcher) in planned {
+    let cells = layout.as_ref().map(|layout| layout.cells(&plain));
+    let order: Vec<usize> = if cli.dry_run || host == Host::Printed {
+        (0..total).collect()
+    } else {
+        cells
+            .as_ref()
+            .map(|cells| cells.iter().map(|cell| cell.member).collect())
+            .unwrap_or_else(|| (0..total).collect())
+    };
+    let mut created = BTreeMap::new();
+    for index in order {
+        let (mut m, launcher) = planned[index].clone();
         let mut env = launcher.env.clone();
         env.insert("THC_ACTOR".into(), m.actor.clone());
         env.insert("THC_ROLE".into(), m.role.clone());
@@ -444,7 +514,20 @@ fn up(
         if fresh && matches!(m.role.as_str(), "pm" | "lead") {
             prompt.push_str(" Read the README and folder, refine About, write the first ordered tasks with roles/priorities/dependencies, then complete First plan and ask the human to accept it before routing work.");
         }
-        let argv = team_launch::argv(&m.agent, &launcher, model, &prompt)?;
+        let options = team_launch::options(
+            &m.agent,
+            &launcher,
+            m.model.as_deref(),
+            modes.get(&m.actor).and_then(|m| m.as_deref()),
+        )?;
+        let mut argv = launcher.command.clone();
+        argv.extend(options.iter().cloned());
+        argv.extend(
+            launcher
+                .prompt
+                .iter()
+                .map(|s| s.replace("{prompt}", &prompt)),
+        );
         let command = format!(
             "cd {} && env {} {}",
             team_launch::quote(&root.to_string_lossy()),
@@ -462,48 +545,71 @@ fn up(
             if !cli.json {
                 out.line(format!("# {}\n{command}", m.role));
             }
-            roster.members.push(m);
+            roster.members[index] = m;
             continue;
         }
         if host == Host::Printed {
             m.state = "printed".into();
-            roster.members.push(m.clone());
+            roster.members[index] = m.clone();
             save(&roster)?;
             if !cli.json {
                 out.line(format!("# {}\n{command}", m.role));
             }
             continue;
         }
-        let (pane, identity) = team_host::create(&host, root, &env, &argv, &panes, roles.len())?;
+        let (pane, identity) = if let (Some(layout), Some(cells)) = (&layout, &cells) {
+            let cell = cells.iter().find(|cell| cell.member == index).unwrap();
+            let parent = cell
+                .parent
+                .map(|member| {
+                    created
+                        .get(&member)
+                        .map(String::as_str)
+                        .ok_or_else(|| invalid("team layout parent was not created"))
+                })
+                .transpose()?;
+            team_host::create_cell(
+                &host,
+                root,
+                &roster.context,
+                &env,
+                &argv,
+                parent,
+                cell.direction,
+                cell.remaining,
+                &layout.tab,
+            )?
+        } else {
+            team_host::create(&host, root, &env, &argv, &panes, total)?
+        };
         m.host_identity = identity;
         m.pane = Some(pane.clone());
         m.state = "starting".into();
-        if host == Host::Herdr {
-            m.model = None;
-        }
-        roster.members.push(m.clone());
+        roster.members[index] = m.clone();
         // Persist immediately after creation: failures in naming/start/prompt remain recoverable.
         save(&roster)?;
         panes.push(pane.clone());
+        created.insert(index, pane.clone());
         if host == Host::Herdr {
             team_host::call(
                 &host,
                 &roster.context,
                 &["pane".into(), "rename".into(), pane.clone(), m.role.clone()],
             )?;
-            team_host::call(
-                &host,
-                &roster.context,
-                &[
-                    "agent".into(),
-                    "start".into(),
-                    m.actor.clone(),
-                    "--kind".into(),
-                    m.agent.clone(),
-                    "--pane".into(),
-                    pane,
-                ],
-            )?;
+            let mut start = vec![
+                "agent".into(),
+                "start".into(),
+                m.actor.clone(),
+                "--kind".into(),
+                m.agent.clone(),
+                "--pane".into(),
+                pane,
+            ];
+            if !options.is_empty() {
+                start.push("--".into());
+                start.extend(options);
+            }
+            team_host::call(&host, &roster.context, &start)?;
             team_host::call(
                 &host,
                 &roster.context,
@@ -518,16 +624,19 @@ fn up(
                     "set-tab-title".into(),
                     "--pane-id".into(),
                     pane,
-                    "team".into(),
+                    layout
+                        .as_ref()
+                        .map(|l| l.tab.clone())
+                        .unwrap_or_else(|| "team".into()),
                 ],
             )?;
         }
-        roster.members.last_mut().unwrap().state = "running".into();
+        roster.members[index].state = "running".into();
         save(&roster)?;
     }
     let _ = vault;
     if cli.json {
-        out.json(&json!({"ok":true,"dry_run":cli.dry_run,"board":roster.board,"host":host,"team":roster.members,"commands":commands,"model_passed":host!=Host::Herdr}));
+        out.json(&json!({"ok":true,"dry_run":cli.dry_run,"board":roster.board,"host":host,"team":roster.members,"commands":commands,"model_passed":true,"layout":layout}));
     }
     Ok(())
 }
