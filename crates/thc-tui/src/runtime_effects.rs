@@ -10,7 +10,7 @@ pub(crate) fn document_identity(app: &App) -> Option<DocumentIdentity> {
         vault: app.vault.paths.vault.clone(),
         target: doc.target.clone(),
         revision: doc.revision(),
-        caret: doc.caret,
+        caret: doc.view.caret,
     })
 }
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {

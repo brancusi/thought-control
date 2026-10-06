@@ -167,7 +167,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // from (navigation.md §2).
         "doc.done" => {
             if d.selection().is_some() {
-                d.anchor = None;
+                d.view.anchor = None;
                 return true;
             }
             app.leave_doc();
@@ -184,12 +184,12 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // a line deleted here, edited elsewhere, then undone, kept the old text and never saved).
         // The first ⌃Z after a drop: the attachment becomes the pasted path, as text (like undoing
         // an autocorrect); the next ⌃Z removes that.
-        "doc.undo" if app.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.lines.iter().any(|l| &l.id == id)) => {
+        "doc.undo" if app.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.lines().iter().any(|l| &l.id == id)) => {
             let (id, raw, _) = app.last_drop.take().unwrap();
             let d = app.doc.as_mut().unwrap();
-            if let Some(i) = d.lines.iter().position(|l| l.id == id) {
-                d.lines[i].text = raw.trim().to_string();
-                d.caret = Pos { line: i, byte: d.lines[i].text.len() };
+            if let Some(i) = d.lines().iter().position(|l| l.id == id) {
+                d.lines_mut()[i].text = raw.trim().to_string();
+                d.view.caret = Pos { line: i, byte: d.lines()[i].text.len() };
             }
             app.save_doc(true);
             app.info("kept the path as text · ⌃Z again removes it");
@@ -215,13 +215,13 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         }
         // ⌃J on an attachment's line: a new line after it (a break inside it would break it).
         "line.soft_break" if crate::doc_ui::image_line(&d.line().text).is_some() => {
-            d.caret.byte = d.line().text.len();
+            d.view.caret.byte = d.line().text.len();
             d.newline();
         }
         // Enter on an attachment's line starts a new line after it; it never opens it (that's ⌃O
         // or a double-click: editing.md §7).
         "line.newline" if d.selection().is_none() && crate::doc_ui::image_line(&d.line().text).is_some() => {
-            d.caret.byte = d.line().text.len();
+            d.view.caret.byte = d.line().text.len();
             d.newline();
         }
         "focus.toggle" => app.set_focus_mode(!app.focus_mode),
@@ -246,7 +246,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
 }
 
 pub fn copy(app: &mut App) {
-    let d = app.doc.as_ref().unwrap();
+    let d = app.doc.as_mut().unwrap();
     let notes = d.selected_parts().len();
     let md = d.copy_text();
     // editing.md §5: `copied 14 chars` inside a note, `copied 3 notes` across notes.
@@ -341,7 +341,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         MouseEventKind::Down(button @ (MouseButton::Left | MouseButton::Middle)) => {
             // The ≠ mark opens the compare (mouse.md §3).
             if let Some(line) = crate::doc_ui::conflict_mark_at(app, m.column, m.row) {
-                let id = app.doc.as_ref().unwrap().lines[line].id.clone();
+                let id = app.doc.as_ref().unwrap().lines()[line].id.clone();
                 app.selected = Some(id);
                 app.open_compare();
                 return true;
@@ -353,9 +353,9 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             app.click_link = None;
             let d = app.doc.as_mut().unwrap();
             // The task box is a button: open ⇄ done.
-            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.lines[line].kind == Kind::Task {
-                d.anchor = None;
-                d.caret = Pos { line, byte: 0 };
+            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.lines()[line].kind == Kind::Task {
+                d.view.anchor = None;
+                d.view.caret = Pos { line, byte: 0 };
                 if d.task_box(line) == "done" {
                     app.save_doc(true);
                 }
@@ -368,21 +368,21 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 3 => d.select_note(line),
                 _ => {
                     if shift {
-                        if d.anchor.is_none() {
-                            d.anchor = Some(d.caret);
+                        if d.view.anchor.is_none() {
+                            d.view.anchor = Some(d.view.caret);
                         }
                     } else {
-                        d.anchor = None;
+                        d.view.anchor = None;
                     }
-                    d.caret = p;
-                    d.goal_col = None;
+                    d.view.caret = p;
+                    d.view.goal = None;
                 }
             }
             app.drag_from = (clicks == 1 && !shift).then_some(p);
             // A double-click on an attachment opens it; a single click only puts the caret there
             // (editing.md §6-7: a click to move around used to open Preview).
             if clicks == 2 && !shift && button == MouseButton::Left {
-                if let Some((_, path)) = crate::doc_ui::image_line(&app.doc.as_ref().unwrap().lines[line].text) {
+                if let Some((_, path)) = crate::doc_ui::image_line(&app.doc.as_ref().unwrap().lines()[line].text) {
                     app.drag_from = None;
                     app.open_attachment(&path);
                     app.doc_after_key();
@@ -390,7 +390,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 }
             }
             // ⌃-click or middle-click on a link opens it (saving first).
-            let on_link = crate::doc_app::link_at(&app.doc.as_ref().unwrap().lines[line].text, byte).is_some();
+            let on_link = crate::doc_app::link_at(&app.doc.as_ref().unwrap().lines()[line].text, byte).is_some();
             if on_link && (ctrl || button == MouseButton::Middle) {
                 app.doc_after_key();
                 app.doc_open();
@@ -398,7 +398,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             }
             // A plain click on a link's title follows it when released (E63); on the `[[` / `]]`,
             // or with ⌥, it only places the caret (E64, E65).
-            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&app.doc.as_ref().unwrap().lines[line].text, byte) {
+            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&app.doc.as_ref().unwrap().lines()[line].text, byte) {
                 app.click_link = Some(p);
             }
             app.doc_after_key();
@@ -408,17 +408,17 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         MouseEventKind::Drag(MouseButton::Left) => {
             let (Some(from), Some((line, byte, _))) = (app.drag_from, crate::doc_ui::hit(app, m.column, m.row)) else { return app.drag_from.is_some() };
             let d = app.doc.as_mut().unwrap();
-            d.anchor = Some(from);
-            d.caret = Pos { line, byte };
-            d.goal_col = None;
+            d.view.anchor = Some(from);
+            d.view.caret = Pos { line, byte };
+            d.view.goal = None;
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
             let dragged = app.drag_from.take().is_some();
             if let Some(p) = app.click_link.take() {
                 let d = app.doc.as_ref().unwrap();
-                if d.caret == p && d.anchor.is_none_or(|a| a == p) {
-                    app.doc.as_mut().unwrap().anchor = None;
+                if d.view.caret == p && d.view.anchor.is_none_or(|a| a == p) {
+                    app.doc.as_mut().unwrap().view.anchor = None;
                     app.doc_after_key();
                     app.doc_open();
                     return true;
@@ -426,10 +426,10 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             }
             let mut selected = false;
             if let Some(d) = app.doc.as_mut() {
-                if d.anchor == Some(d.caret) {
-                    d.anchor = None;
+                if d.view.anchor == Some(d.view.caret) {
+                    d.view.anchor = None;
                 }
-                selected = d.anchor.is_some();
+                selected = d.view.anchor.is_some();
             }
             if dragged && selected {
                 native_selection_hint(app);

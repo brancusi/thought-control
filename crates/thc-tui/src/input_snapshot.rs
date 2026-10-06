@@ -46,7 +46,7 @@ pub(crate) fn capture(app: &mut App) {
         _ => {}
     }
     if let Some(doc) = &app.doc {
-        if let Some(line) = doc.lines.get(doc.caret.line) {
+        if let Some(line) = doc.lines().get(doc.view.caret.line) {
             texts.push(line.text.clone());
         }
     }

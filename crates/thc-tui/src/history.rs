@@ -97,9 +97,9 @@ impl App {
         let caret = self.doc.as_ref().map(|d| {
             let l = d.line();
             // A new, empty line isn't a place: the line above it is (as caret memory).
-            match (l.is_new && l.text.is_empty(), d.caret.line.checked_sub(1).and_then(|i| d.lines.get(i))) {
+            match (l.is_new && l.text.is_empty(), d.view.caret.line.checked_sub(1).and_then(|i| d.lines().get(i))) {
                 (true, Some(p)) => (p.id.clone(), p.text.len()),
-                _ => (l.id.clone(), d.caret.byte),
+                _ => (l.id.clone(), d.view.caret.byte),
             }
         });
         let g = self.theme.glyphs();
@@ -237,14 +237,14 @@ impl App {
             self.restore_cursor_public();
         }
         if let (Some((id, byte)), Some(d)) = (&p.caret, self.doc.as_mut()) {
-            if let Some(i) = d.lines.iter().position(|l| &l.id == id) {
-                let len = d.lines[i].text.len();
+            if let Some(i) = d.lines().iter().position(|l| &l.id == id) {
+                let len = d.lines()[i].text.len();
                 let mut b = (*byte).min(len);
-                while !d.lines[i].text.is_char_boundary(b) {
+                while !d.lines()[i].text.is_char_boundary(b) {
                     b -= 1;
                 }
-                d.anchor = None;
-                d.caret = crate::doc::Pos { line: i, byte: b };
+                d.view.anchor = None;
+                d.view.caret = crate::doc::Pos { line: i, byte: b };
                 d.scroll = p.scroll;
             }
         } else if self.doc.is_none() {

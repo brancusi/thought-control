@@ -56,7 +56,7 @@ fn rec_target(t: &Target) -> RecTarget {
 pub fn unsaved(d: &Doc) -> Option<Recovery> {
     let mut lines = Vec::new();
     let mut prev: Option<&str> = None;
-    for l in &d.lines {
+    for l in d.lines() {
         if !l.text.trim().is_empty() && l.edited() {
             lines.push(RecLine { id: l.id.clone(), is_new: l.is_new, prev: prev.map(str::to_string), depth: l.depth, kind: l.kind, status: l.status.clone(), text: l.text.clone() });
         }
@@ -104,7 +104,7 @@ pub fn apply(d: &mut Doc, rec: &Recovery) -> usize {
     d.begin_recovery();
     let mut n = 0;
     for r in &rec.lines {
-        if let Some(l) = d.lines.iter_mut().find(|l| l.id == r.id) {
+        if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == r.id) {
             if l.text != r.text || l.kind != r.kind || l.depth != r.depth {
                 l.text = r.text.clone();
                 l.kind = r.kind;
@@ -114,14 +114,14 @@ pub fn apply(d: &mut Doc, rec: &Recovery) -> usize {
             }
             continue;
         }
-        let at = r.prev.as_ref().and_then(|p| d.lines.iter().position(|l| &l.id == p)).map_or(d.lines.len(), |i| i + 1);
+        let at = r.prev.as_ref().and_then(|p| d.lines().iter().position(|l| &l.id == p)).map_or(d.lines().len(), |i| i + 1);
         let mut l = Line::new(r.depth, r.kind, &r.text);
         l.status = r.status.clone();
         // A line that was saved once and isn't here now: a new note (its id may be gone).
         if r.is_new {
             l.id = r.id.clone();
         }
-        d.lines.insert(at, l);
+        d.lines_mut().insert(at, l);
         n += 1;
     }
     n

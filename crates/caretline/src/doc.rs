@@ -122,8 +122,34 @@ impl<L: BlockLine> Doc<L> {
         self.buf.changed_at
     }
 
+    /// The host committed what changed (saved it): `changed_at` starts over.
+    pub fn mark_committed(&mut self) {
+        self.buf.changed_at = None;
+    }
+
     pub fn lines(&self) -> &[L] {
         &self.buf.lines
+    }
+
+    /// The blocks, for the host's own bookkeeping (what it saved, what it shows beside them).
+    /// Views aren't rebased: a change to text or shape that other views must follow goes
+    /// through [`Doc::external_edit`].
+    pub fn lines_mut(&mut self) -> &mut Vec<L> {
+        self.rev += 1;
+        &mut self.buf.lines
+    }
+
+    /// The pending deletes, for the host's own bookkeeping (a line re-created under a new id
+    /// leaves its old one to delete).
+    pub fn deleted_mut(&mut self) -> &mut Vec<L::Id> {
+        &mut self.buf.deleted
+    }
+
+    /// `view`'s selection, ordered (start, end), when it has one inside the doc.
+    pub fn selection(&self, view: &View<L::Id>) -> Option<(Pos, Pos)> {
+        let a = view.anchor?;
+        let ok = |p: Pos| self.buf.lines.get(p.line).is_some_and(|l| p.byte <= l.text.len() && l.text.is_char_boundary(p.byte));
+        (a != view.caret && ok(a) && ok(view.caret)).then(|| if a < view.caret { (a, view.caret) } else { (view.caret, a) })
     }
 
     /// Bumped by every change: a view drawn at an older rev re-lays out.

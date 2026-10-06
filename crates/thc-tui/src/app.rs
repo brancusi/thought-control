@@ -2560,7 +2560,7 @@ impl App {
     pub fn yours_is_current(&self, d: &thc_core::model::ConflictDetail) -> bool {
         let s = &self.vault.store;
         let text = |v: &Option<thc_core::model::ConflictVersion>| v.as_ref().map(|v| s.render_text(&v.text));
-        if let Some(line) = self.doc.as_ref().and_then(|doc| doc.lines.iter().find(|l| l.id == d.node)) {
+        if let Some(line) = self.doc.as_ref().and_then(|doc| doc.lines().iter().find(|l| l.id == d.node)) {
             if text(&d.current).as_deref() == Some(line.text.as_str()) {
                 return true;
             }
@@ -3476,8 +3476,8 @@ impl App {
                 }
             }
             if let Some(d) = self.doc.as_mut() {
-                if let Some(i) = d.lines.iter().position(|l| l.id == line) {
-                    d.caret = crate::doc::Pos { line: i, byte: 0 };
+                if let Some(i) = d.lines().iter().position(|l| l.id == line) {
+                    d.view.caret = crate::doc::Pos { line: i, byte: 0 };
                 }
             }
             return;
