@@ -264,6 +264,18 @@ pub struct Doc {
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
     last_saved: HashMap<String, Line>,
     pub(crate) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
+    /// The time and new-line ids the engine edits with (`Doc::stamp`).
+    stamp: std::sync::Arc<std::sync::Mutex<Stamp>>,
+}
+
+/// What an edit message carries for the engine: its time (typing runs, the idle save) and a
+/// seed new lines take their ids from. A replayed message edits the same way (ui-state.md §1).
+/// Unstamped (legacy paths): the wall clock and random ids.
+#[derive(Default)]
+struct Stamp {
+    at: Option<Instant>,
+    seed: Option<String>,
+    n: u32,
 }
 
 impl Doc {
@@ -275,7 +287,29 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let view = caretline::View::new(caretline::Rect::default());
-        Doc { target, root, engine: caretline::Doc::new(lines), view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
+        let stamp = std::sync::Arc::new(std::sync::Mutex::new(Stamp::default()));
+        let (clock, mint) = (stamp.clone(), stamp.clone());
+        let engine = caretline::Doc::new(lines)
+            .with_clock(move || clock.lock().unwrap_or_else(|e| e.into_inner()).at.unwrap_or_else(Instant::now))
+            .with_lines(move |depth, kind, text| {
+                let mut l = Line::new(depth, kind, text);
+                let mut s = mint.lock().unwrap_or_else(|e| e.into_inner());
+                if let Some(seed) = &s.seed {
+                    l.block.id = thc_core::id::from_key(&format!("edit:{seed}:{}", s.n));
+                    s.n += 1;
+                }
+                l
+            });
+        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new(), stamp }
+    }
+
+    /// Edit with this time and these new-line ids until `unstamp`.
+    pub fn stamp(&mut self, at: Instant, seed: &str) {
+        *self.stamp.lock().unwrap_or_else(|e| e.into_inner()) = Stamp { at: Some(at), seed: Some(seed.to_string()), n: 0 };
+    }
+
+    pub fn unstamp(&mut self) {
+        *self.stamp.lock().unwrap_or_else(|e| e.into_inner()) = Stamp::default();
     }
 
     /// Content generation, independent of caret motion and undo coalescing.

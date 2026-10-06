@@ -3,7 +3,7 @@
 //! This is the first P3 migration; legacy input/persistence paths remain outside it.
 use crate::{
     app::{Toast, ToastKind},
-    doc::{Pos, Target},
+    doc::{Doc, Pos, Target},
     theme::Token,
 };
 use std::time::Instant;
@@ -27,16 +27,36 @@ pub(crate) enum Msg {
     PageIdsPersisted { result: Result<(), String> },
     Copy { text: String, notice: String },
     ClipboardResult { result: Result<(), String>, notice: String, at: Instant },
+    /// An editing or motion command at the caret. `seed` names the lines it creates; `widths`
+    /// is the text column per depth (the layout motion moves over).
+    Edit { cmd: caretline::Command, at: Instant, seed: String, widths: Widths },
+    /// Text typed at the caret (over the selection).
+    Type { text: String, at: Instant, seed: String },
+}
+
+/// The text column's width for each depth, as laid out when the message was made.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Widths(pub Vec<usize>);
+
+impl Widths {
+    pub fn of(&self, depth: usize) -> usize {
+        self.0.get(depth).or(self.0.last()).copied().unwrap_or(1)
+    }
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     WritePageIds { visible: bool },
     WriteClipboard { text: String, notice: String },
+    /// Save the document (`all`: the caret's line too).
+    Save { all: bool },
+    /// Re-read lines an undo or redo brought back: they may have changed elsewhere meanwhile.
+    Patch,
 }
 
 pub(crate) struct DocumentFields<'a> {
     pub identity: DocumentIdentity,
-    pub scroll: &'a mut usize,
+    /// The document: its text and undo are model data, edited only through messages here.
+    pub doc: &'a mut Doc,
 }
 pub(crate) struct Fields<'a> {
     pub page_ids: Option<&'a mut bool>,
@@ -63,7 +83,7 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
     match msg {
         Msg::ViewportPrepared(Viewport::Document { identity, rows, caret, height, free, typewriter }) => {
             let Some(document) = state.document.filter(|d| d.identity == identity) else { return vec![] };
-            let scroll = document.scroll;
+            let scroll = &mut document.doc.scroll;
             if free {
                 *scroll = (*scroll).min(rows.saturating_sub(1));
             } else if let Some(caret) = caret {
@@ -116,6 +136,25 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
             };
             *state.toast = Some(Toast { kind, parts: vec![(text, token)], at });
         }
+        Msg::Edit { cmd, at, seed, widths } => {
+            let Some(document) = state.document else { return vec![] };
+            let doc = document.doc;
+            doc.stamp(at, &seed);
+            let out = doc.apply(cmd, &|l| widths.of(l.depth));
+            doc.unstamp();
+            match out {
+                caretline::Outcome::Done => {}
+                caretline::Outcome::Nothing(why) => *state.toast = Some(Toast { kind: ToastKind::Info, parts: vec![(why.into(), Token::Muted)], at }),
+                caretline::Outcome::Completed => return vec![Effect::Save { all: true }],
+                caretline::Outcome::Restored => return vec![Effect::Patch],
+            }
+        }
+        Msg::Type { text, at, seed } => {
+            let Some(document) = state.document else { return vec![] };
+            document.doc.stamp(at, &seed);
+            document.doc.insert(&text);
+            document.doc.unstamp();
+        }
     }
     vec![]
 }
@@ -132,23 +171,20 @@ mod tests {
             caret: Pos { line: 110, byte: 0 },
         }
     }
-    fn apply(scroll: &mut usize, doc_scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
-        update(
-            Fields {
-                page_ids: None,
-                cursor: 4,
-                scroll,
-                document: Some(DocumentFields { identity: identity(), scroll: doc_scroll }),
-                toast,
-            },
-            msg,
-        )
+    fn day() -> chrono::NaiveDate {
+        chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap()
+    }
+    fn doc() -> Doc {
+        Doc::new(Target::Journal { date: day() }, None, &[], day())
+    }
+    fn apply(scroll: &mut usize, doc: &mut Doc, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
+        update(Fields { page_ids: None, cursor: 4, scroll, document: Some(DocumentFields { identity: identity(), doc }), toast }, msg)
     }
 
     #[test]
     fn document_follow_replays_and_rejects_another_vault_or_revision() {
-        let mut left = (0, 0, None);
-        let mut right = (0, 0, None);
+        let mut left = (0, doc(), None);
+        let mut right = (0, doc(), None);
         let message = Msg::ViewportPrepared(Viewport::Document {
             identity: identity(),
             rows: 200,
@@ -159,8 +195,8 @@ mod tests {
         });
         assert!(apply(&mut left.0, &mut left.1, &mut left.2, message.clone()).is_empty());
         assert!(apply(&mut right.0, &mut right.1, &mut right.2, message).is_empty());
-        assert_eq!((left.0, left.1), (right.0, right.1));
-        assert_eq!(left.1, 92);
+        assert_eq!((left.0, left.1.scroll), (right.0, right.1.scroll));
+        assert_eq!(left.1.scroll, 92);
         for other in [DocumentIdentity { vault: "/scratch/two".into(), ..identity() }, DocumentIdentity { revision: 8, ..identity() }] {
             let message = Msg::ViewportPrepared(Viewport::Document {
                 identity: other,
@@ -171,8 +207,46 @@ mod tests {
                 typewriter: false,
             });
             apply(&mut left.0, &mut left.1, &mut left.2, message);
-            assert_eq!(left.1, 92);
+            assert_eq!(left.1.scroll, 92);
         }
+    }
+
+    /// Editing is a pure function of the messages: the same messages on the same document give
+    /// the same text, line ids, caret and undo steps, whenever they're replayed.
+    #[test]
+    fn edits_replay_exactly() {
+        use caretline::{Command as C, Motion};
+        let t0 = Instant::now();
+        let widths = Widths(vec![60, 56, 52]);
+        let ms = |n: u64| t0 + std::time::Duration::from_millis(n);
+        let msgs = vec![
+            Msg::Type { text: "- Plan the offsite".into(), at: ms(0), seed: "a".into() },
+            Msg::Edit { cmd: C::Newline, at: ms(100), seed: "b".into(), widths: widths.clone() },
+            Msg::Type { text: "book".into(), at: ms(200), seed: "c".into() },
+            Msg::Type { text: " the venue".into(), at: ms(300), seed: "d".into() },
+            Msg::Edit { cmd: C::Newline, at: ms(5_000), seed: "e".into(), widths: widths.clone() },
+            Msg::Edit { cmd: C::Indent, at: ms(5_100), seed: "f".into(), widths: widths.clone() },
+            Msg::Type { text: "call them".into(), at: ms(5_200), seed: "g".into() },
+            Msg::Edit { cmd: C::Move { motion: Motion::Up, select: true }, at: ms(5_300), seed: "h".into(), widths: widths.clone() },
+            Msg::Edit { cmd: C::Undo, at: ms(5_400), seed: "i".into(), widths: widths.clone() },
+        ];
+        let run = || {
+            let (mut scroll, mut d, mut toast) = (0, doc(), None);
+            d.caret_to_end(true);
+            // The first line is the host's (a fresh day's line): name it the same in both runs.
+            d.lines_mut()[0].block.id = "firstline000".into();
+            for m in msgs.clone() {
+                apply(&mut scroll, &mut d, &mut toast, m);
+            }
+            let lines: Vec<(String, usize, String)> = d.lines().iter().map(|l| (l.id.clone(), l.depth, l.text.clone())).collect();
+            (lines, d.view.caret, d.view.anchor, d.undo_depth())
+        };
+        let (a, b) = (run(), run());
+        assert_eq!(a, b);
+        let texts: Vec<(usize, &str)> = a.0.iter().map(|l| (l.1, l.2.as_str())).collect();
+        assert_eq!(texts, [(0, "Plan the offsite"), (0, "book the venue"), (1, "")], "⌃Z undid the typing run, not the indent");
+        let ids: Vec<&String> = a.0.iter().map(|l| &l.0).collect();
+        assert!(ids.contains(&&thc_core::id::from_key("edit:b:0")), "a new line id comes from its message: {a:?}");
     }
 
     #[test]
@@ -215,7 +289,7 @@ mod tests {
     #[test]
     fn clipboard_emits_one_value_effect_and_waits_for_an_explicit_result() {
         let mut scroll = 0;
-        let mut doc_scroll = 0;
+        let mut doc_scroll = doc();
         let mut toast = None;
         let effects = apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::Copy { text: "bé🙂".into(), notice: "copied 3 chars".into() });
         assert_eq!(effects, vec![Effect::WriteClipboard { text: "bé🙂".into(), notice: "copied 3 chars".into() }]);

@@ -15,7 +15,7 @@ pub(crate) fn document_identity(app: &App) -> Option<DocumentIdentity> {
 }
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     let identity = document_identity(app);
-    let document = identity.zip(app.doc.as_mut()).map(|(identity, doc)| DocumentFields { identity, scroll: &mut doc.scroll });
+    let document = identity.zip(app.doc.as_mut()).map(|(identity, doc)| DocumentFields { identity, doc });
     let effects = update::update(
         Fields { page_ids: Some(&mut app.page_ids), cursor: app.cursor, scroll: &mut app.scroll, document, toast: &mut app.toast },
         msg,
@@ -31,8 +31,28 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
                 let result = set_clipboard(&text);
                 dispatch(app, Msg::ClipboardResult { result, notice, at: std::time::Instant::now() });
             }
+            Effect::Save { all } => app.save_doc(all),
+            Effect::Patch => app.patch_doc(),
         }
     }
+}
+
+/// The text column per depth at the current layout, for an edit message.
+pub(crate) fn widths(app: &App) -> update::Widths {
+    let ctx = crate::doc_ui::DocContext::from_app(app);
+    update::Widths((0..=32).map(|depth| crate::doc_ui::text_width(ctx, app.screen_width, app.show_detail, depth)).collect())
+}
+
+/// An editing or motion command at the caret, as a message: its time and the ids of the lines
+/// it creates are taken here, once, so the update replays.
+pub(crate) fn edit(app: &mut App, cmd: caretline::Command) {
+    let widths = widths(app);
+    dispatch(app, Msg::Edit { cmd, at: std::time::Instant::now(), seed: thc_core::id::new_id(), widths });
+}
+
+/// Text typed at the caret, as a message.
+pub(crate) fn type_text(app: &mut App, text: &str) {
+    dispatch(app, Msg::Type { text: text.to_string(), at: std::time::Instant::now(), seed: thc_core::id::new_id() });
 }
 
 pub(crate) fn toggle_page_ids(app: &mut App) {

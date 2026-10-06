@@ -1,7 +1,7 @@
 //! Keys inside a document (tui-editor.md §2, §4): Write by default, Esc to Navigate.
 
 use crate::app::App;
-use crate::doc::{Line, Pos, Target};
+use crate::doc::{Pos, Target};
 use crate::motion::Motion;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
@@ -54,10 +54,6 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
             app.info("turn on \"Option as Meta\" in your terminal for ⌥ keys · F1 keys");
         }
     }
-    let ctx = crate::doc_ui::DocContext::from_app(app);
-    let sw = app.screen_width;
-    let detail = app.show_detail;
-    let width_of = move |l: &Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth);
     // The `[[` popup takes ↑ ↓ ⌃N ⌃P Enter Tab Esc while it's open.
     if app.link_open {
         if let Some((_, q)) = app.link_query() {
@@ -106,13 +102,12 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
     // anything else does nothing (sealed: writing.md §3, keymap.md §3.2).
     let key = crate::keymap::Key::of(&k);
     if let Some(Some(b)) = crate::keymap::lookup(app, &[crate::keymap::Ctx::Write], &[key]) {
-        return write_action(app, b.action, shift, &width_of);
+        return write_action(app, b.action, shift);
     }
     if let KeyCode::Char(c) = k.code {
         if !ctrl && !alt && !k.modifiers.contains(KeyModifiers::SUPER) {
-            let d = app.doc.as_mut().unwrap();
             let mut buf = [0u8; 4];
-            d.insert(c.encode_utf8(&mut buf));
+            crate::runtime_effects::type_text(app, c.encode_utf8(&mut buf));
             // `[[` opens the link popup; the cursor starts on the first match.
             if c == '[' && app.link_query().is_some_and(|(_, q)| q.is_empty()) {
                 app.link_open = true;
@@ -132,28 +127,24 @@ pub fn run_write(app: &mut App, action: &str) -> bool {
     if app.doc.is_none() || !crate::keymap::table().iter().any(|b| b.ctx == crate::keymap::Ctx::Write && b.action == action) {
         return false;
     }
-    let ctx = crate::doc_ui::DocContext::from_app(app);
-    let sw = app.screen_width;
-    let detail = app.show_detail;
-    let width_of = move |l: &Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth);
-    let r = write_action(app, action, false, &width_of);
+    let r = write_action(app, action, false);
     app.doc_after_key();
     r
 }
 
 /// A `write` action from the table, on the open document. `shift`: a move extends the selection.
-fn write_action(app: &mut App, action: &str, shift: bool, width_of: &dyn Fn(&Line) -> usize) -> bool {
+fn write_action(app: &mut App, action: &str, shift: bool) -> bool {
     // ⌘↑ ⌘↓ are big jumps: history keeps where the caret was (navigation.md §7.1).
     if !shift && matches!(action, "move.doc_start" | "move.doc_end") {
         let before = app.place();
-        let r = write_action_inner(app, action, shift, width_of);
+        let r = write_action_inner(app, action, shift);
         app.history_jumped(before);
         return r;
     }
-    write_action_inner(app, action, shift, width_of)
+    write_action_inner(app, action, shift)
 }
 
-fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn Fn(&Line) -> usize) -> bool {
+fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
     // The view's height (last frame's), less two rows of context: a page (motion.md §4).
     let page = app.render.doc_view_rows.saturating_sub(2).max(1);
     // ⌥V: an image on the clipboard is attached at the caret (attachments.md §2); otherwise the
@@ -228,13 +219,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         "clip.paste_system" => app.paste_system(),
         // Editing and motion: caretline commands, applied to the document.
         other if command_for(other, shift, page as isize).is_some() => {
-            let cmd = command_for(other, shift, page as isize).unwrap();
-            match d.apply(cmd, width_of) {
-                caretline::Outcome::Done => {}
-                caretline::Outcome::Nothing(why) => app.info(why),
-                caretline::Outcome::Completed => app.save_doc(true),
-                caretline::Outcome::Restored => app.patch_doc(),
-            }
+            crate::runtime_effects::edit(app, command_for(other, shift, page as isize).unwrap());
         }
         // The views, help, the palette, quit, today: global actions bound in write; save first.
         other => {
@@ -292,7 +277,7 @@ pub fn paste(app: &mut App, text: &str) {
     }
     // One line: typed in as is, less what can't show in a line (a tab, a stray CR).
     if !text.contains('\n') && !text.contains('\r') {
-        d.insert(&text.replace('\t', "    "));
+        crate::runtime_effects::type_text(app, &text.replace('\t', "    "));
         app.doc_after_key();
         return;
     }
