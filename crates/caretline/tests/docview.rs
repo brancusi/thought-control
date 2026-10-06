@@ -333,3 +333,54 @@ fn the_host_supplies_the_clock_and_the_new_lines() {
     // And it's the same every time.
     assert_eq!(run(), (ids, changed, after_undo));
 }
+
+/// A host that draws its own layout gives motion its stops; typing never asks for them.
+#[test]
+fn motion_uses_the_hosts_stops_and_typing_never_lays_out() {
+    let mut d = sample();
+    let mut v = View::new(Rect { x: 0, y: 0, width: 60, height: 20 });
+    let mut calls = 0;
+    // The host's layout: one row per block, whatever the width.
+    let mut stops = |lines: &[L], _: &View<u64>| {
+        calls += 1;
+        lines.iter().enumerate().flat_map(|(i, l)| caretline::note_stops(i, &l.text, &[(0, l.text.len())], 0, 0)).collect()
+    };
+    d.apply_and_rebase_with(&mut v, [], Command::Move { motion: Motion::Down, select: false }, &mut stops).unwrap();
+    assert_eq!(v.caret.line, 1, "the host's single row per block: ↓ leaves the soft-broken paragraph");
+    d.apply_and_rebase_with(&mut v, [], Command::Newline, &mut stops).unwrap();
+    d.insert(&mut v, "x").unwrap();
+    assert_eq!(calls, 1, "only the motion laid out");
+}
+
+/// `edit_at` runs the buffer's rules at a view's caret, refuses a read-only view and rebases the
+/// others; `at` reads and selects on any view.
+#[test]
+fn edit_at_and_at_follow_the_view_rules() {
+    let mut d = sample();
+    let mut main = View::new(Rect { x: 0, y: 0, width: 60, height: 20 });
+    let mut panel = View::new(Rect { x: 0, y: 0, width: 30, height: 10 }).read_only(true);
+    panel.caret = Pos { line: 3, byte: 4 };
+    let before = texts(&d);
+    assert!(matches!(d.edit_at(&mut panel, |b| b.insert("no")), Err(Refused::ReadOnly)));
+    assert_eq!(texts(&d), before);
+    main.caret = Pos { line: 3, byte: 0 };
+    let ((), edit) = d.edit_at(&mut main, |b| b.insert(">> ")).unwrap();
+    d.rebase(&mut panel, &edit);
+    assert_eq!(panel.caret, Pos { line: 3, byte: 7 }, "the panel's caret follows its text");
+    assert_eq!(main.caret, Pos { line: 3, byte: 3 });
+    d.at(&mut panel, |b| b.select_word(Pos { line: 1, byte: 3 }));
+    assert_eq!((panel.anchor, panel.caret), (Some(Pos { line: 1, byte: 2 }), Pos { line: 1, byte: 8 }), "a word selected in a read-only view");
+    assert_eq!(d.at(&mut panel, |b| b.selected_parts()), vec![(1, "bullet".to_string())]);
+}
+
+/// A motion moves no text: rebasing another view by it changes nothing.
+#[test]
+fn a_motion_rebases_nothing() {
+    let mut d = sample();
+    let mut a = View::new(Rect { x: 0, y: 0, width: 60, height: 20 });
+    let mut b = View::new(Rect { x: 0, y: 0, width: 60, height: 20 });
+    b.caret = Pos { line: 2, byte: 3 };
+    b.anchor = Some(Pos { line: 2, byte: 1 });
+    d.apply_and_rebase(&mut a, [&mut b], Command::Move { motion: Motion::DocEnd, select: false }, &W).unwrap();
+    assert_eq!((b.caret, b.anchor), (Pos { line: 2, byte: 3 }, Some(Pos { line: 2, byte: 1 })));
+}
