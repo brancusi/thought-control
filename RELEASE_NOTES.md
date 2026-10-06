@@ -1,3 +1,7 @@
+**0.9.65**
+
+- **Fixed: pressing ⌃T twice on a plain line now ticks it off.** The first press makes it a task and the second marks it done. Before, a line you'd already saved went back to an open task after the second press.
+
 **0.9.64**
 
 - **`thc status` counts tokens while work is still going.** The background service checks each claimed task's agent session about once a minute, so `thc status` and owner totals include work in flight, not just finished tasks. It saves a checkpoint to the task every hour and a final total when the task is done; `thc status --collect` still works by hand.
