@@ -1,3 +1,11 @@
+**0.9.62**
+
+- **`thc team up` starts your whole team from the project's settings.** List the roster once in `.thc.toml` (`[[team.roster]]`: role, agent, model, count), and a bare `thc team up` opens it in a new `team` tab with balanced columns and the PM at the bottom right. Each agent gets the model you chose, herdr included. `[team.layout]` sets the columns, the tab name and where the PM goes; `--dry-run` shows the roster, commands and layout first.
+- **Remap keys from inside the TUI.** Type `:remap` or click the help footer: thc opens your key settings in your editor, checks them when you close it (with line numbers if something's wrong), and picks up the new keys straight away. Help marks remapped keys with `•`, and a running TUI reloads keys when the settings file changes.
+- **Fixed: a rare torn read of the log.** Two writers appending to the same device log at the same moment could leave a reader's place mid-line (`thc: warning: … expected value at line 1`). Appends now take a lock on the file, so every reader sees whole lines.
+- **The claim hint in `thc next` names the vault** (`--vault thc-dev`) instead of its full path, so screenshots don't show your home folder.
+- **Under the hood:** the editor now runs entirely on caretline, thc's own editor engine: typing, Enter, Tab, ⌃T, undo, motion, folds and copy. Nothing should feel different.
+
 **0.9.60**
 
 - **Thought Control is open source.** thc now lives in the public repo brancusi/thought-control, and releases come from brancusi/thought-control-releases. **If you installed thc before this release, reinstall it once** (your notes and settings stay as they are):
