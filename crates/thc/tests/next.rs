@@ -94,6 +94,13 @@ fn next_skips_blocked_owned_and_unready_tasks() {
     let j = v.json("claude", &["next"]);
     assert_eq!(j["queue"]["title"], "Issues");
     assert!(j["claim"].as_str().unwrap().contains("owner=claude' --expect status=todo"), "{j}");
+    // An unregistered vault's name doesn't resolve from elsewhere: the hint keeps the path.
+    std::fs::create_dir_all(v.root.join("elsewhere")).unwrap();
+    let o = v.cmd("claude").current_dir(v.root.join("elsewhere")).args(["--json", "next"]).output().unwrap();
+    let away: Value = serde_json::from_slice(&o.stdout).unwrap();
+    let vault = std::fs::canonicalize(v.root.join("vault")).unwrap();
+    let claim = away["claim"].as_str().unwrap();
+    assert!(claim.ends_with(&format!("--vault {}", vault.display())) || claim.ends_with(&format!("--vault {}", v.root.join("vault").display())), "{claim}");
     // --mine: what you own, in order.
     assert_eq!(v.next("codex", &["--mine"]), ["first, owned"]);
     // Claimed: the next one moves up.
