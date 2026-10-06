@@ -74,6 +74,9 @@ pub struct Buffer<L: BlockLine> {
     last_edit: Option<(EditKind, usize, Instant)>,
     /// When the buffer last changed (a host's idle commit).
     pub changed_at: Option<Instant>,
+    /// Bumped by every edit and every undo or redo (not by motion): a host keys caches of what
+    /// it derives from the text (wraps, highlights) on it.
+    content_rev: u64,
     /// The host's clock (typing runs, changed_at): `Instant::now` unless the host replays.
     clock: Clock,
     /// The host's new lines (Enter, a split, a paste): `L::fresh` unless the host mints ids.
@@ -102,6 +105,7 @@ impl<L: BlockLine> Buffer<L> {
             redo: vec![],
             last_edit: None,
             changed_at: None,
+            content_rev: 0,
             clock: std::sync::Arc::new(Instant::now),
             mint: std::sync::Arc::new(std::sync::Mutex::new(|d: usize, k: Kind, t: &str| L::fresh(d, k, t))),
         }
@@ -156,6 +160,7 @@ impl<L: BlockLine> Buffer<L> {
 
     /// Record an undo step before an edit. Typing on one line within 1.5 s is one step.
     fn begin(&mut self, kind: EditKind) {
+        self.content_rev = self.content_rev.wrapping_add(1);
         // An empty selection (⇧→ at the end of the text: the anchor on the caret) ends with any
         // edit; left behind, it pointed past the text once the edit shortened it (fuzz).
         if self.anchor == Some(self.caret) {
@@ -172,6 +177,11 @@ impl<L: BlockLine> Buffer<L> {
         self.redo.clear();
         self.last_edit = Some((kind, self.caret.line, now));
         self.changed_at = Some(now);
+    }
+
+    /// The content revision: changes with every edit, undo and redo, never with motion.
+    pub fn content_rev(&self) -> u64 {
+        self.content_rev
     }
 
     /// A note patched in from elsewhere (see `restore`).
@@ -207,6 +217,7 @@ impl<L: BlockLine> Buffer<L> {
     /// Back to a snapshot. Save state (base, saved) stays as the server has it, so undoing past
     /// a save edits the line back and saves that as a new transaction.
     fn restore(&mut self, s: Snapshot<L>) {
+        self.content_rev = self.content_rev.wrapping_add(1);
         // Deletions not saved yet: those notes are still in the vault (fuzz: undo recreated one
         // under a new id and dropped the pending delete, leaving the old one and a copy).
         let pending: std::collections::HashSet<L::Id> = self.deleted.iter().cloned().collect();
@@ -1047,3 +1058,61 @@ fn floor_char(s: &str, mut i: usize) -> usize {
     i
 }
 
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[derive(Clone, PartialEq)]
+    struct L(Block<usize>);
+    impl std::ops::Deref for L {
+        type Target = Block<usize>;
+        fn deref(&self) -> &Block<usize> {
+            &self.0
+        }
+    }
+    impl std::ops::DerefMut for L {
+        fn deref_mut(&mut self) -> &mut Block<usize> {
+            &mut self.0
+        }
+    }
+    impl BlockLine for L {
+        type Id = usize;
+        fn fresh(depth: usize, kind: Kind, text: &str) -> Self {
+            static NEXT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(1_000_000);
+            L(Block::new(NEXT.fetch_add(1, std::sync::atomic::Ordering::Relaxed), depth, kind, text))
+        }
+        fn is_new(&self) -> bool {
+            false
+        }
+        fn keep_host_state(&mut self, _: &Self) {}
+        fn revive(&mut self) {}
+    }
+
+    /// Undo steps share the lines they didn't touch (jank: undo copied the whole document).
+    #[test]
+    fn undo_steps_share_untouched_lines() {
+        let mut b = Buffer::new((0..1000).map(|i| L(Block::new(i, 0, Kind::Bullet, &format!("line {i}")))).collect());
+        let rev = b.content_rev();
+        for i in 0..10 {
+            b.caret = Pos { line: i, byte: b.lines[i].text.len() };
+            b.insert("!");
+        }
+        assert_ne!(b.content_rev(), rev, "edits change the content revision");
+        assert_eq!(b.undo.len(), 10);
+        assert!(std::rc::Rc::ptr_eq(&b.undo[0].lines[500], &b.undo[9].lines[500]), "an untouched line is one allocation");
+        assert!(!std::rc::Rc::ptr_eq(&b.undo[0].lines[3], &b.undo[9].lines[3]), "an edited one isn't");
+        for _ in 0..10 {
+            let rev = b.content_rev();
+            assert!(b.undo());
+            assert_ne!(b.content_rev(), rev, "and so does undo");
+        }
+        assert!(b.lines.iter().take(10).all(|l| !l.text.ends_with('!')), "undo restores every step");
+        while b.redo() {}
+        assert!(b.lines.iter().take(10).all(|l| l.text.ends_with('!')), "and redo replays them");
+        let rev = b.content_rev();
+        b.caret = Pos { line: 5, byte: 0 };
+        b.select(true);
+        assert_eq!(b.content_rev(), rev, "motion doesn't");
+    }
+}
