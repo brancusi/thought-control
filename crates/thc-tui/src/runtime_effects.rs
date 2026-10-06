@@ -22,6 +22,12 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     );
     for effect in effects {
         match effect {
+            Effect::EditKeys => {
+                app.save_doc(true);
+                app.drain_saves(true);
+                app.overlay = None;
+                app.editor_request = Some("@keys".into());
+            }
             Effect::WritePageIds { visible } => {
                 let result =
                     std::fs::write(app.vault.paths.cache.join("tui.toml"), format!("page_ids = {visible}\n")).map_err(|e| e.to_string());

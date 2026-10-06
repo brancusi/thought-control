@@ -597,6 +597,7 @@ pub const PALETTE: &[PaletteItem] = &[
     PaletteItem { label: "Focus: what it shows", action: "focus.overlay", cmd: "" },
     PaletteItem { label: "Mouse capture on / off", action: "mouse.toggle", cmd: "" },
     PaletteItem { label: "Help", action: "help.context", cmd: "" },
+    PaletteItem { label: "Remap keys in $EDITOR", action: "keys.remap", cmd: ":remap" },
     PaletteItem { label: "Quit", action: "quit", cmd: "" },
 ];
 

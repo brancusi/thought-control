@@ -19,6 +19,70 @@ struct Pty {
     child: std::process::Child,
 }
 
+#[test]
+fn remap_suspends_for_the_editor_and_reloads_live_keys() {
+    let root = std::env::temp_dir().join(format!("thc-pty-remap-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&root);
+    std::fs::create_dir_all(root.join("cfg")).unwrap();
+    for args in [vec!["init", "v"], vec!["todo", "Editor regression", "--due", "today"], vec!["todo", "Live regression", "--due", "tomorrow"]] {
+        let mut cmd = common::thc();
+        let out = cmd.current_dir(&root).args(args).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c")).output().unwrap();
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let editor = root.join("editor.sh");
+    std::fs::write(&editor, "#!/bin/sh\nprintf '\\n[keys.list]\\n\"C-x\" = \"node.done\"\\n' >> \"$1\"\n").unwrap();
+    std::fs::set_permissions(&editor, std::os::unix::fs::PermissionsExt::from_mode(0o755)).unwrap();
+    let config = root.join("cfg");
+    let mut p = Pty::spawn_env(&root, &["tui"], &[("VISUAL", editor.to_str().unwrap()), ("THC_CONFIG_DIR", config.to_str().unwrap())]);
+    let wait_text = |p: &Pty, text: &str| {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let out = p.out.lock().unwrap();
+            if String::from_utf8_lossy(&out).contains(text) { break; }
+            assert!(Instant::now() < deadline, "never showed {text:?}: {}", String::from_utf8_lossy(&out));
+            drop(out);
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_text(&p, "Today");
+    p.send(b"3:remap\r");
+    wait_text(&p, "keys ok");
+    let file = config.join("config.toml");
+    let text = std::fs::read_to_string(&file).unwrap();
+    assert!(text.contains("# [keys.write]") && text.contains("\"C-x\" = \"node.done\""), "generated defaults and editor changes are both present");
+    let out = p.out.lock().unwrap().clone();
+    let left = out.windows(8).position(|w| w == b"\x1b[?1049l").expect("editor leaves alternate screen");
+    assert!(out[left + 8..].windows(8).any(|w| w == b"\x1b[?1049h"), "TUI resumes its screen");
+    let query = |text: &str| {
+        let out = common::thc().current_dir(&root).args(["q", &format!("text:{text} status:any"), "--json"]).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c")).output().unwrap();
+        assert!(out.status.success());
+        serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["items"][0]["status"].clone()
+    };
+    p.send(b"\x18"); // the editor's new key works immediately
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while query("Editor") != "done" {
+        assert!(Instant::now() < deadline, "editor remap was not reloaded");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+
+    // Change the remap from another terminal while the TUI remains open.
+    std::fs::write(&file, text.replace("\"C-x\" = \"node.done\"", "\"C-x\" = \"node.history\"\n\"C-y\" = \"node.done\"" )).unwrap();
+    std::thread::sleep(Duration::from_millis(1000));
+    p.send(b"\x18"); // old completion key now opens history, without completing
+    p.send(b"\x1b");
+    p.send(b"3");
+    assert_eq!(query("Live"), "todo");
+    p.send(b"\x19"); // new completion key
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while query("Live") != "done" {
+        assert!(Instant::now() < deadline, "new key was not reloaded: {}", String::from_utf8_lossy(&p.out.lock().unwrap()));
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    p.send(b"\x11");
+    drop(p);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// A failing assert must never leave the TUI running (one sat on a pty for 19 hours).
 impl Drop for Pty {
     fn drop(&mut self) {
@@ -70,6 +134,10 @@ impl Pty {
                 // crossterm asks for the kitty flags (CSI ? u) and then DA1: answer as a kitty terminal.
                 if b[..n].windows(4).any(|x| x == b"\x1b[?u") {
                     let _ = w.write_all(b"\x1b[?0u\x1b[?62;22c");
+                }
+                // Rebuilding the terminal after an external editor queries its cursor.
+                if b[..n].windows(4).any(|x| x == b"\x1b[6n") {
+                    let _ = w.write_all(b"\x1b[1;1R");
                 }
                 o.lock().unwrap().extend_from_slice(&b[..n]);
             }

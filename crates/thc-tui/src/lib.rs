@@ -22,6 +22,7 @@ mod quiet;
 mod snapshot_fmt;
 mod input;
 mod keymap;
+pub mod keys_edit;
 mod images;
 mod motion;
 mod recover;
@@ -479,6 +480,9 @@ fn wants_bar(app: &App) -> bool {
 
 fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> Result<()> {
     let mut last_poll = Instant::now();
+    let mut last_keys_poll = Instant::now();
+    let mut keys_watch = keys_edit::Watch::default();
+    keys_watch.changed(&app.vault.paths.vault);
     // THC_TUI_TRACE=1: per-frame timings (key read → frame written), for the budgets in
     // tui-editor.md §10. Written to the cache dir as tui-trace.log; p50/p99 on exit.
     let trace = std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1");
@@ -497,6 +501,12 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
         }
         if let Some(path) = app.switch_to.take() {
             switch_vault(app, &path);
+        }
+        if last_keys_poll.elapsed() >= Duration::from_millis(500) {
+            last_keys_poll = Instant::now();
+            if keys_watch.changed(&app.vault.paths.vault) {
+                reload_keys(app);
+            }
         }
         app.drain_update();
         // What a crash now would lose, for the panic hook (recover.rs).
@@ -556,10 +566,18 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
             let _ = ratatui::init();
             *terminal = ratatui::Terminal::new(quiet::Quiet::new(std::io::stdout()))?;
             terminal.clear()?;
-            match r {
-                Ok(Some(msg)) => app.confirm("edited", None, msg),
-                Ok(None) => app.info("no changes"),
-                Err(e) => app.error(format!("{e:#}")),
+            if id == "@keys" {
+                runtime_effects::dispatch(app, update::Msg::KeysEdited {
+                    result: r.map(|msg| msg.unwrap_or_default()).map_err(|e| format!("{e:#}")),
+                    at: Instant::now(),
+                });
+                keys_watch.changed(&app.vault.paths.vault);
+            } else {
+                match r {
+                    Ok(Some(msg)) => app.confirm("edited", None, msg),
+                    Ok(None) => app.info("no changes"),
+                    Err(e) => app.error(format!("{e:#}")),
+                }
             }
             let _ = app.reload();
             continue;
@@ -636,6 +654,11 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
 
 /// `$EDITOR` round-trip on a subtree (same format as `thc edit`). The terminal is restored first.
 fn run_editor(app: &mut App, id: &str) -> Result<Option<String>> {
+    if id == "@keys" {
+        let result = keys_edit::edit(None);
+        reload_keys(app);
+        return result.map(Some);
+    }
     if let Some(name) = id.strip_prefix("@view:") {
         return run_view_editor(app, name);
     }
@@ -686,6 +709,19 @@ fn run_editor(app: &mut App, id: &str) -> Result<Option<String>> {
             }
             Err(e) => return Err(e.context(format!("edit not applied; text kept at {}", path.display()))),
         }
+    }
+}
+
+fn reload_keys(app: &mut App) {
+    let settings = thc_core::settings::init(Some(&app.vault.paths.vault));
+    keymap::reset();
+    app.pending_keys.clear();
+    app.pending_since = None;
+    let problems = keymap::remap_problems();
+    if !problems.is_empty() {
+        app.error(format!("keys: {} · :remap to fix", problems.join(" · ")));
+    } else if let Some(problem) = settings.notices.first() {
+        app.error(problem.clone());
     }
 }
 

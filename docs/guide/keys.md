@@ -25,11 +25,13 @@ your terminal's own selection. More in [The mouse](mouse.md).
 
 ## Remapping
 
-The easy way: **`thc keys --edit`**. It opens your config at a list of every key, commented
+The easy way: **`thc keys --edit`**, or **`:remap`** in the TUI's command palette. It opens your config at a list of every key, commented
 out and grouped by where it works, each with what it does. Uncomment a line (and its
 `[keys.…]` line above), change the key on the left, save, and thc checks it for you:
 `keys ok · 1 remapped`, or the problem with its line number. Run it again any time: the list
-refreshes, and the lines you changed stay. `--context write` opens at that part;
+refreshes, and the lines you changed stay. The TUI resumes after the editor closes and picks
+up remaps live, including changes made from another terminal. Help marks remapped keys
+with `•` and shows the editing command in its footer. `--context write` opens at that part;
 `--print` just shows the list. Three examples:
 
 - unbind a key: `"q" = "no_op"`;

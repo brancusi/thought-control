@@ -109,6 +109,18 @@ fn openers() -> Vec<(&'static str, Box<dyn Fn(&mut App)>)> {
     ]
 }
 
+#[test]
+fn help_remap_footer_is_a_working_menu_action() {
+    let (_s, mut app) = app("help-remap");
+    let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
+    app.overlay = Some(Overlay::Help { all: false, scroll: 0 });
+    draw(&mut app, &mut term);
+    let footer = app.render.click_targets.iter().find(|t| matches!(t.what, Click::Action("keys.remap"))).expect("remap footer target").clone();
+    click(&mut app, footer.x0, footer.y);
+    assert!(app.overlay.is_none());
+    assert_eq!(app.editor_request.as_deref(), Some("@keys"));
+}
+
 fn picker(a: &mut App) {
     let row = |name: &str, current: bool, home: bool| crate::app::VaultRow { name: name.into(), path: std::env::temp_dir().join(format!("thc-overlays-{name}")), open: Some(1), inbox: Some(0), sync: "local only", current, home, accent: "ember".into() };
     a.overlay = Some(Overlay::Vaults { rows: vec![row("acme", false, false), row("side", false, false), row("personal", true, true)], sel: 2, naming: None });

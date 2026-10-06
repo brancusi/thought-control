@@ -282,6 +282,10 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                     }
                     key(app, code, mods);
                 }
+                Some(crate::ui::Click::Action(action)) if matches!(app.overlay, Some(Overlay::Help { .. })) => {
+                    app.overlay = None;
+                    crate::keymap::run(app, action);
+                }
                 _ => {}
             }
         }

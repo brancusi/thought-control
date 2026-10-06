@@ -21,7 +21,7 @@ mod team_host;
 mod team_launch;
 mod team_board;
 mod wezterm;
-mod keys_edit;
+use thc_tui::keys_edit;
 mod daemon_cmd;
 mod apply;
 mod view_cmd;
@@ -1416,47 +1416,18 @@ fn grouped_list(ctx: &mut Ctx, by: &str, sorted: bool, nodes: Vec<Node>, used: &
 /// `thc keys --edit` (keymap.md §8.2a): the block in config.toml, made or refreshed, then
 /// $EDITOR at it (or at `--context`'s table), then the result checked. `--print`: the block only.
 fn keys_edit_cmd(context: Option<&str>, print: bool) -> Result<()> {
-    let bindings = thc_tui::keys_json();
-    let file = thc_core::vault::global_config_path().ok_or_else(|| anyhow::anyhow!("no config path (HOME isn't set)"))?;
-    let old = std::fs::read_to_string(&file).unwrap_or_default();
-    let next = keys_edit::with_block(&old, &bindings);
     if print {
+        let bindings = thc_tui::keys_json();
+        let file = thc_core::vault::global_config_path().ok_or_else(|| anyhow::anyhow!("no config path (HOME isn't set)"))?;
+        let old = std::fs::read_to_string(file).unwrap_or_default();
+        let next = keys_edit::with_block(&old, &bindings);
         let a = next.find(keys_edit::BEGIN).unwrap_or(0);
         let b = next.find(keys_edit::END).map_or(next.len(), |b| b + keys_edit::END.len());
         println!("{}", &next[a..b]);
         return Ok(());
     }
-    if let Some(c) = context {
-        if keys_edit::line_of_context(&next, c).is_none() {
-            return Err(thc_core::error::invalid(format!("no keys context {c:?} · global, list, today, inbox, tasks, pages, journal, search, log, write")));
-        }
-    }
-    if let Some(d) = file.parent() {
-        std::fs::create_dir_all(d)?;
-    }
-    if next != old {
-        std::fs::write(&file, &next)?;
-    }
-    let line = context.and_then(|c| keys_edit::line_of_context(&next, c)).or_else(|| next.lines().position(|l| l == keys_edit::BEGIN).map(|i| i + 1)).unwrap_or(1);
-    let editor = std::env::var("VISUAL").or_else(|_| std::env::var("EDITOR")).unwrap_or_else(|_| "vi".into());
-    // Most terminal editors take +LINE (vi, vim, nvim, nano, micro, emacs, kak, hx).
-    let at = if ["vi", "vim", "nvim", "nano", "micro", "emacs", "kak", "hx"].iter().any(|e| editor.split_whitespace().next().is_some_and(|x| x.ends_with(e))) { format!(" +{line}") } else { String::new() };
-    let status = std::process::Command::new("sh").arg("-c").arg(format!("{editor}{at} \"$1\"")).arg("thc-keys").arg(&file).status()?;
-    if !status.success() {
-        return Err(anyhow::anyhow!("editor exited with {status}"));
-    }
-    let text = std::fs::read_to_string(&file)?;
-    let problems = keys_edit::validate(&file, &text);
-    if problems.is_empty() {
-        let n = keys_edit::remapped(&text);
-        println!("keys ok · {n} remapped · {}", thc_core::vault::tilde(&file));
-        Ok(())
-    } else {
-        for p in &problems {
-            eprintln!("{p}");
-        }
-        Err(thc_core::error::invalid(format!("{} problem{} in {} · thc keys --edit to fix", problems.len(), if problems.len() == 1 { "" } else { "s" }, thc_core::vault::tilde(&file))))
-    }
+    println!("{}", keys_edit::edit(context)?);
+    Ok(())
 }
 
 fn explain_cmd(ctx: &mut Ctx, q: &str, sql: bool) -> Result<()> {
