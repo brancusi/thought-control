@@ -536,9 +536,10 @@ pub fn proto_schema() -> Value {
             "event": obj(json!({ "event": { "type": "string" }, "data": {} }))
         },
         "methods": {
-            "hello": { "params": obj(json!({ "client": { "type": "string" }, "version": { "type": "string" }, "proto": { "type": "integer" }, "topics": { "type": "array", "items": { "enum": ["changed", "alerts", "*"] } }, "deliver": { "type": "boolean" } })),
+            "hello": { "params": obj(json!({ "client": { "type": "string" }, "version": { "type": "string" }, "proto": { "type": "integer" }, "topics": { "type": "array", "items": { "enum": ["changed", "alerts", "tokens", "*"] } }, "deliver": { "type": "boolean" } })),
                        "result": obj(json!({ "daemon": { "type": "string" }, "proto": { "type": "integer" }, "proto_minor": { "type": "integer", "description": "additive revision within proto" }, "device": { "type": "string" }, "version_mismatch": { "type": "boolean" } })) },
             "status": { "params": obj(json!({})), "result": { "$ref": "#/$defs/DaemonStatus" } },
+            "tokens": { "params": obj(json!({})), "result": obj(json!({ "items": { "type": "array", "items": obj(json!({ "id": { "type": "string" }, "tokens": obj(json!({ "in": { "type": "integer" }, "out": { "type": "integer" }, "cache": { "type": "integer" }, "source": { "type": "string" }, "sessions": { "type": "array", "items": { "type": "string" } } })), "collected_ms": { "type": "integer" } })) } })) },
             "today": { "params": obj(json!({})), "result": { "$ref": "#/$defs/TodayPanel" } },
             "query": { "params": obj(json!({ "q": { "type": "string" }, "limit": { "type": "integer" } })), "result": { "$ref": "#/$defs/List" } },
             "parse": { "params": obj(json!({ "text": { "type": "string" } })), "result": { "$ref": "#/$defs/CapturePreview" } },
@@ -566,6 +567,7 @@ pub fn proto_schema() -> Value {
                               "result": obj(json!({ "root": { "type": "string" }, "tx": { "type": ["string", "null"] }, "events": { "type": "integer" }, "results": { "type": "array", "items": { "$ref": "#/$defs/BlockResult" } } })) }
         },
         "events": {
+            "tokens": { "topic": "tokens", "data": obj(json!({ "ids": { "type": "array", "items": { "type": "string" } } })) },
             "changed": { "topic": "changed", "data": obj(json!({ "ids": { "type": "array", "items": { "type": "string" } }, "tx": { "type": "string" }, "actor": { "type": "string" }, "dev": { "type": "string" } })) },
             "conflict": { "topic": "changed", "data": obj(json!({ "id": { "type": "string" }, "kind": { "enum": ["text", "move"] } })) },
             "alert.fire": { "topic": "alerts", "data": { "$ref": "#/$defs/Delivery" } },

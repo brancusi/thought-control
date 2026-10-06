@@ -5,6 +5,7 @@
 
 mod notifier;
 mod server;
+mod tokens;
 pub use server::today_panel;
 
 use anyhow::{Context, Result, bail};
@@ -73,6 +74,8 @@ pub struct Shared {
     pub color: bool,
     /// Set by writes made through the socket so the main loop pushes them promptly.
     pub dirty: AtomicBool,
+    /// Session collection runs on its own worker, outside the vault lock while reading logs.
+    pub tokens_dirty: AtomicBool,
     /// The file watcher is up: changes are pushed as they happen (until then, on the next pass).
     pub watching: AtomicBool,
     pub last_change: Mutex<Option<(String, String)>>,
@@ -258,6 +261,7 @@ fn serve_until(paths: Paths, opts: RunOpts, primary: bool, stop: Option<Arc<Atom
         json_log: opts.json,
         color: !opts.json && std::io::stdout().is_terminal(),
         dirty: AtomicBool::new(false),
+        tokens_dirty: AtomicBool::new(true),
         watching: AtomicBool::new(false),
         last_change: Mutex::new(None),
     });
@@ -325,7 +329,10 @@ fn serve_until(paths: Paths, opts: RunOpts, primary: bool, stop: Option<Arc<Atom
         let sh = shared.clone();
         std::thread::spawn(move || update_checks(sh));
     }
+    let token_worker = tokens::start(shared.clone());
     let result = main_loop(&shared, &paths, rx);
+    shared.shutdown.store(true, Ordering::SeqCst);
+    let _ = token_worker.join();
     // Tell every client before the socket goes, so panels go offline at once.
     let reason = match &result {
         Err(_) => "error",
@@ -512,6 +519,7 @@ fn sync_step(shared: &Arc<Shared>, st: &mut LoopState, rescan: bool) -> Result<(
         (fresh, conflicts, v.device.clone())
     };
     if !fresh.is_empty() {
+        shared.tokens_dirty.store(true, Ordering::SeqCst);
         // Group by transaction for both the log line and the pushed events.
         let mut by_tx: Vec<(String, Vec<&thc_core::model::HistoryEntry>)> = Vec::new();
         for e in &fresh {

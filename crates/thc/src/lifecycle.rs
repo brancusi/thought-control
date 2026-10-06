@@ -37,6 +37,11 @@ fn done(ctx: &mut Ctx, a: Ids) -> Result<()> {
         Ok(())
     })?;
     if let Some((ev, ())) = r {
+        let home = std::env::var_os("HOME").map(std::path::PathBuf::from).unwrap_or_default();
+        let now = thc_core::status::Range::parse("all", thc_core::dates::now_local())?.to_ms;
+        if let Err(e) = thc_core::token_usage::after_done(&mut ctx.vault, &ids, &home, now) {
+            eprintln!("token collection: {e:#}");
+        }
         ctx.report_write("done", &ev, &ids)?;
     }
     Ok(())

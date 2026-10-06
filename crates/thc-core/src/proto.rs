@@ -31,7 +31,8 @@ pub const PROTO_VERSION: u32 = 1;
 /// Additive changes within v1 (clients ignore what they don't know):
 /// 2 = `parse`, TodayPanel `badge` / `upcoming_more` / `to_review` / `conflict_ids` / `presets`,
 /// Node `rev` / `place`, the `shutdown` event, DaemonStatus `exe`.
-pub const PROTO_MINOR: u32 = 2;
+/// 3 = live usage `tokens` snapshots and the `tokens` subscription topic/event.
+pub const PROTO_MINOR: u32 = 3;
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
