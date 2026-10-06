@@ -578,7 +578,9 @@ impl Doc {
             if Some(l.kind) != l.saved_kind {
                 ops.push(BlockOp::Kind { id: l.id.clone(), kind: l.kind, rev: None });
             }
-            if l.kind == Kind::Task && l.status.is_some() && l.status != l.saved_status && Some(l.kind) == l.saved_kind {
+            // Kind(Task) initializes todo. A second ⌃T can already have completed the
+            // live line before its kind was saved: carry that status in the same plan.
+            if l.kind == Kind::Task && l.status.is_some() && l.status != l.saved_status && (Some(l.kind) == l.saved_kind || l.status.as_deref() != Some("todo")) {
                 ops.push(BlockOp::Status { id: l.id.clone(), status: l.status.clone().unwrap(), rev: None });
             }
         }
@@ -918,6 +920,24 @@ mod tests {
         // A heading's marker sits in the hang: the first row gets its columns back.
         assert_eq!(wrap_with("## abcdefgh ij", 8, 3), vec![(0, 12), (12, 14)]);
         assert_eq!(wrap("abcdefgh ij", 8), vec![(0, 9), (9, 11)], "a word filling the row stays on it");
+    }
+
+    #[test]
+    fn save_plan_keeps_completion_alongside_an_unsaved_task_kind() {
+        let mut d = doc(&[(0, Kind::Para, "alpha line")]);
+        let l = &mut d.lines_mut()[0];
+        l.is_new = false;
+        l.saved = Some(l.text.clone());
+        l.saved_kind = Some(Kind::Para);
+        assert_eq!(d.edit(|b| b.task_cycle()), "task");
+        let first = d.plan_save(true);
+        assert!(first.ops.iter().any(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })));
+        assert!(!first.ops.iter().any(|op| matches!(op, BlockOp::Status { .. })), "Kind(Task) already initializes todo");
+        assert_eq!(d.edit(|b| b.task_cycle()), "done");
+        let second = d.plan_save(true);
+        let kind = second.ops.iter().position(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })).unwrap();
+        let status = second.ops.iter().position(|op| matches!(op, BlockOp::Status { status, .. } if status == "done")).unwrap();
+        assert!(kind < status, "the completed status follows the kind that initializes todo");
     }
 
     /// ⌃T cycles text → [ ] → [x] → text (writing.md A9); ⌫ takes the marker off a step at a

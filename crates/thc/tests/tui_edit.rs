@@ -379,3 +379,28 @@ fn editing_a_line_again_is_no_conflict() {
     assert!(v.as_array().map_or_else(|| v["conflicts"].as_array().unwrap().is_empty(), |a| a.is_empty()), "{c}");
     let _ = std::fs::remove_dir_all(&root);
 }
+
+#[test]
+fn double_task_cycle_completes_a_newly_tasked_plain_line() {
+    let (root, page) = setup("task-double");
+    // Every press advances the model, even before the first kind change has been saved.
+    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
+    let kids = children(&root, &page);
+    assert_eq!(kids.iter().find(|n| n["text"] == "First line").unwrap()["status"], "done", "{frame}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+#[test]
+fn double_task_cycle_completes_each_plain_line_while_moving_down() {
+    let (root, page) = setup("task-double-down");
+    for text in ["Second line", "Third line", "Fourth line", "Fifth line"] {
+        thc(&root, &[], &["add", text, "--under", &page]);
+    }
+    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-t><c-t><down><c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
+    let kids = children(&root, &page);
+    for text in ["First line", "Second line"] {
+        assert_eq!(kids.iter().find(|n| n["text"] == text).unwrap()["status"], "done", "{text}: {frame}");
+    }
+    assert!(kids.iter().find(|n| n["text"] == "Third line").unwrap().get("status").is_none());
+    let _ = std::fs::remove_dir_all(root);
+}
