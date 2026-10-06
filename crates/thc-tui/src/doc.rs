@@ -512,7 +512,7 @@ pub struct SavePlan {
 
 /// What a save saw when it was planned. A result folds into a line only as far as the line is
 /// still what was sent; an edit made while the save was out stays, and the next save sends it.
-#[derive(Default, Clone, Debug)]
+#[derive(Default, Clone, Debug, PartialEq, Eq)]
 pub struct Sent {
     /// Each line's (text, status).
     pub lines: HashMap<String, (String, Option<String>)>,

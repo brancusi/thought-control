@@ -33,6 +33,12 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
             }
             Effect::Save { all } => app.save_doc(all),
             Effect::Patch => app.patch_doc(),
+            Effect::SaveNotices { msgs, error } => {
+                let msgs = app.name_conflicts(msgs);
+                if let Some(m) = msgs.into_iter().last() {
+                    if error { app.error(m) } else { app.info(m) }
+                }
+            }
         }
     }
 }

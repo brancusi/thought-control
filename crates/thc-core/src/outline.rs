@@ -28,7 +28,7 @@ pub use caretline::Kind;
 
 /// One block: a node as the editor shows it. `text` is the clean text (fields live in the
 /// gutter, editor.md §4), `rev` guards the next save.
-#[derive(Clone, Debug, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Block {
     pub id: String,
     pub parent: Option<String>,
@@ -370,7 +370,7 @@ impl OpResultWire {
 }
 
 /// What happened to one op.
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
 pub struct OpResult {
     pub index: usize,
     pub id: String,

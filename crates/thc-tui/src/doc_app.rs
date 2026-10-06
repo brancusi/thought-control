@@ -1,6 +1,7 @@
 //! The document editor inside the app (tui-editor.md): which document is open, saving it
 //! through `outline::plan`, and patching it from changes made elsewhere.
 
+use crate::update::Msg;
 use crate::app::{App, View};
 use crate::doc::{Doc, Line, Target};
 use std::time::{Duration, Instant};
@@ -582,27 +583,14 @@ impl App {
             _ => (d.root.clone(), None),
         };
         let result = save_inline(&mut self.vault, root, journal, plan.ops.clone(), today);
-        let Some(d) = self.doc.as_mut() else { return };
-        match result {
-            Ok((root, results)) => {
-                d.root = Some(root);
-                let msgs = d.apply_results(&results, &plan.afters, &plan.parsed, &plan.sent, today);
-                let msgs = self.name_conflicts(msgs);
-                self.log_sizes = self.vault.log.files().unwrap_or_default();
-                if let Some(m) = msgs.into_iter().last() {
-                    self.info(m);
-                }
-            }
-            Err(e) => {
-                // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
-                for l in d.lines_mut().iter_mut() {
-                    if plan.parsed.contains(&l.id) {
-                        l.save_error = Some(e.clone());
-                    }
-                }
-                self.error(format!("not saved: {e} · :retry"));
-            }
+        if result.is_ok() {
+            self.log_sizes = self.vault.log.files().unwrap_or_default();
         }
+        let (root, result) = match result {
+            Ok((root, results)) => (Some(root), Ok(results)),
+            Err(e) => (None, Err(e)),
+        };
+        crate::runtime_effects::dispatch(self, Msg::Saved { root, result, afters: plan.afters, parsed: plan.parsed, sent: plan.sent, today, inline: true });
     }
 
     /// Fold the writer thread's results back into the document.
@@ -629,26 +617,7 @@ impl App {
                 return;
             };
             saver.pending -= 1;
-            let msgs = match (self.doc.as_mut(), done.result) {
-                (Some(d), Ok(results)) => {
-                    if d.root.is_none() {
-                        d.root = done.root.clone();
-                    }
-                    d.apply_results(&results, &done.afters, &done.parsed, &done.sent, today)
-                }
-                (Some(d), Err(e)) => {
-                    for l in d.lines_mut().iter_mut().filter(|l| done.parsed.contains(&l.id)) {
-                        l.save_error = Some(e.clone());
-                    }
-                    vec![format!("not saved: {e} · :retry")]
-                }
-                (None, Err(e)) => vec![format!("not saved: {e}")],
-                (None, Ok(_)) => vec![],
-            };
-            let msgs = self.name_conflicts(msgs);
-            if let Some(m) = msgs.into_iter().last() {
-                self.info(m);
-            }
+            crate::runtime_effects::dispatch(self, Msg::Saved { root: done.root, result: done.result, afters: done.afters, parsed: done.parsed, sent: done.sent, today, inline: false });
             // The save that waited for this one: planned now, against what the vault has.
             if let Some(all) = self.doc_saver.as_mut().filter(|s| s.pending == 0).and_then(|s| s.waiting.take()) {
                 self.save_doc(all);
@@ -662,7 +631,7 @@ impl App {
 
     /// Conflicts a save just made name who else edited: the chip `≠ claude · c compare` and
     /// the bar `≠ claude changed this line while you typed · both kept · c compare`.
-    fn name_conflicts(&mut self, msgs: Vec<String>) -> Vec<String> {
+    pub(crate) fn name_conflicts(&mut self, msgs: Vec<String>) -> Vec<String> {
         match self.fill_conflict_names() {
             Some(who) => msgs.into_iter().map(|m| if m.starts_with('≠') { format!("≠ {who} changed this line while you typed · both kept · ⌃O compare") } else { m }).collect(),
             None => msgs,

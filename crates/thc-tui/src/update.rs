@@ -32,6 +32,9 @@ pub(crate) enum Msg {
     Edit { cmd: caretline::Command, at: Instant, seed: String, widths: Widths },
     /// Text typed at the caret (over the selection).
     Type { text: String, at: Instant, seed: String },
+    /// A save's results (or why it failed), with what the save was planned from. `inline`: made
+    /// in this process (its failure is an error on the bar), not by the writer thread.
+    Saved { root: Option<String>, result: Result<Vec<thc_core::outline::OpResult>, String>, afters: std::collections::HashMap<String, Option<String>>, parsed: Vec<String>, sent: crate::doc::Sent, today: chrono::NaiveDate, inline: bool },
 }
 
 /// The text column's width for each depth, as laid out when the message was made.
@@ -51,6 +54,9 @@ pub(crate) enum Effect {
     Save { all: bool },
     /// Re-read lines an undo or redo brought back: they may have changed elsewhere meanwhile.
     Patch,
+    /// What a save has to say (the last is shown); `≠` conflicts get the other side's name
+    /// from the store first. `error`: shown as an error.
+    SaveNotices { msgs: Vec<String>, error: bool },
 }
 
 pub(crate) struct DocumentFields<'a> {
@@ -149,6 +155,32 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
                 caretline::Outcome::Restored => return vec![Effect::Patch],
             }
         }
+        Msg::Saved { root, result, afters, parsed, sent, today, inline } => {
+            let Some(document) = state.document else {
+                return match result {
+                    Err(e) => vec![Effect::SaveNotices { msgs: vec![format!("not saved: {e}")], error: false }],
+                    Ok(_) => vec![],
+                };
+            };
+            let d = document.doc;
+            let error = inline && result.is_err();
+            let msgs = match result {
+                Ok(results) => {
+                    if d.root.is_none() {
+                        d.root = root;
+                    }
+                    d.apply_results(&results, &afters, &parsed, &sent, today)
+                }
+                Err(e) => {
+                    // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
+                    for l in d.lines_mut().iter_mut().filter(|l| parsed.contains(&l.id)) {
+                        l.save_error = Some(e.clone());
+                    }
+                    vec![format!("not saved: {e} · :retry")]
+                }
+            };
+            return vec![Effect::SaveNotices { msgs, error }];
+        }
         Msg::Type { text, at, seed } => {
             let Some(document) = state.document else { return vec![] };
             document.doc.stamp(at, &seed);
@@ -208,6 +240,23 @@ mod tests {
             });
             apply(&mut left.0, &mut left.1, &mut left.2, message);
             assert_eq!(left.1.scroll, 92);
+        }
+    }
+
+    /// A failed save marks the lines it sent and says why: as an error when it was made here,
+    /// as a notice from the writer thread. Either way the text stays.
+    #[test]
+    fn a_failed_save_marks_its_lines() {
+        for inline in [true, false] {
+            let (mut scroll, mut d, mut toast) = (0, doc(), None);
+            d.caret_to_end(true);
+            d.insert("kept");
+            let id = d.lines()[0].id.clone();
+            let msg = Msg::Saved { root: None, result: Err("disk full".into()), afters: Default::default(), parsed: vec![id], sent: Default::default(), today: day(), inline };
+            let effects = apply(&mut scroll, &mut d, &mut toast, msg);
+            assert_eq!(effects, [Effect::SaveNotices { msgs: vec!["not saved: disk full · :retry".into()], error: inline }]);
+            assert_eq!(d.lines()[0].save_error.as_deref(), Some("disk full"));
+            assert_eq!(d.lines()[0].text, "kept");
         }
     }
 
