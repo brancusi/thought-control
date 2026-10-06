@@ -2106,7 +2106,7 @@ dependencies = [
 
 [[package]]
 name = "thc"
-version = "0.9.62"
+version = "0.9.63"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2126,7 +2126,7 @@ dependencies = [
 
 [[package]]
 name = "thc-core"
-version = "0.9.62"
+version = "0.9.63"
 dependencies = [
  "anyhow",
  "caretline",
@@ -2147,7 +2147,7 @@ dependencies = [
 
 [[package]]
 name = "thc-daemon"
-version = "0.9.62"
+version = "0.9.63"
 dependencies = [
  "anyhow",
  "chrono",
@@ -2161,7 +2161,7 @@ dependencies = [
 
 [[package]]
 name = "thc-tui"
-version = "0.9.62"
+version = "0.9.63"
 dependencies = [
  "anyhow",
  "caretline",

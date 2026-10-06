@@ -1,3 +1,7 @@
+**0.9.63**
+
+- **0.9.62 as it should have shipped.** Same features as 0.9.62; the release build had failed because the agent instructions bundled in the repo were out of date.
+
 **0.9.62**
 
 - **`thc team up` starts your whole team from the project's settings.** List the roster once in `.thc.toml` (`[[team.roster]]`: role, agent, model, count), and a bare `thc team up` opens it in a new `team` tab with balanced columns and the PM at the bottom right. Each agent gets the model you chose, herdr included. `[team.layout]` sets the columns, the tab name and where the PM goes; `--dry-run` shows the roster, commands and layout first.
