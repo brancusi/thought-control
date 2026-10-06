@@ -1,3 +1,13 @@
+**0.9.60**
+
+- **Thought Control is open source.** thc now lives in the public repo brancusi/thought-control, and releases come from brancusi/thought-control-releases. **If you installed thc before this release, reinstall it once** (your notes and settings stay as they are):
+  `curl -fsSL https://github.com/brancusi/thought-control-releases/releases/latest/download/install.sh | sh`
+  Older versions look for updates in the old place, so they won't find this one on their own. From here on, `thc update` works as before. Downloads are checked with their sha256 and a signed manifest instead of Apple's signing.
+- **`thc status` shows where a board stands:** what's done, in flight and blocked, the bottleneck holding up the most tasks, momentum per day, and for each task when it started, how long it waited and how long it took (`thc show` has the same line). `thc status --collect` adds what each task cost in tokens, read from the agent's own session log.
+- **Two new themes, `redacted` (dark) and `newsprint` (light),** from the new Thought Control look: `THC_THEME=redacted`, or `[theme] theme = "redacted"` in your settings. Ember stays the default.
+- **Text in your screenshots is searchable.** thc reads the text in attached images on your Mac (macOS Vision: nothing leaves the machine), and `thc search` finds them by it. `thc ocr` shows which images you already have would be read; `thc ocr --yes` reads them.
+- **Agents claim every task before they start,** with their session, so the status board knows when work began.
+
 **0.9.59**
 
 - **`thc team add` grows a running team.** `thc team add engineer --agent codex` opens one more agent in the team's tab, briefed for its role on the project's board; `--task <id>` hands it a task to claim first. `thc team rm` takes one out. Every add and remove is noted on the board.
