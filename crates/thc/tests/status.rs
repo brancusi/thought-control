@@ -101,12 +101,12 @@ fn times_counts_and_bottlenecks_come_from_the_log() {
     let today = &r["momentum"]["today"];
     assert_eq!(today.as_array().unwrap().iter().map(|h| h["done"].as_u64().unwrap()).sum::<u64>(), 3);
     // Tokens: none known, and it says so.
-    assert_eq!((r["tokens"]["known"].as_u64(), r["tokens"]["of"].as_u64()), (Some(0), Some(3)));
+    assert_eq!((r["tokens"]["known"].as_u64(), r["tokens"]["of"].as_u64()), (Some(0), Some(4)));
     // Text: the same, readable; untracked says so.
     let o = v.cmd("human", "2026-10-06T12:00").args(["status", "--since", "today"]).output().unwrap();
     let text = String::from_utf8_lossy(&o.stdout);
     assert!(text.contains("worked 38m") && text.contains("untracked") && text.contains("holds up 2 tasks"), "{text}");
-    assert!(text.contains("tokens known for 0 of 3"), "{text}");
+    assert!(text.contains("tokens known for 0 of 4"), "{text}");
     // thc show: the times line (§3.4).
     let o = v.cmd("human", "2026-10-06T12:00").args(["show", &a, "--depth", "0"]).output().unwrap();
     let show = String::from_utf8_lossy(&o.stdout);
@@ -152,4 +152,107 @@ fn collect_reads_usage_from_a_session_log_and_can_be_undone() {
     v.json("claude", "2026-10-06T12:10", &["done", &b]);
     let r2 = v.json("human", "2026-10-06T12:30", &["status", "--since", "today", "--collect"]);
     assert!(task(&r2, &b).get("tokens").is_none(), "{}", task(&r2, &b));
+}
+
+#[test]
+fn daemon_polls_live_cache_without_log_events_then_reconciles_rpc_completion() {
+    use chrono::{Duration as CD, TimeZone};
+    use std::{time::{Duration, Instant}, process::Stdio};
+    use thc_core::{proto::Client, vault::Paths};
+    let v = V::new("live");
+    let now = chrono::Local::now().naive_local();
+    let stamp = |t: chrono::NaiveDateTime| t.format("%Y-%m-%dT%H:%M").to_string();
+    let at = |t: chrono::NaiveDateTime| chrono::Local.from_local_datetime(&t).unwrap().to_rfc3339();
+    let current = stamp(now);
+    let id = v.id(&stamp(now-CD::hours(1)), &["todo", "live usage"]);
+    v.json("codex", &stamp(now-CD::minutes(5)), &["set", &id, "status=doing", "owner=codex", "session_id=live-codex"]);
+    let dir = v.root.join("home/.codex/sessions/2026/10/06");
+    std::fs::create_dir_all(&dir).unwrap();
+    let file = dir.join("rollout-scratch-live-codex.jsonl");
+    let line = |t: chrono::NaiveDateTime, input: u64, output: u64| serde_json::json!({"timestamp":at(t),"payload":{"type":"token_count","info":{"total_token_usage":{"input_tokens":input,"output_tokens":output,"cached_input_tokens":0},"last_token_usage":{"input_tokens":100,"output_tokens":20,"cached_input_tokens":0}}}}).to_string()+"\n";
+    let first = line(now-CD::minutes(3),100,20);
+    std::fs::write(&file, &first).unwrap();
+    let count = || v.json("human", &current, &["history", &id])["events"].as_array().unwrap().len();
+    let before = count();
+    let paths = Paths {vault:v.root.join("vault"),cache:v.root.join("cache")};
+    let start = || common::Guard::spawn(v.cmd("human", &current).args(["daemon","run"]).env("THC_TEST_TOKEN_POLL_MS","200").stdout(Stdio::from(std::fs::File::create(v.root.join("daemon.log")).unwrap())).stderr(Stdio::from(std::fs::File::create(v.root.join("daemon.err")).unwrap())));
+    let mut daemon = start();
+    let deadline=Instant::now()+Duration::from_secs(15);
+    let mut client = loop {
+        if let Some(c)=Client::connect(&paths) { break c }
+        assert!(Instant::now()<deadline,"daemon did not start: {} / {}",std::fs::read_to_string(v.root.join("daemon.log")).unwrap_or_default(),std::fs::read_to_string(v.root.join("daemon.err")).unwrap_or_default()); std::thread::sleep(Duration::from_millis(50));
+    };
+    let wait_usage = |client: &mut Client, expected: u64| {
+        let deadline=Instant::now()+Duration::from_secs(10);
+        loop {
+            let r=client.call("tokens",serde_json::json!({})).unwrap();
+            if r["items"].as_array().unwrap().iter().any(|x| x["id"]==id && x["tokens"]["in"]==expected) { break }
+            assert!(Instant::now()<deadline,"usage {expected} never arrived: {r}"); std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_usage(&mut client,100);
+    assert_eq!(count(),before,"startup collection before one hour is cache-only");
+    client.hello("test", &["tokens"], false).unwrap();
+    std::fs::write(&file, first.clone()+&line(now-CD::minutes(1),300,60)).unwrap();
+    wait_usage(&mut client,300);
+    assert_eq!(count(),before,"minute polling must not append props");
+    assert!(client.pending_events.iter().any(|e| e.event=="tokens"));
+    let r=v.json("human",&current,&["status","--since","all"]);
+    assert_eq!(task(&r,&id)["tokens"]["in"],300);
+    assert_eq!((r["tokens"]["in"].as_u64(),r["tokens"]["known"].as_u64(),r["tokens"]["of"].as_u64()),(Some(300),Some(1),Some(1)));
+    // The cache is local and survives a daemon restart without checkpoint churn.
+    client.call("shutdown",serde_json::json!({})).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(10);
+    while daemon.0.try_wait().unwrap().is_none() { assert!(Instant::now()<deadline); std::thread::sleep(Duration::from_millis(50)); }
+    daemon=start();
+    let deadline=Instant::now()+Duration::from_secs(10);
+    let mut client=loop {
+        if let Some(c)=Client::connect(&paths) { break c }
+        assert!(Instant::now()<deadline); std::thread::sleep(Duration::from_millis(50));
+    };
+    wait_usage(&mut client,300);
+    assert_eq!(count(),before);
+    // This completion goes through RPC (not CLI's after_done hook).
+    client.call("complete",serde_json::json!({"id":id})).unwrap();
+    std::fs::write(&file,first+&line(now-CD::minutes(1),300,60)+&line(now+CD::minutes(2),9999,9999)).unwrap();
+    let deadline=Instant::now()+Duration::from_secs(10);
+    loop {
+        let r=v.json("human",&current,&["show",&id]);
+        if r["props"]["tokens_source"]=="transcript" {
+            assert_eq!(r["props"]["tokens_in"].as_f64(),Some(300.0)); break
+        }
+        assert!(Instant::now()<deadline,"final reconciliation never arrived: {r}"); std::thread::sleep(Duration::from_millis(50));
+    }
+    assert!(count()>before);
+    client.call("shutdown",serde_json::json!({})).unwrap();
+    let _ = daemon.0.wait();
+}
+
+#[test]
+fn manual_live_collection_and_offline_done_respect_collector_policy() {
+    use chrono::TimeZone;
+    let v=V::new("offline");
+    let id=v.id("2026-10-06T09:00",&["todo","offline tokens"]);
+    v.json("codex","2026-10-06T10:00",&["set",&id,"status=doing","session_id=offline-codex"]);
+    let dir=v.root.join("home/.codex/sessions"); std::fs::create_dir_all(&dir).unwrap();
+    let line=serde_json::json!({"timestamp":chrono::Local.with_ymd_and_hms(2026,10,6,10,10,0).unwrap().to_rfc3339(),"payload":{"type":"token_count","info":{"last_token_usage":{"input_tokens":100,"output_tokens":20,"cached_input_tokens":30}}}}).to_string()+"\n";
+    std::fs::write(dir.join("rollout-scratch-offline-codex.jsonl"),line).unwrap();
+    let dry=v.cmd("human","2026-10-06T10:15").args(["--dry-run","status","--collect"]).output().unwrap();
+    assert!(dry.status.success());
+    assert!(v.json("human","2026-10-06T10:15",&["show",&id])["props"].get("tokens_in").is_none());
+    let r=v.json("human","2026-10-06T10:15",&["status","--collect"]);
+    assert_eq!(task(&r,&id)["tokens"]["in"],70);
+    v.json("codex","2026-10-06T10:20",&["done",&id]);
+    let r=v.json("human","2026-10-06T10:20",&["show",&id]);
+    assert_eq!(r["props"]["tokens_in"].as_f64(),Some(70.0));
+    assert!(r["props"]["tokens_window"].as_str().unwrap().contains("\"done\":"));
+    let denied=v.id("2026-10-06T09:00",&["todo","collector refused"]);
+    v.json("codex","2026-10-06T10:00",&["set",&denied,"status=doing","session_id=offline-codex"]);
+    let config=v.root.join("config");std::fs::create_dir_all(&config).unwrap();
+    std::fs::write(config.join("config.toml"),"[actors.collector]\ndeny=[\"set\"]\n").unwrap();
+    let o=v.cmd("codex","2026-10-06T10:20").env("THC_CONFIG_DIR",&config).args(["done",&denied]).output().unwrap();
+    assert!(o.status.success(),"{}",String::from_utf8_lossy(&o.stderr));
+    let r=v.json("human","2026-10-06T10:20",&["show",&denied]);
+    assert_eq!(r["status"],"done");
+    assert!(r["props"].get("tokens_in").is_none());
 }

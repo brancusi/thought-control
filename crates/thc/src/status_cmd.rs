@@ -3,8 +3,8 @@
 
 use crate::Ctx;
 use anyhow::Result;
-use serde_json::{Value, json};
-use std::path::{Path, PathBuf};
+use serde_json::json;
+use std::path::PathBuf;
 use thc_core::status::{self, Report, Tokens, duration, tokens_short};
 
 pub const SPEC: crate::registry::Spec = crate::spec!("status", "Where the board stands: done, in flight, blocked, momentum, times and tokens", StatusArgs, run, board: true, settings: true, verbs: |m| if m.get_flag("collect") { vec!["set".into()] } else { vec![] });
@@ -17,7 +17,7 @@ pub struct StatusArgs {
     /// Only tasks owned by this actor.
     #[arg(long)]
     by: Option<String>,
-    /// First fill in token props from the agents' session logs (usage numbers only), as actor
+    /// First reconcile token props from the agents' session logs (usage numbers only), as actor
     /// `collector`, one undoable transaction per task.
     #[arg(long)]
     collect: bool,
@@ -136,139 +136,29 @@ fn cut(s: &str, n: usize) -> String {
 
 // ---- tokens from session logs (§2) --------------------------------------------------------------
 
-/// Sessions a task was worked in: its own `session_id` prop and its notes' (one per claim).
-fn sessions(ctx: &Ctx, id: &str) -> Result<Vec<String>> {
-    let mut out = Vec::new();
-    let mut add = |props: &serde_json::Map<String, Value>| {
-        if let Some(s) = props.get("session_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty()) {
-            if !out.contains(&s.to_string()) {
-                out.push(s.to_string());
-            }
-        }
-    };
-    add(&ctx.store().props_of(id)?);
-    for c in ctx.store().children(id)? {
-        add(&ctx.store().props_of(&c.id)?);
-    }
-    Ok(out)
-}
-
-/// Fill in tokens for done, tracked tasks that have sessions and no tokens yet. Returns how many.
+/// Manual collection also covers in-flight work, through the same session reader as the daemon.
 fn collect(ctx: &mut Ctx, r: &Report) -> Result<usize> {
     let home = std::env::var_os("HOME").map(PathBuf::from).unwrap_or_default();
     let mut n = 0;
-    for t in r.tasks.iter().filter(|t| t.done.is_some() && !t.untracked && t.tokens.is_none()) {
-        let (Some(from), Some(to)) = (t.times.started, t.times.done) else { continue };
-        let ids = sessions(ctx, &t.id)?;
-        let mut sum = Tokens { source: Some("transcript".into()), ..Default::default() };
-        let mut found = false;
-        for s in &ids {
-            if let Some(u) = usage(&home, s, from, to) {
-                sum.input += u.0;
-                sum.out += u.1;
-                sum.cache += u.2;
-                found = true;
-            }
-        }
-        if !found {
-            continue;
-        }
-        let kv: Vec<(String, String)> = vec![
-            ("tokens_in".into(), sum.input.to_string()),
-            ("tokens_out".into(), sum.out.to_string()),
-            ("tokens_cache".into(), sum.cache.to_string()),
-            ("tokens_source".into(), "transcript".into()),
-        ];
-        let id = t.id.clone();
+    for t in r.tasks.iter().filter(|t| t.done.is_some() || t.status == "doing") {
+        let Some(input) = thc_core::token_usage::input(ctx.store(), &t.id)? else { continue };
+        let Some(tokens) = thc_core::token_usage::collect(&home, &input, r.range.to_ms) else { continue };
+        let kv = input.props(&tokens, r.range.to_ms);
         let me = std::mem::replace(&mut ctx.vault.actor, thc_core::event::Actor { kind: "agent".into(), name: Some("collector".into()) });
-        let w = ctx.write(|b| b.set_props(&id, &kv));
+        let collector_policy = thc_core::policy::Policy::load(&ctx.vault.actor, ctx.readonly);
+        let w = (|| {
+            if !ctx.dry_run {
+                collector_policy?.check(&["set".into()], ctx.yes)?;
+            }
+            ctx.write(|b| {
+                if thc_core::token_usage::input(b.store, &input.id)?.as_ref() != Some(&input) {
+                    return Err(thc_core::error::invalid("claim changed during token collection"));
+                }
+                b.set_props(&input.id, &kv)
+            })
+        })();
         ctx.vault.actor = me;
-        if w?.is_some() {
-            n += 1;
-        }
+        if w?.is_some() { n += 1; }
     }
     Ok(n)
-}
-
-/// A session's usage between two times: (in, out, cache), from Claude Code's
-/// `~/.claude/projects/*/<session>.jsonl` or Codex's `~/.codex/sessions/**/rollout-*-<session>.jsonl`.
-/// Only the usage numbers are read.
-fn usage(home: &Path, session: &str, from: i64, to: i64) -> Option<(u64, u64, u64)> {
-    // A session id names a file: letters, digits, - and _ only, so a prop can't point elsewhere.
-    if session.is_empty() || !session.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return None;
-    }
-    let claude = std::fs::read_dir(home.join(".claude/projects")).ok()?.flatten().map(|d| d.path().join(format!("{session}.jsonl"))).find(|p| p.exists());
-    if let Some(p) = claude {
-        return claude_usage(&p, from, to);
-    }
-    let codex = find_rollout(&home.join(".codex/sessions"), session)?;
-    codex_usage(&codex, from, to)
-}
-
-fn in_window(line: &Value, from: i64, to: i64) -> bool {
-    line["timestamp"].as_str().and_then(|t| chrono::DateTime::parse_from_rfc3339(t).ok()).is_some_and(|t| (from..=to).contains(&t.timestamp_millis()))
-}
-
-fn claude_usage(p: &Path, from: i64, to: i64) -> Option<(u64, u64, u64)> {
-    use std::io::BufRead;
-    let f = std::io::BufReader::new(std::fs::File::open(p).ok()?);
-    let mut seen = std::collections::HashSet::new();
-    let (mut i, mut o, mut c) = (0u64, 0u64, 0u64);
-    for line in f.lines().map_while(Result::ok) {
-        if !line.contains("\"usage\"") {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-        if !in_window(&v, from, to) {
-            continue;
-        }
-        let u = &v["message"]["usage"];
-        // One message's usage repeats on each of its content blocks: count it once.
-        let mid = v["message"]["id"].as_str().unwrap_or_default().to_string();
-        if !mid.is_empty() && !seen.insert(mid) {
-            continue;
-        }
-        let n = |k: &str| u[k].as_u64().unwrap_or(0);
-        i += n("input_tokens") + n("cache_creation_input_tokens");
-        o += n("output_tokens");
-        c += n("cache_read_input_tokens");
-    }
-    Some((i, o, c))
-}
-
-fn find_rollout(dir: &Path, session: &str) -> Option<PathBuf> {
-    for e in std::fs::read_dir(dir).ok()?.flatten() {
-        let p = e.path();
-        if p.is_dir() {
-            if let Some(f) = find_rollout(&p, session) {
-                return Some(f);
-            }
-        } else if p.file_name().and_then(|n| n.to_str()).is_some_and(|n| n.ends_with(&format!("{session}.jsonl"))) {
-            return Some(p);
-        }
-    }
-    None
-}
-
-fn codex_usage(p: &Path, from: i64, to: i64) -> Option<(u64, u64, u64)> {
-    use std::io::BufRead;
-    let f = std::io::BufReader::new(std::fs::File::open(p).ok()?);
-    let (mut i, mut o, mut c) = (0u64, 0u64, 0u64);
-    for line in f.lines().map_while(Result::ok) {
-        if !line.contains("\"token_count\"") {
-            continue;
-        }
-        let Ok(v) = serde_json::from_str::<Value>(&line) else { continue };
-        if !in_window(&v, from, to) {
-            continue;
-        }
-        let u = &v["payload"]["info"]["last_token_usage"];
-        let n = |k: &str| u[k].as_u64().unwrap_or(0);
-        // Codex counts cached input inside input_tokens.
-        i += n("input_tokens").saturating_sub(n("cached_input_tokens"));
-        o += n("output_tokens");
-        c += n("cached_input_tokens");
-    }
-    Some((i, o, c))
 }

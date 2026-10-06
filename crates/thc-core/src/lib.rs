@@ -36,6 +36,7 @@ pub mod tui_config;
 pub mod review;
 pub mod settings;
 pub mod status;
+pub mod token_usage;
 pub mod store;
 pub mod vault;
 pub mod views;

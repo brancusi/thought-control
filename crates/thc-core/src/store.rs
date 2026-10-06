@@ -18,6 +18,8 @@ use std::path::Path;
 pub const BUILTIN: [&str; 8] = ["title", "status", "scheduled", "due", "priority", "repeat", "done_at", "journal"];
 
 const SCHEMA: &str = r#"
+-- Local usage samples: never replayed or synced (signed props are coarse checkpoints).
+CREATE TABLE IF NOT EXISTS local_tokens(node TEXT PRIMARY KEY, signature TEXT NOT NULL, tokens TEXT NOT NULL, collected_ms INTEGER NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS meta(k TEXT PRIMARY KEY, v TEXT NOT NULL) STRICT;
 CREATE TABLE IF NOT EXISTS nodes(
   id TEXT PRIMARY KEY, parent TEXT, ord TEXT NOT NULL, title TEXT, text TEXT NOT NULL DEFAULT '',

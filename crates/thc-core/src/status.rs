@@ -165,7 +165,7 @@ pub fn tokens_short(n: u64) -> String {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, PartialEq)]
+#[derive(Clone, Debug, Default, Serialize, serde::Deserialize, PartialEq)]
 pub struct Tokens {
     #[serde(rename = "in")]
     pub input: u64,
@@ -173,7 +173,7 @@ pub struct Tokens {
     pub cache: u64,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub source: Option<String>,
-    #[serde(skip_serializing_if = "Vec::is_empty")]
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sessions: Vec<String>,
 }
 
@@ -427,7 +427,7 @@ pub fn report(store: &Store, root: Option<&str>, range: Range, by: Option<&str>,
             batch: !is_open && t.batch(),
             long: false,
             reopened: t.reopened,
-            tokens: Tokens::of(&props),
+            tokens: crate::token_usage::reported(store, &n.id, &props)?,
             times: t,
         });
     }
@@ -502,7 +502,7 @@ pub fn report(store: &Store, root: Option<&str>, range: Range, by: Option<&str>,
         today: hours.into_iter().map(|(hour, done)| Hour { hour, done }).collect(),
     };
 
-    // Tokens over the done tasks; coverage stated.
+    // Tokens spent so far: landed and in-flight tasks, with coverage stated.
     let totals = |ts: &[&Task]| {
         let mut t = TokenTotals { of: ts.len(), ..Default::default() };
         for x in ts {
@@ -515,7 +515,8 @@ pub fn report(store: &Store, root: Option<&str>, range: Range, by: Option<&str>,
         }
         t
     };
-    let tokens = totals(&done);
+    let spent: Vec<&Task> = tasks.iter().filter(|t| t.done.is_some() || t.status == "doing").collect();
+    let tokens = totals(&spent);
 
     // Per actor (a task's owner; untracked work under "(no owner)").
     let mut by_actor: BTreeMap<String, Vec<&Task>> = BTreeMap::new();
@@ -531,7 +532,7 @@ pub fn report(store: &Store, root: Option<&str>, range: Range, by: Option<&str>,
                 done: d.len(),
                 doing: ts.iter().filter(|t| t.status == "doing").count(),
                 worked_median: median(&mut d.iter().filter(|t| !t.untracked && !t.batch).filter_map(|t| t.worked).collect::<Vec<_>>()),
-                tokens: totals(&d),
+                tokens: totals(&ts.iter().copied().filter(|t| t.done.is_some() || t.status == "doing").collect::<Vec<_>>()),
             }
         })
         .collect();

@@ -90,6 +90,10 @@ fn dispatch(shared: &Arc<Shared>, client_id: u64, stream: &UnixStream, req: &Req
             Ok(json!({ "daemon": VERSION, "proto": PROTO_VERSION, "proto_minor": thc_core::proto::PROTO_MINOR, "device": device, "version_mismatch": !their_version.is_empty() && their_version != VERSION }))
         }
         "status" => status_json(shared),
+        "tokens" => {
+            let v = shared.vault.lock().unwrap();
+            Ok(json!({ "items": thc_core::token_usage::snapshots(&v.store)? }))
+        },
         "shutdown" => {
             shared.shutdown.store(true, Ordering::SeqCst);
             // Unblock accept() so the server thread can exit.

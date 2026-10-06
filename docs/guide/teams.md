@@ -85,3 +85,24 @@ If startup stops at a dialog, `thc team ls` keeps the created pane available to 
 `thc team down` closes only saved team panes and keeps the board and claims. To change the
 roster, stop its existing panes first. `team add` and `team rm` remain available for individual
 changes; those operations require a person or an explicitly enabled lead.
+
+## Work times and tokens
+
+`thc status --since today` shows completed work, work in flight, blockers and time spent.
+Use `--by codex-engineer` to focus on one owner, or `--json` for structured reports.
+
+Record a real `session_id` when claiming a task. While the daemon runs, it reads usage
+numbers from Claude Code and Codex session logs about once a minute. It never calls agents.
+Task and owner totals include both completed work and tokens already spent in flight;
+coverage says how many tasks have known usage. Missing logs remain unknown.
+
+Minute samples stay in the local derived cache, which status and TUI reports can read.
+They also arrive through the daemon's `tokens` RPC and subscription topic, with a collection
+time on each snapshot. Usage props are written as `collector` only at hourly checkpoints
+and completion, so the append-only log stays small. The collector respects device policy.
+`thc done` also attempts final collection when the daemon is offline.
+
+`thc status --collect` is the manual path for collecting or reconciling usage, including
+in-flight tasks. Final props can be reviewed and undone like other agent writes. The
+collector uses the task's tracked start/completion window and session IDs on its claim notes;
+work without a claim cannot be attributed automatically.
