@@ -1,3 +1,7 @@
+**0.9.64**
+
+- **`thc status` counts tokens while work is still going.** The background service checks each claimed task's agent session about once a minute, so `thc status` and owner totals include work in flight, not just finished tasks. It saves a checkpoint to the task every hour and a final total when the task is done; `thc status --collect` still works by hand.
+
 **0.9.63**
 
 - **0.9.62 as it should have shipped.** Same features as 0.9.62; the release build had failed because the agent instructions bundled in the repo were out of date.

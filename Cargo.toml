@@ -3,7 +3,7 @@ resolver = "2"
 members = ["crates/caretline", "crates/caretline-ratatui", "crates/thc-core", "crates/thc-tui", "crates/thc-daemon", "crates/thc"]
 
 [workspace.package]
-version = "0.9.63"
+version = "0.9.64"
 edition = "2024"
 license = "MIT"
 repository = "https://github.com/brancusi/thought-control"
