@@ -494,7 +494,23 @@ fn fuzz_regressions() {
 /// `answer[i]` (None: saved in place, the oracle). Then everything saved: the buffer's notes and
 /// the vault's, without IDs.
 fn late(ops: &[Op], answer: Option<&[bool]>) -> (Vec<Note>, Vec<Note>) {
-    let (_s, vault) = scratch(&format!("late{}", answer.map_or(0, |a| a.iter().fold(1usize, |h, b| h * 2 + *b as usize))));
+    late_from(ops, answer, &[])
+}
+
+fn late_from(ops: &[Op], answer: Option<&[bool]>, plain: &[&str]) -> (Vec<Note>, Vec<Note>) {
+    let tag = if plain.is_empty() { "late" } else { "late-saved" };
+    let (_s, mut vault) = scratch(&format!("{tag}{}", answer.map_or(0, |a| a.iter().fold(1usize, |h, b| h * 2 + *b as usize))));
+    if !plain.is_empty() {
+        vault.transact(|store| {
+            let today = thc_core::dates::today();
+            let mut b = thc_core::builder::TxBuilder::new(store, today);
+            let journal = b.journal(today)?;
+            for text in plain {
+                b.create_from_capture(Some(journal.clone()), &thc_core::capture::parse(text, today)?, None)?;
+            }
+            Ok((b.finish(), ()))
+        }).unwrap();
+    }
     crate::SNAPSHOT.with(|s| s.set(true));
     let mut app = App::new(vault).unwrap();
     app.daemon_live = false;
@@ -506,6 +522,12 @@ fn late(ops: &[Op], answer: Option<&[bool]>) -> (Vec<Note>, Vec<Note>) {
     }
     app.journal_date = app.today;
     app.set_view(View::Journal);
+    if !plain.is_empty() {
+        let d = app.doc.as_mut().unwrap();
+        d.view.caret = crate::doc::Pos { line: 0, byte: 0 };
+        d.view.anchor = None;
+        d.view.goal = None;
+    }
     for (i, op) in ops.iter().enumerate() {
         apply(&mut app, *op);
         if answer.is_some_and(|a| a.get(i).copied().unwrap_or(false)) {
@@ -543,6 +565,33 @@ fn late_saves_never_roll_back_what_came_after() {
             let (buf, held) = late(&ops, Some(&answer));
             assert_eq!(buf, want, "{ops:?} answered {answer:?}: the buffer isn't the last state");
             assert_eq!(held, want, "{ops:?} answered {answer:?}: the vault isn't the last state");
+        }
+    }
+}
+
+/// cptrz: inline and delayed saves must complete saved plain notes, rather than merely
+/// agree with each other after both paths have rolled the completed status back to todo.
+#[test]
+fn late_task_cycles_complete_saved_plain_lines() {
+    let t = Op::TaskCycle;
+    let plain = ["alpha line", "bravo line", "charlie line"];
+    for (ops, completed) in [(vec![t, t], 1), (vec![t, t, Op::Move(KeyCode::Down), t, t], 2)] {
+        let n = ops.len();
+        // Exercise every answer schedule, including inline and no answers until flush.
+        for mask in 0..=(1usize << n) {
+            let answer: Vec<bool> = (0..n).map(|i| mask & (1 << i) != 0).collect();
+            let schedule = if mask == (1usize << n) { None } else { Some(answer.as_slice()) };
+            let (buf, held) = late_from(&ops, schedule, &plain);
+            assert_eq!(buf, held, "{ops:?}, {answer:?}: vault differs from editor");
+            assert_eq!(buf.len(), plain.len());
+            for (i, note) in buf.iter().enumerate() {
+                assert_eq!(note.3, plain[i]);
+                if i < completed {
+                    assert_eq!((note.0, note.2.as_deref()), (Kind::Task, Some("done")), "{ops:?}, {answer:?}: completion rolled back");
+                } else {
+                    assert_eq!(note.2, None);
+                }
+            }
         }
     }
 }
