@@ -7,6 +7,7 @@ use chrono::{DateTime, Utc};
 use std::collections::BTreeMap;
 use std::fs::{self, File, OpenOptions};
 use std::io::{Read, Seek, SeekFrom, Write};
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 
 pub struct Log {
@@ -46,6 +47,13 @@ impl Log {
             let path = self.root.join(&rel);
             fs::create_dir_all(path.parent().unwrap())?;
             let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+            // Vault's writer lock is cache-local. Separate caches can still use the same
+            // device log (e.g. THC_DEVICE in fixtures), so serialize the size measurement
+            // and the whole append here too. Closing this descriptor releases the lock.
+            // SAFETY: f owns a valid descriptor for the duration of this append.
+            if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+                return Err(std::io::Error::last_os_error()).with_context(|| format!("locking {}", path.display()));
+            }
             let before = f.metadata()?.len();
             f.write_all(buf.as_bytes())?;
             f.sync_all()?;
@@ -130,6 +138,75 @@ fn is_newer(line: &[u8]) -> bool {
 mod tests {
     use super::*;
 
+    fn event(eid: &str, text: &str) -> Event {
+        serde_json::from_value(serde_json::json!({
+            "v": 1, "eid": eid, "hlc": [1, 0], "dev": "dev",
+            "actor": {"kind": "human"}, "via": "cli", "tx": eid,
+            "op": "node.text", "id": "aaaaaaaaaaaa", "text": text
+        })).unwrap()
+    }
+
+    #[test]
+    fn empty_and_incomplete_lines_wait_for_a_newline() {
+        let dir = std::env::temp_dir().join(format!("thc-log-partial-{}", std::process::id()));
+        fs::create_dir_all(dir.join("dev")).unwrap();
+        let path = dir.join("dev/2026-10.jsonl");
+        let log = Log::new(dir.clone());
+        fs::write(&path, "").unwrap();
+        let empty = log.read_from("dev/2026-10.jsonl", 0).unwrap();
+        assert_eq!(empty.new_offset, 0);
+        assert!(empty.bad_lines.is_empty());
+        let line = serde_json::to_vec(&event("partial", "a multibyte note: café")).unwrap();
+        let split = line.len() / 2;
+        fs::write(&path, [&b"\n \t\n"[..], &line[..split]].concat()).unwrap();
+        let partial = log.read_from("dev/2026-10.jsonl", 0).unwrap();
+        assert_eq!(partial.new_offset, 4);
+        assert!(partial.events.is_empty());
+        assert!(partial.bad_lines.is_empty());
+        let mut f = OpenOptions::new().append(true).open(&path).unwrap();
+        f.write_all(&line[split..]).unwrap();
+        f.write_all(b"\n").unwrap();
+        let complete = log.read_from("dev/2026-10.jsonl", partial.new_offset).unwrap();
+        assert_eq!(complete.events, [event("partial", "a multibyte note: café")]);
+        assert!(complete.bad_lines.is_empty());
+        assert_eq!(complete.new_offset, fs::metadata(&path).unwrap().len());
+        fs::remove_dir_all(dir).unwrap();
+    }
+
+    #[test]
+    fn concurrent_appends_return_their_actual_byte_ranges() {
+        let dir = std::env::temp_dir().join(format!("thc-log-append-race-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        let log = Log::new(dir.clone());
+        let barrier = std::sync::Barrier::new(16);
+        let mut ranges = std::thread::scope(|scope| {
+            let handles: Vec<_> = (0..16).map(|i| {
+                let log = &log;
+                let barrier = &barrier;
+                scope.spawn(move || {
+                    let e = event(&format!("writer-{i}"), &"x".repeat(128_000 + i));
+                    barrier.wait();
+                    let range = log.append("dev", std::slice::from_ref(&e)).unwrap().remove(0);
+                    (range, e)
+                })
+            }).collect();
+            handles.into_iter().map(|h| h.join().unwrap()).collect::<Vec<_>>()
+        });
+        ranges.sort_by_key(|((_, before, _), _)| *before);
+        let mut end = 0;
+        for ((rel, before, after), e) in &ranges {
+            assert_eq!(*before, end, "append ranges must neither overlap nor leave gaps");
+            let chunk = log.read_from(rel, *before).unwrap();
+            assert!(chunk.bad_lines.is_empty(), "{:?}", chunk.bad_lines);
+            assert_eq!(chunk.events.first().map(|e| &e.eid), Some(&e.eid));
+            end = *after;
+        }
+        let rel = &ranges[0].0.0;
+        assert_eq!(end, fs::metadata(dir.join(rel)).unwrap().len());
+        assert_eq!(log.read_from(rel, 0).unwrap().events.len(), 16);
+        fs::remove_dir_all(dir).unwrap();
+    }
+
     #[test]
     fn unknown_ops_are_skipped_not_reported() {
         let dir = std::env::temp_dir().join(format!("thc-log-{}", std::process::id()));
@@ -143,4 +220,3 @@ mod tests {
         let _ = fs::remove_dir_all(&dir);
     }
 }
-
