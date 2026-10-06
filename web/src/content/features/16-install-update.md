@@ -6,7 +6,7 @@ order: 16
 ---
 
 ```sh
-$ curl -fsSL https://github.com/brancusi/thought-central-releases/releases/latest/download/install.sh | sh
+$ curl -fsSL https://github.com/brancusi/thought-control-releases/releases/latest/download/install.sh | sh
   verified: checksum, Apple signature, update signature
 Setting up thought-central
   ✓ vault       ~/thought (new)

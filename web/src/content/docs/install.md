@@ -8,7 +8,7 @@ group: Start
 `thc` installs with one line, on macOS (Apple silicon or Intel):
 
 ```sh
-$ curl -fsSL https://github.com/brancusi/thought-central-releases/releases/latest/download/install.sh | sh
+$ curl -fsSL https://github.com/brancusi/thought-control-releases/releases/latest/download/install.sh | sh
 ```
 
 It ends with a checklist, something like this:
@@ -33,7 +33,7 @@ Setting up thought-central
 Open a new terminal window so your shell finds the command, then type `thc j`.
 
 The installer is macOS-only for now. Releases, checksums and the installer itself live at
-[thought-central-releases](https://github.com/brancusi/thought-central-releases/releases).
+[thought-control-releases](https://github.com/brancusi/thought-control-releases/releases).
 
 ## What it sets up
 

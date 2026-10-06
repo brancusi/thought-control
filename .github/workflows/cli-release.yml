@@ -20,7 +20,7 @@ permissions:
   contents: read
 
 env:
-  RELEASES_REPO: brancusi/thought-central-releases
+  RELEASES_REPO: brancusi/thought-control-releases
   TARGETS: aarch64-apple-darwin x86_64-apple-darwin
 
 jobs:

@@ -1,7 +1,7 @@
 #!/bin/sh
 # Install thc (thought-central) on a Mac:
 #
-#   curl -fsSL https://github.com/brancusi/thought-central-releases/releases/latest/download/install.sh | sh
+#   curl -fsSL https://github.com/brancusi/thought-control-releases/releases/latest/download/install.sh | sh
 #
 # Puts thc in ~/.local/bin, then runs `thc setup --all --yes`: the vault (~/thought), PATH, the
 # background daemon (a LaunchAgent) and agent skills. If thc is currently a link into
@@ -12,7 +12,7 @@
 # signature against the ed25519 key built into thc, and that the binary reports the manifest's version.
 set -eu
 
-MANIFEST="${THC_INSTALL_MANIFEST:-https://github.com/brancusi/thought-central-releases/releases/latest/download/latest.json}"
+MANIFEST="${THC_INSTALL_MANIFEST:-https://github.com/brancusi/thought-control-releases/releases/latest/download/latest.json}"
 DEST_DIR="$HOME/.local/bin"
 
 say() { printf '%s\n' "$*"; }

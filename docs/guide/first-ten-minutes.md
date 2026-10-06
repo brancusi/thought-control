@@ -5,7 +5,7 @@ Nine short steps, from install to "I trust this". Each takes about a minute.
 ## 1. Install
 
 ```console
-$ curl -fsSL https://github.com/brancusi/thought-central-releases/releases/latest/download/install.sh | sh
+$ curl -fsSL https://github.com/brancusi/thought-control-releases/releases/latest/download/install.sh | sh
 thc 0.9.0 (aarch64-apple-darwin)
   verified: checksum, Apple signature, update signature
   installed ~/.local/bin/thc

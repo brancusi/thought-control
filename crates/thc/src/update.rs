@@ -19,7 +19,7 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 
 /// Where the manifest lives: the releases repo's latest release (CLI releases own `latest`; a
 /// resumed Mac app would move to `app-v*` tags with its own feed release).
-pub const MANIFEST_URL: &str = "https://github.com/brancusi/thought-central-releases/releases/latest/download/latest.json";
+pub const MANIFEST_URL: &str = "https://github.com/brancusi/thought-control-releases/releases/latest/download/latest.json";
 
 /// The update signing key's public half (hex). All zeros until the release key is made: such a
 /// build refuses to update rather than trust anything.
