@@ -12,6 +12,7 @@ them.
 | [Writing](writing.md) | You want to know how the editor thinks |
 | [The mouse](mouse.md) | You'd rather click |
 | [Working with agents](agents.md) | Claude, Codex or a script is going to use your notes too |
+| [Starting a team](teams.md) | Start a saved roster with roles, models and a column layout |
 | [Vaults](vaults.md) | You want a separate notebook per project |
 | [Everything it can do](features.md) | You want the complete list |
 | [Keys](keys.md) | You want every key, in one place |

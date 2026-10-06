@@ -132,16 +132,6 @@ pub fn safe(name: &str, arg: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn argv(name: &str, l: &Launcher, model: Option<&str>, prompt: &str) -> Result<Vec<String>> {
-    let mut a = l.command.clone();
-    if let Some(model) = model {
-        safe(name, model)?;
-        a.extend(l.model.iter().map(|s| s.replace("{model}", model)));
-    }
-    a.extend(l.prompt.iter().map(|s| s.replace("{prompt}", prompt)));
-    Ok(a)
-}
-
 pub fn quote(s: &str) -> String {
     format!("'{}'", s.replace('\'', "'\\''"))
 }

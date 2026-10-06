@@ -2,7 +2,7 @@
 #[path = "team_placement.rs"]
 mod placement;
 use anyhow::Result;
-pub use placement::{balance, create_member};
+pub use placement::{balance, create_cell, create_member};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::{collections::BTreeMap, path::Path};

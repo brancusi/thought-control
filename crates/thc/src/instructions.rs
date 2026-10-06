@@ -22,8 +22,18 @@ pub const TEAM:&str=r#"## Starting a team
 `thc team up pm designer engineer --agent claude --agent engineer=codex` starts one agent
 per role in this project: herdr first, then a new WezTerm team tab, otherwise shell commands.
 Each gets THC_ACTOR, THC_ROLE and the resolved THC_BOARD, independent of the capture vault.
-It uses normal agent permissions. `--model` fills the launcher model arguments; herdr reports
-when it cannot pass a model. Custom launchers use [team.agents.NAME] argument arrays in config.
+It uses normal agent permissions. `--model` fills the launcher model arguments, including
+native arguments after -- in herdr. Custom launchers use [team.agents.NAME] argument arrays in config.
+
+Bare `thc team up` reads [[team.roster]] entries in the project's .thc.toml: role, agent,
+optional model, and count (default 1). Entries keep their order and repeated roles get unique
+actor suffixes. Listed roles replace the configured roster; --agent and --model override it.
+Profiles open a new team tab with balanced columns and the first pm/lead at bottom-right.
+[team.layout] sets columns (default 3), tab (default "team"), and pm="bottom-right".
+Explicit-role commands keep their previous layout unless [team.layout] is set. The user's
+[team] max_agents cap still applies; set it to 7 for a seven-person roster. A Claude entry's
+permission_mode="auto"|"manual" is human-only; agents must omit it. Native first-run trust
+dialogs are left for the human. --dry-run shows the roster, commands and layout without launching.
 
 `thc team ls --json` joins the cached project roster with live host state, board claims,
 unread messages and last activity. `thc team down --yes` closes only the saved panes;

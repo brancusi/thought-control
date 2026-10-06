@@ -3,6 +3,122 @@ use super::*;
 
 pub type MemberPane = (String, Option<String>, Vec<String>, Option<String>);
 
+/// Build a fresh tab's grid without moving or resizing any pre-existing panes.
+#[allow(clippy::too_many_arguments)]
+pub fn create_cell(
+    host: &Host,
+    root: &Path,
+    context: &BTreeMap<String, String>,
+    env: &BTreeMap<String, String>,
+    argv: &[String],
+    parent: Option<&str>,
+    direction: &str,
+    remaining: usize,
+    title: &str,
+) -> Result<(String, Option<String>)> {
+    let mut args: Vec<String>;
+    match host {
+        Host::Herdr => {
+            args = if let Some(parent) = parent {
+                vec![
+                    "pane".into(),
+                    "split".into(),
+                    parent.into(),
+                    "--direction".into(),
+                    direction.into(),
+                    "--ratio".into(),
+                    (1.0 / remaining as f64).to_string(),
+                ]
+            } else {
+                let mut args = vec![
+                    "tab".into(),
+                    "create".into(),
+                    "--label".into(),
+                    title.into(),
+                ];
+                if let Some(workspace) = context.get("HERDR_WORKSPACE_ID") {
+                    args.extend(["--workspace".into(), workspace.clone()]);
+                }
+                args
+            };
+            args.extend([
+                "--cwd".into(),
+                root.display().to_string(),
+                "--no-focus".into(),
+            ]);
+            for (key, value) in env {
+                args.extend(["--env".into(), format!("{key}={value}")]);
+            }
+            let value: Value = serde_json::from_str(&call(host, context, &args)?)?;
+            let pane = value
+                .pointer(if parent.is_some() {
+                    "/result/pane"
+                } else {
+                    "/result/root_pane"
+                })
+                .ok_or_else(|| invalid("herdr creation returned no pane"))?;
+            Ok((
+                pane_id(pane).ok_or_else(|| invalid("herdr creation returned no pane id"))?,
+                identity(pane),
+            ))
+        }
+        Host::Wezterm => {
+            args = vec!["cli".into()];
+            if let Some(parent) = parent {
+                let dimension = if direction == "right" { "cols" } else { "rows" };
+                let rows = list(host, context, false)?;
+                let extent = rows
+                    .iter()
+                    .find(|v| pane_id(v).as_deref() == Some(parent))
+                    .and_then(|v| v.get("size"))
+                    .and_then(|v| v.get(dimension))
+                    .and_then(Value::as_u64)
+                    .ok_or_else(|| invalid("wezterm returned no parent pane size"))?;
+                // Leave one cell for each future separator, then divide the usable cells.
+                if extent < (2 * remaining - 1) as u64 {
+                    return Err(invalid("team pane is too small for the configured layout"));
+                }
+                let keep = (extent - (remaining - 1) as u64) / remaining as u64;
+                let new_cells = extent - 1 - keep;
+                args.extend([
+                    "split-pane".into(),
+                    "--pane-id".into(),
+                    parent.into(),
+                    if direction == "right" {
+                        "--right"
+                    } else {
+                        "--bottom"
+                    }
+                    .into(),
+                    "--cells".into(),
+                    new_cells.to_string(),
+                ]);
+            } else {
+                args.push("spawn".into());
+            }
+            args.extend([
+                "--cwd".into(),
+                root.display().to_string(),
+                "--".into(),
+                "env".into(),
+            ]);
+            args.extend(env.iter().map(|(key, value)| format!("{key}={value}")));
+            args.extend(argv.iter().cloned());
+            let pane = call(host, context, &args)?;
+            if pane.is_empty() || !pane.chars().all(|c| c.is_ascii_digit()) {
+                return Err(invalid("wezterm returned an invalid pane id"));
+            }
+            let ident = list(host, context, false).ok().and_then(|rows| {
+                rows.into_iter()
+                    .find(|v| pane_id(v).as_ref() == Some(&pane))
+                    .and_then(|v| identity(&v))
+            });
+            Ok((pane, ident))
+        }
+        Host::Printed => Err(invalid("printed teams do not create panes")),
+    }
+}
+
 pub fn create_member(
     roster: &crate::team_cmd::Roster,
     env: &BTreeMap<String, String>,

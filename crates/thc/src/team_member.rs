@@ -177,11 +177,7 @@ pub fn add(
         ));
     }
 
-    let max = thc_core::settings::load(None)
-        .get("team.max_agents")
-        .and_then(|v| v.as_integer())
-        .filter(|n| *n > 0)
-        .unwrap_or(6) as usize;
+    let max = super::profile::max_agents();
     if roster.members.len() >= max {
         return Err(invalid(format!("team exceeds max_agents ({max})")));
     }
