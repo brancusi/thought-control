@@ -322,25 +322,36 @@ fn dispatch(shared: &Arc<Shared>, client_id: u64, stream: &UnixStream, req: &Req
                 .map_err(|e| invalid(format!("bad block op: {e}")))?;
             let today = thc_core::dates::today();
             let mut v = shared.vault.lock().unwrap();
-            // A journal day is created by its first save.
-            let root = match (p.get("root").and_then(|x| x.as_str()), p.get("journal").and_then(|x| x.as_str())) {
-                (Some(r), _) => v.store.resolve(r)?,
-                (None, Some(d)) => {
-                    let date = thc_core::dates::parse(d, today)?.date();
-                    match v.store.journal_node(&date.format("%Y-%m-%d").to_string())? {
-                        Some(id) => id,
-                        None => v.transact(|st| {
-                            let mut b = TxBuilder::new(st, today);
-                            let id = b.journal(date)?;
-                            Ok((b.finish(), id))
-                        })?.1,
+            // The client that typed it says so (`"via": "tui"`): its saves are its own writes,
+            // which is how a TUI tells them from other writers' (a push; a UI trace's `_log`).
+            let via = p.get("via").and_then(|x| x.as_str()).filter(|s| !s.is_empty() && s.len() <= 16 && s.bytes().all(|b| b.is_ascii_lowercase()));
+            let daemon_via = via.map(|s| std::mem::replace(&mut v.via, s.to_string()));
+            let saved = (|| {
+                // A journal day is created by its first save.
+                let root = match (p.get("root").and_then(|x| x.as_str()), p.get("journal").and_then(|x| x.as_str())) {
+                    (Some(r), _) => v.store.resolve(r)?,
+                    (None, Some(d)) => {
+                        let date = thc_core::dates::parse(d, today)?.date();
+                        match v.store.journal_node(&date.format("%Y-%m-%d").to_string())? {
+                            Some(id) => id,
+                            None => v.transact(|st| {
+                                let mut b = TxBuilder::new(st, today);
+                                let id = b.journal(date)?;
+                                Ok((b.finish(), id))
+                            })?.1,
+                        }
                     }
-                }
-                _ => return Err(usage("blocks.apply needs \"root\" or \"journal\"")),
-            };
-            let r = root.clone();
-            let (events, mut results) = v.transact(move |st| thc_core::outline::plan(st, &r, &ops, today))?;
-            thc_core::outline::refresh_revs(&v.store, &mut results);
+                    _ => return Err(usage("blocks.apply needs \"root\" or \"journal\"")),
+                };
+                let r = root.clone();
+                let (events, mut results) = v.transact(move |st| thc_core::outline::plan(st, &r, &ops, today))?;
+                thc_core::outline::refresh_revs(&v.store, &mut results);
+                Ok((root, events, results))
+            })();
+            if let Some(d) = daemon_via {
+                v.via = d;
+            }
+            let (root, events, results) = saved?;
             drop(v);
             shared.dirty.store(true, Ordering::SeqCst);
             Ok(json!({ "root": root, "tx": events.first().map(|e| e.tx.clone()), "events": events.len(), "results": results }))

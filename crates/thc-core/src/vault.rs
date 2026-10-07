@@ -694,6 +694,67 @@ impl Vault {
         Ok(())
     }
 
+    /// How far the store has read each log file: a point in the vault's history. The logs only
+    /// grow, so the vault as of a frontier is every file cut at its offset ([`scratch_copy_at`]).
+    /// A UI trace pins where it starts with one (docs/ui-protocol.md).
+    pub fn frontier(&self) -> Result<Frontier> {
+        self.store.cursors()
+    }
+
+    /// The lines other writers added to the log between two frontiers, as written: what the store
+    /// took in, less this vault's own writes (this device with this `via`). Lines a newer writer
+    /// made are kept too.
+    pub fn foreign_lines(&self, from: &Frontier, to: &Frontier) -> Result<Vec<serde_json::Value>> {
+        self.log_lines(from, to, true)
+    }
+
+    /// Every line the store took in between two frontiers, as written; with `skip_own`, less
+    /// this vault's own writes.
+    pub fn log_lines(&self, from: &Frontier, to: &Frontier, skip_own: bool) -> Result<Vec<serde_json::Value>> {
+        let mut out = Vec::new();
+        for (rel, &end) in to {
+            let start = from.get(rel).copied().unwrap_or(0);
+            if end <= start {
+                continue;
+            }
+            for line in self.log.lines_between(rel, start, end)? {
+                let Ok(v) = serde_json::from_str::<serde_json::Value>(&line) else { continue };
+                if skip_own && v["dev"].as_str() == Some(self.device.as_str()) && v["via"].as_str() == Some(self.via.as_str()) {
+                    continue;
+                }
+                out.push(v);
+            }
+        }
+        Ok(out)
+    }
+
+    /// Lines another writer made (a UI trace's `_log`), put where that writer put them (its
+    /// device's file for the month) and applied. Each lands once: a line whose event is already
+    /// here is skipped. Returns how many were added.
+    pub fn ingest_lines(&mut self, lines: &[serde_json::Value]) -> Result<usize> {
+        let _lock = self.lock()?;
+        let mut by_file: std::collections::BTreeMap<String, Vec<String>> = Default::default();
+        let mut n = 0;
+        for v in lines {
+            let (Some(dev), Some(ms), Some(eid)) = (v["dev"].as_str(), v["hlc"][0].as_u64(), v["eid"].as_str()) else {
+                bail!(usage(format!("not an event line: {v}")));
+            };
+            if !valid_dev(dev) {
+                bail!(usage(format!("not a device id: {dev}")));
+            }
+            if self.store.has_event(eid)? {
+                continue;
+            }
+            by_file.entry(Log::rel_path(dev, ms)).or_default().push(serde_json::to_string(v)?);
+            n += 1;
+        }
+        for (rel, lines) in by_file {
+            self.log.append_lines(&rel, &lines)?;
+        }
+        self.catch_up_locked()?;
+        Ok(n)
+    }
+
     /// A throwaway store replayed up to `ms` (inclusive), for `--as-of` queries.
     pub fn as_of(&self, ms: u64) -> Result<Store> {
         let mem = Store::open_memory()?;
@@ -765,15 +826,26 @@ fn hostname() -> Option<String> {
 /// that replay keys: writes land in the copy, never the real vault. On APFS `fs::copy`
 /// clones, so even a large store copies in milliseconds. Returns the copy's paths.
 pub fn scratch_copy(paths: &Paths) -> Result<Paths> {
+    scratch_copy_at(paths, None)
+}
+
+/// [`scratch_copy`] as of a [`Frontier`]: every log file cut where the frontier says, files it
+/// doesn't name left out, and the store rebuilt from what's left when the copy is opened. The
+/// log is append-only, so this is the vault exactly as it was then (FORMAT.md). A file shorter
+/// than the frontier says means another vault, or a log that lost lines: an error.
+pub fn scratch_copy_at(paths: &Paths, at: Option<&Frontier>) -> Result<Paths> {
     let root = std::env::temp_dir().join(format!("thc-snapshot-{}-{}", std::process::id(), crate::id::new_id()));
-    fn copy_dir(from: &Path, to: &Path) -> Result<()> {
+    fn copy_dir(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<()> {
         fs::create_dir_all(to)?;
         for e in fs::read_dir(from)? {
             let e = e?;
+            if skip(&e.path()) {
+                continue;
+            }
             let t = e.file_type()?;
             let dest = to.join(e.file_name());
             if t.is_dir() {
-                copy_dir(&e.path(), &dest)?;
+                copy_dir(&e.path(), &dest, skip)?;
             } else if t.is_file() {
                 fs::copy(e.path(), dest)?;
             }
@@ -782,9 +854,38 @@ pub fn scratch_copy(paths: &Paths) -> Result<Paths> {
         Ok(())
     }
     let copy = Paths { vault: root.join("vault"), cache: root.join("cache") };
-    copy_dir(&paths.vault, &copy.vault)?;
+    let log = paths.vault.join("log");
+    copy_dir(&paths.vault, &copy.vault, &|p| at.is_some() && p == log)?;
     if paths.cache.exists() {
-        copy_dir(&paths.cache, &copy.cache)?;
+        // As of a frontier the store is ahead of the cut log: it's rebuilt instead.
+        let store = |p: &Path| p.parent() == Some(paths.cache.as_path()) && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("store.db"));
+        copy_dir(&paths.cache, &copy.cache, &|p| at.is_some() && store(p))?;
+    }
+    if let Some(at) = at {
+        for (rel, &len) in at {
+            if rel.split('/').any(|c| c.is_empty() || c == "..") {
+                bail!(usage(format!("not a log file: {rel}")));
+            }
+            let from = log.join(rel);
+            let have = fs::metadata(&from).map(|m| m.len()).unwrap_or(0);
+            if have < len {
+                bail!(usage(format!("log/{rel} has {have} bytes here and the trace starts at {len}: not the vault it was recorded on")));
+            }
+            let mut bytes = vec![0u8; len as usize];
+            std::io::Read::read_exact(&mut File::open(&from)?, &mut bytes)?;
+            let dest = copy.vault.join("log").join(rel);
+            fs::create_dir_all(dest.parent().context("a log file is in a device directory")?)?;
+            fs::write(dest, bytes)?;
+        }
+        fs::create_dir_all(copy.vault.join("log"))?;
     }
     Ok(copy)
 }
+
+/// A device id as a log directory name: no path separators or dots that could leave `log/`.
+fn valid_dev(dev: &str) -> bool {
+    !dev.is_empty() && !dev.starts_with('.') && !dev.contains(['/', '\\']) && dev != ".."
+}
+
+/// Where the store has read each log file to, by path under `log/` (`Vault::frontier`).
+pub type Frontier = std::collections::BTreeMap<String, u64>;

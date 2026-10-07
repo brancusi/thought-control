@@ -42,6 +42,29 @@ fn copy(vault: &Vault) -> Vault {
     v
 }
 
+/// `thc ui replay` in a test: each segment on a scratch copy of the vault at `paths` as of
+/// where it starts (its `state` line's `log`), removed afterwards.
+fn replay(paths: &Paths, trace: &str, size: Option<(u16, u16)>, every: bool) -> Vec<String> {
+    let mut copies = Vec::new();
+    let mut open = |at: Option<&thc_core::vault::Frontier>| -> Result<Session, String> {
+        let p = thc_core::vault::scratch_copy_at(paths, at).map_err(|e| format!("{e:#}"))?;
+        copies.push(p.vault.parent().unwrap().to_path_buf());
+        let mut v = Vault::open(p, thc_core::event::Actor { kind: "human".into(), name: None }, "tui").map_err(|e| format!("{e:#}"))?;
+        v.origin = Some(paths.clone());
+        Ok(session(v, (80, 24)))
+    };
+    let frames = crate::session::replay(&mut open, trace, size, "text", every).unwrap();
+    for c in copies {
+        let _ = std::fs::remove_dir_all(c);
+    }
+    frames
+}
+
+fn trace_text(s: &Session, all: bool) -> String {
+    let (_, lines) = s.trace(None, all).unwrap();
+    lines.iter().map(|l| format!("{l}\n")).collect()
+}
+
 fn session(vault: Vault, size: (u16, u16)) -> Session {
     crate::SNAPSHOT.with(|s| s.set(true));
     let mut app = crate::app::App::new(vault).unwrap();
@@ -60,7 +83,6 @@ const TOUR: &str = "3jj<tab><tab>k/plan<cr><esc>2:<esc>?<esc>4j<s-tab>gg";
 #[test]
 fn a_trace_replays_to_the_same_frames_every_time() {
     let (_s, vault) = seeded("replay");
-    let base = copy(&vault);
     let mut live = session(vault, (110, 32));
     for m in crate::script::parse(TOUR, false).unwrap() {
         live.apply(m).unwrap();
@@ -68,11 +90,10 @@ fn a_trace_replays_to_the_same_frames_every_time() {
     }
     let expected = frame(&mut live);
     let (_, lines) = live.trace(None, true).unwrap();
-    let trace: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let trace = trace_text(&live, true);
     let mut runs = Vec::new();
     for _ in 0..2 {
-        let mut s = session(copy(&base), (80, 24));
-        runs.push(crate::session::replay(&mut s, &trace, None, "text", true).unwrap());
+        runs.push(replay(&live.app.vault.paths, &trace, None, true));
     }
     assert_eq!(runs[0], runs[1], "two replays differ");
     assert_eq!(runs[0].last().unwrap(), &expected, "the replay's last frame isn't the session's");
@@ -220,29 +241,96 @@ fn the_view_reads_no_store_clock_environment_or_file() {
 #[test]
 fn typing_in_a_document_replays_the_same_on_two_copies() {
     let (_s, vault) = seeded("replay-doc");
-    let base = copy(&vault);
     let mut live = session(vault, (100, 30));
+    // As the terminal loop does: the frame after each key (the save of a line just left).
     for m in crate::script::parse("5hello world<cr>a second line<up><end> again", false).unwrap() {
         live.apply(m).unwrap();
         live.drop_effects();
+        live.runtime(Msg::Frame);
     }
     assert!(live.state().document.as_ref().is_some_and(|d| d.target.is_some()), "a journal day is open");
-    let (_, lines) = live.trace(None, true).unwrap();
-    let trace: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    let runs: Vec<Vec<String>> = (0..2)
-        .map(|_| {
-            let mut s = session(copy(&base), (100, 30));
-            crate::session::replay(&mut s, &trace, None, "text", true).unwrap()
-        })
-        .collect();
+    let trace = trace_text(&live, true);
+    // Replayed on the vault as it is now, which already has the session's saves: the trace's
+    // `state` line pins where it started, so they land once.
+    let expected = frame(&mut live);
+    let runs: Vec<Vec<String>> = (0..2).map(|_| replay(&live.app.vault.paths, &trace, None, true)).collect();
     assert_eq!(runs[0], runs[1]);
-    assert!(runs[0].last().unwrap().contains("hello world again"), "{}", runs[0].last().unwrap());
+    let last = runs[0].last().unwrap();
+    assert_eq!(last, &expected, "the replay's last frame is the session's");
+    assert_eq!(last.matches("hello world").count(), 1, "{last}");
+}
+
+/// The bug a replay doubled every edit with: it ran on the vault as it is now. A trace pins the
+/// vault it started on; what others wrote meanwhile rides along (`_log`) and lands once, where
+/// it landed live; the runtime's own saves and polls are messages; a checkpoint starts over.
+#[test]
+fn a_trace_pins_its_vault_and_others_writes_land_once() {
+    let (_s, vault) = seeded("replay-pin");
+    let paths = vault.paths.clone();
+    let mut live = session(vault, (100, 30));
+    let step = |live: &mut Session, keys: &str| {
+        for m in crate::script::parse(keys, false).unwrap() {
+            live.apply(m).unwrap();
+            live.drop_effects();
+            live.runtime(Msg::Frame);
+        }
+    };
+    step(&mut live, "5coffee notes<cr><tab>nested line");
+    // Time passes with nothing typed: the idle point (one undo step, the idle save).
+    let now = live.app.ui.now_ms + 2000;
+    live.apply(Msg::Tick { now_ms: now, utc_offset_min: 0 }).unwrap();
+    live.runtime(Msg::Idle);
+    // An agent writes through the same store (`thc add` beside the TUI), then the poll.
+    let mut agent = Vault::open(paths.clone(), thc_core::event::Actor { kind: "agent".into(), name: Some("claude".into()) }, "cli").unwrap();
+    let today = thc_core::dates::today();
+    agent
+        .transact(|st| {
+            let mut b = TxBuilder::new(st, today);
+            let j = b.journal(today)?;
+            b.create_from_capture(Some(j), &thc_core::capture::parse("from the agent", today).unwrap(), None)?;
+            Ok((b.finish(), ()))
+        })
+        .unwrap();
+    live.runtime(Msg::Poll);
+    live.sync_external();
+    step(&mut live, "<cr>after the agent");
+    live.apply(Msg::Patch { patch: json!({"view": "tasks"}), actor: Some("claude".into()) }).unwrap();
+    live.apply(Msg::Patch { patch: json!({"view": "journal"}), actor: Some("claude".into()) }).unwrap();
+    live.sync_external();
+
+    let trace = trace_text(&live, true);
+    let first: serde_json::Value = serde_json::from_str(trace.lines().next().unwrap()).unwrap();
+    assert!(first["log"].is_object(), "the state line pins the vault: {first}");
+    let carried: Vec<serde_json::Value> = trace.lines().map(|l| serde_json::from_str::<serde_json::Value>(l).unwrap()).filter(|v| v.get("_log").is_some()).collect();
+    assert_eq!(carried.len(), 1, "the agent's write rides along once:\n{trace}");
+    assert!(carried[0]["_log"].as_array().unwrap().iter().all(|e| e["via"] == "cli"), "only other writers' lines: {}", carried[0]);
+    for m in ["idle", "poll", "frame"] {
+        assert!(trace.contains(&format!("{{\"msg\":\"{m}\"")), "no {m} in the trace:\n{trace}");
+    }
+    let expected = frame(&mut live);
+    let got = replay(&paths, &trace, None, false);
+    assert_eq!(got.last().unwrap(), &expected, "the replay's frame is the live one");
+    for text in ["coffee notes", "nested line", "from the agent", "after the agent"] {
+        assert_eq!(expected.matches(text).count(), 1, "{text} once:\n{expected}");
+    }
+    // At another size: the frame the live session draws at that size.
+    let small = live.render(70, 24, "text").unwrap().frame.unwrap();
+    assert_eq!(replay(&paths, &trace, Some((70, 24)), false).last().unwrap(), &small);
+
+    // A checkpoint: the segment after it replays on its own, on the vault as of then.
+    live.checkpoint_saved();
+    step(&mut live, "<cr>past the checkpoint");
+    let segment = trace_text(&live, false);
+    assert!(segment.lines().next().unwrap().starts_with("{\"state\""), "{segment}");
+    let expected = frame(&mut live);
+    assert_eq!(replay(&paths, &segment, None, false).last().unwrap(), &expected);
+    // And the whole trace, segment by segment.
+    assert_eq!(replay(&paths, &trace_text(&live, true), None, false).last().unwrap(), &expected);
 }
 
 #[test]
 fn changes_outside_messages_are_recorded_and_replay() {
     let (_s, vault) = seeded("external");
-    let base = copy(&vault);
     let mut live = session(vault, (100, 30));
     live.apply(Msg::Key { key: "3".into() }).unwrap();
     // Something the runtime did between frames: an alert toast and a flash, as the daemon's
@@ -258,9 +346,7 @@ fn changes_outside_messages_are_recorded_and_replay() {
     assert!(lines.last().unwrap()["msg"] == "external", "{:?}", lines.last());
     let expected = frame(&mut live);
     let trace: String = lines.iter().map(|l| format!("{l}\n")).collect();
-    let mut s = session(copy(&base), (100, 30));
-    let frames = crate::session::replay(&mut s, &trace, None, "text", false).unwrap();
+    let frames = replay(&live.app.vault.paths, &trace, None, false);
     assert_eq!(frames.last().unwrap(), &expected);
     assert!(expected.contains("an alert from elsewhere"));
-    assert_eq!(s.state(), live.state());
 }
