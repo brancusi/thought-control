@@ -66,7 +66,6 @@ This repository has two editor engines. They are not the same thing.
 | [`caretline-next`](../../crates/caretline-next) | The new engine: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app` |
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
 | [`caretline`](../../crates/caretline) | The older engine: a block editor for Markdown (paragraphs, list items, tasks, folds, several views on one document) | thought-central's TUI (`thc-tui`) |
-| [`caretline-ratatui`](../../crates/caretline-ratatui) | Draws the older engine's view into a ratatui buffer | |
 
 caretline-next is meant to replace the older engine once the TUI adopts it. That hasn't
 happened yet. Today the TUI still runs on the older `caretline` crate. caretline-next doesn't
