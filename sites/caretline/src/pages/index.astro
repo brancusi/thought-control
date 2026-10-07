@@ -92,7 +92,7 @@ const mark = { yes: '●', part: '◐', no: '○' } as const;
 const word = { yes: 'yes', part: 'partly', no: 'no' } as const;
 
 const tour = `// The pieces, end to end (docs/caretline/architecture.md)
-use caretline_next::{keymap, update, view, Key, KeyCode, State, Viewport};
+use caretline::{keymap, update, view, Key, KeyCode, State, Viewport};
 
 let mut state = State::new("hi", None, Viewport { width: 20, height: 3 });
 let msg = keymap(&Key::plain(KeyCode::End)).unwrap();   // Move { forward, line_end }
