@@ -488,4 +488,14 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | Keys | Does | Action | When |
 |---|---|---|---|
 | `Esc` | close | `notes.close` |  |
+
+### `layers`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `F2` | next | `tour.next` | tour |
+| `⇧F2` | back | `tour.back` | tour |
+| `F3` | stop | `tour.stop` | tour |
+| `Esc` | dismiss | `layers.dismiss` | agent_layers |
+| `⌘[` `⌃⌥←` | take back | `layers.back` | agent_layers |
 <!-- keys:end -->

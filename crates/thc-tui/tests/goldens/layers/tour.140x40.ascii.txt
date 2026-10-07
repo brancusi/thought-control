@@ -37,4 +37,4 @@
                       |
                       |
                       |
- P Launch plan - 25 words - autosaved                                                      ⌃T task  ⌃O open  Esc done  F1 keys   thc 0.10.1
+ P Launch plan - 25 words - autosaved                       F2 next  ⇧F2 back  F3 stop  Esc dismiss  ⌃T task  ⌃O open  F1 keys   thc 0.10.1

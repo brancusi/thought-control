@@ -117,11 +117,8 @@ impl LayerState {
     }
 
     pub fn has_text_anchors(&self) -> bool {
-        self.stack.layers.iter().any(|l| {
-            l.anchor
-                .iter()
-                .any(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }))
-        })
+        let text = |a: &cl::Anchor| matches!(a.unscoped(), cl::Anchor::Text { .. });
+        self.stack.layers.iter().any(|l| l.anchor.iter().any(text)) || self.tour.as_ref().is_some_and(|t| t.steps.iter().any(|s| s.anchor.iter().any(text)))
     }
 
     pub fn has_agent_layers(&self) -> bool {
@@ -163,11 +160,35 @@ impl LayerState {
         true
     }
 
-    /// The edit `changes` moved the open document's text: text anchors follow it.
+    /// The edit `changes` moved the open document's text: text anchors follow it, the layers
+    /// showing and a walkthrough's steps still to come alike.
     pub fn observe(&mut self, changes: &caretline::helix::ChangeSet, now_ms: u64) {
+        if let Some(t) = self.tour.as_mut() {
+            map_steps(&mut t.steps, changes);
+        }
         if cl::observe(&mut self.stack, Some(changes), now_ms) {
             self.tidy();
         }
+    }
+}
+
+/// A walkthrough's steps through an edit: each step's text anchors move as a layer's would. A
+/// step whose anchors all went (their text deleted) points at the screen's centre instead.
+fn map_steps(steps: &mut [TourStep], changes: &caretline::helix::ChangeSet) {
+    if !steps.iter().any(|s| s.anchor.iter().any(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }))) {
+        return;
+    }
+    let mut tmp = cl::Layers::default();
+    for (i, s) in steps.iter().enumerate() {
+        let mut l = cl::Layer::new(cl::Anchor::Caret);
+        l.id = format!("step-{i}");
+        l.anchor = s.anchor.clone();
+        l.ring = Some(cl::Ring::default());
+        tmp.layers.push(l);
+    }
+    cl::map_anchors(&mut tmp, changes);
+    for (i, s) in steps.iter_mut().enumerate() {
+        s.anchor = tmp.get(&format!("step-{i}")).map_or_else(|| vec![cl::Anchor::Screen(cl::ScreenPos::Center)], |l| l.anchor.clone());
     }
 }
 

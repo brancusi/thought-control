@@ -391,3 +391,91 @@ fn layers_a_trace_replays_byte_identically() {
     assert_eq!(runs[0], runs[1], "two replays differ");
     assert_eq!(runs[0].last().unwrap(), &expected, "the replay's last frame isn't the live one");
 }
+
+#[test]
+fn layers_keys_live_in_the_keymap() {
+    let (_x, vault) = fixture("keys", 0);
+    let mut s = session(vault, (120, 32), "dark");
+    scene(&mut s, "tour");
+    // The footer and help show the walkthrough's keys.
+    let ctxs = crate::keymap::footer_ctxs(&s.app);
+    assert_eq!(ctxs.first(), Some(&crate::keymap::Ctx::Layers), "{ctxs:?}");
+    let hints: Vec<String> = crate::keymap::footer(&s.app, &ctxs).iter().map(|h| format!("{} {}", h.keys, h.label)).collect();
+    assert!(hints.iter().any(|h| h.contains("F2") && h.contains("next")), "{hints:?}");
+    assert!(crate::keymap::help_ctxs(&s.app, false).contains(&crate::keymap::Ctx::Layers));
+    let f = s.render(120, 32, "text").unwrap().frame.unwrap();
+    assert!(f.lines().last().unwrap().contains("F2"), "{f}");
+    // Gone with the walkthrough.
+    s.apply(Msg::Key { key: "<f3>".into() }).unwrap();
+    assert!(!crate::keymap::footer_ctxs(&s.app).contains(&crate::keymap::Ctx::Layers));
+}
+
+#[test]
+fn layers_a_step_still_to_come_follows_edits() {
+    let (_x, vault) = fixture("pending", 0);
+    let mut s = session(vault, (100, 30), "dark");
+    open_page(&mut s);
+    s.apply(Msg::DocView { req: json!({"op": "doc.view.open", "at": {"id": id("invites")}}), actor: Some("claude".into()) }).unwrap();
+    let r = s.app.doc_view_reply.take().unwrap();
+    let from = r["line"]["text"]["from"].as_u64().unwrap() as usize;
+    let steps = json!([
+        {"anchor": format!("row:{}", id("signup")), "text": "first"},
+        {"anchor": {"text": {"from": from, "to": from + 4}}, "text": "Send"},
+    ]);
+    layer(&mut s, json!({"op": "tour.start", "steps": steps}), Some("claude"));
+    // The person types at the top of the page while step 1 shows.
+    s.apply(Msg::Key { key: "<home>".into() }).unwrap();
+    for c in ["N", "e", "w", " "] {
+        s.apply(Msg::Key { key: c.into() }).unwrap();
+    }
+    let a = s.app.ui.layers.tour.as_ref().unwrap().steps[1].anchor.clone();
+    assert_eq!(a, vec![caretline_layers::Anchor::Text { from: from + 4, to: from + 8 }], "the step still to come moved with its text");
+    layer(&mut s, json!({"op": "tour.next"}), Some("claude"));
+    let on = resolved(&mut s, "tour");
+    assert_eq!(cells(&s, &on.rects[0]), "Send");
+}
+
+#[test]
+fn layers_a_walkthrough_box_stays_when_clicked() {
+    let (_x, vault) = fixture("tour-click", 0);
+    let mut s = session(vault, (100, 30), "dark");
+    scene(&mut s, "tour");
+    s.render(100, 30, "text").unwrap();
+    let r = s.app.render.layer_plan.as_ref().unwrap().layers.iter().find(|l| l.id == "tour").unwrap().rect.unwrap();
+    s.apply(Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Down, x: r.x + 2, y: r.y + 1, mods: String::new(), clicks: Some(1) } }).unwrap();
+    assert!(s.app.ui.layers.tour.is_some() && s.app.ui.layers.stack.get("tour").is_some());
+}
+
+#[test]
+fn layers_a_segment_starting_mid_session_reopens_agent_views() {
+    let (_x, vault) = fixture("midseg", 0);
+    let mut live = session(vault, (100, 30), "dark");
+    open_page(&mut live);
+    live.apply(Msg::DocView { req: json!({"op": "doc.view.open", "at": {"id": id("goal"), "end": true}}), actor: Some("claude".into()) }).unwrap();
+    assert_eq!(live.state().agent_views["claude"].caret_id, id("goal"));
+    // A new segment starts here; then the agent writes at its caret.
+    live.checkpoint_saved();
+    live.apply(Msg::DocView { req: json!({"op": "doc.msgs", "msgs": [{"msg": "insert_text", "text": " (agreed)"}]}), actor: Some("claude".into()) }).unwrap();
+    let expected = live.render(100, 30, "text").unwrap().frame.unwrap();
+    assert!(expected.contains("end of the month. (agreed)"), "{expected}");
+    let (_, lines) = live.trace(None, false).unwrap();
+    assert!(lines[0]["state"]["agent_views"]["claude"]["caret_id"] == json!(id("goal")), "{}", lines[0]);
+    let trace: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let paths = live.app.vault.paths.clone();
+    let mut copies = Vec::new();
+    let mut open = |at: Option<&thc_core::vault::Frontier>| -> Result<Session, String> {
+        let p = thc_core::vault::scratch_copy_at(&paths, at).map_err(|e| format!("{e:#}"))?;
+        copies.push(p.vault.parent().unwrap().to_path_buf());
+        let mut v = Vault::open(Paths { vault: p.vault, cache: p.cache }, thc_core::event::Actor { kind: "human".into(), name: None }, "tui").map_err(|e| format!("{e:#}"))?;
+        v.origin = Some(paths.clone());
+        crate::SNAPSHOT.with(|s| s.set(true));
+        let mut app = crate::app::App::new(v).map_err(|e| format!("{e:#}"))?;
+        app.daemon_live = false;
+        Ok(Session::new(app, (80, 24)))
+    };
+    let frames = crate::session::replay(&mut open, &trace, None, "text", false).unwrap();
+    for c in copies {
+        let _ = std::fs::remove_dir_all(c);
+    }
+    assert_eq!(frames.last().unwrap(), &expected);
+}

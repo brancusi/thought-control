@@ -862,47 +862,33 @@ pub fn click(app: &mut App, x: u16, y: u16) -> bool {
             }
         }
         Some(_) => {}
-        None if region == TOUR_ID => {}
         None => {
-            // The person dismisses a hint by clicking it.
-            app.ui.layers.stack.layers.retain(|l| l.id != region);
+            // The person dismisses a hint by clicking it. A walkthrough step (or any other
+            // kind) stays: only its buttons act.
+            let hint = app.ui.layers.stack.get(&region).and_then(|l| l.content.as_ref()).is_some_and(|c| c.kind == cl::HINT);
+            if hint && region != TOUR_ID {
+                app.ui.layers.stack.layers.retain(|l| l.id != region);
+            }
         }
     }
     true
 }
 
-/// The person's keys for layers, before anything else: a walkthrough's F2 (next), ⇧F2 (back)
-/// and F3 (stop); Esc dismisses every agent layer (when nothing else is open to close). True:
-/// the key was the layers'.
+/// The person's keys for layers, before anything else: the `layers` context of the keymap
+/// (keymap.rs: F2 / ⇧F2 / F3 for a walkthrough, Esc and ⌘[ for agents' layers, as remapped).
+/// True: the key was the layers'.
 pub fn key(app: &mut App, k: &ratatui::crossterm::event::KeyEvent) -> bool {
-    use ratatui::crossterm::event::{KeyCode, KeyModifiers};
-    let limits = app.layer_limits.limits();
-    let now = app.ui.now_ms;
-    if app.ui.layers.tour.is_some() {
-        let shift = k.modifiers.contains(KeyModifiers::SHIFT);
-        let op = match k.code {
-            KeyCode::F(2) if shift => Some("tour.back"),
-            KeyCode::F(2) => Some("tour.next"),
-            KeyCode::F(3) => Some("tour.stop"),
-            KeyCode::F(14) => Some("tour.back"),
-            _ => None,
-        };
-        if let Some(op) = op {
-            let _ = crate::layers::step(&mut app.ui.layers, op, now, &limits);
-            return true;
+    use crate::keymap::{Ctx, Key};
+    if !crate::keymap::layer_keys(app) || !app.pending_keys.is_empty() {
+        return false;
+    }
+    // ⇧F2 arrives as F14 from some terminals.
+    let k = if k.code == ratatui::crossterm::event::KeyCode::F(14) { ratatui::crossterm::event::KeyEvent::new(ratatui::crossterm::event::KeyCode::F(2), ratatui::crossterm::event::KeyModifiers::SHIFT) } else { *k };
+    match crate::keymap::lookup(app, &[Ctx::Layers], &[Key::of(&k)]) {
+        Some(Some(b)) => {
+            let action = b.action;
+            crate::keymap::run(app, action)
         }
+        _ => false,
     }
-    if k.code == KeyCode::Esc
-        && k.modifiers.is_empty()
-        && app.ui.layers.has_agent_layers()
-        && app.overlay.is_none()
-        && app.prompt.is_none()
-        && app.edit.is_none()
-        && app.pending_keys.is_empty()
-        && app.ui.focus != crate::app::Focus::Sidebar
-    {
-        app.ui.layers.dismiss_agents();
-        return true;
-    }
-    false
 }

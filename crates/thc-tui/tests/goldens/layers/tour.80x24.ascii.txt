@@ -21,4 +21,4 @@
 
 
 
- P Launch plan - 25 words - autosaved       ⌃T task  ⌃O open  Esc done  F1 keys
+                                                                     thc 0.10.1

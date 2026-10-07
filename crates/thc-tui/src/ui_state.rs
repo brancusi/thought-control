@@ -187,6 +187,20 @@ pub struct UiState {
     /// written to the vault; left out of the JSON while empty.
     #[serde(skip_serializing_if = "crate::layers::LayerState::is_empty")]
     pub layers: crate::layers::LayerState,
+    /// Agents' own views on the open document (doc_view.rs), by actor: each one's view id and
+    /// caret, so a trace segment that starts mid-session reopens them where they were. Read
+    /// back on a state line; left out while empty.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub agent_views: BTreeMap<String, AgentView>,
+}
+
+/// An agent's view on the open document: its id, and its caret by note id and byte.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentView {
+    pub view: u32,
+    pub caret_id: String,
+    pub caret_byte: usize,
 }
 
 impl Default for UiState {
@@ -266,6 +280,7 @@ impl Default for UiState {
             history: Default::default(),
             sidebar: Default::default(),
             layers: Default::default(),
+            agent_views: BTreeMap::new(),
         }
     }
 }

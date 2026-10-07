@@ -108,8 +108,10 @@ fn line_of(d: &crate::editor::Doc, id: &str) -> Result<usize, String> {
 /// The agent's view, opened when it has none (`at`: `start`, `end`, `{"id", "byte"}` or
 /// `{"id", "end": true}`).
 fn ensure(app: &mut App, actor: &str, at: Option<&Value>) -> ViewId {
-    let n = app.agent_views.len() as ViewId;
-    let vid = *app.agent_views.entry(actor.to_string()).or_insert(BASE + n);
+    // A view id no agent holds (ids aren't reused while their views live).
+    let taken: Vec<ViewId> = app.ui.agent_views.values().map(|v| v.view).collect();
+    let next = (BASE..).find(|i| !taken.contains(i)).unwrap_or(BASE);
+    let vid = app.ui.agent_views.entry(actor.to_string()).or_insert(crate::ui_state::AgentView { view: next, ..Default::default() }).view;
     let d = app.doc.as_mut().expect("checked");
     let fresh = !d.has_view(vid);
     if fresh {
@@ -170,9 +172,9 @@ pub fn run(app: &mut App, req: &Value, actor: Option<&str>) -> Result<Value, Str
             Ok(place(app, vid))
         }
         "doc.view.close" => {
-            if let Some(vid) = app.agent_views.remove(&actor) {
+            if let Some(v) = app.ui.agent_views.remove(&actor) {
                 if let Some(d) = app.doc.as_mut() {
-                    d.remove_view(vid);
+                    d.remove_view(v.view);
                 }
             }
             Ok(json!({"closed": true}))

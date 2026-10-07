@@ -198,6 +198,9 @@ pub enum Ctx {
     Focus,
     Help,
     Notes,
+    /// Layers are showing (layers.rs): a walkthrough's keys, and taking agents' layers away.
+    /// Above everything but overlays and prompts.
+    Layers,
 }
 
 // `name`, `ALL`, `When::name`, `group` and `footer` are read by the generated footer, help and
@@ -231,10 +234,11 @@ impl Ctx {
             Ctx::Focus => "focus",
             Ctx::Help => "help",
             Ctx::Notes => "notes",
+            Ctx::Layers => "layers",
         }
     }
 
-    pub const ALL: [Ctx; 25] = [
+    pub const ALL: [Ctx; 26] = [
         Ctx::Global,
         Ctx::List,
         Ctx::Today,
@@ -260,6 +264,7 @@ impl Ctx {
         Ctx::Focus,
         Ctx::Help,
         Ctx::Notes,
+        Ctx::Layers,
     ];
 
     fn of_view(v: View) -> Ctx {
@@ -323,6 +328,10 @@ pub enum When {
     PanelIsDoc,
     /// The sidebar is the drawer or replace (narrower than a column): Esc closes it.
     SidebarOver,
+    /// A walkthrough is showing (layers.rs).
+    Tour,
+    /// An agent's layer is showing: Esc and ⌘[ take them away.
+    AgentLayers,
 }
 
 impl When {
@@ -358,13 +367,15 @@ impl When {
             When::SidebarClosedAny => "sidebar_closed_any",
             When::PanelIsDoc => "panel_is_doc",
             When::SidebarOver => "sidebar_over",
+            When::Tour => "tour",
+            When::AgentLayers => "agent_layers",
         }
     }
 
     /// For help: a row's state (a task, children, an alert) is taken as given, since help
     /// describes keys, not this row; the app's state (Pages, the lane, a filter) still decides.
     pub fn holds_for_help(self, app: &App) -> bool {
-        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable | When::HasTarget | When::RowAside | When::SidebarHasPanels | When::SidebarShown | When::SidebarClosedAny | When::PanelIsDoc | When::SidebarOver) || self.holds(app)
+        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable | When::HasTarget | When::RowAside | When::SidebarHasPanels | When::SidebarShown | When::SidebarClosedAny | When::PanelIsDoc | When::SidebarOver | When::Tour | When::AgentLayers) || self.holds(app)
     }
 
     pub fn holds(self, app: &App) -> bool {
@@ -399,6 +410,8 @@ impl When {
             When::SidebarClosedAny => !app.ui.sidebar.closed.is_empty(),
             When::PanelIsDoc => app.ui.sidebar.active_key().is_some_and(|k| k.kind.is_doc()),
             When::SidebarOver => app.sidebar_over.is_some(),
+            When::Tour => app.ui.layers.tour.is_some() && !app.ui.layers.stack.hidden,
+            When::AgentLayers => app.ui.layers.has_agent_layers() && !app.ui.layers.stack.hidden,
         }
     }
 }
@@ -721,6 +734,13 @@ pub fn defaults() -> Vec<Binding> {
         b!(Sidebar, "A-0", "sidebar.width_auto", SidebarShown, "width", "Sidebar"),
         b!(Sidebar, "C-w", "pane.next", Always, "next pane", "Sidebar"),
         b!(Sidebar, "f1", "help.context", Always, "keys", "View", 9),
+        // ---- layers (layers.rs): over every view, the document and the sidebar
+        b!(Layers, "f2", "tour.next", Tour, "next", "Walkthrough", 0),
+        b!(Layers, "S-f2", "tour.back", Tour, "back", "Walkthrough", 0),
+        b!(Layers, "f3", "tour.stop", Tour, "stop", "Walkthrough", 0),
+        b!(Layers, "esc", "layers.dismiss", AgentLayers, "dismiss", "Layers", 1),
+        b!(Layers, "Cmd-[", "layers.back", AgentLayers, "take back", "Layers"),
+        b!(Layers, "C-A-left", "layers.back", AgentLayers, "take back", "Layers"),
     ]);
     t.extend(vec![
         // ---- overlays and prompts (§12.6): sealed; these rows feed the footer and help.
@@ -799,7 +819,7 @@ pub struct Hint {
 /// The contexts whose ranked bindings make the footer (§6): the overlay, prompt or toast that
 /// owns the bar; else the document (the link popup while it's open); else the view and `?`.
 pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
-    use crate::app::{Overlay, ToastKind};
+    use crate::app::Overlay;
     if let Some(o) = &app.overlay {
         return vec![match o {
             Overlay::Help { .. } => Ctx::Help,
@@ -819,6 +839,21 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
     if app.prompt.as_ref().is_some_and(|(k, _)| !k.inline()) {
         return vec![Ctx::Prompt];
     }
+    let mut v = footer_ctxs_below(app);
+    if layer_keys(app) {
+        v.insert(0, Ctx::Layers);
+    }
+    v
+}
+
+/// Whether the layers' keys are on: a walkthrough or an agent's layer shows, and no overlay or
+/// prompt has the keyboard.
+pub fn layer_keys(app: &App) -> bool {
+    app.overlay.is_none() && app.prompt.is_none() && app.edit.is_none() && (When::Tour.holds(app) || When::AgentLayers.holds(app))
+}
+
+fn footer_ctxs_below(app: &App) -> Vec<Ctx> {
+    use crate::app::ToastKind;
     if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(app.ui.now_ms)) {
         match t.kind {
             ToastKind::Alert => return vec![Ctx::ToastAlert],
@@ -1432,8 +1467,11 @@ pub fn help_ctxs(app: &App, all: bool) -> Vec<Ctx> {
     } else {
         vec![Ctx::of_view(app.view), Ctx::List, Ctx::Global]
     };
+    if layer_keys(app) {
+        v.insert(0, Ctx::Layers);
+    }
     if all {
-        for c in [Ctx::Today, Ctx::Inbox, Ctx::Tasks, Ctx::Pages, Ctx::Journal, Ctx::Search, Ctx::Log, Ctx::List, Ctx::Global, Ctx::ToastAlert, Ctx::ToastAgent] {
+        for c in [Ctx::Today, Ctx::Inbox, Ctx::Tasks, Ctx::Pages, Ctx::Journal, Ctx::Search, Ctx::Log, Ctx::List, Ctx::Global, Ctx::ToastAlert, Ctx::ToastAgent, Ctx::Layers] {
             if !v.contains(&c) {
                 v.push(c);
             }
@@ -1546,11 +1584,17 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 app.info("one vault here · the scope picker is for views across vaults".to_string());
             }
         }
-        // An agent's layer step first: ⌘[ takes back its newest layer (layers.rs).
-        "nav.back" => {
-            if !app.ui.layers.back_agent_step() {
-                app.history_go(-1)
-            }
+        "nav.back" => app.history_go(-1),
+        "tour.next" | "tour.back" | "tour.stop" => {
+            let limits = app.layer_limits.limits();
+            let now = app.ui.now_ms;
+            let _ = crate::layers::step(&mut app.ui.layers, action, now, &limits);
+        }
+        "layers.dismiss" => {
+            app.ui.layers.dismiss_agents();
+        }
+        "layers.back" => {
+            app.ui.layers.back_agent_step();
         }
         "nav.forward" => app.history_go(1),
         "context.toggle" => app.toggle_context(),
