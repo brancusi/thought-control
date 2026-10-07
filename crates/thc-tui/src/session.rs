@@ -367,6 +367,12 @@ impl Session {
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
+        if doc.is_some() && self.app.doc.is_some() {
+            // `scroll` counts rows as the view's width wraps them: lay the document out at
+            // the screen's geometry first, then put the caret and the scroll back as given
+            // (zjvvd: set against a view not yet laid out, the row landed elsewhere).
+            self.follow();
+        }
         if let (Some(ds), Some(d)) = (doc, self.app.doc.as_mut()) {
             if !ds.caret_id.is_empty() {
                 // The caret goes back as it does on reopening (a remembered caret): a day's
