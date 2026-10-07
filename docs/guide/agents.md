@@ -39,6 +39,11 @@ From the command line: `thc review`, `thc log --by claude --since 1d`, and
 
 ## Working side by side
 
+**Showing you something.** Ask an agent to put a page, a day or a list beside you and it runs
+`thc ui aside "Reading List"`: the page opens at the top of your sidebar, marked `◆ claude`, and
+the bar says so. Your keyboard stays where it is. `⌘[` takes it back. Agents can't move your
+focus, and they can't close or unpin a panel you pinned.
+
 If an agent changes a note you're writing in, `thc` tells you at once
 (`◆ claude changed this line`). It never rewrites the text under your cursor. When you move off,
 the change applies. If you both changed it, both versions are kept for you to choose.

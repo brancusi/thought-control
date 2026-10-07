@@ -43,6 +43,8 @@ pub struct DocSlot {
 pub struct PanelRt {
     /// Its view's id in its document.
     pub vid: ViewId,
+    /// Pages linking to it from elsewhere (`▸ linked from N`), counted on read and refresh.
+    pub linked: usize,
     pub slot: DocSlot,
     /// Why it can't show its document (deleted, unreadable).
     pub problem: Option<String>,
@@ -272,7 +274,7 @@ impl App {
         let vid = self.next_vid;
         self.next_vid += 1;
         let remembered = self.ui.sidebar.get(key).and_then(|p| p.doc_view().cloned());
-        let mut rt = PanelRt { vid, slot: DocSlot { parked: true, write: true, ..Default::default() }, problem: None };
+        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, ..Default::default() }, problem: None };
         if self.doc.as_ref().is_some_and(|d| caret_key(&d.target) == dk) {
             let d = self.doc.as_mut().unwrap();
             d.add_view(vid);
@@ -293,7 +295,25 @@ impl App {
             }
         }
         self.panels.insert(key.clone(), rt);
+        self.count_backlinks(key);
         self.sync_panel_view(key);
+    }
+
+    /// `▸ linked from N`: notes elsewhere that mention this page.
+    fn count_backlinks(&mut self, key: &PanelKey) {
+        let (PanelKind::Page, Some(id)) = (key.kind, key.id.clone()) else { return };
+        let here: std::collections::HashSet<String> = self.panel_doc(key).map(|d| d.blocks().iter().map(|l| l.id.clone()).collect()).unwrap_or_default();
+        let n = self
+            .vault
+            .store
+            .nodes_where("n.deleted=0 AND n.id IN (SELECT src FROM edges WHERE rel='mention' AND dst=?1) ORDER BY n.updated_ms DESC LIMIT 50", &[&id])
+            .unwrap_or_default()
+            .iter()
+            .filter(|n| !here.contains(&n.id))
+            .count();
+        if let Some(rt) = self.panels.get_mut(key) {
+            rt.linked = n;
+        }
     }
 
     /// A panel left the stack: what's typed in it is saved, then its view goes (and its
@@ -384,6 +404,9 @@ impl App {
     /// `sync_doc`): lines update in place, the caret stays on its text (§4.3).
     pub(crate) fn patch_panels(&mut self) {
         let keys: Vec<PanelKey> = self.panels.iter().filter(|(_, rt)| rt.slot.doc.is_some()).map(|(k, _)| k.clone()).collect();
+        for k in self.panels.keys().cloned().collect::<Vec<_>>() {
+            self.count_backlinks(&k);
+        }
         let typing = (self.ui.focus == Focus::Sidebar).then(|| self.ui.sidebar.active_key()).flatten();
         for k in keys {
             // A panel without the keyboard takes changes at once, its caret mapped through them.
@@ -728,6 +751,149 @@ impl App {
             }
             self.doc_line_id = Some(d.caret_block().id.clone());
         }
+    }
+
+    // ---- agents (§10) -------------------------------------------------------------------------
+
+    /// `thc ui aside`: an agent puts `target` beside the person (§10.3). The stack's rules run
+    /// here (dedupe, move to top, the limit); the keyboard stays where it is; the panel says who
+    /// opened it; the bar says so; ⌘[ takes it back. With `close`, it closes a panel it opened.
+    pub fn agent_aside(&mut self, target: &str, pin: bool, fold: bool, close: bool, actor: Option<&str>) -> Result<PanelKey, AsideError> {
+        let key = match self.resolve_aside(target) {
+            Ok(k) => k,
+            // `--close` also takes the panel by its id as the stack holds it.
+            Err(e) if close => self.panel_keys().into_iter().find(|k| k.id.as_deref() == Some(target) || k.query.as_deref() == Some(target) || k.view.as_deref() == Some(target)).ok_or(e)?,
+            Err(e) => return Err(e),
+        };
+        let before = self.ui.sidebar.clone();
+        let who = actor.unwrap_or("").to_string();
+        if close {
+            let Some(p) = self.ui.sidebar.get(&key).cloned() else { return Err(AsideError::NotFound(format!("{} isn't beside you", self.panel_name(&key)))) };
+            if p.pinned && actor.is_some() {
+                return Err(AsideError::Invalid("a pinned panel is the person's · an agent can't close it".into()));
+            }
+            if actor.is_some() && p.opened_by.as_deref() != actor {
+                return Err(AsideError::Invalid(format!("{} wasn't opened by {who} · an agent closes only what it opened", self.panel_name(&key))));
+            }
+            self.commit_panel(&key);
+            crate::runtime_effects::sidebar_op(self, SidebarOp::Close { key: key.clone() });
+        } else {
+            let focus_before = self.ui.focus;
+            let active_before = self.ui.sidebar.focused.clone();
+            crate::runtime_effects::sidebar_op(self, SidebarOp::Open { panel: Panel::new(key.clone()), focus: false, by: actor.map(str::to_string) });
+            if self.ui.sidebar.get(&key).is_none() {
+                return Err(AsideError::Invalid(format!("{} panels pinned · the person unpins one first", crate::sidebar::policy::MAX_PANELS)));
+            }
+            if pin && !self.ui.sidebar.get(&key).is_some_and(|p| p.pinned) {
+                crate::runtime_effects::sidebar_op(self, SidebarOp::Pin { key: key.clone() });
+                if let Some(p) = self.ui.sidebar.get_mut(&key) {
+                    p.opened_by = actor.map(str::to_string);
+                }
+            }
+            if fold && !self.ui.sidebar.get(&key).is_some_and(|p| p.folded) {
+                if let Some(p) = self.ui.sidebar.get_mut(&key) {
+                    p.folded = true;
+                }
+            }
+            // Agents never move the keyboard (§10.4): the person's active panel stays theirs.
+            if actor.is_some() && !crate::sidebar::policy::AGENTS_MOVE_FOCUS {
+                self.ui.focus = focus_before;
+                if focus_before == Focus::Sidebar {
+                    self.ui.sidebar.focused = active_before.filter(|k| self.ui.sidebar.get(k).is_some()).or(self.ui.sidebar.focused.clone());
+                }
+            }
+        }
+        if let Some(a) = actor {
+            let change = crate::sidebar::AgentChange::between(a, &before, &self.ui.sidebar);
+            if !change.is_empty() {
+                self.history_agent_step(change);
+            }
+            self.agent_toast(a, &key, close, &before);
+        }
+        self.persist_sidebar();
+        Ok(key)
+    }
+
+    /// `◆ claude opened ¶ Reading List beside you   ⌘[ back`, coalesced: `◆ claude opened 3
+    /// panels beside you (3)`; an eviction names the panel it closed.
+    fn agent_toast(&mut self, actor: &str, key: &PanelKey, close: bool, before: &crate::sidebar::SidebarState) {
+        let g = self.theme.glyphs();
+        let back = if self.cmd_seen { "⌘[" } else { "⌃⌥←" };
+        let name = self.panel_name(key);
+        let evicted = before.open.iter().find(|p| !p.pinned && p.key() != *key && self.ui.sidebar.get(&p.key()).is_none()).map(|p| self.panel_name(&p.key()));
+        let now = self.ui.now_ms;
+        let n = match &self.agent_opens {
+            Some((a, n, at)) if a == actor && !close && now.saturating_sub(*at) < 5000 => n + 1,
+            _ => 1,
+        };
+        if !close {
+            self.agent_opens = Some((actor.to_string(), n, now));
+        }
+        let text = if close {
+            format!("{} {actor} closed {name}   {back} back", g.agent)
+        } else if let Some(gone) = evicted {
+            format!("{} {actor} opened {name} · closed {gone} to make room   {back} back", g.agent)
+        } else if n > 1 {
+            format!("{} {actor} opened {n} panels beside you ({n})   {back} back", g.agent)
+        } else {
+            format!("{} {actor} opened {name} beside you   {back} back", g.agent)
+        };
+        self.toast_parts(crate::app::ToastKind::Agent, vec![(text, crate::theme::Token::Agent)]);
+    }
+
+    /// ⌘[ over an agent's change (§10.4): close what it opened (unless the person pinned it
+    /// since), bring back what it closed, unfold what it folded. Nothing else.
+    pub fn undo_agent_change(&mut self, c: crate::sidebar::AgentChange) {
+        for k in &c.opened {
+            if self.ui.sidebar.get(k).is_some_and(|p| !p.pinned) {
+                self.commit_panel(k);
+                crate::runtime_effects::sidebar_op(self, SidebarOp::Close { key: k.clone() });
+                self.ui.sidebar.closed.retain(|p| p.key() != *k);
+            }
+        }
+        for p in c.closed.iter().rev() {
+            if self.ui.sidebar.get(&p.key()).is_none() {
+                let focus = self.ui.focus;
+                crate::runtime_effects::sidebar_op(self, SidebarOp::Open { panel: p.clone(), focus: false, by: None });
+                self.ui.focus = focus;
+                self.ui.sidebar.closed.retain(|q| q.key() != p.key());
+            }
+        }
+        for k in &c.folded {
+            if let Some(p) = self.ui.sidebar.get_mut(k) {
+                p.folded = false;
+            }
+        }
+        if self.ui.focus == Focus::Sidebar && !self.ui.sidebar.has_panels() {
+            self.ui.focus = Focus::List;
+        }
+        self.persist_sidebar();
+        self.info(format!("took back {}'s change beside you", c.actor));
+    }
+
+    /// The stack as `thc ui aside --ls` reports it: each panel with its title and counts.
+    pub fn aside_ls(&self) -> serde_json::Value {
+        let open: Vec<serde_json::Value> = self
+            .ui
+            .sidebar
+            .open
+            .iter()
+            .map(|p| {
+                let k = p.key();
+                let mut v = serde_json::to_value(p).unwrap_or_default();
+                v["title"] = serde_json::json!(self.panel_title(&k));
+                if let Some(d) = self.panel_doc(&k) {
+                    let open = d.blocks().iter().filter(|l| l.kind() == thc_core::outline::Kind::Task && matches!(l.status.as_deref(), Some("todo" | "doing" | "waiting"))).count();
+                    v["notes"] = serde_json::json!(d.blocks().iter().filter(|l| !l.text.trim().is_empty()).count());
+                    v["open"] = serde_json::json!(open);
+                }
+                if let Some(rt) = self.lists.get(&k) {
+                    v["rows"] = serde_json::json!(rt.rows.iter().filter(|r| r.node().is_some()).count());
+                }
+                v
+            })
+            .collect();
+        serde_json::json!({"focus": self.ui.focus, "focused": self.ui.sidebar.focused, "shown": self.ui.sidebar.shown, "width": self.ui.sidebar.width, "open": open, "closed": self.ui.sidebar.closed.len()})
     }
 
     // ---- the stack's file ---------------------------------------------------------------------

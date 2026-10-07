@@ -15,7 +15,21 @@ pub const TOPICS: &[(&str, &str)] = &[
     ("roles", ROLES),
     ("messages", MESSAGES),
     ("team", TEAM),
+    ("ui", UI),
 ];
+
+const UI: &str = "## Beside the person (`thc ui aside`)
+
+When the human is in the TUI and asks you to show them something, open it in their sidebar:
+`thc ui aside \"Reading List\"` (a page title or id), `thc ui aside today` (a day: `fri`,
+`2026-10-06`), `@today` / `@inbox` / `@tasks` / `@log` / `@<saved view>`, `\"#tag\"` or any query.
+The panel opens on top, marked `◆ <you>`; their keyboard stays where it is, the bar tells them, and
+`⌘[` takes it back. `--pin` and `--fold` open it pinned or folded; `--close <id>` closes a panel
+you opened (never a pinned one); `--ls --json` lists the stack with titles and counts. Exit `3`:
+no such page or day; `5`: ambiguous (candidates listed); `6`: a bad query or a refusal. Only on
+request: the sidebar is the human's. `thc ui patch` can change it too, but can't move their
+focus or close or unpin a pinned panel (exit 6).
+";
 
 pub const TEAM:&str=r#"## Starting a team
 
@@ -311,7 +325,7 @@ pub fn index() -> String {
 
 /// Everything, as it appears in AGENTS.md Part 1.
 pub fn all() -> String {
-    let order = ["rules", "commands", "capture", "query", "dates", "apply", "conflicts", "exit-codes", "json", "coordination", "roles", "messages", "team"];
+    let order = ["rules", "commands", "capture", "query", "dates", "apply", "conflicts", "exit-codes", "json", "coordination", "roles", "messages", "team", "ui"];
     let mut s = String::from(
         "`thc` is a CLI for a personal stash of notes, todos, dates and reminders. Treat it the way\nyou'd treat `gh` or `git`: the CLI is the API. Start a session with `thc prime`.\n\n",
     );

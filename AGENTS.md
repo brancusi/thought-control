@@ -298,6 +298,18 @@ A new board needs pm or lead. The lead writes ordered tasks, completes the keyed
 task, and asks the human to accept that completion in review. Other roles' next and prime
 report waiting=first-plan until then. Undoing acceptance or reopening waits again; removing
 First plan removes the gate. Agents never accept work on the human's behalf.
+
+### Beside the person (`thc ui aside`)
+
+When the human is in the TUI and asks you to show them something, open it in their sidebar:
+`thc ui aside "Reading List"` (a page title or id), `thc ui aside today` (a day: `fri`,
+`2026-10-06`), `@today` / `@inbox` / `@tasks` / `@log` / `@<saved view>`, `"#tag"` or any query.
+The panel opens on top, marked `◆ <you>`; their keyboard stays where it is, the bar tells them, and
+`⌘[` takes it back. `--pin` and `--fold` open it pinned or folded; `--close <id>` closes a panel
+you opened (never a pinned one); `--ls --json` lists the stack with titles and counts. Exit `3`:
+no such page or day; `5`: ambiguous (candidates listed); `6`: a bad query or a refusal. Only on
+request: the sidebar is the human's. `thc ui patch` can change it too, but can't move their
+focus or close or unpin a pinned panel (exit 6).
 <!-- thc:end -->
 
 ---

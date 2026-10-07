@@ -459,6 +459,8 @@ pub struct App {
     pub panel_pointer: Option<crate::sidebar::PanelKey>,
     /// The sidebar's list panels at runtime: rows and selection (sidebar_list.rs).
     pub lists: HashMap<crate::sidebar::PanelKey, crate::sidebar_list::ListRt>,
+    /// An agent's opens in a row, for the toast's count: (actor, how many, when).
+    pub agent_opens: Option<(String, usize, u64)>,
     /// A list panel's key is running as the main list (sidebar_list.rs `with_list_panel`).
     pub in_list: Option<crate::sidebar::PanelKey>,
     /// The sidebar's column width this frame (None: no column), set before drawing.
@@ -835,6 +837,7 @@ impl App {
             sidebar_checked: false,
             panel_pointer: None,
             lists: HashMap::new(),
+            agent_opens: None,
             in_list: None,
             sidebar_col: None,
             sidebar_over: None,
