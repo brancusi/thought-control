@@ -1,0 +1,29 @@
+name: Preflight
+
+# Fails a pull request or push that adds build output, oversized or stray binary files, home or
+# scratch paths, or anything credential-shaped (scripts/preflight.sh). Seconds to run, so it runs
+# on every PR, unlike the full CI. The local pre-push hook runs the same script first.
+on:
+  pull_request:
+  push:
+    branches: [main, "release/**"]
+
+permissions:
+  contents: read
+
+jobs:
+  preflight:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Preflight
+        env:
+          BASE: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          if [ -z "$BASE" ] || [ "$BASE" = 0000000000000000000000000000000000000000 ]; then
+            BASE=$(git rev-list --max-parents=0 "$HEAD" | tail -1)
+          fi
+          scripts/preflight.sh --range "$BASE..$HEAD"

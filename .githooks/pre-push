@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# Runs scripts/preflight.sh on every commit a push would add to the remote. Installed by
+# scripts/install-hooks.sh (core.hooksPath=.githooks, shared by every worktree of a clone).
+set -euo pipefail
+zero=0000000000000000000000000000000000000000
+status=0
+while read -r _local_ref local_sha _remote_ref remote_sha; do
+  [ "$local_sha" = "$zero" ] && continue                      # deleting a branch
+  if [ "$remote_sha" = "$zero" ]; then                       # a new branch: compare with main
+    base=$(git merge-base "$local_sha" origin/main 2>/dev/null || true)
+  else
+    base=$remote_sha
+  fi
+  [ -n "$base" ] || { echo "pre-push: can't find a base for $local_sha (git fetch)" >&2; exit 1; }
+  scripts/preflight.sh --range "$base..$local_sha" || status=1
+done
+exit $status

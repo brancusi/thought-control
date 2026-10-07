@@ -369,6 +369,17 @@ focus or close or unpin a pinned panel (exit 6).
   - Replay must stay a pure function of the events. Anything clock-, random- or
     timezone-dependent belongs in `TxBuilder` (the writer), never in `Store::apply`.
   - New op types need a format version bump.
+- **Before every commit and push (public repo):** a stray build folder once reached public main
+  and took a history rewrite to remove, so:
+  - Stage explicit paths (`git add <files>`), never `git add -A` / `git add .` in a tree that has
+    build output in it. Build outside the checkout (`CARGO_TARGET_DIR` in your scratch area) or in
+    the gitignored `/target`.
+  - Run `scripts/preflight.sh` before pushing and before `gh pr merge`; `--staged` checks the index.
+    It fails on build output, files over 512 KB, binaries outside fixtures/goldens/web/public, home
+    or scratch paths, the local user name, private repo URLs and credential-shaped strings.
+  - `scripts/install-hooks.sh` (once per clone) makes every push run it; CI's Preflight workflow
+    runs it on each PR. Never bypass it with `--no-verify`. If it flags something, unstage it or
+    fix the cause; a real exception goes in `.preflight-allow` with a comment saying why.
 - **caretline (the editor engine):** caretline lives at brancusi/caretline; engine bugs found in
   thc are fixed there first, released or pinned, then pulled into thc. Never patch the engine
   inside thought-control.
