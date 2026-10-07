@@ -13,7 +13,7 @@ mod common;
 
 use caretline::helix::Selection;
 use caretline::outline::markdown;
-use caretline::{script_to_msgs_for, update, view, BlockAttrs, Effect, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
+use caretline::{script_to_msgs_for, update, view, MarkAttrs, Effect, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
 
 // ---------------------------------------------------------------------------------------
 // The notation
@@ -79,7 +79,7 @@ fn doc_wh(notation: &str, width: u16, height: u16) -> State {
     for (k, (_, want)) in blocks.iter().enumerate().skip(1) {
         let b = o.get(MarkId(k as u64)).unwrap_or_else(|| panic!("no block for segment {k} of {notation:?}"));
         if b.gap != *want {
-            s.doc.marks.set_attrs(b.id, BlockAttrs { gap: Some(*want) });
+            s.doc.marks.set_attrs(b.id, MarkAttrs::gap(Some(*want)));
         }
     }
     s.outline_changed();
@@ -868,7 +868,7 @@ fn a_blank_row_is_a_virtual_row() {
 fn insert_blocks_adds_host_blocks_as_one_step() {
     let mut s = doc("- a▮ ¦ - b");
     let blocks = vec![
-        NewBlock { depth: 1, kind: Kind::Task, status: Some(' '), text: "sub".into(), gap: None, mark: Some(MarkId(40)) },
+        NewBlock { depth: 1, kind: Kind::Task, status: Some(' '), tag: None, text: "sub".into(), gap: None, mark: Some(MarkId(40)) },
         NewBlock::para(IMG),
     ];
     send(&mut s, [Msg::InsertBlocks { after: Some(MarkId(0)), blocks }]);

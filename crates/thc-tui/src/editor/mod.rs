@@ -28,6 +28,7 @@
 mod doc;
 mod next;
 mod patch;
+mod tasks;
 
 pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
 

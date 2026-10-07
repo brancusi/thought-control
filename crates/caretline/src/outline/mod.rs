@@ -17,7 +17,7 @@
 //!   starts a block.
 //! - **Block identity** is the mark on its first line. Node ids, due dates and anything else a
 //!   host keeps per block are keyed by [`MarkId`].
-//! - **The blank row before a block** is an attribute ([`BlockAttrs::gap`]), drawn as a
+//! - **The blank row before a block** is an attribute ([`MarkAttrs::gap`]), drawn as a
 //!   virtual row and never stored as text. Unset, it follows the defaults in
 //!   [`default_gap`].
 //!
@@ -34,7 +34,7 @@ use std::sync::{Arc, Mutex};
 use serde::{Deserialize, Serialize};
 
 use crate::helix::{RopeSlice};
-use crate::marks::{BlockAttrs, MarkId, Marks};
+use crate::marks::{MarkAttrs, MarkId, Marks};
 use crate::state::{Document, State};
 
 /// One entry of a task vocabulary: the character between the brackets and its name.
@@ -59,6 +59,15 @@ pub struct OutlineConfig {
     pub atomic_images: bool,
     /// `12. ` and `12) ` start numbered items; Enter continues the number.
     pub numbered: bool,
+    /// Characters a bullet may carry as a one-character tag in brackets, `- [c] ` (GFM's
+    /// task-list syntax, among others). Empty: `[c]` is text. A tag means nothing to the
+    /// engine: it is part of the marker (never a caret stop, drawn in the hang), Backspace at
+    /// the content's start removes it before the bullet, and changing it is a text edit.
+    #[serde(skip_serializing_if = "String::is_empty")]
+    pub tags: String,
+    /// The tag Enter gives the item after a tagged one. None: a plain bullet.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub new_tag: Option<char>,
 }
 
 impl Default for OutlineConfig {
@@ -70,6 +79,8 @@ impl Default for OutlineConfig {
             cycle: [' ', 'x'],
             atomic_images: true,
             numbered: true,
+            tags: String::new(),
+            new_tag: None,
         }
     }
 }
@@ -77,6 +88,11 @@ impl Default for OutlineConfig {
 impl OutlineConfig {
     pub fn is_task_char(&self, c: char) -> bool {
         self.task_markers.iter().any(|m| m.ch == c)
+    }
+
+    /// Whether `c` may be a bullet's tag.
+    pub fn is_tag(&self, c: char) -> bool {
+        self.tags.contains(c)
     }
 
     pub fn indent_str(&self, depth: u16) -> String {
@@ -121,6 +137,8 @@ pub struct BlockInfo {
     pub kind: Kind,
     /// A task's box character.
     pub status: Option<char>,
+    /// A bullet's tag (`- [c] `, see [`OutlineConfig::tags`]): part of its marker.
+    pub tag: Option<char>,
     /// Chars of indentation and marker on the first line: never a caret stop.
     pub prefix_len: usize,
     /// Spaces of indentation on the first line.
@@ -133,7 +151,7 @@ pub struct BlockInfo {
     /// Whether a blank row comes before it (its attribute, else the default).
     pub gap: bool,
     /// Its attributes as set (`gap` unset means the default).
-    pub attrs: BlockAttrs,
+    pub attrs: MarkAttrs,
 }
 
 impl BlockInfo {
@@ -223,6 +241,7 @@ pub(crate) struct Prefix {
     pub indent: usize,
     pub kind: Kind,
     pub status: Option<char>,
+    pub tag: Option<char>,
     pub hang: Hang,
     /// Chars of indentation plus marker.
     pub len: usize,
@@ -233,7 +252,7 @@ pub(crate) struct Prefix {
 
 impl Prefix {
     fn fence_content() -> Prefix {
-        Prefix { indent: 0, kind: Kind::Para, status: None, hang: Hang::None, len: 0, marker: false, fence: true }
+        Prefix { indent: 0, kind: Kind::Para, status: None, tag: None, hang: Hang::None, len: 0, marker: false, fence: true }
     }
 }
 
@@ -265,13 +284,16 @@ pub(crate) fn parse_str(line: &str, cfg: &OutlineConfig) -> Prefix {
 }
 
 fn parse_head(indent: usize, h: &[char], cfg: &OutlineConfig) -> Prefix {
-    let para = Prefix { indent, kind: Kind::Para, status: None, hang: Hang::None, len: indent, marker: false, fence: false };
+    let para = Prefix { indent, kind: Kind::Para, status: None, tag: None, hang: Hang::None, len: indent, marker: false, fence: false };
     let at = |i: usize| h.get(i).copied();
     match (at(0), at(1)) {
         (Some('-' | '*' | '+'), Some(' ')) => {
             if at(2) == Some('[') && at(4) == Some(']') && at(5) == Some(' ') {
                 if let Some(c) = at(3).filter(|&c| cfg.is_task_char(c)) {
                     return Prefix { kind: Kind::Task, status: Some(c), hang: Hang::Task(c), len: indent + 6, marker: true, ..para };
+                }
+                if let Some(c) = at(3).filter(|&c| cfg.is_tag(c)) {
+                    return Prefix { kind: Kind::Bullet, tag: Some(c), hang: Hang::Bullet, len: indent + 6, marker: true, ..para };
                 }
             }
             return Prefix { kind: Kind::Bullet, hang: Hang::Bullet, len: indent + 2, marker: true, ..para };
@@ -335,7 +357,7 @@ pub fn derive(text: RopeSlice, marks: &Marks, cfg: &OutlineConfig) -> Outline {
         while next_mark.peek().is_some_and(|m| m.pos < line_start) {
             next_mark.next();
         }
-        let mark = next_mark.peek().filter(|m| m.pos == line_start).copied().copied();
+        let mark = next_mark.peek().filter(|m| m.pos == line_start).copied().cloned();
         let prefix = if in_fence { None } else { Some(parse_prefix(line, cfg)) };
         let starts = i == 0 || mark.is_some() || prefix.is_some_and(|p| p.marker);
         let mut opened = false;
@@ -347,7 +369,7 @@ pub fn derive(text: RopeSlice, marks: &Marks, cfg: &OutlineConfig) -> Outline {
                 opened = true;
             }
             blocks.push(BlockInfo {
-                id: mark.map_or(MarkId(u64::MAX), |m| m.id),
+                id: mark.as_ref().map_or(MarkId(u64::MAX), |m| m.id),
                 start: line_start,
                 end: content_end,
                 first_line: i,
@@ -355,13 +377,14 @@ pub fn derive(text: RopeSlice, marks: &Marks, cfg: &OutlineConfig) -> Outline {
                 depth,
                 kind: p.kind,
                 status: p.status,
+                tag: p.tag,
                 prefix_len: p.len.min(content_end - line_start),
                 indent: p.indent,
                 hang: p.hang,
                 fence: p.fence,
                 atomic: false,
                 gap: false,
-                attrs: mark.map(|m| m.attrs).unwrap_or_default(),
+                attrs: mark.map(|m| m.attrs.clone()).unwrap_or_default(),
             });
         } else if let Some(b) = blocks.last_mut() {
             b.line_count += 1;
@@ -578,13 +601,14 @@ pub fn derive_from(prev: &Outline, prev_len: usize, (from, to): (usize, usize), 
                 depth,
                 kind: p.kind,
                 status: p.status,
+                tag: p.tag,
                 prefix_len: p.len.min(content_end - line_start),
                 indent: p.indent,
                 hang: p.hang,
                 fence: p.fence,
                 atomic: false,
                 gap: false,
-                attrs: BlockAttrs::default(),
+                attrs: MarkAttrs::default(),
             });
         } else if let Some(b) = blocks.last_mut() {
             b.line_count += 1;
@@ -620,7 +644,7 @@ pub fn derive_from(prev: &Outline, prev_len: usize, (from, to): (usize, usize), 
         match ms.peek() {
             Some(m) if m.pos == b.start => {
                 b.id = m.id;
-                b.attrs = m.attrs;
+                b.attrs = m.attrs.clone();
                 ms.next();
             }
             _ => {
@@ -630,7 +654,7 @@ pub fn derive_from(prev: &Outline, prev_len: usize, (from, to): (usize, usize), 
                     return None;
                 }
                 b.id = MarkId(u64::MAX);
-                b.attrs = BlockAttrs::default();
+                b.attrs = MarkAttrs::default();
             }
         }
     }
@@ -711,6 +735,9 @@ pub struct NewBlock {
     /// A task's box character.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub status: Option<char>,
+    /// A bullet's tag (`- [c] `).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tag: Option<char>,
     /// The content, with `\n` for soft breaks. A bullet whose text starts with `12. ` is a
     /// numbered item; a paragraph may start with a heading or quote marker.
     pub text: String,
@@ -723,7 +750,7 @@ pub struct NewBlock {
 
 impl NewBlock {
     pub fn para(text: &str) -> NewBlock {
-        NewBlock { depth: 0, kind: Kind::Para, status: None, text: text.into(), gap: None, mark: None }
+        NewBlock { depth: 0, kind: Kind::Para, status: None, tag: None, text: text.into(), gap: None, mark: None }
     }
 
     /// The block's lines as buffer text (prefix on the first line, `\n` between lines).
@@ -732,6 +759,7 @@ impl NewBlock {
         let marker = match self.kind {
             Kind::Task => format!("- [{}] ", self.status.unwrap_or(cfg.cycle[0])),
             Kind::Bullet if numbered_marker(&self.text).is_some() => String::new(),
+            Kind::Bullet if self.tag.is_some() => format!("- [{}] ", self.tag.unwrap_or(' ')),
             Kind::Bullet => "- ".into(),
             Kind::Para => String::new(),
         };

@@ -75,6 +75,12 @@ pub type Replayed = (State, Vec<(u32, View)>, usize);
 
 /// [`replay_trace`], also returning the other views open at the end, with their ids.
 pub fn replay_trace_views(input: &str) -> Result<Replayed, String> {
+    replay_trace_with(input, &crate::host::Host::default())
+}
+
+/// [`replay_trace_views`] with a host's extensions set on every state the trace starts
+/// from: a trace that runs host commands replays where the same commands are registered.
+pub fn replay_trace_with(input: &str, host: &crate::host::Host) -> Result<Replayed, String> {
     let mut state: Option<State> = None;
     let mut views: Vec<(u32, View)> = Vec::new();
     let mut count = 0;
@@ -90,6 +96,7 @@ pub fn replay_trace_views(input: &str) -> Result<Replayed, String> {
             TraceLine::State(s) => {
                 let mut s = *s;
                 s.sanitize();
+                s.doc.set_host(host.clone());
                 state = Some(s);
                 views.clear();
             }

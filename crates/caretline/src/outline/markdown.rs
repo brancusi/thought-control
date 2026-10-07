@@ -2,7 +2,6 @@
 //! Markdown for the clipboard, and a whole outline document read from and written to a
 //! Markdown file.
 
-use crate::marks::BlockAttrs;
 use crate::outline::{default_gap, derive, numbered_marker, parse_str, BlockInfo, Hang, Kind, NewBlock, Outline, OutlineConfig};
 use crate::state::{State, Viewport};
 
@@ -12,6 +11,33 @@ use crate::state::{State, Viewport};
 /// with its line breaks. Images are left out and counted. `plain`: a paragraph per block of
 /// lines, line breaks kept, nothing read as a list.
 pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
+    parse_markdown_with(input, plain, &OutlineConfig::default())
+}
+
+/// A bullet's tag at the start of `rest` (`[c] `, with `c` in `cfg.tags`; GFM's `[X]` reads as
+/// `[x]` when only `x` is a tag): the tag and the chars it takes.
+fn tag_at(rest: &str, cfg: &OutlineConfig) -> Option<char> {
+    let mut cs = rest.chars();
+    if cs.next() != Some('[') {
+        return None;
+    }
+    let c = cs.next()?;
+    if cs.next() != Some(']') || cs.next() != Some(' ') {
+        return None;
+    }
+    if cfg.is_tag(c) {
+        Some(c)
+    } else if c == 'X' && cfg.is_tag('x') {
+        Some('x')
+    } else {
+        None
+    }
+}
+
+/// [`parse_markdown`] for a document's config: with [`OutlineConfig::tags`] set, `- [c] `
+/// (and a bare `[c] ` line) is a tagged bullet.
+pub fn parse_markdown_with(input: &str, plain: bool, cfg: &OutlineConfig) -> (Vec<NewBlock>, usize) {
+    let legacy = !cfg.task_markers.is_empty();
     let text = input.replace("\r\n", "\n").replace('\r', "\n");
     let mut raw: Vec<String> = text.split('\n').map(|l| l.replace('\t', "    ")).collect();
     while raw.last().is_some_and(|l| l.trim().is_empty()) {
@@ -52,7 +78,7 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
         if let Some(b) = rest.strip_prefix("- ").or_else(|| rest.strip_prefix("* ")).or_else(|| rest.strip_prefix("+ ")) {
             return Some((indent, "-".into(), b.to_string()));
         }
-        if CHECKBOXES.iter().any(|(p, _)| rest.starts_with(p)) {
+        if (legacy && CHECKBOXES.iter().any(|(p, _)| rest.starts_with(p))) || tag_at(rest, cfg).is_some() {
             return Some((indent, "-".into(), rest.to_string()));
         }
         let n = numbered_marker(rest)?;
@@ -116,13 +142,19 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
         }
         if let Some((indent, marker, body)) = item(&l) {
             flush(&mut para, &mut out, para_indent);
-            let mut nb = NewBlock { depth: (indent / unit) as u16, kind: Kind::Bullet, status: None, text: body, gap: None, mark: None };
-            for (p, c) in CHECKBOXES {
+            let mut nb = NewBlock { depth: (indent / unit) as u16, kind: Kind::Bullet, status: None, tag: None, text: body, gap: None, mark: None };
+            for (p, c) in CHECKBOXES.into_iter().filter(|_| legacy) {
                 if let Some(rest) = nb.text.strip_prefix(p) {
                     nb.kind = Kind::Task;
                     nb.status = Some(c);
                     nb.text = rest.to_string();
                     break;
+                }
+            }
+            if nb.kind == Kind::Bullet {
+                if let Some(c) = tag_at(&nb.text, cfg) {
+                    nb.tag = Some(c);
+                    nb.text = nb.text[4..].to_string();
                 }
             }
             if nb.kind == Kind::Bullet && marker != "-" {
@@ -220,6 +252,7 @@ pub fn to_markdown_with(state: &State, o: &Outline, from: usize, to: usize, suff
         } else {
             let marker = match (b.kind, b.hang, b.status) {
                 (Kind::Task, _, Some(c)) => format!("- [{c}] "),
+                _ if b.tag.is_some() => format!("- [{}] ", b.tag.unwrap_or(' ')),
                 (_, Hang::Number(_), _) => piece(b.start + b.indent, b.content_start()),
                 _ => "- ".into(),
             };
@@ -249,6 +282,7 @@ fn continuation_indent(b: &BlockInfo) -> usize {
     match b.kind {
         Kind::Para => b.indent,
         Kind::Task => b.indent + 2,
+        Kind::Bullet if b.tag.is_some() => b.indent + 2,
         Kind::Bullet => b.prefix_len,
     }
 }
@@ -313,6 +347,7 @@ pub fn from_file(md: &str, cfg: &OutlineConfig) -> (String, Vec<(usize, bool)>) 
             cont = match p.kind {
                 Kind::Para => p.indent,
                 Kind::Task => p.indent + 2,
+                Kind::Bullet if p.tag.is_some() => p.indent + 2,
                 Kind::Bullet => p.len,
             };
             in_fence = p.fence;
@@ -343,7 +378,7 @@ pub fn load(md: &str, path: Option<String>, viewport: Viewport, cfg: OutlineConf
         let want = blank.get(&b.first_line).copied().unwrap_or(false);
         let default = default_gap(o.blocks.get(i - 1), b);
         if want != default {
-            state.doc.marks.set_attrs(b.id, BlockAttrs { gap: Some(want) });
+            state.doc.marks.set_gap(b.id, Some(want));
         }
     }
     state.enable_outline(cfg);

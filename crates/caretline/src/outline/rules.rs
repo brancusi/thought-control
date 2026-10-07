@@ -10,7 +10,7 @@ use crate::helix::graphemes::{next_grapheme_boundary, prev_grapheme_boundary};
 use crate::helix::line_ending::line_end_char_index;
 use crate::helix::{Assoc, Range, RopeSlice, Selection, Tendril, Transaction};
 use crate::layout::Layout;
-use crate::marks::{BlockAttrs, ClipMark, Clipboard, Mark, MarkId, Marks};
+use crate::marks::{MarkAttrs, ClipMark, Clipboard, Mark, MarkId, Marks};
 use crate::msg::{By, Dir, Effect, Msg};
 use crate::outline::markdown;
 use crate::outline::{BlockInfo, Hang, Kind, NewBlock, Outline};
@@ -130,6 +130,7 @@ fn next_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
             format!("{}{delim} ", n + 1)
         }
         (Kind::Task, _) => format!("{} [{}] ", m.chars().next().unwrap_or('-'), cfg.cycle[0]),
+        _ if b.tag.is_some() => continued_tag(cfg, &m),
         _ => m,
     }
 }
@@ -140,7 +141,18 @@ fn empty_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
     let m = marker_of(text, b);
     match b.kind {
         Kind::Task => format!("{} [{}] ", m.chars().next().unwrap_or('-'), cfg.cycle[0]),
+        _ if b.tag.is_some() => continued_tag(cfg, &m),
         _ => m,
+    }
+}
+
+/// The marker after a tagged bullet `m` (`- [c] `): the same bullet with the config's new tag,
+/// or none.
+fn continued_tag(cfg: &crate::outline::OutlineConfig, m: &str) -> String {
+    let bullet = m.chars().next().unwrap_or('-');
+    match cfg.new_tag {
+        Some(t) => format!("{bullet} [{t}] "),
+        None => format!("{bullet} "),
     }
 }
 
@@ -383,6 +395,7 @@ fn backspace_at_start(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
     if b.prefix_len > 0 {
         let (from, to) = match b.kind {
             Kind::Task => (b.start + b.indent + 2, b.content_start()),
+            _ if b.tag.is_some() => (b.start + b.indent + 2, b.content_start()),
             _ => (b.start, b.content_start()),
         };
         edit(state, vec![(from, to, None)], caret_at(from), false, |_, _| {});
@@ -660,10 +673,10 @@ fn split_for_task(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
     let sel = mapped(state, &changes, Assoc::After);
     state.view.status = Some("task".into());
     edit(state, changes, sel, false, move |m, new| {
-        let tight = BlockAttrs { gap: Some(false) };
+        let tight = MarkAttrs::gap(Some(false));
         for k in (ka..=kb).chain(after) {
             if k != first {
-                m.mint_with(new.line_to_char(k), tight);
+                m.mint_with(new.line_to_char(k), tight.clone());
             }
         }
     });
@@ -757,10 +770,10 @@ fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
     edit(state, vec![(u_start, l_end, Some(new_text))], sel, false, move |m, _| {
         m.remove_range(u_start, u_start + new_len);
         for mk in &l_marks {
-            let _ = m.insert(Mark { pos: mk.pos - l_start + u_start, ..*mk });
+            let _ = m.insert(Mark { pos: mk.pos - l_start + u_start, ..mk.clone() });
         }
         for mk in &u_marks {
-            let _ = m.insert(Mark { pos: mk.pos - u_start + u_start + l_len, ..*mk });
+            let _ = m.insert(Mark { pos: mk.pos - u_start + u_start + l_len, ..mk.clone() });
         }
     });
     Vec::new()
@@ -817,11 +830,11 @@ fn insert_blocks(state: &mut State, after: Option<MarkId>, blocks: &[NewBlock]) 
     edit(state, changes, sel, false, move |m, new| {
         for (line, mark, gap) in starts {
             let pos = new.line_to_char(base + line);
-            let attrs = BlockAttrs { gap };
-            let placed = mark.is_some_and(|id| m.insert(Mark { pos, id, attrs }).is_ok());
+            let attrs = MarkAttrs::gap(gap);
+            let placed = mark.is_some_and(|id| m.insert(Mark { pos, id, attrs: attrs.clone() }).is_ok());
             if !placed {
                 if let Some(id) = m.at(pos) {
-                    m.set_attrs(id, attrs);
+                    m.set_gap(id, attrs.gap);
                 } else {
                     m.mint_with(pos, attrs);
                 }
@@ -840,7 +853,7 @@ fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effec
         // Whole blocks elsewhere (inside a block's text): as Markdown blocks.
         if state.doc.clipboard.blocks && single(state).is_some() {
             if let Some(md) = state.doc.clipboard.external.clone() {
-                let (blocks, _) = markdown::parse_markdown(&md, false);
+                let (blocks, _) = markdown::parse_markdown_with(&md, false, state.doc.outline.as_ref().expect("outline"));
                 if !blocks.is_empty() {
                     paste_blocks(state, &blocks);
                     return Some(Vec::new());
@@ -855,7 +868,7 @@ fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effec
         return None;
     }
     single(state)?;
-    let (blocks, images) = markdown::parse_markdown(&text, plain);
+    let (blocks, images) = markdown::parse_markdown_with(&text, plain, state.doc.outline.as_ref().expect("outline"));
     if blocks.is_empty() {
         return Some(notice(state, &format!("left out {}", plural(images, "image"))));
     }
@@ -917,9 +930,9 @@ fn paste_blocks(state: &mut State, blocks: &[NewBlock]) {
         for (line, gap) in starts {
             let pos = new.line_to_char(base_line + line);
             if let Some(id) = m.at(pos) {
-                m.set_attrs(id, BlockAttrs { gap });
+                m.set_gap(id, gap);
             } else {
-                m.mint_with(pos, BlockAttrs { gap });
+                m.mint_with(pos, MarkAttrs::gap(gap));
             }
         }
     });
@@ -946,7 +959,7 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
         marks = removed
             .iter()
             .filter(|m| r.from() <= m.pos && m.pos <= r.to())
-            .map(|m| ClipMark { offset: m.pos - r.from(), id: m.id, attrs: m.attrs })
+            .map(|m| ClipMark { offset: m.pos - r.from(), id: m.id, attrs: m.attrs.clone() })
             .collect();
     }
     let external = (md != raw).then(|| md.clone());
@@ -1001,7 +1014,7 @@ fn copy_blocks(state: &mut State, o: &Outline, i0: usize, i1: usize, cut: bool) 
         marks = removed
             .iter()
             .filter(|m| first.start <= m.pos && m.pos <= last.end)
-            .map(|m| ClipMark { offset: m.pos - first.start, id: m.id, attrs: m.attrs })
+            .map(|m| ClipMark { offset: m.pos - first.start, id: m.id, attrs: m.attrs.clone() })
             .collect();
     }
     state.doc.clipboard = Clipboard { text: raw, external: Some(md.clone()), marks, blocks: true };
@@ -1063,7 +1076,7 @@ fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
     let le = le(state);
     let body = body_lines.join(&le);
     let reg_line = |offset: usize| line_offsets.partition_point(|&s| s <= offset).saturating_sub(1);
-    let carried: Vec<(usize, ClipMark)> = clip.marks.iter().map(|c| (reg_line(c.offset), *c)).collect();
+    let carried: Vec<(usize, ClipMark)> = clip.marks.iter().map(|c| (reg_line(c.offset), c.clone())).collect();
     let starts: Vec<usize> = ro.blocks.iter().map(|x| x.first_line).collect();
     let (from, to, ins, first_line) = if empty {
         (b.start, b.end, body, b.first_line)
@@ -1088,7 +1101,7 @@ fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
         for (l, c) in carried {
             let pos = new.line_to_char(first_line + l);
             if m.at(pos).is_none() && !m.contains(c.id) {
-                let _ = m.insert(Mark { pos, id: c.id, attrs: c.attrs });
+                let _ = m.insert(Mark { pos, id: c.id, attrs: c.attrs.clone() });
             }
         }
         // Every pasted block starts a block here, an empty paragraph too (nothing else would
@@ -1258,6 +1271,12 @@ pub(crate) fn pins_for(state: &State, msg: &Msg) -> Option<Pins> {
     }
 }
 
+/// Every block's blank row, to keep through an edit (a host command's `keep_gaps`).
+pub(crate) fn pins_all(state: &State) -> Option<Pins> {
+    let o = state.blocks()?;
+    Some(Pins::All(o.blocks.iter().map(|b| (b.id, b.gap)).collect()))
+}
+
 /// Writes the blank rows `pins` kept wherever the edit changed them, as part of the same
 /// undo step (a kind change never moves another block).
 pub(crate) fn pin(state: &mut State, pins: Pins) {
@@ -1283,7 +1302,7 @@ pub(crate) fn pin(state: &mut State, pins: Pins) {
     let txn = Transaction::new(&state.doc.text);
     update::commit_with(state, txn, Step { kind: None, replaced: false, merge: true }, move |m, _| {
         for (id, gap) in changes {
-            m.set_attrs(id, BlockAttrs { gap: Some(gap) });
+            m.set_gap(id, Some(gap));
         }
     });
 }

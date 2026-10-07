@@ -21,9 +21,12 @@ pub enum Role {
     Status,
     /// The dirty marker and other emphasis in the status bar.
     StatusAccent,
-    /// A block's hang in an outline layout: where a host draws its bullet, number, task box
-    /// or heading sign. Blank unless the layout asks for plain glyphs.
+    /// A block's hang in an outline layout: the columns before its content, where its
+    /// marker's glyph goes. Blank unless a decoration or the layout's plain glyphs fill it.
     Hang,
+    /// A role a host named in a [`Decoration`](crate::host::Decoration): its name is
+    /// [`Frame::role_name`].
+    Named(u16),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -57,15 +60,24 @@ pub enum RowInfo {
 }
 
 /// Where a screen cell is, by meaning: what a click there means ([`hit`]).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Hit {
     /// Text: the char position a click there puts the caret at.
     Text { pos: usize },
-    /// A block's hang (its bullet, number, task box).
-    Hang { block: MarkId },
-    /// A block's marks column, left of everything.
-    Marks { block: MarkId },
+    /// A block's hang (the columns before its content), with the id of the decoration drawn
+    /// there, if it has one.
+    Hang {
+        block: MarkId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deco: Option<String>,
+    },
+    /// A block's gutter, left of everything, with its decoration's id.
+    Marks {
+        block: MarkId,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        deco: Option<String>,
+    },
     /// The blank row before a block.
     Gap { block: MarkId },
     /// A host's row after a block.
@@ -83,6 +95,8 @@ pub struct Frame {
     pub cursor: Option<(u16, u16)>,
     /// One per row: what it shows.
     pub rows: Vec<RowInfo>,
+    /// The names of the [`Role::Named`] roles, by index.
+    pub roles: Vec<String>,
 }
 
 impl Frame {
@@ -100,7 +114,32 @@ impl Frame {
             ],
             cursor: None,
             rows: Vec::with_capacity(height as usize),
+            roles: Vec::new(),
         }
+    }
+
+    /// The name of a role: a built-in role's wire name, or the name a host gave it.
+    pub fn role_name(&self, role: Role) -> &str {
+        match role {
+            Role::Named(i) => self.roles.get(i as usize).map_or("host", String::as_str),
+            r => crate::protocol::role_name(r),
+        }
+    }
+
+    /// The role for a decoration's role name: `hang` is the built-in [`Role::Hang`], any
+    /// other name a [`Role::Named`].
+    fn named(&mut self, name: &str) -> Role {
+        if name == "hang" {
+            return Role::Hang;
+        }
+        let i = match self.roles.iter().position(|r| r == name) {
+            Some(i) => i,
+            None => {
+                self.roles.push(name.to_string());
+                self.roles.len() - 1
+            }
+        };
+        Role::Named(i.min(u16::MAX as usize) as u16)
     }
 
     pub fn cell(&self, x: u16, y: u16) -> &Cell {
@@ -197,6 +236,7 @@ fn sgr(role: Role, cursor: bool) -> &'static str {
         (Role::Status, _) => "\x1b[30;47m",
         (Role::StatusAccent, _) => "\x1b[1;30;47m",
         (Role::Hang, _) => "\x1b[2m",
+        (Role::Named(_), _) => "",
     }
 }
 
@@ -271,9 +311,14 @@ pub fn render(doc: &Document, view: &View) -> Frame {
                     for cx in from..lf.x.min(width as usize) {
                         frame.cells[(y0 + k) * width as usize + cx].role = Role::Hang;
                     }
-                    if g.hang_glyphs {
-                        let glyph = hang_glyph(b.hang);
-                        frame.put_str(from, y0 + k, &glyph, lf.x.min(width as usize), Role::Hang);
+                    let deco = decoration(doc, view, g, b);
+                    if let Some(d) = &deco.hang {
+                        let role = frame.named(&d.role);
+                        frame.put_str(from, y0 + k, &d.text, lf.x.min(width as usize), role);
+                    }
+                    if let Some(d) = &deco.gutter {
+                        let role = frame.named(&d.role);
+                        frame.put_str(0, y0 + k, &d.text, (g.marks as usize).min(from).min(width as usize), role);
                     }
                 }
             }
@@ -366,6 +411,25 @@ pub fn render(doc: &Document, view: &View) -> Frame {
     frame
 }
 
+/// What is drawn beside block `b`: the host's decoration, else (with `hang_glyphs`) the plain
+/// Markdown glyph of its marker, else nothing.
+pub fn decoration(doc: &Document, view: &View, g: &crate::layout::OutlineLayout, b: &crate::outline::BlockInfo) -> crate::host::Decoration {
+    use crate::host::{Ctx, Deco, Decoration};
+    if let Some(d) = doc.host().decorate(&Ctx::new(doc, view), b) {
+        return d;
+    }
+    if g.hang_glyphs {
+        let text = match b.tag {
+            Some(c) => format!("[{c}]"),
+            None => hang_glyph(b.hang),
+        };
+        if !text.is_empty() {
+            return Decoration { hang: Some(Deco { text, role: "hang".into(), id: None }), gutter: None };
+        }
+    }
+    Decoration::default()
+}
+
 /// A plain glyph for a hang, for a host that draws none.
 fn hang_glyph(hang: Hang) -> String {
     match hang {
@@ -402,11 +466,13 @@ pub fn hit(doc: &Document, view: &View, col: u16, row: u16) -> Hit {
         }
         if let Some(g) = layout.geometry() {
             let c = col as usize;
-            if c < g.marks as usize {
-                return Hit::Marks { block: b.id };
-            }
             if c < lf.x {
-                return Hit::Hang { block: b.id };
+                // Only a block's first row carries its decoration.
+                let deco = (at.row == lf.before && b.first_line == at.line).then(|| decoration(doc, view, g, b)).unwrap_or_default();
+                if c < g.marks as usize {
+                    return Hit::Marks { block: b.id, deco: deco.gutter.and_then(|d| d.id) };
+                }
+                return Hit::Hang { block: b.id, deco: deco.hang.and_then(|d| d.id) };
             }
         }
     }

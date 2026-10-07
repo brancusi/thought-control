@@ -59,7 +59,14 @@ pub(crate) fn step(state: &mut State, msg: Msg) -> Vec<Effect> {
 
     let pins = if outline_on { crate::outline::rules::pins_for(state, &msg) } else { None };
     let edits_before = state.doc.edits.0;
-    let handled = if outline_on { crate::outline::rules::update(state, &msg) } else { None };
+    let handled = match &msg {
+        Msg::Command { name, args } => Some(crate::host::run_command(state, name, args)),
+        _ => match crate::host::input_rules(state, &msg) {
+            Some(fx) => Some(fx),
+            None if outline_on => crate::outline::rules::update(state, &msg),
+            None => None,
+        },
+    };
     if let Some(fx) = handled {
         effects.extend(fx);
     } else {
@@ -219,6 +226,8 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         Msg::Unfold { id } => crate::views::fold(state, id, Some(false)),
         Msg::ToggleFold { id } => crate::views::fold(state, id, None),
         Msg::Edit { changes, join } => host_edit(state, changes, join),
+        // Handled before the plain editor.
+        Msg::Command { .. } => {}
         // `update` and `update_doc` apply it to the document and every view.
         Msg::External { .. } => {}
         Msg::SelectAll => {
@@ -531,7 +540,7 @@ pub(crate) fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark>
     removed
         .iter()
         .filter(|m| from <= m.pos && m.pos <= to)
-        .map(|m| ClipMark { offset: m.pos - from, id: m.id, attrs: m.attrs })
+        .map(|m| ClipMark { offset: m.pos - from, id: m.id, attrs: m.attrs.clone() })
         .collect()
 }
 
@@ -562,7 +571,7 @@ pub(crate) fn paste_text(state: &mut State, text: &str, carried: &[ClipMark]) {
         for c in carried {
             let pos = from + c.offset;
             if pos <= new.len_chars() && crate::marks::is_line_start(new, pos) {
-                let _ = marks.insert(Mark { pos, id: c.id, attrs: c.attrs });
+                let _ = marks.insert(Mark { pos, id: c.id, attrs: c.attrs.clone() });
             }
         }
     });

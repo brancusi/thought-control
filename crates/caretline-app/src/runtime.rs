@@ -181,6 +181,7 @@ fn style(role: Role) -> Style {
         Role::Status => Style::default().add_modifier(Modifier::REVERSED),
         Role::StatusAccent => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
         Role::Hang => Style::default().add_modifier(Modifier::DIM),
+        Role::Named(_) => Style::default(),
     }
 }
 

@@ -22,6 +22,7 @@
 
 pub mod diff;
 pub mod helix;
+pub mod host;
 pub mod keymap;
 pub mod layout;
 pub mod marks;
@@ -36,7 +37,8 @@ pub mod view;
 pub mod views;
 pub mod external;
 
-pub use marks::{BlockAttrs, Mark, MarkId, Marks};
+pub use host::{Ctx, Deco, Decoration, Edit, Host, MarkOp};
+pub use marks::{MarkAttrs, Mark, MarkId, Marks};
 pub use outline::{BlockInfo, Kind, NewBlock, Outline, OutlineConfig};
 pub use keymap::{keymap, keymap_for, outline_keymap, parse_keys, script_to_msgs, script_to_msgs_for, Key, KeyCode, Mods};
 pub use external::ExtChange;

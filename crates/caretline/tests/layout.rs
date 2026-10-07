@@ -82,8 +82,8 @@ fn extra_rows_follow_a_block_and_are_never_caret_stops() {
 fn hit_tells_hang_marks_gap_and_text() {
     let s = laid_out(TRIP, 50, 16);
     let ids = ids(&s);
-    assert_eq!(hit(&s.doc, &s.view, 0, 5), Hit::Marks { block: ids[2] });
-    assert_eq!(hit(&s.doc, &s.view, 3, 5), Hit::Hang { block: ids[2] });
+    assert_eq!(hit(&s.doc, &s.view, 0, 5), Hit::Marks { block: ids[2], deco: None });
+    assert_eq!(hit(&s.doc, &s.view, 3, 5), Hit::Hang { block: ids[2], deco: None });
     assert_eq!(hit(&s.doc, &s.view, 9, 5), Hit::Text { pos: s.doc.text.line_to_char(3) + 9 });
     assert_eq!(hit(&s.doc, &s.view, 9, 1), Hit::Gap { block: ids[1] });
     assert_eq!(hit(&s.doc, &s.view, 9, 15), Hit::Past);

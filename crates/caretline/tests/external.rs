@@ -132,7 +132,7 @@ fn remote_change(rng: &mut StdRng, s: &State, next_id: &mut u64) -> Option<ExtCh
         *next_id += 2;
         return Some(ExtChange::InsertBlock {
             after: None,
-            block: NewBlock { depth: 0, kind: Kind::Bullet, status: None, text: "from elsewhere".into(), gap: None, mark: Some(MarkId(*next_id)) },
+            block: NewBlock { depth: 0, kind: Kind::Bullet, status: None, tag: None, text: "from elsewhere".into(), gap: None, mark: Some(MarkId(*next_id)) },
         });
     }
     let b = &theirs[rng.random_range(0..theirs.len())];
@@ -146,13 +146,14 @@ fn remote_change(rng: &mut StdRng, s: &State, next_id: &mut u64) -> Option<ExtCh
                     depth: b.depth,
                     kind: [Kind::Bullet, Kind::Task][rng.random_range(0..2)],
                     status: Some(' '),
+                    tag: None,
                     text: "inserted".into(),
                     gap: None,
                     mark: Some(MarkId(*next_id)),
                 },
             }
         }
-        3 if b.kind != Kind::Para => ExtChange::SetShape { id: b.id, depth: b.depth, kind: Kind::Task, status: Some('x') },
+        3 if b.kind != Kind::Para => ExtChange::SetShape { id: b.id, depth: b.depth, kind: Kind::Task, status: Some('x'), tag: None },
         _ if o.blocks.last().map(|l| l.id) != Some(b.id) => ExtChange::RemoveBlock { id: b.id },
         _ => ExtChange::SetGap { id: b.id, gap: Some(true) },
     })
@@ -391,8 +392,8 @@ fn set_shape_rewrites_the_marker_and_keeps_the_content() {
         &mut s,
         Msg::External {
             changes: vec![
-                ExtChange::SetShape { id: ids[0], depth: 0, kind: Kind::Task, status: Some('x') },
-                ExtChange::SetShape { id: ids[1], depth: 1, kind: Kind::Bullet, status: None },
+                ExtChange::SetShape { id: ids[0], depth: 0, kind: Kind::Task, status: Some('x'), tag: None },
+                ExtChange::SetShape { id: ids[1], depth: 1, kind: Kind::Bullet, status: None, tag: None },
             ],
         },
     );
@@ -404,7 +405,7 @@ fn set_shape_rewrites_the_marker_and_keeps_the_content() {
 fn an_inserted_block_takes_the_hosts_id() {
     let mut s = outline("- one\n- two\n");
     let one = s.doc.marks.iter().next().unwrap().id;
-    let nb = NewBlock { depth: 1, kind: Kind::Task, status: Some(' '), text: "new".into(), gap: None, mark: Some(MarkId(500)) };
+    let nb = NewBlock { depth: 1, kind: Kind::Task, status: Some(' '), tag: None, text: "new".into(), gap: None, mark: Some(MarkId(500)) };
     update(&mut s, Msg::External { changes: vec![ExtChange::InsertBlock { after: Some(one), block: nb }] });
     assert_eq!(s.doc.text.to_string(), "- one\n  - [ ] new\n- two");
     assert_eq!(s.doc.marks.iter().nth(1).unwrap().id, MarkId(500));
