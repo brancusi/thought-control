@@ -240,7 +240,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     d.set_view(&g);
     // Whether the meta gets its own row follows the saved meta, never the live chip: lines
     // below don't jump while a token is typed (the chip may run into the margin instead).
-    let with_meta: Vec<(usize, String)> = d.blocks().iter().enumerate().map(|(i, l)| (i, meta_of(ctx, l, None))).filter(|(_, m)| !m.is_empty()).collect();
+    let with_meta: Vec<(usize, String)> = d.blocks().iter().enumerate().filter(|(_, l)| l.conflict || !l.meta.is_empty()).map(|(i, l)| (i, meta_of(ctx, l, None))).filter(|(_, m)| !m.is_empty()).collect();
     let ends = d.first_row_ends(&with_meta.iter().map(|(i, _)| *i).collect::<Vec<_>>());
     let mut after: std::collections::HashMap<usize, After> = std::collections::HashMap::new();
     for ((i, meta), end) in with_meta.iter().zip(ends) {
@@ -528,7 +528,8 @@ impl DocContext {
 }
 
 /// A content fingerprint also catches in-place edits (including folds and same-size text
-/// replacements), not just saves. It reads no clock, store, or interior cache.
+/// replacements), not just saves: the document's revision, caret and view. It reads no clock,
+/// store, or interior cache, and costs the same on a page of any length.
 fn source_revision(app: &App) -> u64 {
     use std::hash::{BuildHasher, Hash, Hasher};
     // A fast fixed-seed hash: this runs over every line twice a frame.
@@ -543,23 +544,13 @@ fn source_revision(app: &App) -> u64 {
     app.crumb_shows().hash(&mut h);
     app.today.hash(&mut h);
     if let Some(d) = &app.doc {
+        // The document's revision moves with every change to its lines (text, shape, meta,
+        // save state, from the engine or the host): no walk over the lines.
         format!("{:?}", d.target).hash(&mut h);
         d.root.hash(&mut h);
-        d.caret().line.hash(&mut h);
-        d.caret().byte.hash(&mut h);
-        d.blocks().len().hash(&mut h);
-        for l in d.blocks() {
-            l.id.hash(&mut h);
-            l.text.hash(&mut h);
-            l.depth.hash(&mut h);
-            l.kind().hash(&mut h);
-            l.status.hash(&mut h);
-            l.gap.hash(&mut h);
-            d.is_folded(&l.id).hash(&mut h);
-            l.meta.hash(&mut h);
-            l.conflict.hash(&mut h);
-            l.conflict_with.hash(&mut h);
-        }
+        d.revision().hash(&mut h);
+        d.caret().hash(&mut h);
+        d.view_stamp().hash(&mut h);
     }
     h.finish()
 }

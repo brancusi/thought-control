@@ -220,6 +220,9 @@ pub struct Doc {
     pub(super) last_saved: HashMap<String, Line>,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
+    /// Each note's rows in the view, remembered (`view::RowIndex`): where the view is in the
+    /// whole document, without laying the whole document out every frame.
+    pub(super) rows: std::cell::RefCell<super::view::RowIndex>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
@@ -240,7 +243,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0, hold_caret_line: true }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.

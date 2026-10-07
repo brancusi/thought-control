@@ -11,7 +11,8 @@ use cn::layout::{Layout, RowPos};
 use cn::state::{Follow, Scroll};
 use cn::view::{Hit, RowInfo};
 use cn::{MarkId, OutlineLayout, Viewport};
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
+use std::hash::{BuildHasher, Hash, Hasher};
 
 /// Columns before the hang: the marks (`≠`, `◆`, `◌`, `▸`), the outline layout's gutter.
 pub const MARKS: u16 = 2;
@@ -132,12 +133,13 @@ impl Doc {
         let rope = &st.doc.text;
         let line_of = |m: MarkId| o.index_of(m);
         let w = frame.width as usize;
+        // (A text row names its document line: its block is a lookup, not a search.)
         let rows = frame
             .rows
             .iter()
             .enumerate()
             .map(|(y, r)| match r {
-                RowInfo::Text { block: Some(m), chars, first, x, .. } => match line_of(*m) {
+                RowInfo::Text { block: Some(_), line, chars, first, x, .. } => match Some(o.index_of_line(*line)) {
                     Some(i) => {
                         let b = &o.blocks[i];
                         let cs = b.start + list_len(b);
@@ -199,14 +201,31 @@ impl Doc {
         }
     }
 
-    /// How many rows the document lays out to, and the first row on screen.
+    /// How many rows the document lays out to, and the first row on screen. Each note's rows
+    /// come from the row index ([`RowIndex`]): only notes that changed are laid out again.
     pub fn scroll_rows(&self) -> (usize, usize) {
+        let rev = self.revision();
         let st = self.engine.state();
         let layout = Layout::of(&st.doc, &st.view);
-        let start = RowPos { line: layout.visible_at_or_after(0).unwrap_or(0), row: 0 };
-        let total = layout.rows_between(start, layout.end(), usize::MAX).max(0) as usize + 1;
-        let top = layout.rows_between(start, layout.top(&st.view.scroll), usize::MAX).max(0) as usize;
-        (total, top)
+        let mut idx = self.rows.borrow_mut();
+        idx.update(rev, st, &layout);
+        let total = idx.prefix.last().copied().unwrap_or(0) as usize;
+        let top = layout.top(&st.view.scroll);
+        let o = st.doc.blocks().expect("an outline document");
+        let b = o.index_of_line(top.line);
+        let within: usize = (o.blocks[b].first_line..top.line).map(|l| layout.line_rows(l)).sum();
+        (total, idx.prefix[b] as usize + within + top.row)
+    }
+
+    /// A stamp of where the view is: its scroll, folds and whether it follows the caret.
+    pub fn view_stamp(&self) -> u64 {
+        let v = &self.engine.state().view;
+        let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
+        (v.scroll.line, v.scroll.row, v.scroll.col, v.free, v.viewport.width, v.viewport.height).hash(&mut h);
+        for m in &v.folds {
+            m.0.hash(&mut h);
+        }
+        h.finish()
     }
 
     /// The first row on screen, as a row of the whole document.
@@ -218,10 +237,26 @@ impl Doc {
     /// there until the caret moves (the wheel, the scrollbar); else it follows the caret again.
     pub fn set_scroll(&mut self, row: usize, free: bool) {
         self.engine.flush();
+        let rev = self.revision();
         let st = self.engine.state_mut();
         let layout = Layout::of(&st.doc, &st.view);
-        let start = RowPos { line: layout.visible_at_or_after(0).unwrap_or(0), row: 0 };
-        let (top, _) = layout.step_rows(start, row.min(isize::MAX as usize) as isize);
+        // The note row `row` is in (by the row index), then the line in it.
+        let mut idx = self.rows.borrow_mut();
+        idx.update(rev, st, &layout);
+        let o = st.doc.blocks().expect("an outline document");
+        let n = o.blocks.len();
+        let b = idx.prefix.partition_point(|&p| (p as usize) <= row).saturating_sub(1).min(n.saturating_sub(1));
+        let mut left = row.saturating_sub(idx.prefix[b] as usize);
+        let mut top = RowPos { line: o.blocks[b].first_line, row: 0 };
+        for l in o.blocks[b].first_line..=o.blocks[b].last_line() {
+            let r = layout.line_rows(l);
+            top = RowPos { line: l, row: left.min(r.saturating_sub(1)) };
+            if left < r {
+                break;
+            }
+            left -= r;
+        }
+        drop(idx);
         st.view.scroll = Scroll { line: top.line, row: top.row, col: 0 };
         st.view.free = free;
         if free {
@@ -247,6 +282,140 @@ impl Doc {
         if st.view.free {
             st.view.free = false;
             cn::layout::ensure_caret_visible(st);
+        }
+    }
+}
+
+/// Each note's rows in the view, remembered by what decides them (its text and shape, its
+/// blank row and the rows drawn after it, the view's geometry), and the running sums for the
+/// document as it is now. An edit lays out again only the notes it changed; a frame, a clock
+/// tick or a caret move lays out none.
+#[derive(Default)]
+pub(crate) struct RowIndex {
+    by_content: HashMap<u64, u32, foldhash::fast::FixedState>,
+    /// What `prefix` was summed for: the text, the marks, the view's geometry and folds.
+    stamp: Option<u64>,
+    /// `prefix[i]`: the rows before note `i` (one more entry: all of them).
+    pub(crate) prefix: Vec<u32>,
+    /// Notes laid out since the document opened (tests: an edit lays out what it changed).
+    pub(crate) laid_out: usize,
+}
+
+impl RowIndex {
+    fn update(&mut self, rev: u64, st: &cn::State, layout: &Layout) {
+        let seed = foldhash::fast::FixedState::with_seed(0);
+        let v = &st.view;
+        let mut g = seed.build_hasher();
+        v.viewport.width.hash(&mut g);
+        if let Some(l) = &v.layout {
+            (l.gutter, l.indent, l.hang, l.column, l.min_column, l.hang_glyphs).hash(&mut g);
+            for (m, n) in &l.extra_rows {
+                (m.0, n).hash(&mut g);
+            }
+        }
+        for m in &v.folds {
+            m.0.hash(&mut g);
+        }
+        let geometry = g.finish();
+        let mut s = seed.build_hasher();
+        (geometry, rev, st.doc.rev, st.doc.text.len_chars(), st.doc.marks.len()).hash(&mut s);
+        let stamp = s.finish();
+        if self.stamp == Some(stamp) {
+            return;
+        }
+        let o = st.doc.blocks().expect("an outline document");
+        let rope = &st.doc.text;
+        let extra = v.layout.as_ref().map(|l| &l.extra_rows);
+        self.prefix.clear();
+        self.prefix.reserve(o.blocks.len() + 1);
+        let mut sum = 0u32;
+        let mut buf = String::new();
+        for b in &o.blocks {
+            self.prefix.push(sum);
+            if !v.folds.is_empty() && layout.is_hidden(b.first_line) {
+                continue;
+            }
+            let mut k = seed.build_hasher();
+            (geometry, b.gap, b.fence, extra.and_then(|e| e.get(&b.id)).copied().unwrap_or(0)).hash(&mut k);
+            // The text as one string: the rope's chunks move with edits nearby, the text doesn't.
+            buf.clear();
+            for c in rope.slice(b.start..b.end).chunks() {
+                buf.push_str(c);
+            }
+            buf.hash(&mut k);
+            let key = k.finish();
+            let rows = match self.by_content.get(&key) {
+                Some(&r) => r,
+                None => {
+                    let r = (b.first_line..=b.last_line()).map(|l| layout.line_rows(l)).sum::<usize>() as u32;
+                    self.laid_out += 1;
+                    if self.by_content.len() > 50_000 {
+                        self.by_content.clear();
+                    }
+                    self.by_content.insert(key, r);
+                    r
+                }
+            };
+            sum += rows;
+        }
+        self.prefix.push(sum);
+        self.stamp = Some(stamp);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::editor::Target;
+
+    fn big(n: usize) -> Doc {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+        let blocks: Vec<thc_core::outline::Block> = (0..n)
+            .map(|i| serde_json::from_value(serde_json::json!({"id": format!("n{i}"), "parent": null, "depth": 0, "kind": "bullet", "text": format!("the quick brown fox jumps over the lazy dog and keeps running past the old fence {i}"), "text_rev": "r"})).unwrap())
+            .collect();
+        let mut d = Doc::new(Target::Page { id: "p".into(), title: "Big".into() }, Some("p".into()), &blocks, today);
+        d.set_view(&ViewGeometry { width: 100, height: 40, column: 72, extra_rows: Vec::new(), typewriter: false });
+        d
+    }
+
+    /// The engine's own count of the document's rows, walking all of it.
+    fn engine_total(d: &Doc) -> usize {
+        let st = d.engine.state();
+        let layout = Layout::of(&st.doc, &st.view);
+        layout.rows_between(RowPos { line: 0, row: 0 }, layout.end(), usize::MAX) as usize + 1
+    }
+
+    /// The view's place in the whole document comes from remembered rows: a caret move, a
+    /// frame or asking again lays out no note, and typing lays out only the note typed in. (A
+    /// whole-document layout per message once made typing on a 5,000-line page 160 ms a key.)
+    #[test]
+    fn only_changed_notes_are_laid_out_again() {
+        let mut d = big(2000);
+        let (total, top) = d.scroll_rows();
+        assert_eq!(top, 0);
+        assert_eq!(total, engine_total(&d));
+        assert!(total >= 4000, "each note wraps to two rows: {total}");
+        let warm = d.rows.borrow().laid_out;
+        assert!(warm >= 1, "the first look lays the document out");
+        d.run_command("move.down");
+        d.scroll_rows();
+        let _ = d.frame();
+        d.scroll_rows();
+        assert_eq!(d.rows.borrow().laid_out, warm, "nothing changed: nothing laid out");
+        d.insert("typed ");
+        let (total2, _) = d.scroll_rows();
+        let more = d.rows.borrow().laid_out - warm;
+        assert!(more <= 1, "only the note typed in: {more}");
+        assert_eq!(total2, engine_total(&d), "the rows agree with the engine's walk");
+    }
+
+    /// Scrolling to a row and reading it back agree, anywhere in the document.
+    #[test]
+    fn set_scroll_and_scroll_agree() {
+        let mut d = big(300);
+        for row in [0, 1, 7, 100, 333] {
+            d.set_scroll(row, true);
+            assert_eq!(d.scroll(), row, "row {row}");
         }
     }
 }
