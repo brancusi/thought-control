@@ -59,7 +59,7 @@ With `--bench`, it plays them into an editor that is already running instead and
 frame rates achieved (see [Performance](performance.md)):
 
 ```sh
-caretline notes.md --listen          # in one terminal
+caretline draft.md --listen          # in one terminal
 caretline demo scenes --bench        # in another
 ```
 
@@ -87,11 +87,12 @@ caretline send --latest keys '<d-down>hello from another shell'
 ## Then
 
 ```sh
-caretline notes.md               # edit a file
-caretline --outline todo.md      # lists, blocks and folds
-caretline --new-state notes.md --size 60x20 > s.json
+caretline draft.md               # edit a file
+caretline --outline list.md      # lists, blocks and folds
+caretline keys                   # every key and its command (F1 in the editor)
+caretline --new-state draft.md --size 60x20 > s.json
 caretline --state s.json --keys 'Hello<cr>' --snapshot 60x20   # headless
-caretline notes.md --trace t.jsonl                             # record a session…
+caretline draft.md --trace t.jsonl                             # record a session…
 caretline --replay t.jsonl --snapshot 80x24                    # …and replay it
 ```
 

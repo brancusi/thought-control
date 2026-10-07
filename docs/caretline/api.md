@@ -1,6 +1,6 @@
 # Rust API
 
-The `caretline` crate, by task. Every snippet here compiles against the crate on `main`.
+The `caretline` crate, by job. Every snippet here compiles against the crate on `main`.
 The complete program at the end is also in the repo as
 [`examples/basic.rs`](../../crates/caretline/examples/basic.rs):
 
@@ -40,17 +40,20 @@ log. There's no terminal crate and no ratatui.
 | `update::selection_text` | `caretline::update` | Get the selected text, as a copy would |
 | `view`, `Frame` | `caretline` | Render to cells |
 | `view::{render, hit, Cell, Role, RowInfo, Hit, display_width}` | `caretline::view` | Render any view; read cells and rows; style them by meaning; hit-test a cell |
-| `OutlineLayout`, `views::hidden_lines` | `caretline` | The [outline layout](outline.md#the-outline-layout) and folds |
+| `OutlineLayout`, `views::hidden_lines` | `caretline` | The [outline layout](structure.md#the-outline-layout) and folds |
 | `keymap`, `Key`, `KeyCode`, `Mods` | `caretline` | Map keys to messages |
 | `parse_keys`, `script_to_msgs`, `keymap::ScriptItem` | `caretline` | Use the `--keys` notation |
 | `trace::{TraceLine, parse_msgs, replay_trace, replay_trace_views}` | `caretline::trace` | Record and replay sessions (with their views) |
 | `layout::{Layout, LineFormat, RowPos, text_format, ensure_caret_visible}` | `caretline::layout` | Lower-level layout queries |
 | `helix::*` | `caretline::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
 | `Session`, `protocol::*` | `caretline` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
-| `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline` | Block identity that survives edits: see [Block marks](#block-marks) |
+| `Marks`, `Mark`, `MarkId`, `MarkAttrs` | `caretline` | Block identity that survives edits, with the host's payload: see [Block marks](#block-marks) |
 | `marks::{Clipboard, ClipMark, MarkDelta, Fixup, is_line_start}`, `update::mark_only_edit` | `caretline::marks`, `::update` | The register with carried marks, the per-revision deltas, a host's undoable mark edit |
-| `OutlineConfig`, `Outline`, `BlockInfo`, `Kind`, `NewBlock`, `outline::{markdown, derive, content, Hang}` | `caretline`, `::outline` | Outline documents: blocks, lists and tasks over the same buffer. See [outline.md](outline.md#in-rust) |
-| `outline_keymap`, `keymap_for`, `script_to_msgs_for` | `caretline` | The outline's keys |
+| `OutlineConfig`, `Outline`, `BlockInfo`, `Kind`, `NewBlock`, `outline::{markdown, derive, content, Hang}` | `caretline`, `::outline` | Block documents: [structure](structure.md) and the [Markdown grammar](markdown.md) over the same buffer |
+| `outline_keymap`, `keymap_for`, `script_to_msgs_for` | `caretline` | A block document's keys |
+| `Host`, `Ctx`, `Edit`, `MarkOp`, `Decoration`, `Deco` | `caretline` | Your app's [extensions](embedding.md#extending-the-engine): commands, input rules, decorations |
+| `commands::{commands, command, command_msg, default_keymap, command_for, Binding, CommandInfo, Category, Platform}` | `caretline::commands` | The [command catalog and the default keymap](keys.md) |
+| `trace::replay_trace_with` | `caretline::trace` | Replay a trace that runs host commands |
 
 ## Create a state
 
@@ -60,7 +63,7 @@ is the status bar):
 ```rust
 use caretline::{State, Viewport};
 
-let state = State::new("# Notes\n", Some("notes.md".into()), Viewport { width: 80, height: 24 });
+let state = State::new("# Draft\n", Some("draft.md".into()), Viewport { width: 80, height: 24 });
 assert_eq!(state.caret(), 0);
 assert!(!state.doc.dirty);
 ```
@@ -209,7 +212,8 @@ print!("{}", frame.to_text());                     // or frame.to_ansi()
 | `Selection` | Selected text |
 | `Status` | The status bar |
 | `StatusAccent` | The dirty marker `[+]` in the status bar |
-| `Hang` | An outline block's hang, with the [outline layout](outline.md#the-outline-layout) |
+| `Hang` | A block's hang, with the [outline layout](structure.md#the-outline-layout) |
+| `Named(i)` | A role a host named in a [decoration](structure.md#decorations): `frame.role_name(role)` |
 
 The engine never picks colours. Your renderer maps roles to styles. Each cell also has the
 `char_idx` of the document char it shows (none for blank cells and the status bar), and the
@@ -336,12 +340,12 @@ undo history, when you load a document; use `update::mark_only_edit` for a chang
 that should be one undo step.
 
 ```rust
-use caretline::{update, BlockAttrs, Msg, State, Viewport};
+use caretline::{update, MarkAttrs, Msg, State, Viewport};
 
 let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
 let list = s.doc.marks.mint(0);                        // MarkId(0) on line 0
 let milk = s.doc.marks.mint(s.doc.text.line_to_char(1));   // MarkId(1) on line 1
-s.doc.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
+s.doc.marks.set_attrs(milk, MarkAttrs { gap: Some(false), data: Some(serde_json::json!({ "row": 7 })) });
 
 update(&mut s, Msg::InsertText { text: "Weekly ".into() });  // at the start of line 0
 assert_eq!(s.doc.marks.pos(list), Some(0));                      // still line 0
@@ -356,12 +360,12 @@ assert_eq!(s.doc.marks.pos(milk), Some(s.doc.text.line_to_char(1)));
 | `insert(Mark)` | Put a known id back; refuses a taken line or a live id |
 | `remove(id)`, `remove_at(pos)`, `remove_range(from, to)` | Take marks out, returning them |
 | `at(pos)`, `mark_at(pos)`, `pos(id)`, `get(id)`, `in_range(from, to)`, `at_or_before(pos)` | Look marks up |
-| `attrs(id)`, `set_attrs(id, attrs)` | A block's attributes |
+| `attrs(id)`, `set_attrs(id, attrs)`, `set_gap(id, gap)`, `set_data(id, data)` | A block's attributes: its blank row and the host's payload |
 | `iter()`, `len()`, `next_id()` | Walk them in document order |
 
-## Outline documents
+## Block documents
 
-`markdown::load` opens Markdown as an [outline document](outline.md); `state.enable_outline`
+`markdown::load` opens Markdown as a [block document](structure.md); `state.enable_outline`
 turns an existing state into one. `state.blocks()` gives the derived blocks, each with its
 mark id. `save` writes Markdown back.
 
@@ -369,12 +373,12 @@ mark id. `save` writes Markdown back.
 use caretline::outline::markdown;
 use caretline::{update, By, Dir, Msg, OutlineConfig, Viewport};
 
-let mut s = markdown::load("- [ ] Pay rent\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
+let mut s = markdown::load("- Pay rent\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
 update(&mut s, Msg::Move { dir: Dir::Forward, by: By::LineEnd, extend: false });
-update(&mut s, Msg::InsertNewline);                 // a new open task below
+update(&mut s, Msg::InsertNewline);                 // a new item below
 update(&mut s, Msg::InsertText { text: "Call Ana".into() });
 update(&mut s, Msg::Indent);                        // nested under the first
-assert_eq!(markdown::to_file(&s), "- [ ] Pay rent\n  - [ ] Call Ana\n");
+assert_eq!(markdown::to_file(&s), "- Pay rent\n  - Call Ana\n");
 ```
 
 ## Session
@@ -437,7 +441,7 @@ fn main() {
     // 1. A state: the text, an optional file path (where `save` writes) and a viewport.
     let start = State::new(
         "hello world\n",
-        Some("notes.md".into()),
+        Some("draft.md".into()),
         Viewport {
             width: 30,
             height: 4,
@@ -471,7 +475,7 @@ fn main() {
                 Effect::ClipboardSet { text } => println!("effect: copy {text:?} to the clipboard"),
                 Effect::WriteFile { path, .. } => println!("effect: write {path}"),
                 Effect::Quit => println!("effect: quit"),
-                // Outline documents also report notices, completed tasks and block changes.
+                // Outline documents also report notices and block changes; host commands their own.
                 other => println!("effect: {other:?}"),
             }
         }
@@ -524,16 +528,16 @@ effect: copy " world" to the clipboard
 text:      "hello world\n"
 selection: anchor 5 head 11
 selected:  Some(" world")
-would write 12 bytes to notes.md
+would write 12 bytes to draft.md
 dirty:     false
 hello there
 
 
- notes.md  saved notes.m 1:12
+ draft.md  saved draft.m 1:12
 cursor at  Some((11, 0))
 after undo: "hello world\n"
 replayed 7 messages: same state
 ```
 
-The status bar clips its message (`saved notes.md`) so the `line:col` on the right stays
+The status bar clips its message (`saved draft.md`) so the `line:col` on the right stays
 visible.

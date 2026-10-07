@@ -9,7 +9,7 @@ It comes from the `caretline-cli` crate. Every output on this page is from a rea
 curl -fsSL https://caretline.app/install.sh | sh && caretline demo   # a prebuilt binary, then the tour
 cargo install caretline-cli   # or build it
 cargo install --locked --path crates/caretline-app   # from a checkout
-cargo run -p caretline-cli -- notes.md                # or run it from the checkout
+cargo run -p caretline-cli -- draft.md                # or run it from the checkout
 ```
 
 See the [Quickstart](quickstart.md) for what the installer does and what the demos show.
@@ -33,8 +33,9 @@ See the [Quickstart](quickstart.md) for what the installer does and what the dem
 | `… --size WxH` | Resize before applying messages |
 | `caretline serve`, `caretline send`, `--listen` | The state protocol, see [protocol.md](protocol.md) |
 | `caretline bench` | Protocol throughput and latency (build with `--release`) |
-| `caretline --outline FILE` | Edit FILE as an [outline](outline.md): lists, tasks and blocks with their own keys, Markdown in and out (also for `--new-state` and `serve`) |
-| `caretline --layout FILE` | As `--outline`, with the [outline layout](outline.md#the-outline-layout): markers in a hang with plain glyphs, a column per depth (also for `serve`) |
+| `caretline --outline FILE` | Edit FILE as [Markdown blocks](markdown.md): lists, headings and blocks with their own keys, Markdown in and out (also for `--new-state` and `serve`) |
+| `caretline --layout FILE` | As `--outline`, with the [outline layout](structure.md#the-outline-layout): markers in a hang with plain glyphs, a column per depth (also for `serve`) |
+| `caretline keys [--outline] [--json]` | Every key and the command it runs, from caretline's [command catalog](keys.md). In the editor, F1 or Alt-? shows the same |
 | `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
 | `… --max-fps FPS` | Editor: repaint at most this many times a second, coalescing changes in between (default 120; `0` repaints after every batch of input). See [performance.md](performance.md#how-the-live-editor-paints) |
 | `… --frame-clock FPS` | Editor: start with a frame clock (a `frame` message FPS times a second). Off by default |
@@ -48,7 +49,7 @@ clipboard isn't touched. `--effects` shows what would have happened.
 ## Edit a file
 
 ```sh
-caretline notes.md
+caretline draft.md
 ```
 
 The keys are macOS text-field keys with Ctrl twins (see [messages.md](messages.md#the-keymap)).
@@ -191,7 +192,7 @@ Then review them.
 ### 7. Record and replay a session
 
 ```sh
-caretline notes.md --trace t.jsonl          # edit, then quit
+caretline draft.md --trace t.jsonl          # edit, then quit
 caretline --replay t.jsonl --snapshot 80x24 # the final frame, exactly
 caretline --replay t.jsonl --dump-state -   # the final state
 ```
@@ -235,15 +236,14 @@ same.
 
 | Fixture | Shows |
 |---|---|
-| `wrapped-paragraph` | A Markdown note soft-wrapped at 44 columns, caret on a wrapped row |
+| `wrapped-paragraph` | A Markdown paragraph soft-wrapped at 44 columns, caret on a wrapped row |
 | `emoji-line` | Emoji (skin tone, ZWJ family, flags), combining accents and wide CJK, with a selection |
 | `mid-selection` | A selection across lines, ending inside a wrapped row |
 | `after-undo` | An edit undone, with the redo step still in the history |
 | `no-wrap-table` | Wrapping off: a long table row scrolled sideways |
 | `session.trace.jsonl` | A recorded session; `session.snapshot.txt` is its replay at 36x8 |
-| `outline-trip` | `trip.md` opened as an outline: a heading, paragraphs, nested tasks, an image block and a numbered list, with blank rows drawn as virtual rows |
-| `outline-edited` | The same after keys: a new nested task added and done, an item moved up |
-| `outline-split` | A paragraph whose two selected lines the task cycle turned into tasks (`standup.md`) |
+| `outline-trip` | `trip.md` opened as blocks: a heading, paragraphs, a nested list, an image block and a numbered list, with blank rows drawn as virtual rows |
+| `outline-edited` | The same after keys: a nested item added under another, an item moved up |
 
 ```console
 $ caretline --state crates/caretline-app/fixtures/emoji-line.state.json --keys '<s-right><s-right>' --snapshot 40x6
@@ -272,8 +272,8 @@ The status bar's `N sel` counts Unicode scalar values, while `line:col` counts g
 While someone types in `caretline FILE --listen`, push changes so their caret never moves:
 
 ```sh
-caretline send --latest set-text notes-v2.md     # text.set: only what differs changes
-caretline send --latest keys '<d-down>- a note'  # through this connection's own view
+caretline send --latest set-text draft-v2.md     # text.set: only what differs changes
+caretline send --latest keys '<d-down>- a line'  # through this connection's own view
 ```
 
 - `set-text` (`text.set`) diffs your text against the live one and applies only the changes,
@@ -297,7 +297,7 @@ running instead, paced against absolute deadlines, and reports the frames per se
 achieved:
 
 ```sh
-caretline notes.md --listen                                       # in one terminal
+caretline draft.md --listen                                       # in one terminal
 caretline demo scenes --bench                                     # in another
 caretline demo scenes --bench --fps 120 --scene donut,plasma --seconds 5
 ```

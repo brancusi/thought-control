@@ -7,6 +7,8 @@ There are two ways to put caretline in your project:
 | [As a library](#as-a-library) | `State`, `update` and `view` in your Rust process | Your app is in Rust and owns its terminal or window |
 | [As a process](#as-a-process) | `caretline serve` speaking JSON lines | Your app is in another language, or you want isolation |
 
+Either way, your app adds what its text means through the [extension points](#extending-the-engine).
+
 Either way, caretline owns the editing rules and you own everything else: input, drawing,
 files, the clipboard and the clock.
 
@@ -18,7 +20,7 @@ caretline is on [crates.io](https://crates.io/crates/caretline): `cargo add care
 
 ```toml
 [dependencies]
-caretline = "0.2"
+caretline = "0.3"
 ```
 
 Its library is `caretline::`; this repository's crate is the same code. For something on
@@ -54,7 +56,7 @@ selects and undoes; `Ctrl-Q` twice quits and prints the text.
 
 ```toml
 [dependencies]
-caretline = "0.2"
+caretline = "0.3"
 ratatui = "0.30"
 crossterm = "0.29"
 ```
@@ -161,7 +163,7 @@ For a fuller runtime (mouse, the system clipboard, atomic saves, kitty keyboard 
 traces), read the `caretline` binary's
 [`runtime.rs`](../../crates/caretline-app/src/runtime.rs).
 
-Notes for your own renderer:
+For your own renderer:
 
 - The frame's size is the state's viewport. When your area changes size, send
   `Msg::Resize`; `update` keeps the caret in view.
@@ -235,6 +237,143 @@ Draw each panel with `draw_editor(f, rects[i], &panels.editors[i])` from the exa
   one don't reach another.
 - **Persist the layout** by saving each state with `to_json`. Reopening restores the text,
   the caret, the scroll and the undo history.
+
+## Extending the engine
+
+caretline edits text and knows its shape (blocks, depth, markers), never its meaning. What a
+line *means* in your app (a task, a ticket, a status) you add through four extension points,
+registered on a `Host` and set on the document:
+
+| Point | Register | Runs |
+|---|---|---|
+| [Host commands](#host-commands) | `Host::command(name, f)` | `Msg::Command { name, args }`: one transaction, one undo step |
+| [Input rules](#input-rules) | `Host::input_rule(name, f)` | Before the engine handles an editing message; the first to return an edit takes it |
+| [Mark payloads](#mark-payloads) | (data, not code) | Carried with each block's mark |
+| [Decorations](#decorations) | `Host::decorator(f)` | When a view with an outline layout is drawn or hit-tested |
+
+```rust
+use caretline::{Edit, Host, State};
+
+let host = Host::new()
+    .command("shout", |ctx, _args| {
+        let line = ctx.text().char_to_line(ctx.caret());
+        let (a, b) = (ctx.text().line_to_char(line), ctx.text().line_to_char(line + 1) - 1);
+        Ok(Edit { changes: vec![(a, b, ctx.text().slice(a..b).to_string().to_uppercase())], ..Edit::default() })
+    });
+let mut state = State::new("hello\nworld\n", None, caretline::Viewport { width: 40, height: 6 });
+state.doc.set_host(host);
+caretline::update(&mut state, caretline::Msg::Command { name: "shout".into(), args: serde_json::Value::Null });
+assert_eq!(state.doc.text.to_string(), "HELLO\nworld\n");
+```
+
+**Every extension is a pure function**: no clock, randomness or I/O, the same answer for the
+same document, view and arguments. That is what keeps the engine's promises:
+
+- **State** stays one serializable value. The host is not part of it (it compares equal to any
+  other host and is never serialized); a state read from JSON has none until you `set_host`.
+- **Replay** stays exact. A command is a message, so traces record it; replay a trace that uses
+  commands with `trace::replay_trace_with(input, &host)`, registering the same functions.
+- **The protocol** keeps working: `msgs` can send `{"msg":"command","name":…,"args":…}`,
+  `hello` and `commands.list` name the registered commands, and `state.set` keeps the session's
+  host.
+
+### Host commands
+
+A command gets a `Ctx` (the document and the view it acts through: `text()`, `blocks()`,
+`selection()`, `caret()`, `mapped_selection(changes)`) and the message's JSON `args`, and
+returns an `Edit` or the reason it can't run (shown in the status bar, nothing changed):
+
+| `Edit` field | Meaning |
+|---|---|
+| `changes` | `[from, to)` replaced by text, in chars of the current text, sorted and apart |
+| `selection` | The selection after, in the new text (none: the old one mapped through the changes) |
+| `marks` | `MarkOp`s applied after the text: `Mint { pos, attrs }`, `Remove { id }`, `SetGap { id, gap }`, `SetData { id, data }` |
+| `status` | A one-line message for the view |
+| `effects` | Your own effects, returned from `update` as `Effect::Host { name, data }` |
+| `keep_gaps` | Every block keeps its blank row (a change of shape never moves another block) |
+
+An unknown name changes nothing and says so; a read-only view refuses a command like any edit.
+Bind keys to commands in your app's keymap: caretline's [default keymap](keys.md) binds only
+its own vocabulary.
+
+### Input rules
+
+An input rule sees each editing message (typing, Enter, Backspace, paste…) before the engine
+and may return an `Edit` to apply instead, as CodeMirror's input handlers do. Use one for a
+shorthand typed in the text. caretline has no transaction filters: the structure a host needs
+enforced (a prefix the caret never enters) is data, [tags](markdown.md#tags).
+
+### Mark payloads
+
+Each block's mark carries `MarkAttrs { gap, data }`; `data` is any JSON value, yours. caretline
+never reads it and keeps it with the mark through edits, cut and paste, undo and redo, and
+changes from elsewhere. Set it with `MarkOp::SetData` in a command (undoable),
+`ExtChange::SetData` from elsewhere, or on `doc.marks` directly. Or keep your data in your own
+map keyed by `MarkId`, as thc does.
+
+### Decorations
+
+A decorator returns, for each block, a `Decoration { hang, gutter }` of `Deco { text, role, id }`.
+caretline draws the text in the slot; the cells carry your role's name
+(`Frame::role_name`); `view::hit` reports the `id` under a click. See
+[structure.md](structure.md#decorations).
+
+## Case study: tasks in thc
+
+thc (Thought Control) is a notes app built on caretline, and its pages have tasks: `- [ ] Pay
+rent`, ⌃T to cycle text → open → done → text, a click on the box to complete it, a save the
+moment a task is done. None of that is in caretline. Here is how thc builds it from the
+extension points, and how you would build anything like it.
+
+**1. The syntax, as data.** A task is a bullet with a one-character tag. thc turns tags on for
+its statuses, and has Enter after a task open a new one:
+
+```rust
+let config = OutlineConfig { tags: " x/w-".into(), new_tag: Some(' '), ..OutlineConfig::default() };
+```
+
+caretline now keeps the caret out of `[x] `, draws it in the hang, and has Backspace remove it
+before the bullet, without knowing that `x` means done. thc maps tag characters to its own
+status names (`' '` todo, `x` done, `/` doing, `w` waiting, `-` cancelled).
+
+**2. The cycle, as a command.** ⌃T is a thc key bound to a thc command. The command reads the
+blocks the selection touches and rewrites their prefixes with plain text changes:
+
+```rust
+fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
+    let o = ctx.blocks().ok_or("only in outline documents")?;
+    let b = o.block_at(ctx.text(), ctx.caret());
+    let at = b.start + b.indent;
+    let (changes, done) = match b.tag {
+        Some('x') => (vec![(b.start, b.content_start(), String::new())], false), // done → text
+        Some(_) => (vec![(at + 3, at + 4, "x".to_string())], true),             // open → done
+        None if b.kind == Kind::Para => (vec![(at, at, "- [ ] ".to_string())], false),
+        None => (vec![(at, b.content_start(), "- [ ] ".to_string())], false),    // bullet → open
+    };
+    Ok(Edit {
+        selection: Some(ctx.mapped_selection(&changes)),
+        changes,
+        keep_gaps: true,
+        effects: if done { vec![("completed".into(), json!({ "id": b.id.0 }))] } else { vec![] },
+        ..Edit::default()
+    })
+}
+```
+
+thc's real one also applies to every selected block, splits a multi-line paragraph into tasks
+(minting marks with `MarkOp::Mint`) and joins them back. It is one undo step, it replays, and
+its `completed` effect tells thc to save at once.
+
+**3. The box, as a decoration.** thc's decorator draws `[ ]` or `[x]` in the hang with a role
+per status (`"thc.task.done"`) and the id `"box"`; a click whose `hit` is
+`Hang { deco: Some("box"), block }` sends `Msg::Command { name: "thc.set_status", args: {"id": block, "status": "x"} }`.
+
+**4. The shorthand, as an input rule.** Typing `[ ] ` at a paragraph line's start becomes
+`- [ ] `: an input rule that matches the typed space and returns that edit.
+
+**5. The rest stays in thc.** Due dates, priorities and the vault: thc keeps them per block in its
+own map keyed by `MarkId`, sends changes from the vault as `Msg::External`, and draws its own
+surface. caretline never learns the word "task".
 
 ## As a process
 

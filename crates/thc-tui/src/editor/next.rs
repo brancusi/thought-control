@@ -1,7 +1,7 @@
 //! The engine behind the seam: caretline.
 //!
 //! A page or a day is one caretline outline document: one text line per row, each block
-//! bounded by a mark (docs/caretline/outline.md). thc's [`Line`]s are a mirror of its blocks,
+//! bounded by a mark (docs/caretline/structure.md). thc's [`Line`]s are a mirror of its blocks,
 //! one per block in order, each tied to its block by `Line::mark`. A line keeps thc's save
 //! state (node id, base, what was saved, the meta); its shape and text are the block's,
 //! re-read after every engine step (`sync`).

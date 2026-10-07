@@ -198,7 +198,7 @@ a choice of these "blitters", driven by the same frame clock.
 
 ```console
 $ caretline bench                       # engine and protocol (release build)
-$ caretline notes.md --listen           # a live editor to drive from another process
+$ caretline draft.md --listen           # a live editor to drive from another process
 ```
 
 Drive the live editor with `caretline send` or any JSON-lines client; see

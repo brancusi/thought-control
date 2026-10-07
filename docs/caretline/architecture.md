@@ -49,7 +49,7 @@ halves' fields side by side, the shape every earlier state has.
 | `quit_armed` | view | A first quit with unsaved changes arms it; the second quits |
 | `marks` | doc | Block marks: numeric ids at line starts, mapped through every edit (see [Block marks](#block-marks)). Left out of the JSON when unused |
 | `mark_log` | doc | What each history revision did to the marks, by revision. Left out of the JSON when empty |
-| `outline` | doc | Set for an [outline document](outline.md): its config (indent, task vocabulary, cycle). Left out when unset |
+| `outline` | doc | Set for a [block document](structure.md): its config (indent, [tags](markdown.md#tags), images, numbers). Left out when unset |
 | `doc_rev` | doc (`rev`) | Goes up by one for every change of the text or the marks, from any view or from elsewhere. Left out while 0 |
 | `undo_floor` | doc | The history was trimmed at a change from elsewhere (the barrier fallback). Left out while false |
 | `word_drag` | view | The word a `select_word_at` selected, while a shift-click may extend it by words |
@@ -57,7 +57,7 @@ halves' fields side by side, the shape every earlier state has.
 | `read_only` | view | Editing messages are refused. Left out while false |
 | `focused` | view | Only a focused view draws its caret. Left out while true |
 | `free` | view | Scrolled freely (`scroll_view`): the view doesn't follow the caret until it moves. Left out while false |
-| `layout` | view | The [outline layout](outline.md#the-outline-layout). Left out when unset |
+| `layout` | view | The [outline layout](structure.md#the-outline-layout). Left out when unset |
 
 Only `text` matters when a state is parsed: every other field is optional and gets what
 `State::new` would give (see [Rehydration](#rehydration)).
@@ -102,7 +102,7 @@ assert_eq!(views[1].caret(), 10); // still before "world"
 - **Text someone else puts in at your caret goes after it.** When a change a view didn't make
   inserts text exactly at that view's caret, the caret stays where it was (it *associates
   before*), so a person typing at the end of a line keeps typing there while an agent inserts
-  a note at the same place. This holds for an edit through another view, a change from
+  a line at the same place. This holds for an edit through another view, a change from
   elsewhere, and a host's edit by position (`Msg::Edit`, even through the view itself: it is
   an edit at a place, not typing at the caret). A non-empty selection keeps covering what it
   covered: text inserted at either end goes outside it, text inserted inside grows it. The
@@ -377,10 +377,11 @@ edits, motions, undos and resizes.
 ## Block marks
 
 A mark is a `MarkId` (a plain `u64`) at a char position that is always the start of a line.
-Marks are block identity: the [outline layer](outline.md) puts one on the first line of every
-block, and a host keys its own data (a database row, a node id) by them. The engine only
+Marks are block identity: the [block structure](structure.md) puts one on the first line of
+every block, and a host keys its own data (a database row, a node id) by them. The engine only
 hands out numbers, from a counter in `Marks` that never goes back, so an id is never reused.
-Each mark also carries `BlockAttrs` (today a block's `gap`, its blank row before it).
+Each mark also carries `MarkAttrs`: a block's `gap` (its blank row before it) and `data`, the
+host's payload, any JSON value the engine never reads.
 
 **Mapping.** After every transaction each mark is mapped with `Assoc::After` and snapped to
 the start of its line:
@@ -411,23 +412,34 @@ one back where its offset lands on a line start, unless that id is in use. So a 
 in one session move blocks with their ids, and cut then paste in place gives back the same
 marks.
 
-## Outline documents
+## Block documents
 
 With `state.doc.outline` set, the same buffer is read as blocks bounded by marks (one text line
 per row, a block's first line carrying its indentation and marker, other lines continuing
-it). `update` hands Enter, Backspace, Delete, Tab, the task cycle, moves, copy and paste to
-the outline's rules first (`outline::rules`), which build ordinary Transactions with explicit
-mark edits. Every commit then marks new block starts, and after every message the selection
-is kept out of markers and atomic blocks. Layout adds a virtual row before each block with a
-blank row, and with a view's [outline layout](outline.md#the-outline-layout) lays each line out
-at its own column and width. See [outline.md](outline.md).
+it). `update` hands Enter, Backspace, Delete, Tab, moves, copy and paste to the block rules
+first (`outline::rules`: the [Markdown grammar](markdown.md) and the
+[block operations](structure.md#block-operations)), which build ordinary Transactions with
+explicit mark edits. Every commit then marks new block starts, and after every message the
+selection is kept out of markers and atomic blocks. Layout adds a virtual row before each block
+with a blank row, and with a view's [outline layout](structure.md#the-outline-layout) lays each
+line out at its own column and width.
+
+## The host
+
+A host extends the engine without changing it: named commands (`Msg::Command`), input rules
+(which take an editing message before the engine) and a decorator (what to draw beside each
+block), registered on a `Host` and set on the document (`Document::set_host`). Each is a pure
+function, so `update` stays pure and replay stays exact when the same host is registered. The
+host is not part of the state's value and never serialized. In the update loop, a command runs
+in place of the engine's handling of its message, as one transaction and one undo step; input
+rules run before the block rules. See [embedding.md](embedding.md#extending-the-engine).
 
 ## What `update` does after every message
 
 After handling any message, `update` always:
 
-1. in an outline document, moves selection ends out of folded blocks, keeps them out of
-   markers and atomic blocks, and reports `block_left` (and `restored`, `notice`),
+1. in a block document, moves selection ends out of folded blocks, keeps them out of markers
+   and atomic blocks, and reports `block_left` (and `notice`),
 2. recomputes `dirty`,
 3. closes the edit run if history moved past it, and
 4. scrolls so the primary caret is visible, by the view's follow policy (unless the view was
