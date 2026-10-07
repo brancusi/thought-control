@@ -197,7 +197,7 @@ fn layers_draw_what_the_design_says() {
     let f = s.render(100, 30, "text").unwrap().frame.unwrap();
     assert!(f.contains("●●○") && f.contains("‹ back") && f.contains("next ›"), "{f}");
     let ids: Vec<String> = s.app.render.layer_plan.as_ref().unwrap().regions.iter().map(|r| r.id.clone()).collect();
-    for want in ["tour/back", "tour/next", "tour/stop"] {
+    for want in ["s2/0/back", "s2/0/next", "s2/0/stop"] {
         assert!(ids.iter().any(|i| i == want), "{want} in {ids:?}");
     }
 }
@@ -307,7 +307,7 @@ fn layers_walkthrough_keys_and_buttons() {
     let (_x, vault) = fixture("tour-keys", 0);
     let mut s = session(vault, (100, 30), "dark");
     scene(&mut s, "tour");
-    let step = |s: &Session| s.app.ui.layers.tour.as_ref().map(|t| t.at);
+    let step = |s: &Session| s.app.ui.layers.tour.index();
     assert_eq!(step(&s), Some(1));
     s.apply(Msg::Key { key: "<f2>".into() }).unwrap();
     assert_eq!(step(&s), Some(2));
@@ -315,7 +315,7 @@ fn layers_walkthrough_keys_and_buttons() {
     assert_eq!(step(&s), Some(1));
     // The next › button.
     s.render(100, 30, "text").unwrap();
-    let next = s.app.render.layer_plan.as_ref().unwrap().regions.iter().find(|r| r.id == "tour/next").unwrap().rect;
+    let next = s.app.render.layer_plan.as_ref().unwrap().regions.iter().find(|r| r.id.ends_with("/next")).unwrap().rect;
     s.apply(Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Down, x: next.x, y: next.y, mods: String::new(), clicks: Some(1) } }).unwrap();
     assert_eq!(step(&s), Some(2));
     s.apply(Msg::Key { key: "<f3>".into() }).unwrap();
@@ -428,10 +428,10 @@ fn layers_a_step_still_to_come_follows_edits() {
     for c in ["N", "e", "w", " "] {
         s.apply(Msg::Key { key: c.into() }).unwrap();
     }
-    let a = s.app.ui.layers.tour.as_ref().unwrap().steps[1].anchor.clone();
-    assert_eq!(a, vec![caretline_layers::Anchor::Text { from: from + 4, to: from + 8 }], "the step still to come moved with its text");
+    let a = s.app.ui.layers.tour.tour.as_ref().unwrap().steps[1].layers[0].anchor.clone();
+    assert_eq!(a, vec![caretline_tour::StepAnchor::At(caretline_layers::Anchor::Text { from: from + 4, to: from + 8 })], "the step still to come moved with its text");
     layer(&mut s, json!({"op": "tour.next"}), Some("claude"));
-    let on = resolved(&mut s, "tour");
+    let on = resolved(&mut s, "s2/0");
     assert_eq!(cells(&s, &on.rects[0]), "Send");
 }
 
@@ -441,9 +441,9 @@ fn layers_a_walkthrough_box_stays_when_clicked() {
     let mut s = session(vault, (100, 30), "dark");
     scene(&mut s, "tour");
     s.render(100, 30, "text").unwrap();
-    let r = s.app.render.layer_plan.as_ref().unwrap().layers.iter().find(|l| l.id == "tour").unwrap().rect.unwrap();
+    let r = s.app.render.layer_plan.as_ref().unwrap().layers.iter().find(|l| l.id == "s2/0").unwrap().rect.unwrap();
     s.apply(Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Down, x: r.x + 2, y: r.y + 1, mods: String::new(), clicks: Some(1) } }).unwrap();
-    assert!(s.app.ui.layers.tour.is_some() && s.app.ui.layers.stack.get("tour").is_some());
+    assert!(s.app.ui.layers.touring() && s.app.ui.layers.stack.get("s2/0").is_some());
 }
 
 #[test]
@@ -478,4 +478,32 @@ fn layers_a_segment_starting_mid_session_reopens_agent_views() {
         let _ = std::fs::remove_dir_all(c);
     }
     assert_eq!(frames.last().unwrap(), &expected);
+}
+
+#[test]
+fn layers_a_caretline_tour_sets_the_scene_and_advances_on_an_action() {
+    let (_x, vault) = fixture("ct", 0);
+    let mut s = session(vault, (100, 30), "dark");
+    let tour = json!({
+        "id": "thc.test", "version": 2, "title": "Test", "kind": "thc.tour",
+        "step": [
+            {"id": "tasks", "host": {"view": "tasks"}, "anchor": [format!("row:{}", id("signup")), {"screen": "center"}], "data": {"title": "Tasks", "text": "Open Pages next."}, "place": {"arrow": true}, "advance": {"command": "go.pages"}},
+            {"id": "pages", "anchor": {"screen": "center"}, "data": {"text": "That's all."}}
+        ]
+    });
+    let host = crate::ui_proto::Host { clock: false, effects: false };
+    let r: Value = serde_json::from_str(&crate::ui_proto::handle(&mut s, &json!({"op": "tour.start", "tour": tour, "actor": "claude"}).to_string(), &host).response).unwrap();
+    assert_eq!(r["result"]["layer"], "tasks/0", "{r}");
+    // The step's host patch set the scene, as a step the agent took.
+    assert_eq!(s.app.ui.view, crate::app::View::Tasks);
+    let f = s.render(100, 30, "text").unwrap().frame.unwrap();
+    assert!(f.contains("◆ claude") && f.contains("Open Pages next."), "{f}");
+    // The person goes to Pages: the step's `advance` holds, the walkthrough moves on.
+    s.apply(Msg::Key { key: "4".into() }).unwrap();
+    assert_eq!(s.app.ui.layers.tour.step.as_deref(), Some("pages"));
+    s.apply(Msg::Key { key: "<f2>".into() }).unwrap();
+    assert!(!s.app.ui.layers.touring());
+    assert_eq!(s.app.ui.layers.tour.seen["thc.test"].version, 2);
+    // Its ops schema is in the protocol's.
+    assert!(caretline_tour::ops::schema().get("tour.start").is_some() || caretline_tour::ops::schema().to_string().contains("tour.start"));
 }

@@ -22,7 +22,7 @@
 //! Agents' layers are drawn in the agent hue, thc's and a walkthrough's own in the accent.
 
 use crate::app::App;
-use crate::layers::{TOUR, TOUR_ID};
+use crate::layers::TOUR;
 use crate::theme::{Theme, Token};
 use crate::ui::{Click, RenderOutput};
 use caretline_layers as cl;
@@ -115,7 +115,7 @@ fn lines_of(kind: &str, data: &Value, inner: usize) -> Lines {
         wrap(text, inner)
     };
     let controls = (kind == TOUR).then(|| Controls {
-        step: data.get("step").and_then(Value::as_u64).unwrap_or(1) as usize,
+        step: data.get("at").and_then(Value::as_u64).unwrap_or(1) as usize,
         of: data.get("of").and_then(Value::as_u64).unwrap_or(1) as usize,
     });
     Lines {
@@ -555,14 +555,10 @@ fn border(th: &Theme) -> Border {
 }
 
 /// Who made a layer, as the top edge says it: `◆ claude` for an agent's, nothing for thc's.
-fn attribution(th: &Theme, owner: &cl::Owner) -> Option<String> {
-    owner.actor().map(|a| {
-        format!(
-            "{}{}{a}",
-            th.glyphs().agent,
-            if th.ascii { " " } else { " " }
-        )
-    })
+fn attribution(th: &Theme, owner: &cl::Owner, tour_actor: Option<&str>) -> Option<String> {
+    // A walkthrough's steps are `guide` layers: an agent's walkthrough carries its name.
+    let who = owner.actor().or(if *owner == cl::Owner::Guide { tour_actor } else { None })?;
+    Some(format!("{} {who}", th.glyphs().agent))
 }
 
 /// Draws the plan over the frame.
@@ -580,7 +576,9 @@ pub fn draw(buf: &mut Buffer, p: &mut cl::Plan, app: &App) {
     }
     let layers = p.layers.clone();
     for l in &layers {
-        let lk = look(&th, l.agent);
+        // An agent's layer, or a step of an agent's walkthrough: the agent hue.
+        let agent = l.agent || (l.owner == cl::Owner::Guide && app.ui.layers.tour_actor.is_some());
+        let lk = look(&th, agent);
         // The ring: the anchor's cells tinted.
         for r in &l.ring {
             for y in r.y..r.bottom().min(buf.area.height) {
@@ -596,7 +594,7 @@ pub fn draw(buf: &mut Buffer, p: &mut cl::Plan, app: &App) {
             let st = if th.is_ansi() {
                 lk.border
             } else {
-                th.s(if l.agent { Token::Agent } else { Token::Accent })
+                th.s(if agent { Token::Agent } else { Token::Accent })
             };
             for (k, s) in rt.steps.iter().enumerate() {
                 let keep_bg = buf
@@ -655,7 +653,7 @@ pub fn draw(buf: &mut Buffer, p: &mut cl::Plan, app: &App) {
             let st = if th.is_ansi() {
                 lk.border.add_modifier(Modifier::REVERSED)
             } else {
-                lk.border.patch(th.fill(if l.agent {
+                lk.border.patch(th.fill(if agent {
                     Token::AgentTint
                 } else {
                     Token::AccentTint
@@ -676,7 +674,7 @@ pub fn draw(buf: &mut Buffer, p: &mut cl::Plan, app: &App) {
         let (Some(r), Some(content)) = (l.rect, content) else {
             continue;
         };
-        draw_box(buf, p, l, r, &content, &th, &lk);
+        draw_box(buf, p, l, r, &content, &th, &lk, app.ui.layers.tour_actor.as_deref());
     }
 }
 
@@ -688,8 +686,9 @@ fn draw_box(
     content: &cl::Content,
     th: &Theme,
     lk: &Look,
+    tour_actor: Option<&str>,
 ) {
-    let who = attribution(th, &l.owner);
+    let who = attribution(th, &l.owner, tour_actor);
     let b = border(th);
     // A strip: one row across the area.
     if l.mode == Some(cl::Mode::Strip) {
@@ -838,7 +837,13 @@ pub fn click(app: &mut App, x: u16, y: u16) -> bool {
     };
     let limits = app.layer_limits.limits();
     let now = app.ui.now_ms;
-    match region.split_once('/') {
+    // Ids: `<layer>`, `<layer>/reveal`, a step's buttons `<layer>/next` (a step layer's own id
+    // has a `/`: `s1/0`).
+    let (id, part) = match region.rsplit_once('/') {
+        Some((id, p @ ("next" | "back" | "stop" | "reveal"))) => (id.to_string(), Some(p)),
+        _ => (region.clone(), None),
+    };
+    match part.map(|p| (id.as_str(), p)) {
         Some((_, "next")) => {
             let _ = crate::layers::step(&mut app.ui.layers, "tour.next", now, &limits);
         }
@@ -863,10 +868,11 @@ pub fn click(app: &mut App, x: u16, y: u16) -> bool {
         }
         Some(_) => {}
         None => {
-            // The person dismisses a hint by clicking it. A walkthrough step (or any other
-            // kind) stays: only its buttons act.
-            let hint = app.ui.layers.stack.get(&region).and_then(|l| l.content.as_ref()).is_some_and(|c| c.kind == cl::HINT);
-            if hint && region != TOUR_ID {
+            // The person dismisses a hint by clicking it. A walkthrough step (a guide layer, or
+            // any other kind) stays: only its buttons act.
+            let l = app.ui.layers.stack.get(&region);
+            let hint = l.and_then(|l| l.content.as_ref()).is_some_and(|c| c.kind == cl::HINT) && l.is_some_and(|l| l.owner != cl::Owner::Guide);
+            if hint {
                 app.ui.layers.stack.layers.retain(|l| l.id != region);
             }
         }

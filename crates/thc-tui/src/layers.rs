@@ -18,13 +18,12 @@
 
 use crate::ui_state::UiState;
 use caretline_layers as cl;
+use caretline_tour as ct;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 /// The content kind of a walkthrough step: `{title?, text, step, of}`.
 pub const TOUR: &str = "thc.tour";
-/// The id of the walkthrough's step layer.
-pub const TOUR_ID: &str = "tour";
 
 /// The agent policy (`[layers] agent_limits` in the config). `off` (the default): no limits,
 /// agents push what they like, spotlights included; the person keeps control with Esc (every
@@ -56,51 +55,41 @@ impl AgentLimits {
     }
 }
 
-/// One step of a walkthrough.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct TourStep {
-    /// Fallbacks, as a layer's.
-    pub anchor: Vec<cl::Anchor>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub title: Option<String>,
-    #[serde(default)]
-    pub text: String,
-}
-
-/// A walkthrough: its steps, the one showing, and who started it. The step showing is the
-/// layer `tour`; F2 (or its `next ›` button) moves on, ⇧F2 back, F3 or Esc stops.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Tour {
-    pub steps: Vec<TourStep>,
-    pub at: usize,
-    /// The agent that started it (None: the person or thc).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub actor: Option<String>,
-    /// Each step dims everything but itself.
-    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
-    pub spotlight: bool,
-}
-
-/// The layers in the UI state. Serialized only when there are some, so states and traces
-/// without layers are unchanged.
+/// The layers in the UI state, and the walkthrough (caretline-tour's `TourState`). Serialized
+/// only when there are some, so states and traces without layers are unchanged.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct LayerState {
     #[serde(skip_serializing_if = "stack_is_empty")]
     pub stack: cl::Layers,
+    /// The walkthrough: its tour, the step showing, its history, and which tours this device
+    /// has seen. Its steps' layers are the `guide` layers in `stack`.
+    #[serde(skip_serializing_if = "tour_is_empty")]
+    pub tour: ct::TourState,
+    /// The agent that started the walkthrough (None: the person or thc): its steps carry its
+    /// name, and Esc stops it.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub tour: Option<Tour>,
+    pub tour_actor: Option<String>,
+    /// The host patches the steps just entered asked for (`host`), for the session to apply
+    /// after the message. Never serialized: drained within the message.
+    #[serde(skip)]
+    pub host_patches: Vec<Value>,
+    /// A walkthrough ended within the message (its seen-state goes to the device's cache).
+    #[serde(skip)]
+    pub ended: bool,
 }
 
 fn stack_is_empty(l: &cl::Layers) -> bool {
     *l == cl::Layers::default()
 }
 
+fn tour_is_empty(t: &ct::TourState) -> bool {
+    *t == ct::TourState::default()
+}
+
 impl LayerState {
     pub fn is_empty(&self) -> bool {
-        stack_is_empty(&self.stack) && self.tour.is_none()
+        stack_is_empty(&self.stack) && tour_is_empty(&self.tour) && self.tour_actor.is_none()
     }
 
     /// Something to draw.
@@ -108,87 +97,126 @@ impl LayerState {
         !self.stack.layers.is_empty() && !self.stack.hidden
     }
 
-    /// Something waits on the clock (a layer with a lifetime).
+    /// A walkthrough is running.
+    pub fn touring(&self) -> bool {
+        self.tour.running()
+    }
+
+    /// Something waits on the clock (a layer with a lifetime, a step's nudge or `after_ms`).
     pub fn timed(&self) -> bool {
-        self.stack
-            .layers
-            .iter()
-            .any(|l| l.ttl_ms.is_some_and(|t| t < u64::MAX / 2))
+        self.stack.layers.iter().any(|l| l.ttl_ms.is_some_and(|t| t < u64::MAX / 2))
+            || self.tour.current().is_some_and(|s| s.nudge.is_some() || s.advance.is_some())
     }
 
     pub fn has_text_anchors(&self) -> bool {
         let text = |a: &cl::Anchor| matches!(a.unscoped(), cl::Anchor::Text { .. });
-        self.stack.layers.iter().any(|l| l.anchor.iter().any(text)) || self.tour.as_ref().is_some_and(|t| t.steps.iter().any(|s| s.anchor.iter().any(text)))
+        self.stack.layers.iter().any(|l| l.anchor.iter().any(text))
+            || self.tour.tour.as_ref().is_some_and(|t| t.steps.iter().any(|s| s.layers.iter().any(|l| l.anchor.iter().filter_map(ct::StepAnchor::anchor).any(text))))
     }
 
+    /// An agent's layer, or an agent's walkthrough, is showing.
     pub fn has_agent_layers(&self) -> bool {
-        self.stack.layers.iter().any(|l| l.owner.is_agent())
+        self.stack.layers.iter().any(|l| l.owner.is_agent()) || (self.touring() && self.tour_actor.is_some())
     }
 
-    /// The clock moved: expired layers go (and a walkthrough whose step went).
+    /// The clock moved: expired layers go.
     pub fn expire(&mut self, now_ms: u64) {
-        if cl::expire(&mut self.stack, now_ms) {
-            self.tidy();
-        }
+        cl::expire(&mut self.stack, now_ms);
     }
 
-    /// A walkthrough without its step layer is over.
-    fn tidy(&mut self) {
-        if self.tour.is_some() && self.stack.get(TOUR_ID).is_none() {
-            self.tour = None;
-        }
-    }
-
-    /// Esc: every agent's layer goes (and an agent's walkthrough). True: some did.
-    pub fn dismiss_agents(&mut self) -> bool {
+    /// Esc: every agent's layer goes, and an agent's walkthrough stops. True: some did.
+    pub fn dismiss_agents(&mut self, now_ms: u64) -> bool {
         let n = self.stack.layers.len();
         self.stack.layers.retain(|l| !l.owner.is_agent());
-        self.tidy();
-        self.stack.layers.len() != n
+        let mut did = self.stack.layers.len() != n;
+        if self.touring() && self.tour_actor.is_some() {
+            if let Ok(fx) = ct::apply(&mut self.tour, ct::TourOp::Stop, now_ms) {
+                self.effects(fx, now_ms);
+            }
+            did = true;
+        }
+        did
     }
 
     /// ⌘[: the newest agent layer goes, one step back. True: one did.
     pub fn back_agent_step(&mut self) -> bool {
-        let Some(i) = (0..self.stack.layers.len())
-            .filter(|&i| self.stack.layers[i].owner.is_agent())
-            .max_by_key(|&i| (self.stack.layers[i].since_ms, i))
-        else {
+        let Some(i) = (0..self.stack.layers.len()).filter(|&i| self.stack.layers[i].owner.is_agent()).max_by_key(|&i| (self.stack.layers[i].since_ms, i)) else {
             return false;
         };
         self.stack.layers.remove(i);
-        self.tidy();
         true
     }
 
     /// The edit `changes` moved the open document's text: text anchors follow it, the layers
     /// showing and a walkthrough's steps still to come alike.
     pub fn observe(&mut self, changes: &caretline::helix::ChangeSet, now_ms: u64) {
-        if let Some(t) = self.tour.as_mut() {
+        if let Some(t) = self.tour.tour.as_mut() {
             map_steps(&mut t.steps, changes);
         }
-        if cl::observe(&mut self.stack, Some(changes), now_ms) {
-            self.tidy();
+        cl::observe(&mut self.stack, Some(changes), now_ms);
+    }
+
+    /// What the walkthrough's reducer asked for: its steps' layers replace the guide layers,
+    /// its host patches wait for the session, and an ended tour leaves only its seen-state.
+    pub fn effects(&mut self, fx: Vec<ct::TourEffect>, now_ms: u64) {
+        for e in fx {
+            match e {
+                ct::TourEffect::Host { patch } => self.host_patches.push(patch),
+                ct::TourEffect::Layers { layers } => {
+                    let _ = ct::replace_guide(&mut self.stack, layers, now_ms);
+                }
+                ct::TourEffect::Step { .. } => {}
+                ct::TourEffect::Ended { .. } => {
+                    self.tour.tour = None;
+                    self.tour_actor = None;
+                    self.ended = true;
+                }
+            }
         }
     }
 }
 
-/// A walkthrough's steps through an edit: each step's text anchors move as a layer's would. A
-/// step whose anchors all went (their text deleted) points at the screen's centre instead.
-fn map_steps(steps: &mut [TourStep], changes: &caretline::helix::ChangeSet) {
-    if !steps.iter().any(|s| s.anchor.iter().any(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }))) {
+/// The tours this device has seen (caretline-tour's seen-state), kept beside the vault's caches:
+/// a walkthrough someone finished or stopped isn't offered again until its version is.
+pub fn load_seen(cache: &std::path::Path) -> std::collections::BTreeMap<String, ct::Seen> {
+    std::fs::read(cache.join("tours-seen.json")).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
+}
+
+pub fn save_seen(cache: &std::path::Path, seen: &std::collections::BTreeMap<String, ct::Seen>) {
+    if crate::SNAPSHOT.with(|s| s.get()) {
+        return;
+    }
+    if let Ok(b) = serde_json::to_vec(seen) {
+        let _ = std::fs::write(cache.join("tours-seen.json"), b);
+    }
+}
+
+/// A walkthrough's steps through an edit: each step layer's text anchors move as a layer's
+/// would. A layer whose anchors all went (their text deleted) points at the screen's centre.
+fn map_steps(steps: &mut [ct::Step], changes: &caretline::helix::ChangeSet) {
+    let text = |a: &ct::StepAnchor| a.anchor().is_some_and(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }));
+    if !steps.iter().any(|s| s.layers.iter().any(|l| l.anchor.iter().any(text))) {
         return;
     }
     let mut tmp = cl::Layers::default();
     for (i, s) in steps.iter().enumerate() {
-        let mut l = cl::Layer::new(cl::Anchor::Caret);
-        l.id = format!("step-{i}");
-        l.anchor = s.anchor.clone();
-        l.ring = Some(cl::Ring::default());
-        tmp.layers.push(l);
+        for (k, l) in s.layers.iter().enumerate() {
+            let mut t = cl::Layer::new(cl::Anchor::Caret);
+            t.id = format!("{i}/{k}");
+            t.anchor = l.anchor.iter().filter_map(ct::StepAnchor::anchor).cloned().collect();
+            t.ring = Some(cl::Ring::default());
+            tmp.layers.push(t);
+        }
     }
     cl::map_anchors(&mut tmp, changes);
     for (i, s) in steps.iter_mut().enumerate() {
-        s.anchor = tmp.get(&format!("step-{i}")).map_or_else(|| vec![cl::Anchor::Screen(cl::ScreenPos::Center)], |l| l.anchor.clone());
+        for (k, l) in s.layers.iter_mut().enumerate() {
+            if !l.anchor.iter().any(text) {
+                continue;
+            }
+            let mapped = tmp.get(&format!("{i}/{k}")).map_or_else(|| vec![cl::Anchor::Screen(cl::ScreenPos::Center)], |t| t.anchor.clone());
+            l.anchor = mapped.into_iter().map(ct::StepAnchor::At).collect();
+        }
     }
 }
 
@@ -207,6 +235,9 @@ pub const OPS: &[&str] = &[
     "tour.next",
     "tour.back",
     "tour.stop",
+    "tour.step",
+    "tour.restart",
+    "tour.list",
 ];
 
 /// A refusal as `(reason, detail)`.
@@ -328,7 +359,6 @@ pub fn request(
             cl::ops::Request::List => Ok(Done::Listed(list(st))),
             cl::ops::Request::Apply(op) => {
                 let a = cl::apply(&mut st.stack, op, who.as_deref(), now, limits)?;
-                st.tidy();
                 Ok(Done::Applied(a))
             }
         }
@@ -377,115 +407,133 @@ pub fn request(
             Ok(done)
         }
         "tour.start" => {
-            let steps: Vec<Value> = req
-                .get("steps")
-                .and_then(Value::as_array)
-                .cloned()
-                .ok_or_else(|| invalid("tour.start needs steps: [{anchor, title?, text}]"))?;
-            if steps.is_empty() {
-                return Err(invalid("a walkthrough needs at least one step"));
+            let tour = tour_from(&req)?;
+            let dims = tour.steps.iter().any(|s| s.layers.iter().any(|l| l.place.spotlight.is_some()));
+            if dims && actor.is_some() && limits.agent_dim != cl::AgentDim::Always {
+                return Err(refusal(cl::Reason::DimNotAllowed, "agents can't dim the screen unless the person allows it"));
             }
-            let steps = steps
-                .iter()
-                .map(|s| {
-                    let anchor = anchor_from(
-                        s.get("anchor")
-                            .ok_or_else(|| invalid("a step needs an anchor"))?,
-                    )?;
-                    Ok(TourStep {
-                        anchor,
-                        title: str_field(s, "title"),
-                        text: str_field(s, "text").unwrap_or_default(),
-                    })
-                })
-                .collect::<Result<Vec<_>, cl::Refusal>>()?;
-            let spotlight = req
-                .get("spotlight")
-                .and_then(Value::as_bool)
-                .unwrap_or(false);
-            if spotlight && actor.is_some() && limits.agent_dim != cl::AgentDim::Always {
-                return Err(refusal(
-                    cl::Reason::DimNotAllowed,
-                    "agents can't dim the screen unless the person allows it",
-                ));
-            }
-            // A walkthrough already showing is replaced.
-            st.stack.layers.retain(|l| l.id != TOUR_ID);
-            st.tour = Some(Tour {
-                steps,
-                at: 0,
-                actor: actor.clone(),
-                spotlight,
-            });
-            show_step(st, now, limits)
+            let fx = ct::apply(&mut st.tour, ct::TourOp::Start(Box::new(tour)), now).map_err(tour_err)?;
+            st.tour_actor = actor.clone();
+            st.effects(fx, now);
+            Ok(Done::Applied(cl::Applied { layer: st.stack.layers.iter().find(|l| l.owner == cl::Owner::Guide).map(|l| l.id.clone()), popped: vec![] }))
         }
-        "tour.next" | "tour.back" | "tour.stop" => {
-            let Some(t) = st.tour.as_ref() else {
+        "tour.list" => Ok(Done::Listed(ct::ops::list(&[], &st.tour))),
+        "tour.next" | "tour.back" | "tour.stop" | "tour.step" | "tour.restart" => {
+            if !st.touring() && op != "tour.restart" {
                 return Err(refusal(cl::Reason::NotFound, "no walkthrough is showing"));
-            };
-            if actor.is_some() && t.actor != actor {
-                return Err(refusal(
-                    cl::Reason::NotAllowed,
-                    "the walkthrough isn't this actor's",
-                ));
             }
-            step(st, &op, now, limits)
+            if actor.is_some() && st.tour_actor != actor {
+                return Err(refusal(cl::Reason::NotAllowed, "the walkthrough isn't this actor's"));
+            }
+            let op = match op.as_str() {
+                "tour.step" => match req.get("to").and_then(Value::as_str) {
+                    Some("next") => ct::TourOp::Next,
+                    Some("back") => ct::TourOp::Back,
+                    Some(to) if !to.is_empty() => ct::TourOp::To(to.into()),
+                    _ => return Err(invalid("tour.step: `to` is a step id, \"next\" or \"back\"")),
+                },
+                "tour.next" => ct::TourOp::Next,
+                "tour.back" => ct::TourOp::Back,
+                "tour.restart" => ct::TourOp::Restart,
+                _ => ct::TourOp::Stop,
+            };
+            tour_op(st, op, now)
         }
         other => Err(invalid(format!("unknown layer op {other:?}"))),
     }
 }
 
 /// Moves the walkthrough (`tour.next`, `tour.back`, `tour.stop`): the person's keys and
-/// buttons, and the socket.
-pub fn step(
-    st: &mut LayerState,
-    op: &str,
-    now: u64,
-    limits: &cl::Limits,
-) -> Result<Done, cl::Refusal> {
-    let Some(t) = st.tour.as_mut() else {
-        return Err(refusal(cl::Reason::NotFound, "no walkthrough is showing"));
+/// buttons, and the socket. Back on the first step does nothing.
+pub fn step(st: &mut LayerState, op: &str, now: u64, _limits: &cl::Limits) -> Result<Done, cl::Refusal> {
+    let op = match op {
+        "tour.next" => ct::TourOp::Next,
+        "tour.back" => ct::TourOp::Back,
+        _ => ct::TourOp::Stop,
     };
-    match op {
-        "tour.next" if t.at + 1 < t.steps.len() => t.at += 1,
-        "tour.back" => t.at = t.at.saturating_sub(1),
-        _ => {
-            // Stop, or next on the last step: the walkthrough is over.
-            st.tour = None;
-            st.stack.layers.retain(|l| l.id != TOUR_ID);
-            return Ok(Done::Applied(cl::Applied {
-                layer: None,
-                popped: vec![TOUR_ID.into()],
-            }));
-        }
-    }
-    show_step(st, now, limits)
+    tour_op(st, op, now)
 }
 
-/// The walkthrough's current step as the `tour` layer (pushed, or updated in place).
-fn show_step(st: &mut LayerState, now: u64, limits: &cl::Limits) -> Result<Done, cl::Refusal> {
-    let t = st.tour.as_ref().expect("a walkthrough");
-    let s = &t.steps[t.at];
-    let mut layer = cl::Layer::new(cl::Anchor::Caret);
-    layer.id = TOUR_ID.into();
-    layer.anchor = s.anchor.clone();
-    layer.owner = t.actor.clone().map_or(cl::Owner::Guide, cl::Owner::Agent);
-    let mut data = json!({"text": s.text, "step": t.at + 1, "of": t.steps.len()});
-    if let Some(title) = &s.title {
-        data["title"] = json!(title);
+fn tour_op(st: &mut LayerState, op: ct::TourOp, now: u64) -> Result<Done, cl::Refusal> {
+    let before: Vec<String> = st.stack.layers.iter().map(|l| l.id.clone()).collect();
+    match ct::apply(&mut st.tour, op, now) {
+        Ok(fx) => st.effects(fx, now),
+        Err(e) if e.reason == ct::TourReason::NoBack => {}
+        Err(e) => return Err(tour_err(e)),
     }
-    layer.content = Some(cl::Content::new(TOUR, data));
-    layer.arrow = true;
-    layer.ring = Some(cl::Ring::default());
-    layer.spotlight = t.spotlight.then(cl::Spotlight::default);
-    let op = if st.stack.get(TOUR_ID).is_some() {
-        cl::LayerOp::Update(layer)
-    } else {
-        cl::LayerOp::Push(layer)
+    let popped = before.into_iter().filter(|id| st.stack.get(id).is_none()).collect();
+    Ok(Done::Applied(cl::Applied { layer: st.stack.layers.iter().find(|l| l.owner == cl::Owner::Guide).map(|l| l.id.clone()), popped }))
+}
+
+fn tour_err(e: ct::TourError) -> cl::Refusal {
+    let reason = match e.reason {
+        ct::TourReason::NotFound | ct::TourReason::NotRunning => cl::Reason::NotFound,
+        _ => cl::Reason::Invalid,
     };
-    // thc moves the walkthrough itself: the owner is kept as set (an agent's stays its).
-    let a = cl::apply(&mut st.stack, op, None, now, limits)?;
-    Ok(Done::Applied(a))
+    refusal(reason, e.detail)
+}
+
+/// A walkthrough from a request: caretline-tour's own (`{"tour": {id, version, title, kind,
+/// step[]}}`), or thc's short form (`{"steps": [{anchor, title?, text, host?}], "spotlight"?,
+/// "title"?}`), whose steps show thc's step box (dots, back and next) with an arrow and a ring.
+fn tour_from(req: &Value) -> Result<ct::Tour, cl::Refusal> {
+    if let Some(t) = req.get("tour") {
+        // thc's short anchors (`row:<id>`, `ui:tab:tasks`…) in the steps and their layers.
+        let mut t = t.clone();
+        let short = |a: &mut Value| -> Result<(), cl::Refusal> {
+            let has_short = a.is_string() || a.as_array().is_some_and(|x| x.iter().any(Value::is_string));
+            if has_short {
+                let list: Vec<Value> = match a.take() {
+                    Value::Array(x) => x,
+                    v => vec![v],
+                };
+                let mut out = Vec::new();
+                for v in list {
+                    out.push(if v.is_string() { serde_json::to_value(anchor_from(&v)?).unwrap_or_default()[0].clone() } else { v });
+                }
+                *a = Value::Array(out);
+            }
+            Ok(())
+        };
+        for key in ["step", "steps"] {
+            for st in t.get_mut(key).and_then(Value::as_array_mut).into_iter().flatten() {
+                if let Some(a) = st.get_mut("anchor") {
+                    short(a)?;
+                }
+                for l in st.get_mut("layers").and_then(Value::as_array_mut).into_iter().flatten() {
+                    if let Some(a) = l.get_mut("anchor") {
+                        short(a)?;
+                    }
+                }
+            }
+        }
+        return match ct::ops::parse("tour.start", &json!({"tour": t}), &[]).map_err(tour_err)? {
+            ct::ops::Request::Apply(ct::TourOp::Start(t)) => Ok(*t),
+            _ => Err(invalid("tour.start: a tour")),
+        };
+    }
+    let steps = req.get("steps").and_then(Value::as_array).ok_or_else(|| invalid("tour.start needs steps: [{anchor, title?, text}] (or a caretline-tour `tour`)"))?;
+    if steps.is_empty() {
+        return Err(invalid("a walkthrough needs at least one step"));
+    }
+    let spotlight = req.get("spotlight").and_then(Value::as_bool).unwrap_or(false);
+    let mut out = Vec::new();
+    for (i, s) in steps.iter().enumerate() {
+        let anchor = anchor_from(s.get("anchor").ok_or_else(|| invalid("a step needs an anchor"))?)?;
+        let mut data = json!({"text": str_field(s, "text").unwrap_or_default()});
+        if let Some(t) = str_field(s, "title") {
+            data["title"] = json!(t);
+        }
+        let mut step = json!({"id": str_field(s, "id").unwrap_or_else(|| format!("s{}", i + 1)), "anchor": anchor, "data": data, "place": {"arrow": true, "ring": true, "spotlight": spotlight}});
+        for k in ["host", "narration", "advance"] {
+            if let Some(v) = s.get(k) {
+                step[k] = v.clone();
+            }
+        }
+        out.push(step);
+    }
+    let tour = json!({"id": str_field(req, "id").unwrap_or_else(|| "thc.walkthrough".into()), "version": 1, "title": str_field(req, "title").unwrap_or_default(), "kind": TOUR, "step": out});
+    ct::parse_json(&tour.to_string()).map_err(|e| invalid(format!("tour.start: {e}")))
 }
 
 /// `focus`'s ordinary reveal: a row anchor selects that row (the list follows it). Text in the
@@ -502,8 +550,10 @@ fn reveal(ui: &mut UiState, anchor: &[cl::Anchor]) {
 /// `layer.ls`: every layer, and the walkthrough.
 pub fn list(st: &LayerState) -> Value {
     let mut v = cl::ops::list(&st.stack);
-    if let Some(t) = &st.tour {
-        v["tour"] = json!({"at": t.at, "of": t.steps.len(), "actor": t.actor});
+    if st.touring() {
+        let mut t = ct::ops::reply(&st.tour);
+        t["actor"] = json!(st.tour_actor);
+        v["tour"] = t;
     }
     v
 }
@@ -520,8 +570,9 @@ pub fn schema() -> Value {
         "layer.update": {"type": "object", "required": ["layer"], "properties": {"layer": {"type": "object"}, "actor": {"type": "string"}}},
         "layer.pop": {"type": "object", "properties": {"layer": {"type": "string"}, "owner": {"type": "string"}, "all": {"type": "boolean"}, "actor": {"type": "string"}}},
         "layer.ls": {"type": "object", "properties": {}},
-        "tour.start": {"type": "object", "required": ["steps"], "properties": {"steps": {"type": "array", "items": {"type": "object", "required": ["anchor", "text"], "properties": {"anchor": anchor, "title": {"type": "string"}, "text": {"type": "string"}}}}, "spotlight": {"type": "boolean"}, "actor": {"type": "string"}}},
-        "tour.next": {"type": "object"}, "tour.back": {"type": "object"}, "tour.stop": {"type": "object"},
+        "tour.start": {"type": "object", "description": "thc's short form (steps), or a caretline-tour tour (see caretline_tour_ops)", "properties": {"steps": {"type": "array", "items": {"type": "object", "required": ["anchor", "text"], "properties": {"anchor": anchor, "title": {"type": "string"}, "text": {"type": "string"}, "host": {"type": "object", "description": "a UI state merge patch applied on entering the step"}, "advance": {"type": "object"}}}}, "tour": {"oneOf": [{"type": "object"}, {"type": "string"}]}, "spotlight": {"type": "boolean"}, "title": {"type": "string"}, "actor": {"type": "string"}}},
+        "tour.next": {"type": "object"}, "tour.back": {"type": "object"}, "tour.stop": {"type": "object"}, "tour.restart": {"type": "object"}, "tour.list": {"type": "object"},
+        "tour.step": {"type": "object", "required": ["to"], "properties": {"to": {"type": "string"}}},
     })
 }
 
@@ -646,26 +697,18 @@ mod tests {
             &l,
         )
         .unwrap();
-        let data = |u: &UiState| {
-            u.layers
-                .stack
-                .get(TOUR_ID)
-                .unwrap()
-                .content
-                .clone()
-                .unwrap()
-                .data
-        };
-        assert_eq!(data(&u)["step"], 1);
+        let data = |u: &UiState| u.layers.stack.layers.iter().find(|l| l.owner == cl::Owner::Guide).unwrap().content.clone().unwrap().data;
+        assert_eq!(data(&u)["at"], 1);
         step(&mut u.layers, "tour.next", 0, &l).ok();
-        assert_eq!(data(&u)["step"], 2);
+        assert_eq!(data(&u)["at"], 2);
         step(&mut u.layers, "tour.back", 0, &l).ok();
         step(&mut u.layers, "tour.back", 0, &l).ok();
-        assert_eq!(data(&u)["step"], 1);
+        assert_eq!(data(&u)["at"], 1);
         for _ in 0..3 {
             step(&mut u.layers, "tour.next", 0, &l).ok();
         }
-        assert!(u.layers.tour.is_none() && u.layers.stack.layers.is_empty());
+        assert!(!u.layers.touring() && u.layers.stack.layers.is_empty());
+        assert!(u.layers.tour.seen.contains_key("thc.walkthrough"), "seen-state kept");
         // Another agent can't move it.
         request(
             &mut u,
@@ -709,7 +752,7 @@ mod tests {
             u.layers.stack.layers.iter().any(|l| l.content.is_some()),
             "the newer highlight went first"
         );
-        assert!(u.layers.dismiss_agents());
+        assert!(u.layers.dismiss_agents(0));
         assert_eq!(u.layers.stack.layers.len(), 1, "the person's own stays");
     }
 

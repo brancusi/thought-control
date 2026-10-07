@@ -415,6 +415,12 @@ list panel's row, a line of the open document), `ui:tab:<view>`, `ui:footer:<act
 caretline-layers anchor as JSON. A list is fallbacks. A row scrolled out of sight shows an edge
 chip pointing to it.
 
+**Walkthroughs** run on caretline-tour: a step's `host` is a UI state patch applied on
+entering it (a history step, like any agent's), `advance` moves on when a predicate holds
+(`{"command": "go.pages"}`: a keymap action ran; `{"msg": "key"}`; `{"state": {…}}`), and
+which tours this device finished or stopped is kept in its cache (`tours-seen.json`). The
+steps are `guide` layers; an agent's walkthrough carries its name.
+
 **The person stays in control.** Esc takes every agent's layer away, ⌘[ takes back the
 newest, a click on a hint dismisses it, and F2 / ⇧F2 / F3 move or stop a walkthrough (or its
 buttons). An agent can't change `layers` through `state.set` or `patch`.
@@ -437,8 +443,9 @@ caret stays where it was, and the lines save as the person's do. CLI: `thc ui do
 | `highlight`, `focus` | `anchor`, `ttl_ms?`; focus: `text?`, `title?` | as `hint.show` |
 | `layer.push`, `layer.update`, `layer.pop` | a caretline-layers `layer`; `layer`, `owner` or `all` | as `hint.show` / `popped` |
 | `layer.ls` | | `rev`, `layers` (`layers`, `hidden`, `tour`) |
-| `tour.start` | `steps`, `spotlight?` | as `hint.show` (layer `tour`) |
-| `tour.next`, `tour.back`, `tour.stop` | | `rev` |
+| `tour.start` | `steps` (`[{anchor, title?, text, host?, advance?}]`), `spotlight?`, `title?`; or `tour`, a caretline-tour walkthrough | as `hint.show` (the step's layer, `s1/0`) |
+| `tour.next`, `tour.back`, `tour.stop`, `tour.restart`, `tour.step` (`to`) | | `rev` |
+| `tour.list` | | `rev`, `layers` (the walkthrough and the tours seen) |
 | `doc.view.open`, `doc.view.close` | `at?` | `rev`, `doc` (`view`, `caret`, `line` with its `text` chars) |
 | `doc.msgs` | `msgs` (caretline messages), `at?` | as `doc.view.open` |
 | `doc.text.set` | `id`, `text` | as `doc.view.open` |

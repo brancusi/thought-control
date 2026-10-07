@@ -472,6 +472,8 @@ pub struct App {
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
     /// The agent policy for layers (`[layers] agent_limits`; a trace records it in `env`).
     pub layer_limits: crate::layers::AgentLimits,
+    /// The keymap actions run in this message (a walkthrough's `command` predicates).
+    pub ran_actions: Vec<String>,
     /// The last `doc_view` message's result, for the socket's reply.
     pub doc_view_reply: Option<serde_json::Value>,
 }
@@ -852,8 +854,11 @@ impl App {
                     .unwrap_or("off"),
             ),
             doc_view_reply: None,
+            ran_actions: Vec::new(),
         };
         app.load_page_ids();
+        // The tours this device has seen (layers.rs).
+        app.ui.layers.tour.seen = crate::layers::load_seen(&app.vault.paths.cache);
         if !deferred {
             app.reload()?;
         }

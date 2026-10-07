@@ -211,6 +211,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "caretline-tour"
+version = "0.1.0"
+dependencies = [
+ "caretline",
+ "caretline-layers",
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
+]
+
+[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2150,6 +2161,7 @@ version = "0.10.1"
 dependencies = [
  "anyhow",
  "caretline-layers",
+ "caretline-tour",
  "chrono",
  "clap",
  "ed25519-dalek",
@@ -2162,7 +2174,7 @@ dependencies = [
  "thc-core",
  "thc-daemon",
  "thc-tui",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -2181,7 +2193,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "ulid",
 ]
 
@@ -2206,6 +2218,7 @@ dependencies = [
  "anyhow",
  "caretline",
  "caretline-layers",
+ "caretline-tour",
  "chrono",
  "foldhash 0.2.0",
  "libc",
@@ -2214,7 +2227,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thc-core",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "unicode-segmentation",
  "unicode-width 0.2.2",
 ]
@@ -2289,10 +2302,25 @@ dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml"
+version = "1.1.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.1+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -2300,6 +2328,15 @@ name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.1+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "3165f65f62e28e0115a00b2ebdd37eb6f3b641855f9d636d3cd4103767159ad7"
 dependencies = [
  "serde_core",
 ]

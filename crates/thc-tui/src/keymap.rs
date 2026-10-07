@@ -410,7 +410,7 @@ impl When {
             When::SidebarClosedAny => !app.ui.sidebar.closed.is_empty(),
             When::PanelIsDoc => app.ui.sidebar.active_key().is_some_and(|k| k.kind.is_doc()),
             When::SidebarOver => app.sidebar_over.is_some(),
-            When::Tour => app.ui.layers.tour.is_some() && !app.ui.layers.stack.hidden,
+            When::Tour => app.ui.layers.touring() && !app.ui.layers.stack.hidden,
             When::AgentLayers => app.ui.layers.has_agent_layers() && !app.ui.layers.stack.hidden,
         }
     }
@@ -1495,6 +1495,8 @@ pub fn key_for(app: &App, action: &str) -> Option<String> {
 
 /// Every action the table names, with what it does. `false`: not an action here.
 pub fn run(app: &mut App, action: &str) -> bool {
+    // What ran this message, for a walkthrough's `command` predicates (layers.rs).
+    app.ran_actions.push(action.to_string());
     // In a panel (sidebar_app.rs): anything beyond the document runs in the main view after
     // the key. ⌥O there opens what's at the panel's caret.
     if app.in_panel.is_some() {
@@ -1591,7 +1593,8 @@ pub fn run(app: &mut App, action: &str) -> bool {
             let _ = crate::layers::step(&mut app.ui.layers, action, now, &limits);
         }
         "layers.dismiss" => {
-            app.ui.layers.dismiss_agents();
+            let now = app.ui.now_ms;
+            app.ui.layers.dismiss_agents(now);
         }
         "layers.back" => {
             app.ui.layers.back_agent_step();

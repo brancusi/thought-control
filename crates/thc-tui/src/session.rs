@@ -560,9 +560,38 @@ impl Session {
     /// follow what it edited in the open document.
     fn run(&mut self, msg: &Msg) -> Result<(), String> {
         let before = self.layer_text();
+        self.app.ran_actions.clear();
         let r = self.run_msg(msg);
         self.observe_text(before);
+        self.tour_after(msg);
         r
+    }
+
+    /// A walkthrough after a message: its predicates see what the message did (an action ran,
+    /// its kind, the state) and the time, and may move it on; the host patches of the steps
+    /// entered land as a step the walkthrough took (one history step, the toast says whose);
+    /// and an ended one's seen-state goes to this device's cache.
+    fn tour_after(&mut self, msg: &Msg) {
+        if self.app.ui.layers.touring() {
+            let kind = serde_json::to_value(msg).ok().and_then(|v| v.get("msg").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            let now = self.app.ui.now_ms;
+            let mut tour = std::mem::take(&mut self.app.ui.layers.tour);
+            let host = TourAnswers { kind, ran: &self.app.ran_actions, ui: &self.app.ui };
+            let fx = caretline_tour::observe(&mut tour, &host, now);
+            self.app.ui.layers.tour = tour;
+            self.app.ui.layers.effects(fx, now);
+        }
+        let patches = std::mem::take(&mut self.app.ui.layers.host_patches);
+        let actor = self.app.ui.layers.tour_actor.clone();
+        for p in patches {
+            match self.app.ui.patched(&p).and_then(|s| self.same_vault(s)) {
+                Ok(new) => self.set_state(new, actor.as_deref()),
+                Err(e) => self.app.error(format!("walkthrough: a step's host patch: {e}")),
+            }
+        }
+        if std::mem::take(&mut self.app.ui.layers.ended) {
+            crate::layers::save_seen(&self.app.vault.paths.cache, &self.app.ui.layers.tour.seen);
+        }
     }
 
     /// Starts tracking the open document's text changes when a layer has a text anchor to
@@ -942,6 +971,27 @@ impl Session {
             other => return Err(format!("format {other}: text, ansi, html or cells")),
         };
         Ok(out)
+    }
+}
+
+/// What a walkthrough's predicates ask of thc after a message (caretline-tour's `TourHost`):
+/// the keymap actions it ran, its kind, and the UI state by top-level field. Editor predicates
+/// (`caret_in`, `changed`, …) answer no for now.
+struct TourAnswers<'a> {
+    kind: String,
+    ran: &'a [String],
+    ui: &'a UiState,
+}
+
+impl caretline_tour::TourHost for TourAnswers<'_> {
+    fn ran(&self, command: &str) -> bool {
+        self.ran.iter().any(|a| a == command)
+    }
+    fn msg(&self, kind: &str) -> bool {
+        self.kind == kind
+    }
+    fn state(&self, key: &str) -> Option<Value> {
+        self.ui.to_json().get(key).cloned()
     }
 }
 
