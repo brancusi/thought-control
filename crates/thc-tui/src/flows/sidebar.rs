@@ -31,7 +31,6 @@ fn shift_click_a_link_opens_it_beside() {
 }
 
 #[test]
-#[ignore = "77pe3"]
 fn cmd_click_a_link_opens_it_beside() {
     q4().named("⌘click a link opens it beside (WezTerm, Ghostty)")
         .cmd_click(text("Garden").in_doc())
