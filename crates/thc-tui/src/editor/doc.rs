@@ -655,6 +655,8 @@ impl Doc {
         // The notes placed so far that can still be a parent or a predecessor: (depth, index
         // into `lines`), depths increasing. `place` over every note placed would give the same.
         let mut present: Vec<(usize, usize)> = Vec::new();
+        // Notes this save moves or creates.
+        let mut placed: HashSet<&str> = HashSet::new();
         let push = |present: &mut Vec<(usize, usize)>, d: usize, i: usize| {
             while present.last().is_some_and(|&(pd, _)| pd >= d) {
                 present.pop();
@@ -671,6 +673,7 @@ impl Doc {
                 if l.text.trim().is_empty() || skip {
                     continue;
                 }
+                placed.insert(l.id.as_str());
                 ops.push(BlockOp::Create { id: l.id.clone(), parent, after: after.clone(), kind: l.kind(), text: l.text.clone() });
                 afters.insert(l.id.clone(), after);
                 parsed.push(l.id.clone());
@@ -691,7 +694,11 @@ impl Doc {
             // deleted in this save takes its children with it, so the caret's line must move
             // out first (fuzz: it was deleted with its old parent).
             let reparented = parent != l.saved_parent.as_deref() && !(parent.is_none() && l.saved_parent == self.root);
-            if reparented || after != l.saved_after.as_deref() {
+            // A note after one this save moves goes with it: the vault places it by its own
+            // order, not by what comes before it (fuzz: ⌥↓ moved two notes, the second stayed).
+            let follows_moved = after.is_some_and(|a| placed.contains(a));
+            if reparented || after != l.saved_after.as_deref() || follows_moved {
+                placed.insert(l.id.as_str());
                 let after = after.map(str::to_string);
                 ops.push(BlockOp::Move { id: l.id.clone(), parent: parent.map(str::to_string), after: after.clone(), rev: None });
                 afters.insert(l.id.clone(), after);
