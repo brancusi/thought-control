@@ -1,4 +1,4 @@
-/* The caretline playground: the real engine (crates/caretline-next), compiled to
+/* The caretline playground: the real engine (crates/caretline), compiled to
  * WebAssembly, driven over its own state protocol in the page.
  *
  * Session 0 is the live editor. Keys become key-script tokens (`<s-left>`, `<d-z>`, plain

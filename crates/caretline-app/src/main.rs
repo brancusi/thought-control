@@ -1,4 +1,4 @@
-//! `caretline`: a terminal text editor on the caretline-next engine.
+//! `caretline`: a terminal text editor on the caretline engine.
 //!
 //! The binary is the Elm runtime: it turns terminal events into messages, feeds them to
 //! the pure `update`, performs the effects it returns (file writes, the clipboard), and
@@ -13,9 +13,9 @@ use std::fs;
 use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
-use caretline_next::trace::{parse_msgs, replay_trace};
-use caretline_next::outline::markdown;
-use caretline_next::{script_to_msgs_for, update, view, Msg, OutlineConfig, State, Viewport};
+use caretline::trace::{parse_msgs, replay_trace};
+use caretline::outline::markdown;
+use caretline::{script_to_msgs_for, update, view, Msg, OutlineConfig, State, Viewport};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -99,7 +99,7 @@ struct Args {
 
     /// Interactive: keep at most this many lines in the in-memory trace `trace.get` serves
     /// (older segments are dropped first). The --trace file keeps everything.
-    #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
+    #[arg(long, value_name = "LINES", default_value_t = caretline::session::DEFAULT_TRACE_LIMIT)]
     trace_limit: usize,
 
     /// Interactive: repaint at most this many times a second, coalescing the changes in
@@ -154,7 +154,7 @@ struct ServeArgs {
     layout: bool,
     /// Keep at most this many lines in the in-memory trace `trace.get` serves (older
     /// segments are dropped first). The --trace file keeps everything.
-    #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
+    #[arg(long, value_name = "LINES", default_value_t = caretline::session::DEFAULT_TRACE_LIMIT)]
     trace_limit: usize,
 }
 
@@ -171,7 +171,7 @@ fn serve(args: ServeArgs) -> Result<(), String> {
         state.enable_outline(OutlineConfig::default());
     }
     if args.layout && state.view.layout.is_none() {
-        state.view.layout = Some(caretline_next::OutlineLayout { hang_glyphs: true, ..Default::default() });
+        state.view.layout = Some(caretline::OutlineLayout { hang_glyphs: true, ..Default::default() });
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         state.doc.path = Some(path.clone());
@@ -189,7 +189,7 @@ fn serve(args: ServeArgs) -> Result<(), String> {
         ),
         None => None,
     };
-    let mut session = caretline_next::Session::new(state);
+    let mut session = caretline::Session::new(state);
     session.set_trace_limit(args.trace_limit);
     let mut hub = hub::Hub::new(session, trace);
     hub.clock = !args.no_clock;
@@ -295,7 +295,7 @@ fn run() -> Result<(), String> {
         state.enable_outline(OutlineConfig::default());
     }
     if args.layout && state.view.layout.is_none() {
-        state.view.layout = Some(caretline_next::OutlineLayout { hang_glyphs: true, ..Default::default() });
+        state.view.layout = Some(caretline::OutlineLayout { hang_glyphs: true, ..Default::default() });
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         // A file given with a state names where the state saves.

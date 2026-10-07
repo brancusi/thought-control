@@ -1,7 +1,7 @@
 //! The keymap and the key-script notation.
 
-use caretline_next::keymap::{parse_keys, ScriptItem};
-use caretline_next::{keymap, script_to_msgs, By, Dir, Key, KeyCode, Mods, Msg};
+use caretline::keymap::{parse_keys, ScriptItem};
+use caretline::{keymap, script_to_msgs, By, Dir, Key, KeyCode, Mods, Msg};
 
 fn key(code: KeyCode, f: impl FnOnce(&mut Mods)) -> Key {
     let mut mods = Mods::default();

@@ -14,10 +14,10 @@ mod common;
 
 use std::collections::{HashMap, HashSet};
 
-use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
-use caretline_next::helix::Selection;
-use caretline_next::outline::markdown;
-use caretline_next::{update, view, By, Dir, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
+use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
+use caretline::helix::Selection;
+use caretline::outline::markdown;
+use caretline::{update, view, By, Dir, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
 use common::gen;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -274,7 +274,7 @@ fn markdown_files_round_trip() {
             let o = s.blocks().unwrap();
             o.blocks
                 .iter()
-                .filter(|b| !(b.kind == Kind::Para && b.is_empty() && b.line_count == 1 && b.hang == caretline_next::outline::Hang::None))
+                .filter(|b| !(b.kind == Kind::Para && b.is_empty() && b.line_count == 1 && b.hang == caretline::outline::Hang::None))
                 .map(|b| (b.kind, b.depth, b.gap, s.doc.text.slice(b.content_start()..b.end).to_string()))
                 .collect()
         };

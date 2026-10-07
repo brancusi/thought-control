@@ -1,10 +1,10 @@
 //! The outline layout: markers in a hang, a column and width per depth, virtual rows, folds,
 //! row info and hit-testing.
 
-use caretline_next::helix::Selection;
-use caretline_next::outline::markdown;
-use caretline_next::view::{hit, render, Hit, Role, RowInfo};
-use caretline_next::{update, update_doc, view, By, Dir, MarkId, Msg, OutlineConfig, OutlineLayout, State, View, Viewport};
+use caretline::helix::Selection;
+use caretline::outline::markdown;
+use caretline::view::{hit, render, Hit, Role, RowInfo};
+use caretline::{update, update_doc, view, By, Dir, MarkId, Msg, OutlineConfig, OutlineLayout, State, View, Viewport};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
@@ -221,7 +221,7 @@ fn random_editing_in_a_laid_out_view() {
             let caret = s.caret();
             let b = o.block_at(text, caret);
             assert!(!(b.prefix_len > 0 && caret >= b.start && caret < b.content_start()), "{ctx}: caret in a marker");
-            let hidden = caretline_next::views::hidden_lines(&o, &s.view.folds);
+            let hidden = caretline::views::hidden_lines(&o, &s.view.folds);
             let line = text.char_to_line(caret);
             assert!(!hidden.iter().any(|&(a, z)| a <= line && line < z), "{ctx}: caret in a folded block");
             let f = view(&s);

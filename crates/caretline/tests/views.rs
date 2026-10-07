@@ -1,10 +1,10 @@
 //! Several views of one document: they share the text, marks and undo; an edit through one
 //! rebases the others; a read-only view is refused every edit; folds belong to a view.
 
-use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
-use caretline_next::helix::Selection;
-use caretline_next::outline::markdown;
-use caretline_next::{
+use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
+use caretline::helix::Selection;
+use caretline::outline::markdown;
+use caretline::{
     update, update_doc, view, By, Dir, Document, Effect, Msg, OutlineConfig, State, View, Viewport,
 };
 use rand::rngs::StdRng;
@@ -375,7 +375,7 @@ fn scroll_view_leaves_the_caret_and_the_next_motion_follows_it() {
 fn typewriter_follow_keeps_the_caret_row() {
     let text: String = (0..60).map(|i| format!("line {i}\n")).collect();
     let mut s = State::new(&text, None, Viewport { width: 40, height: 21 });
-    s.view.config.follow = caretline_next::Follow::Typewriter { percent: 50 };
+    s.view.config.follow = caretline::Follow::Typewriter { percent: 50 };
     for _ in 0..30 {
         update(&mut s, Msg::Move { dir: Dir::Forward, by: By::Line, extend: false });
     }

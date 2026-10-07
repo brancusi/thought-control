@@ -3,8 +3,8 @@
 
 mod common;
 
-use caretline_next::trace::{parse_msgs, replay_trace, TraceLine};
-use caretline_next::{update, view, Effect, Msg, State, Viewport};
+use caretline::trace::{parse_msgs, replay_trace, TraceLine};
+use caretline::{update, view, Effect, Msg, State, Viewport};
 use common::*;
 use rand::rngs::StdRng;
 use rand::SeedableRng;
@@ -112,7 +112,7 @@ fn replaying_a_trace_gives_the_live_state() {
     for script in ["hello", "<a-left><s-a-right>", "<c-x>", "<down><c-v>", "<c-s>", "<c-z><c-z><c-y>"] {
         now += 700;
         live.dispatch(Msg::Tick { now_ms: now });
-        for msg in caretline_next::script_to_msgs(script, now).unwrap() {
+        for msg in caretline::script_to_msgs(script, now).unwrap() {
             live.dispatch(msg);
         }
     }

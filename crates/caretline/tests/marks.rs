@@ -6,9 +6,9 @@
 
 mod common;
 
-use caretline_next::helix::Selection;
-use caretline_next::marks::{BlockAttrs, Mark, MarkId};
-use caretline_next::{update, Msg, State, Viewport};
+use caretline::helix::Selection;
+use caretline::marks::{BlockAttrs, Mark, MarkId};
+use caretline::{update, Msg, State, Viewport};
 use common::*;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -118,7 +118,7 @@ fn a_paste_of_the_registers_own_text_from_outside_keeps_the_ids_too() {
     let mut s = marked("One ⟦two\nth▮⟧ree", &[0, 1]);
     let fx = send(&mut s, [Msg::Cut]);
     let text = match &fx[0] {
-        caretline_next::Effect::ClipboardSet { text } => text.clone(),
+        caretline::Effect::ClipboardSet { text } => text.clone(),
         other => panic!("{other:?}"),
     };
     send(&mut s, [Msg::Paste { text: Some(text) }]);
@@ -209,7 +209,7 @@ fn marks_off_line_starts_are_repaired_on_load() {
 fn an_edit_of_only_marks_is_an_undo_step_of_its_own() {
     // Inserting a mark the way a rule does, through the history.
     let mut s = marked("ab\n▮cd", &[0]);
-    caretline_next::update::mark_only_edit(&mut s, |m, _| {
+    caretline::update::mark_only_edit(&mut s, |m, _| {
         m.insert(Mark::new(3, MarkId(40))).unwrap();
     });
     assert_eq!(marks(&s), [(0, 0), (1, 40)]);
@@ -228,7 +228,7 @@ fn check_marks(s: &State, ctx: &str) {
     let mut last: Option<usize> = None;
     for m in s.doc.marks.iter() {
         assert!(m.pos <= text.len_chars(), "{ctx}: mark {m:?} past the end");
-        assert!(caretline_next::marks::is_line_start(text, m.pos), "{ctx}: mark {m:?} not at a line start");
+        assert!(caretline::marks::is_line_start(text, m.pos), "{ctx}: mark {m:?} not at a line start");
         assert!(last.is_none_or(|l| l < m.pos), "{ctx}: marks out of order or two on a line");
         assert!(ids.insert(m.id), "{ctx}: id {:?} twice", m.id);
         last = Some(m.pos);
@@ -310,7 +310,7 @@ fn cut_and_paste_in_place_is_the_identity_for_marks() {
         let s0 = random_marked(&mut rng);
         let len = s0.doc.text.len_chars();
         let t = s0.doc.text.slice(..);
-        use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
+        use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
         let a = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
         let b = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
         if a == b {
@@ -328,7 +328,7 @@ fn cut_and_paste_in_place_is_the_identity_for_marks() {
 /// The example in docs/caretline/api.md.
 #[test]
 fn the_api_example_runs() {
-    use caretline_next::{BlockAttrs, By, Dir};
+    use caretline::{BlockAttrs, By, Dir};
     let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
     let list = s.doc.marks.mint(0);
     let milk = s.doc.marks.mint(s.doc.text.line_to_char(1));

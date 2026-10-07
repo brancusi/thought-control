@@ -1,12 +1,12 @@
-//! A tour of the caretline-next API: build a state, drive it with messages and keys,
+//! A tour of the caretline API: build a state, drive it with messages and keys,
 //! read the text and selection, handle effects, render a frame, and save and reload the
 //! state.
 //!
-//! Run it with `cargo run -p caretline-next --example basic`.
+//! Run it with `cargo run -p caretline --example basic`.
 
-use caretline_next::trace::{replay_trace, TraceLine};
-use caretline_next::update::selection_text;
-use caretline_next::{script_to_msgs, update, view, By, Dir, Effect, Msg, State, Viewport};
+use caretline::trace::{replay_trace, TraceLine};
+use caretline::update::selection_text;
+use caretline::{script_to_msgs, update, view, By, Dir, Effect, Msg, State, Viewport};
 
 fn main() {
     // 1. A state: the text, an optional file path (where `save` writes) and a viewport.

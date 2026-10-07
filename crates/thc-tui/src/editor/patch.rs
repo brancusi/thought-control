@@ -115,7 +115,6 @@ impl Doc {
                 let prev = all[..i].iter().rev().find(|p| have.contains(&p.id)).map(|p| p.id.clone());
                 let at = prev.and_then(|p| self.lines().iter().position(|l| l.id == p)).map_or(0, |x| x + 1);
                 self.lines_mut().insert(at, Line::from_block(b, today));
-                self.mark_arrived(&b.id);
                 if at <= self.view.caret.line {
                     self.view.caret.line += 1;
                 }

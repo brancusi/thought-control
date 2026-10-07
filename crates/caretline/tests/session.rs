@@ -1,9 +1,9 @@
 //! The in-process Session and the protocol handler: every op, the error cases, rev
 //! ordering, subscriptions and trace replay.
 
-use caretline_next::protocol::{event_line, Control, Format, Subscription};
-use caretline_next::trace::replay_trace;
-use caretline_next::{view, Effect, Msg, Session, State, Viewport};
+use caretline::protocol::{event_line, Control, Format, Subscription};
+use caretline::trace::replay_trace;
+use caretline::{view, Effect, Msg, Session, State, Viewport};
 use serde_json::{json, Value};
 
 fn session() -> Session {
@@ -80,7 +80,7 @@ fn keys_go_through_the_keymap() {
     let mut s = session();
     let r = ask(&mut s, json!({"op": "keys", "keys": "<down>Hey <c-z>"}));
     let msgs: Vec<Msg> = serde_json::from_value(r["result"]["msgs"].clone()).unwrap();
-    assert_eq!(msgs[0], Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::VisualLine, extend: false });
+    assert_eq!(msgs[0], Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::VisualLine, extend: false });
     assert_eq!(*msgs.last().unwrap(), Msg::Undo);
     assert_eq!(r["result"]["rev"], msgs.len() as u64);
     assert_eq!(s.state().doc.text.to_string(), "hello world\nsecond line\n");
@@ -444,7 +444,7 @@ fn two_views_of_one_document_over_the_protocol() {
     assert_eq!(s.state().doc.text.to_string(), ">> hello world\nsecond line\n");
     // The trace replays both views.
     let lines: String = s.trace_jsonl();
-    let (state, views, _) = caretline_next::trace::replay_trace_views(&lines).unwrap();
+    let (state, views, _) = caretline::trace::replay_trace_views(&lines).unwrap();
     assert_eq!(state, *s.state());
     assert_eq!(views, s.views().to_vec());
     // Unknown views are errors; view 0 never closes.
@@ -469,11 +469,11 @@ fn an_external_change_then_local_undo_over_the_protocol() {
 #[test]
 fn a_checkpoint_carries_the_open_views() {
     let mut s = session();
-    let v = s.open_view(caretline_next::View::new(Viewport { width: 10, height: 3 }));
-    s.apply_on(v, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
+    let v = s.open_view(caretline::View::new(Viewport { width: 10, height: 3 }));
+    s.apply_on(v, Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::DocEnd, extend: false });
     s.checkpoint();
     let seg: String = s.segment_trace().iter().map(|l| l.to_line() + "\n").collect();
-    let (state, views, _) = caretline_next::trace::replay_trace_views(&seg).unwrap();
+    let (state, views, _) = caretline::trace::replay_trace_views(&seg).unwrap();
     assert_eq!(state, *s.state());
     assert_eq!(views, s.views().to_vec());
 }

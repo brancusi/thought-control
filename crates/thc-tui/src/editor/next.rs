@@ -1,13 +1,13 @@
-//! The second engine behind the seam: caretline-next (`THC_EDITOR=next`).
+//! The engine behind the seam: caretline.
 //!
-//! A page or a day is one caretline-next outline document: one text line per row, each block
+//! A page or a day is one caretline outline document: one text line per row, each block
 //! bounded by a mark (docs/caretline/outline.md). thc's [`Line`]s are a mirror of its blocks,
 //! one per block in order, each tied to its block by `Line::mark`. A line keeps thc's save
 //! state (node id, base, what was saved, the meta); its shape and text are the block's,
 //! re-read after every engine step (`sync`).
 //!
 //! The host (saving, refreshes from the vault, recovery) changes the mirror as it changes the
-//! old engine's lines. Before the engine's next step those changes go in as one
+//! lines. Before the engine's next step those changes go in as one
 //! `Msg::External` (`flush`): changes from elsewhere stay out of the undo history, and the
 //! history is transformed over them, so a later undo takes back only local edits. Lines the
 //! host puts in after `begin_undo_step` go in as one undoable `Msg::InsertBlocks` instead.
@@ -18,9 +18,9 @@
 //! Node ids for new marks come from an [`IdPool`]. Saving stays thc's: `Doc::plan_save` reads
 //! the mirror and makes the same `BlockOp`s.
 
-use super::doc::{Doc, Engine, Line, Pos, copy_saved_state, engine_kind, new_id};
+use super::doc::{Doc, HostView, Line, Pos, copy_saved_state, new_id};
 use super::{EditCmd, Motion, Outcome};
-use caretline_next as cn;
+use caretline as cn;
 use cn::helix::Selection;
 use cn::layout::{Layout, RowPos};
 use cn::marks::Mark;
@@ -54,7 +54,7 @@ impl IdPool {
     }
 }
 
-/// An open page or day on caretline-next, with thc's lines mirrored.
+/// An open page or day in the engine, with thc's lines mirrored.
 pub(crate) struct Next {
     st: cn::State,
     /// One line per block, in order (see the module docs).
@@ -317,6 +317,31 @@ impl Next {
         &mut self.lines
     }
 
+    pub(super) fn lines(&self) -> &[Line] {
+        &self.lines
+    }
+
+    pub(super) fn deleted(&self) -> &[String] {
+        &self.deleted
+    }
+
+    pub(super) fn deleted_mut(&mut self) -> &mut Vec<String> {
+        &mut self.deleted
+    }
+
+    /// How long ago (ms) the last unsaved edit was, at `now`.
+    pub(super) fn changed_since(&self, now: u64) -> Option<u64> {
+        self.changed_at.map(|t| now.saturating_sub(t))
+    }
+
+    pub(super) fn mark_committed(&mut self) {
+        self.changed_at = None;
+    }
+
+    pub(super) fn take_host_changes(&mut self) {
+        self.flush();
+    }
+
     pub(super) fn undo_depth(&self) -> usize {
         self.st.doc.history.current_revision()
     }
@@ -342,7 +367,7 @@ impl Next {
 
     /// One message through the main view: the host's changes and caret in first, then the
     /// mirror and the caret back out.
-    pub(super) fn run(&mut self, view: &mut caretline::View<String>, last_saved: &HashMap<String, Line>, msg: Msg) -> Vec<Effect> {
+    pub(super) fn run(&mut self, view: &mut HostView, last_saved: &HashMap<String, Line>, msg: Msg) -> Vec<Effect> {
         self.prepare(view);
         cn::update(&mut self.st, Msg::Tick { now_ms: self.now_ms });
         let rev = self.st.doc.rev;
@@ -356,7 +381,7 @@ impl Next {
     }
 
     /// The host's changes and caret into the engine.
-    fn prepare(&mut self, view: &caretline::View<String>) {
+    fn prepare(&mut self, view: &HostView) {
         self.flush();
         let mut folds: Vec<String> = view.folds.iter().cloned().collect();
         folds.sort();
@@ -375,7 +400,7 @@ impl Next {
     }
 
     /// The engine's caret into the host's view.
-    fn pull_view(&mut self, view: &mut caretline::View<String>) {
+    fn pull_view(&mut self, view: &mut HostView) {
         let r = self.st.view.selection.primary();
         view.caret = self.pos_of(r.head);
         view.anchor = (r.anchor != r.head).then(|| self.pos_of(r.anchor));
@@ -683,7 +708,7 @@ fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope, cfg: &Outline
     } else if was == Kind::Task {
         l.status = None;
     }
-    l.block.kind = engine_kind(kind);
+    l.kind = kind;
     l.depth = b.depth as usize;
     let cs = b.start + list_len(b);
     let text = rope.slice(cs..b.end.max(cs));
@@ -710,15 +735,14 @@ fn revive(l: &mut Line, deleted: &mut Vec<String>, last_saved: &HashMap<String, 
     }
 }
 
-// ---- the seam's commands on caretline-next ---------------------------------------------------
+// ---- the seam's commands -----------------------------------------------------------------
 
 impl Doc {
     fn next_mut(&mut self) -> &mut Next {
-        let Engine::Next(n) = &mut self.engine else { panic!("caretline-next") };
-        n
+        &mut self.engine
     }
 
-    /// An editing or motion command, as caretline-next messages.
+    /// An editing or motion command, as caretline messages.
     pub(super) fn next_apply(&mut self, cmd: EditCmd, width_of: &dyn Fn(&Line) -> usize) -> Outcome {
         self.next_mut().set_geometry(width_of);
         let mv = |dir, by, extend| Msg::Move { dir, by, extend };
@@ -809,7 +833,7 @@ impl Doc {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{BlockPos, Doc, EditCmd, EngineKind, Target, with_engine};
+    use super::super::{BlockPos, Doc, EditCmd, Target};
     use super::*;
     use thc_core::outline::{Block, BlockOp};
 
@@ -822,7 +846,7 @@ mod tests {
     }
 
     fn open(blocks: &[Block]) -> Doc {
-        with_engine(EngineKind::Next, || Doc::new(Target::Journal { date: today() }, Some("root".into()), blocks, today()))
+        Doc::new(Target::Journal { date: today() }, Some("root".into()), blocks, today())
     }
 
     fn texts(d: &Doc) -> Vec<String> {
@@ -839,11 +863,11 @@ mod tests {
 
     const W: fn(&Line) -> usize = |_| 72;
 
-    /// A copy across notes carries each note's fields, on both engines (as the vault writes
+    /// A copy across notes carries each note's fields (as the vault writes
     /// them), and pasting it back over the same selection changes nothing.
     #[test]
     fn a_copy_across_notes_keeps_their_fields() {
-        crate::editor::on_both_engines(copy_keeps_fields);
+        copy_keeps_fields();
     }
 
     fn copy_keeps_fields() {
@@ -856,7 +880,7 @@ mod tests {
         let mut d = Doc::new(Target::Journal { date: today() }, Some("root".into()), &[a, b, c], today());
         d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 1, byte: "ask about parking".len() });
         let text = d.copy_text();
-        assert_eq!(text, "- [ ] Book the venue due:2026-10-09\n  - ask about parking !high", "[{:?}]", d.engine());
+        assert_eq!(text, "- [ ] Book the venue due:2026-10-09\n  - ask about parking !high");
     }
 
     #[test]
@@ -1080,7 +1104,7 @@ mod widths {
     #[test]
     fn the_engine_and_the_drawing_agree_on_widths() {
         for g in ["🙂", "👨\u{200d}👩\u{200d}👧", "🇯🇵", "字", "e\u{301}", "1\u{fe0f}\u{20e3}", "❤\u{fe0f}", "👍🏽", "⚠", "⚠\u{fe0f}", "★", "→", "a", " "] {
-            assert_eq!(caretline_next::view::display_width(g), crate::text::width(g), "{g:?}");
+            assert_eq!(caretline::view::display_width(g), crate::text::width(g), "{g:?}");
         }
     }
 }
