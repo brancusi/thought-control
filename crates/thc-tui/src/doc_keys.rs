@@ -318,6 +318,9 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
     let shift = m.modifiers.contains(KeyModifiers::SHIFT);
     let ctrl = m.modifiers.contains(KeyModifiers::CONTROL);
     let alt = m.modifiers.contains(KeyModifiers::ALT);
+    // ⌘ (super): no terminal puts it in a mouse report; it comes from WezTerm's ⌘-release
+    // (thc_keys.lua, read in lib.rs) or a client's `mods: "d"`.
+    let cmd = m.modifiers.contains(KeyModifiers::SUPER);
     match m.kind {
         // The wheel scrolls the view and never moves the caret; a key brings the view back.
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
@@ -335,18 +338,24 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 return true;
             }
             let Some((line, byte, hang)) = crate::doc_ui::hit(app, m.column, m.row) else { return false };
-            // ⇧-click on a link's title opens it beside (sidebar.md §2, §12).
-            if shift && clicks == 1 && button == MouseButton::Left {
-                let text = app.doc.as_ref().unwrap().blocks()[line].text.clone();
-                if crate::doc_app::on_link_title(&text, byte) {
-                    if let Some(title) = crate::doc_app::link_at(&text, byte) {
-                        app.open_aside_link(&title);
-                        return true;
-                    }
+            // A link opens beside, in the sidebar (sidebar.md §2, §12; mouse.md): ⇧-click on its
+            // title, or ⌘-, ⌃- or middle-click anywhere on it. The caret stays where it was.
+            if clicks == 1 {
+                let text = &app.doc.as_ref().unwrap().blocks()[line].text;
+                let beside = match crate::doc_app::link_at(text, byte) {
+                    Some(title) if button == MouseButton::Middle || ctrl || cmd => Some(title),
+                    Some(title) if shift && crate::doc_app::on_link_title(text, byte) => Some(title),
+                    _ => None,
+                };
+                if let Some(title) = beside {
+                    app.open_aside_link(&title);
+                    return true;
                 }
             }
             app.doc_parked = false;
-            app.doc.as_mut().unwrap().follow_caret();
+            // The view doesn't move for a click: `hit` placed it in the view as drawn, which may
+            // be scrolled away from the caret by the wheel. (Following the old caret first
+            // scrolled back to it, and the click landed rows away from the pointer.)
             app.link_open = false;
             app.click_link = None;
             let d = app.doc.as_mut().unwrap();
@@ -356,10 +365,19 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 if d.task_box(line) == "done" {
                     app.save_doc(true);
                 }
-                app.doc_after_key();
+                app.doc_after_click();
                 return true;
             }
             let p = BlockPos { line, byte };
+            // A press on a link's title moves nothing yet (E63): released in place it follows the
+            // link (with ⌘: beside, and the caret stays), dragged it selects from here. On the
+            // `[[` / `]]`, or with ⌥, it places the caret (E64, E65). One frame, the page that
+            // opens: the caret never flashes inside the link first.
+            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&d.blocks()[line].text, byte) {
+                app.click_link = Some(p);
+                app.drag_from = Some(p);
+                return true;
+            }
             match clicks {
                 2 => d.select_word_at(p),
                 3 => d.select_block(line),
@@ -376,37 +394,36 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                     return true;
                 }
             }
-            // ⌃-click or middle-click on a link opens it (saving first).
-            let on_link = crate::doc_app::link_at(&app.doc.as_ref().unwrap().blocks()[line].text, byte).is_some();
-            if on_link && (ctrl || button == MouseButton::Middle) {
-                app.doc_after_key();
-                app.doc_open();
-                return true;
-            }
-            // A plain click on a link's title follows it when released (E63); on the `[[` / `]]`,
-            // or with ⌥, it only places the caret (E64, E65).
-            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&app.doc.as_ref().unwrap().blocks()[line].text, byte) {
-                app.click_link = Some(p);
-            }
-            app.doc_after_key();
+            app.doc_after_click();
             true
         }
         // A drag selects by grapheme across rows, lines and notes.
         MouseEventKind::Drag(MouseButton::Left) => {
             let (Some(from), Some((line, byte, _))) = (app.drag_from, crate::doc_ui::hit(app, m.column, m.row)) else { return app.drag_from.is_some() };
-            app.doc.as_mut().unwrap().drag(from, BlockPos { line, byte });
+            let to = BlockPos { line, byte };
+            // A press on a link that moves off it is a drag, not a click (the link isn't followed).
+            if app.click_link.is_some_and(|p| p != to) {
+                app.click_link = None;
+            }
+            if app.click_link.is_none() {
+                app.doc.as_mut().unwrap().drag(from, to);
+            }
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
             let dragged = app.drag_from.take().is_some();
             if let Some(p) = app.click_link.take() {
-                let d = app.doc.as_ref().unwrap();
-                if d.caret() == p && d.anchor().is_none_or(|a| a == p) {
-                    app.doc.as_mut().unwrap().clear_selection();
-                    app.doc_after_key();
-                    app.doc_open();
-                    return true;
+                let title = crate::doc_app::link_at(&app.doc.as_ref().unwrap().blocks()[p.line].text, p.byte);
+                match title {
+                    // Released with ⌘: beside, and the caret stays where it was.
+                    Some(title) if cmd => app.open_aside_link(&title),
+                    _ => {
+                        app.doc.as_mut().unwrap().click(p, false);
+                        app.doc_after_click();
+                        app.doc_open();
+                    }
                 }
+                return true;
             }
             let mut selected = false;
             if let Some(d) = app.doc.as_mut() {
@@ -418,7 +435,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             if dragged && selected {
                 native_selection_hint(app);
             }
-            app.doc_after_key();
+            app.doc_after_click();
             true
         }
         _ => false,

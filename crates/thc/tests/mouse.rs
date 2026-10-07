@@ -35,8 +35,8 @@ impl V {
         String::from_utf8_lossy(&o.stdout).into()
     }
 
-    /// Type and click into today's journal at 60 columns (writes kept); the frame. (Row 2 is the
-    /// crumb, navigation.md §3: the day starts a row lower.)
+    /// Type and click into today's journal at 60 columns (writes kept); the frame. (The crumb
+    /// leads the title's row, navigation.md §3: the day's text starts on row 5.)
     fn run(&self, keys: &str) -> String {
         let o = self.cmd(&[("THC_TUI_SNAPSHOT", "60x24"), ("THC_TUI_KEYS", keys), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_TUI_SNAPSHOT_CURSOR", "1")], &["j", "--no-focus"]);
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
@@ -59,20 +59,20 @@ const PARA: &str = "The quick brown fox jumps over the lazy dog and keeps runnin
 
 #[test]
 fn m1_a_click_on_a_wrapped_row_places_the_caret() {
-    // At 60 columns the paragraph wraps after "and"; its second row starts at column 7.
+    // At 60 columns the paragraph wraps after "and"; its second row (row 7) starts at column 7.
     let v = V::new("m1");
-    v.run(&format!("{PARA}<click:20,8>X<esc>"));
+    v.run(&format!("{PARA}<click:20,7>X<esc>"));
     assert_eq!(v.texts()[0].0, PARA.replace("keeps running far", "keeps runningX far"));
 }
 
 #[test]
 fn m2_the_right_half_of_a_wide_character_goes_after_it() {
-    // "a漢字b" at column 7: a=7, 漢=8-9, 字=10-11. The right half of 漢 (9) is after it.
+    // "a漢字b" at column 7 of row 6: a=7, 漢=8-9, 字=10-11. The right half of 漢 (9) is after it.
     let v = V::new("m2");
-    v.run("a漢字b<click:9,7>X<esc>");
+    v.run("a漢字b<click:9,6>X<esc>");
     assert_eq!(v.texts()[0].0, "a漢X字b");
     let v = V::new("m2l");
-    v.run("a漢字b<click:8,7>X<esc>");
+    v.run("a漢字b<click:8,6>X<esc>");
     assert_eq!(v.texts()[0].0, "aX漢字b", "the left half: before it");
 }
 
@@ -94,22 +94,23 @@ fn m3_the_wheel_never_moves_the_caret() {
 #[test]
 fn m4_the_task_box_toggles_open_and_done_only() {
     let v = V::new("m4");
-    v.run("[ ] call<click:4,7><esc>");
+    v.run("[ ] call<click:4,6><esc>");
     assert_eq!(v.texts()[0].1.as_deref(), Some("done"));
-    v.run("<up><click:4,7><esc>");
+    v.run("<up><click:4,6><esc>");
     assert_eq!(v.texts()[0].1.as_deref(), Some("todo"), "a second click reopens, never text");
 }
 
 #[test]
-fn m5_a_plain_click_on_a_link_writes_and_ctrl_click_opens() {
+fn m5_a_plain_click_on_a_link_writes_and_ctrl_click_opens_it_beside() {
     let v = V::new("m5");
     v.cli(&["page", "new", "Lisbon"]);
-    let f = v.run("see [[Lisbon]] soon<click:12,7>");
+    let f = v.run("see [[Lisbon]] soon<click:12,6>");
     assert!(f.contains("SAT 03 OCT"), "a plain click stays in the day: {f}");
-    let f = v.run("see [[Lisbon]] soon<cclick:12,7>");
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "⌃-click opens the page: {f}");
-    let f = v.run("see [[Lisbon]] soon<mclick:12,7>");
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "middle-click opens the page: {f}");
+    // ⌃-, ⌘- and middle-click open it beside, in the sidebar (mouse.md "Links beside").
+    for click in ["cclick", "cmdclick", "mclick"] {
+        let f = v.run(&format!("see [[Lisbon]] soon<{click}:12,6>"));
+        assert!(f.contains("¶ Lisbon"), "{click} opens the page beside: {f}");
+    }
 }
 
 #[test]
@@ -117,21 +118,21 @@ fn m6_drag_double_and_triple_click_select() {
     // A drag across two paragraphs, then ⌃X: both pieces go.
     let v = V::new("m6");
     v.run("first para<cr><cr>second para<esc>");
-    // first para at row 6, blank 7, second para at row 8 (text from column 7).
-    v.run("<drag:13,7,13,9><c-x><esc>");
+    // first para at row 5, blank 6, second para at row 7 (text from column 7).
+    v.run("<drag:13,6,13,8><c-x><esc>");
     let t: Vec<String> = v.texts().into_iter().map(|t| t.0).collect();
     assert_eq!(t, ["first  para"], "the selection from `first |` to `second|` went: {t:?}");
     // A double-click selects the word; typing replaces it.
     let v = V::new("m6w");
-    v.run("hello world<dclick:15,7>there<esc>");
+    v.run("hello world<dclick:15,6>there<esc>");
     assert_eq!(v.texts()[0].0, "hello there");
     // A triple-click selects the note.
     let v = V::new("m6n");
-    v.run("hello world<tclick:9,7>new<esc>");
+    v.run("hello world<tclick:9,6>new<esc>");
     assert_eq!(v.texts()[0].0, "new");
     // ⇧-click extends from the caret.
     let v = V::new("m6s");
-    v.run("hello world<click:7,7><sclick:13,7>X<esc>");
+    v.run("hello world<click:7,6><sclick:13,6>X<esc>");
     assert_eq!(v.texts()[0].0, "Xworld");
 }
 
@@ -189,11 +190,14 @@ fn m7_m8_chrome_clicks() {
     let f = v.tui("5see [[Lisbon]]<left><left>");
     let (x, y) = pos(&f, "↗ open");
     let f = v.tui(&format!("5see [[Lisbon]]<left><left><click:{},{y}>", x + 2));
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "{f}");
+    assert!(f.lines().any(|l| { let l = l.trim(); l == "Lisbon" || l.ends_with(" › Lisbon") }), "{f}");
     // (today's journal on the unpinned clock, as the snapshots here run)
     assert!(v.cmd(&[("THC_NOW", "")], &["todo", "Pay rent", "--due", "fri"]).status.success());
     let f = v.tui("5");
-    let (x, y) = pos(&f, "due fri");
+    // (On a Thursday, fri is "tomorrow": find the chip on its row.)
+    let (_, y) = pos(&f, "Pay rent");
+    let row = f.lines().nth(y).unwrap();
+    let x = row[..row.rfind("due ").unwrap()].chars().count();
     let f = v.tui(&format!("5<click:{},{y}>", x + 2));
     assert!(f.lines().last().unwrap().contains("due ›"), "{f}");
 }
@@ -345,7 +349,7 @@ fn a_click_on_a_link_follows_it() {
     v.tui("5see [[Lisbon flat]] today #lisbon<esc>");
     let f = v.tui("5");
     let (x, y) = pos(&f, "Lisbon flat");
-    let page = |f: &str| f.lines().any(|l| l.trim() == "Lisbon flat");
+    let page = |f: &str| f.lines().any(|l| { let l = l.trim(); l == "Lisbon flat" || l.ends_with(" › Lisbon flat") });
     let journal = |f: &str| f.contains("· TODAY") && !page(f);
     // E63: a click on the title follows it, and Esc comes back.
     let f = v.tui(&format!("5<click:{},{y}>", x + 2));

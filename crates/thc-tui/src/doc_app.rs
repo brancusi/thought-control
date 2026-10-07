@@ -328,6 +328,13 @@ impl App {
             && if self.focus_mode { self.focus_cfg.has(thc_core::tui_config::El::Nav) } else { self.tui_prefs.page_rail }
     }
 
+    /// The detail pane takes room beside the document: it's on, and the sidebar (which it
+    /// gives way to, sidebar.md §6.2) isn't a column. A document's text column is measured
+    /// without the room a yielded pane would have had (ui::split_width).
+    pub fn detail_shows(&self) -> bool {
+        self.show_detail && !(self.sidebar_col.is_some() && crate::sidebar::policy::DETAIL_YIELDS)
+    }
+
     /// The crumb above the title instead, when the rail doesn't fit (or is off).
     pub fn crumb_shows(&self) -> bool {
         self.doc.is_some()
@@ -750,8 +757,21 @@ impl App {
 
     /// After a key in the document: leaving a line saves the lines left behind.
     pub fn doc_after_key(&mut self) {
-        self.near_miss_typed();
+        self.doc_after(true);
+    }
+
+    /// After a click in the document: as after a key, but the view stays where it is (the
+    /// caret went where the pointer is, on screen; mouse.md "the mouse never scrolls").
+    pub fn doc_after_click(&mut self) {
+        self.doc_after(false);
         if let Some(d) = self.doc.as_mut() {
+            d.hold_view();
+        }
+    }
+
+    fn doc_after(&mut self, follow: bool) {
+        self.near_miss_typed();
+        if let Some(d) = self.doc.as_mut().filter(|_| follow) {
             d.follow_caret();
         }
         let Some(d) = self.doc.as_mut() else { return };

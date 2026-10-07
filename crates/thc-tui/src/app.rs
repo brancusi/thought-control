@@ -467,6 +467,12 @@ pub struct App {
     pub sidebar_col: Option<u16>,
     /// The sidebar's place this frame when it isn't a column: the drawer's or replace's rect.
     pub sidebar_over: Option<(crate::sidebar::Layout, ratatui::layout::Rect)>,
+    /// Where the main view's caret was drawn last layout: it stays on that row when the
+    /// geometry changes under it (doc_ui::prepare).
+    pub caret_pin: Option<crate::doc_ui::CaretPin>,
+    /// The pointer rests on a link's title (main view or a panel): the terminal is asked to
+    /// report ⇧ with clicks there (cmd_click::ShiftCapture).
+    pub pointer_on_link: bool,
     /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
     /// would drop).
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
@@ -841,6 +847,8 @@ impl App {
             in_list: None,
             sidebar_col: None,
             sidebar_over: None,
+            caret_pin: None,
+            pointer_on_link: false,
             sidebar_drag: None,
         };
         app.load_page_ids();

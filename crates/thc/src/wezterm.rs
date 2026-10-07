@@ -99,10 +99,34 @@ M.keys = {
 
 seqs['c+CMD'] = '\x1b[99;9u'
 
+-- ⌘-click in thc: a link opens beside, in the sidebar. A terminal's mouse report has no bit for
+-- ⌘, so the press reaches thc as a plain click; the release is caught here and, in thc, sent as
+-- ⌘F35 (kitty's encoding, a key no keyboard has), which thc reads as "that click had ⌘ held".
+-- In other programs that use the mouse, a ⌘-release opens the link under the pointer, as
+-- WezTerm does without mouse reporting.
+M.mouse_bindings = {
+  {
+    event = { Up = { streak = 1, button = 'Left' } },
+    mods = 'SUPER',
+    mouse_reporting = true,
+    action = wezterm.action_callback(function(window, pane)
+      if M.is_thc(pane:get_foreground_process_name()) then
+        pane:send_text('\x1b[57398;9u')
+      else
+        window:perform_action(act.CompleteSelectionOrOpenLinkAtMouseCursor 'ClipboardAndPrimarySelection', pane)
+      end
+    end),
+  },
+}
+
 function M.apply(config)
   config.keys = config.keys or {}
   for _, k in ipairs(M.keys) do
     table.insert(config.keys, k)
+  end
+  config.mouse_bindings = config.mouse_bindings or {}
+  for _, b in ipairs(M.mouse_bindings) do
+    table.insert(config.mouse_bindings, b)
   end
   -- ⇧Enter told from Enter (a line break inside an item). This applies to every program in
   -- WezTerm, not only thc; thc asks only for the protocol's first flag.
@@ -278,4 +302,17 @@ pub fn offer(out: &mut Out) -> Result<()> {
     }
     eprintln!("not now · thc setup wezterm --yes any time");
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    /// The ⌘-release thc_keys.lua sends is the marker thc reads (thc_tui::cmd_click), and the
+    /// binding is installed by `apply`.
+    #[test]
+    fn the_module_sends_thcs_cmd_release_marker() {
+        let m = super::MODULE;
+        assert!(m.contains(&format!("pane:send_text('{}')", thc_tui::cmd_click::MARKER)), "thc_keys.lua must send {}", thc_tui::cmd_click::MARKER);
+        assert!(m.contains("mouse_reporting = true") && m.contains("mods = 'SUPER'"));
+        assert!(m.contains("table.insert(config.mouse_bindings, b)"));
+    }
 }

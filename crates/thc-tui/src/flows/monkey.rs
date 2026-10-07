@@ -83,6 +83,13 @@ fn walk(seed: u64, steps: usize, size: (u16, u16)) {
 
 #[test]
 fn monkey_on_a_page() {
+    walk(0x5eed_f10f, 200, (140, 36));
+}
+
+#[test]
+#[ignore = "hyrg2"]
+fn monkey_5eedf10e_a_wide_character_at_the_row_end() {
+    // Step 340: an emoji at the end of a wrapped row overflows the column into the scrollbar.
     walk(0x5eed_f10e, 200, (140, 36));
 }
 

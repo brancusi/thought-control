@@ -233,7 +233,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     let inline_images = app.derived.inline_images;
     let attachments = &app.derived.attachments;
     let sw = app.screen_width;
-    let detail = app.show_detail;
+    let detail = app.detail_shows();
     let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
     let mut g = ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, sw, detail, 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter };
     let d = app.doc.as_mut().unwrap();
@@ -536,7 +536,7 @@ fn source_revision(app: &App) -> u64 {
     let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
     app.vault.paths.vault.hash(&mut h);
     app.screen_width.hash(&mut h);
-    app.show_detail.hash(&mut h);
+    app.detail_shows().hash(&mut h);
     app.focus_mode.hash(&mut h);
     format!("{:?}", app.focus_cfg).hash(&mut h);
     app.doc_write.hash(&mut h);
@@ -570,22 +570,139 @@ pub struct PreparedDoc {
     header: Vec<TLine<'static>>,
     days: Vec<(u16, u16, u16, chrono::NaiveDate)>,
     body: Rect,
+    crumb: Option<CrumbAt>,
 }
 
-pub(crate) fn prepare(app: &mut App, mut area: Rect) {
-    let source_area = area;
+pub(crate) fn prepare(app: &mut App, area: Rect) {
     let ctx = DocContext::from_app(app);
     let w = area.width as usize;
-    if app.crumb_shows() && area.height > 4 {
-        area.y += 1;
-        area.height -= 1;
-    }
     let mut days = Vec::new();
-    let header = header(ctx, &mut days, app, w);
+    let mut header = header(ctx, &mut days, app, w);
+    // Without the rail, the crumb leads the title's own row (navigation.md §3), so the text
+    // starts on the same row with or without it: opening the sidebar, which hides the rail,
+    // moves nothing down (interaction.md §2).
+    let crumb = if app.crumb_shows() { crumb(app, ctx, w) } else { None };
+    let crumb = match crumb {
+        Some(c) if header.first().is_some_and(|l| !l.spans.is_empty()) && title_shows(ctx) => {
+            let first = &mut header[0];
+            let at = usize::from(first.spans.first().is_some_and(|s| s.content.trim().is_empty()));
+            for (i, s) in c.spans.iter().cloned().enumerate() {
+                first.spans.insert(at + i, s);
+            }
+            Some(CrumbAt { row: 0, x0: c.list_x, x1: c.list_x + c.list_w, action: c.action })
+        }
+        Some(c) => {
+            // No title row to share (Focus without the header): the crumb has its own row.
+            let indent = " ".repeat(left_edge(ctx, w) + MARKS + HANG);
+            let mut spans = vec![Span::raw(indent)];
+            spans.extend(c.spans);
+            header.insert(0, TLine::from(spans));
+            for d in days.iter_mut() {
+                d.2 += 1;
+            }
+            Some(CrumbAt { row: 0, x0: c.list_x, x1: c.list_x + c.list_w, action: c.action })
+        }
+        None => None,
+    };
     let head_h = (header.len() as u16).min(area.height);
     let body = Rect { y: area.y + head_h, height: area.height.saturating_sub(head_h), ..area };
-    let (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
-    app.derived.doc = Some(PreparedDoc { area: source_area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body });
+    let (mut rows, mut cursor, mut own_meta, mut scroll) = layout(app, w, body.height);
+    // The caret line stays on its screen row when the geometry changes under it (the sidebar
+    // opens or closes, the rail comes or goes, the terminal resizes): the view scrolls by what
+    // the reflow moved it (interaction.md §2.2).
+    let here = pin_key(app, body, w);
+    if let (Some(pin), Some((_, row))) = (app.caret_pin.clone(), cursor) {
+        let d = app.doc.as_ref().unwrap();
+        let same_place = pin.doc == here.doc && pin.caret == d.caret() && pin.geometry != here.geometry;
+        let follows = !d.scroll_free() && !ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
+        let now_y = body.y + row;
+        if same_place && follows && now_y != pin.y && pin.y >= body.y && pin.y < body.bottom() {
+            let top = d.scroll() as isize + now_y as isize - pin.y as isize;
+            app.doc.as_mut().unwrap().set_scroll(top.max(0) as usize, false);
+            (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
+        }
+    }
+    app.caret_pin = cursor.map(|(_, row)| CaretPin { y: body.y + row, ..here });
+    app.derived.doc = Some(PreparedDoc { area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body, crumb });
+}
+
+/// Where the main view's caret was drawn, for the next layout (`prepare`): its document and
+/// caret, the geometry it was laid out in, and its screen row.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CaretPin {
+    doc: String,
+    caret: crate::editor::BlockPos,
+    geometry: (Rect, usize, usize),
+    y: u16,
+}
+
+impl CaretPin {
+    /// The screen row the caret was drawn on.
+    pub fn row(&self) -> u16 {
+        self.y
+    }
+}
+
+fn pin_key(app: &App, body: Rect, w: usize) -> CaretPin {
+    let ctx = DocContext::from_app(app);
+    let d = app.doc.as_ref().unwrap();
+    CaretPin {
+        doc: format!("{:?}{:?}", d.target, d.root),
+        caret: d.caret(),
+        geometry: (body, text_width(ctx, app.screen_width, app.detail_shows(), 0), left_edge(ctx, w)),
+        y: 0,
+    }
+}
+
+/// The header's title row shows (outside Focus, or Focus with the header element).
+fn title_shows(ctx: DocContext) -> bool {
+    focus(ctx).is_none_or(|f| f.has(El::Header))
+}
+
+/// The crumb's clickable first part, on a header row.
+#[derive(Clone, Copy)]
+struct CrumbAt {
+    row: u16,
+    x0: u16,
+    x1: u16,
+    action: &'static str,
+}
+
+struct Crumb {
+    spans: Vec<Span<'static>>,
+    /// The list's name: where it starts after the indent, and how wide it is.
+    list_x: u16,
+    list_w: u16,
+    action: &'static str,
+}
+
+/// The crumb, when the rail doesn't show: `¶ Pages › ` (or the page an issue lives in, or
+/// `§ Journal › `), its first part a click to the list. Not home: the vault leads, in its accent
+/// (vaults.md §8).
+fn crumb(app: &App, _ctx: DocContext, _w: usize) -> Option<Crumb> {
+    let th = app.theme;
+    let g = th.glyphs();
+    let (sym, list, action) = match &app.doc.as_ref()?.target {
+        // A node inside a page (an issue): the page it lives in, not the Pages list.
+        Target::Page { .. } => match &app.derived.data.document.parent_label {
+            Some(parent) => (g.page, parent.clone(), "doc.done"),
+            None => (g.page, "Pages".to_string(), "go.pages"),
+        },
+        Target::Journal { .. } => (g.journal, "Journal".to_string(), "go.journal"),
+    };
+    let vault = if app.vault_home { String::new() } else { format!("{} › ", app.vault_name) };
+    let lead = format!("{vault}{sym} ");
+    Some(Crumb {
+        spans: vec![
+            Span::styled(vault, th.s(Token::Accent)),
+            Span::styled(format!("{sym} "), th.s(Token::Muted)),
+            Span::styled(list.clone(), th.s(Token::Muted).add_modifier(Modifier::UNDERLINED)),
+            Span::styled(" › ", th.s(Token::Muted)),
+        ],
+        list_x: width(&lead) as u16,
+        list_w: width(&list) as u16,
+        action,
+    })
 }
 
 pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
@@ -596,37 +713,10 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     let ctx = DocContext::from_app(app);
     let fv = focus(ctx);
     let w = area.width as usize;
-    // Narrower than the rail needs: a crumb above the title, its first part a click to the
-    // list (navigation.md §3).
-    let area = if app.crumb_shows() && area.height > 4 {
-        let th = app.theme;
-        let g = th.glyphs();
-        let x0 = left_edge(ctx, w) + MARKS + HANG;
-        let (sym, list, here, action) = match &app.doc.as_ref().unwrap().target {
-            // A node inside a page (an issue): the page it lives in, not the Pages list.
-            Target::Page { .. } => match &app.derived.data.document.parent_label {
-                Some(parent) => (g.page, parent.clone(), app.derived.data.document.label.clone(), "doc.done"),
-                None => (g.page, "Pages".to_string(), app.derived.data.document.label.clone(), "go.pages"),
-            },
-            Target::Journal { date } => (g.journal, "Journal".to_string(), date.format("%a %d %b").to_string(), "go.journal"),
-        };
-        // Not home: the vault leads, in its accent (vaults.md §8): `acme › ¶ Pages › Health`.
-        let vault = if app.vault_home { String::new() } else { format!("{} › ", app.vault_name) };
-        let lead = format!("{vault}{sym} ");
-        let line = TLine::from(vec![
-            Span::raw(" ".repeat(x0)),
-            Span::styled(vault.clone(), th.s(Token::Accent)),
-            Span::styled(format!("{sym} "), th.s(Token::Muted)),
-            Span::styled(list.clone(), th.s(Token::Muted).add_modifier(Modifier::UNDERLINED)),
-            Span::styled(format!(" › {here}"), th.s(Token::Muted)),
-        ]);
-        let lx = area.x + (x0 + width(&lead)) as u16;
-        crate::ui::target(render, lx, lx + width(&list) as u16, area.y, crate::ui::Click::Action(action));
-        f.render_widget(Paragraph::new(line), Rect { height: 1, ..area });
-        Rect { y: area.y + 1, height: area.height - 1, ..area }
-    } else {
-        area
-    };
+    if let Some(c) = prepared.crumb {
+        let x0 = area.x + (left_edge(ctx, w) + MARKS + HANG) as u16;
+        crate::ui::target(render, x0 + c.x0, x0 + c.x1, area.y + c.row, crate::ui::Click::Action(c.action));
+    }
     let head_h = (prepared.header.len() as u16).min(area.height);
     for &(x0, x1, row, date) in &prepared.days {
         if row < head_h {
@@ -702,7 +792,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         let r = &Row { start, ..*r };
         // A code block: cut to the column, from where the engine scrolled it sideways to keep
         // the caret in view, `→` where it runs on.
-        let tw_here = text_width(ctx, app.screen_width, app.show_detail, l.depth);
+        let tw_here = text_width(ctx, app.screen_width, app.detail_shows(), l.depth);
         let (r, more) = if is_code(l) {
             let a = r.shown.clamp(r.start, r.end);
             let (mut b, mut cw) = (a, 0);
@@ -828,7 +918,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             }
         } else if l.kind() == Kind::Para && (l.text == "---" || l.text == "***") && !(app.doc_write && r.line == d.caret().line) {
             // A rule: a line across the text column (the text is still `---`).
-            let tw = text_width(ctx, app.screen_width, app.show_detail, l.depth);
+            let tw = text_width(ctx, app.screen_width, app.detail_shows(), l.depth);
             spans.push(Span::styled("─".repeat(tw), th.s(Token::Line)));
         } else if sa < sb {
             spans.extend(tagged(&text[..sa]));
@@ -930,7 +1020,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                     Some(_) => ("[ ] ", Token::Text),
                     None => ("  · ", Token::Muted),
                 };
-                let tw = text_width(ctx, app.screen_width, app.show_detail, 0);
+                let tw = text_width(ctx, app.screen_width, app.detail_shows(), 0);
                 let text: String = it.text.chars().take(tw).collect();
                 let used = left + MARKS + HANG + width(&text);
                 let meta: String = it.meta.chars().take(META + 8).collect();
