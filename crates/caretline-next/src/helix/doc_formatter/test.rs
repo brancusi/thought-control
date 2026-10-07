@@ -2,7 +2,7 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: module paths only.
+// Changes from upstream: module paths, and the `hang_spaces` field (off).
 
 use crate::helix::doc_formatter::{DocumentFormatter, TextFormat};
 use crate::helix::text_annotations::{InlineAnnotation, Overlay, TextAnnotations};
@@ -18,6 +18,7 @@ impl TextFormat {
             wrap_indicator_highlight: None,
             // use a prime number to allow lining up too often with repeat
             viewport_width: 17,
+            hang_spaces: false,
             soft_wrap_at_text_width: false,
         }
     }

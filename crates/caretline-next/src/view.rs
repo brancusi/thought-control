@@ -311,7 +311,9 @@ pub fn render(doc: &Document, view: &View) -> Frame {
                 let col = (lf.x + g.visual_pos.col) as isize - hscroll as isize - offset as isize;
                 let w = g.width();
                 let role = if selected(g.char_idx) { Role::Selection } else { Role::Text };
-                if Some(g.char_idx) == caret && col >= 0 && (col as usize) < limit.min(width as usize) {
+                // The caret may sit one past the column (after a word that fills the row, on
+                // the space that hangs there), never past the frame.
+                if Some(g.char_idx) == caret && col >= 0 && (col as usize) <= limit && (col as usize) < width as usize {
                     frame.cursor = Some((col as u16, sy as u16));
                 }
                 if col < lf.x as isize {

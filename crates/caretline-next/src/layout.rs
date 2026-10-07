@@ -205,7 +205,26 @@ pub fn text_format(config: &Config, width: u16, wrap: bool) -> TextFormat {
         wrap_indicator_highlight: None,
         viewport_width: width,
         soft_wrap_at_text_width: false,
+        hang_spaces: false,
     }
+}
+
+/// The text format of an outline block's content: prose wrapping. A word moves to the next
+/// row whole unless it's longer than a row (with `hang`; words end at whitespace); the space after a word that reaches the row's end
+/// stays on that row (the next row starts with the next word); a word that ends exactly at the
+/// row's end before a line break or the end stays.
+/// `hang`: there's a cell right of the column for the caret, so a space (or a word that ends
+/// exactly there) may sit at the row's end; without one, the Helix rule (the next row takes
+/// it) keeps the caret on screen.
+pub fn prose_format(config: &Config, width: u16, wrap: bool, hang: bool) -> TextFormat {
+    let mut f = text_format(config, width, wrap);
+    if hang {
+        // Words wrap whole; only a word longer than a row breaks (at the row's end).
+        f.max_wrap = f.viewport_width;
+    }
+    f.hang_spaces = hang;
+    f.soft_wrap_at_text_width = hang;
+    f
 }
 
 /// How one document line is laid out: what of it is drawn, where, at what width, and the
@@ -290,8 +309,11 @@ impl Layout {
             let cap = (width as usize / g.indent.max(1) as usize) + 1;
             for d in 0..=max_depth.min(cap) {
                 let w = depth_width(g, d, width);
-                depth_fmts.push(text_format(&doc.config, w, wrap));
-                depth_fmts.push(text_format(&doc.config, w, false));
+                // A space hangs past the column only where there's a cell for the caret there.
+                let room = (width as usize).saturating_sub(block_x(g, d, width));
+                let hang = (w as usize) < room;
+                depth_fmts.push(prose_format(&doc.config, w, wrap, hang));
+                depth_fmts.push(prose_format(&doc.config, w, false, hang));
             }
         }
         let mut layout = Layout {
