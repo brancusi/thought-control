@@ -35,7 +35,7 @@ mod view;
 
 pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
 pub use tasks::TASK_CYCLE;
-pub use view::{DocFrame, DocHit, DocRow, ViewGeometry, depth_column, HANG, INDENT, MARKS};
+pub use view::{DocHit, DocRow, ViewGeometry, HANG, MARKS};
 
 use thc_core::outline::Kind;
 
@@ -139,10 +139,6 @@ impl Doc {
         self.lines().iter().position(|l| l.id == id).is_some_and(|i| self.engine.is_folded(i))
     }
 
-    /// Note `i` is hidden by a folded note above it.
-    pub fn hidden_by_fold(&self, i: usize) -> bool {
-        self.engine.has_folds() && crate::doc_ui::folded_hidden(self.lines(), i, |k| self.engine.is_folded(k))
-    }
 }
 
 // ---- the caret and the selection ----------------------------------------------------------------

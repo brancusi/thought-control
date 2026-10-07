@@ -424,7 +424,7 @@ impl App {
         let Some(d) = self.doc.as_ref() else { return };
         // A new, empty line isn't a place to come back to: the line above it is.
         let Some(a) = d.place_anchor() else { return };
-        self.carets.insert(caret_key(&d.target), (a.id, a.byte, d.scroll));
+        self.carets.insert(caret_key(&d.target), (a.id, a.byte, d.scroll()));
         save_carets(&self.vault.paths.cache, &self.carets);
     }
 
@@ -477,7 +477,7 @@ impl App {
             // (The fresh line a day opens with isn't needed when the caret goes back.)
             let journal = matches!(d.target, Target::Journal { .. });
             if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, journal) {
-                d.scroll = scroll.min(i);
+                d.set_scroll(scroll.min(i), false);
             }
         }
         // Lines a crash left unsaved come back, one ⌃Z away (recover.rs), and save at once.
@@ -721,7 +721,9 @@ impl App {
     /// After a key in the document: leaving a line saves the lines left behind.
     pub fn doc_after_key(&mut self) {
         self.near_miss_typed();
-        self.doc_scroll_free = false;
+        if let Some(d) = self.doc.as_mut() {
+            d.follow_caret();
+        }
         let Some(d) = self.doc.as_mut() else { return };
         let now = d.caret_block().id.clone();
         if self.ui.doc_line_id.as_deref() != Some(now.as_str()) {

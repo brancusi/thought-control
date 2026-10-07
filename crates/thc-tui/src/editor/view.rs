@@ -3,7 +3,7 @@
 //! note: a meta on its own row, an image) and styles what the frame shows; it keeps no layout
 //! of its own.
 
-use super::doc::{Doc, Line};
+use super::doc::Doc;
 use super::engine::list_len;
 use super::BlockPos;
 use caretline as cn;
@@ -46,8 +46,9 @@ pub struct ViewGeometry {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum DocRow {
     /// Text of line `line`: bytes `start..end` of its text (a first row starts after a marker
-    /// drawn in the hang). `x` is the column its text starts at.
-    Text { line: usize, start: usize, end: usize, first: bool, x: u16 },
+    /// drawn in the hang); `shown` is the first byte drawn (later in a code block scrolled
+    /// sideways). `x` is the column its text starts at.
+    Text { line: usize, start: usize, end: usize, shown: usize, first: bool, x: u16 },
     /// The blank row before line `line`.
     Gap { line: usize },
     /// Row `index` of the rows drawn after line `line`.
@@ -56,12 +57,10 @@ pub enum DocRow {
     Past,
 }
 
-/// The document drawn: its rows, the caret's cell, and the engine's frame (cells with the
-/// char each shows).
+/// The document drawn: its rows and the caret's cell.
 pub struct DocFrame {
     pub rows: Vec<DocRow>,
     pub cursor: Option<(u16, u16)>,
-    pub frame: cn::Frame,
 }
 
 /// What a click at a cell of the view hits.
@@ -69,10 +68,10 @@ pub struct DocFrame {
 pub enum DocHit {
     /// Text: where the caret goes.
     Text(BlockPos),
-    /// A note's hang; `task_box` when it's the task's box.
-    Hang { line: usize, task_box: bool },
-    /// A note's marks column.
-    Marks { line: usize },
+    /// A note's hang; `task_box` when it's the task's box. `row` is where the row starts.
+    Hang { line: usize, task_box: bool, row: BlockPos },
+    /// A note's marks column. `row` is where the row starts.
+    Marks { line: usize, row: BlockPos },
 }
 
 impl Doc {
@@ -132,16 +131,20 @@ impl Doc {
         let o = st.doc.blocks().expect("an outline document");
         let rope = &st.doc.text;
         let line_of = |m: MarkId| o.index_of(m);
+        let w = frame.width as usize;
         let rows = frame
             .rows
             .iter()
-            .map(|r| match r {
+            .enumerate()
+            .map(|(y, r)| match r {
                 RowInfo::Text { block: Some(m), chars, first, x, .. } => match line_of(*m) {
                     Some(i) => {
                         let b = &o.blocks[i];
                         let cs = b.start + list_len(b);
                         let byte = |c: usize| rope.char_to_byte(c.clamp(cs, b.end.max(cs))) - rope.char_to_byte(cs);
-                        DocRow::Text { line: i, start: byte(chars.start), end: byte(chars.end), first: *first, x: *x }
+                        // The first char a cell of the row shows.
+                        let shown = frame.cells[y * w + (*x as usize).min(w)..(y + 1) * w].iter().find_map(|c| c.char_idx).map_or(chars.start, |c| c as usize);
+                        DocRow::Text { line: i, start: byte(chars.start), end: byte(chars.end), shown: byte(shown), first: *first, x: *x }
                     }
                     None => DocRow::Past,
                 },
@@ -150,7 +153,7 @@ impl Doc {
                 _ => DocRow::Past,
             })
             .collect();
-        DocFrame { rows, cursor: frame.cursor, frame }
+        DocFrame { rows, cursor: frame.cursor }
     }
 
     /// What a click at cell (`col`, `row`) of the view hits. A blank row, or one a note draws
@@ -163,14 +166,19 @@ impl Doc {
         match cn::view::hit(&st.doc, &st.view, col, row) {
             Hit::Text { pos } => Some(DocHit::Text(self.engine.pos_of(pos))),
             Hit::Hang { block, deco } => {
-                // Only the box's own three cells (`[ ]`) are its button; the gap after it is
-                // margin.
                 let line = line_of(block)?;
                 let x = Layout::of(&st.doc, &st.view).line_format(o.blocks[line].first_line).x;
+                // Only the box's own three cells (`[ ]`) are its button; the gap after it is
+                // margin.
                 let in_box = (col as usize) < x.saturating_sub(HANG as usize) + 3;
-                Some(DocHit::Hang { line, task_box: in_box && deco.as_deref() == Some(super::tasks::BOX) })
+                let row = self.row_start(x, row, line);
+                Some(DocHit::Hang { line, task_box: in_box && deco.as_deref() == Some(super::tasks::BOX), row })
             }
-            Hit::Gutter { block, .. } => Some(DocHit::Marks { line: line_of(block)? }),
+            Hit::Gutter { block, .. } => {
+                let line = line_of(block)?;
+                let x = Layout::of(&st.doc, &st.view).line_format(o.blocks[line].first_line).x;
+                Some(DocHit::Marks { line, row: self.row_start(x, row, line) })
+            }
             Hit::Gap { .. } | Hit::Extra { .. } => {
                 // The nearest text row above, at its end.
                 (0..row).rev().find_map(|r| match cn::view::hit(&st.doc, &st.view, u16::MAX - 1, r) {
@@ -179,6 +187,15 @@ impl Doc {
                 })
             }
             Hit::Past => None,
+        }
+    }
+
+    /// Where screen row `row` of note `line` starts: the text cell at column `x`.
+    fn row_start(&self, x: usize, row: u16, line: usize) -> BlockPos {
+        let st = self.engine.state();
+        match cn::view::hit(&st.doc, &st.view, x.min(u16::MAX as usize) as u16, row) {
+            Hit::Text { pos } => self.engine.pos_of(pos),
+            _ => BlockPos { line, byte: 0 },
         }
     }
 
@@ -232,9 +249,4 @@ impl Doc {
             cn::layout::ensure_caret_visible(st);
         }
     }
-}
-
-/// A line's text column: the view's, narrower by depth.
-pub fn depth_column(column: u16, l: &Line) -> u16 {
-    column.saturating_sub(l.depth.min(u16::MAX as usize) as u16 * INDENT).max(MIN_COLUMN)
 }

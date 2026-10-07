@@ -100,7 +100,6 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
     let mut d = Doc::new(Target::Journal { date: today }, None, &[], today);
     d.set_blocks(lines);
     d.select_range(anchor, caret);
-    let w = |_: &Line| 72usize;
     for k in keys {
         let cmd = match *k {
             "←" => Some("move.left"),
@@ -313,7 +312,6 @@ fn texts(d: &Doc) -> Vec<String> {
 
 fn editing_invariants_hold_on_random_documents() {
     let mut r = Rng(0xD1B54A32D192ED03);
-    let w = |_: &Line| 72usize;
     let motions = ["left", "right", "up", "down", "word_left", "word_right", "line_start", "line_end", "doc_start", "doc_end"];
     for case in 0..400 {
         // EI1: a motion without ⇧ leaves no selection. EI2: with ⇧ the anchor never moves.
@@ -447,7 +445,6 @@ fn run_g(before: &str, keys: &[&str]) -> Doc {
             d.set_saved_gap(i, (default[i] != *gap).then_some(*gap));
         }
     }
-    let w = |_: &Line| 72usize;
     for k in keys {
         let c = match *k {
             "⌃T" => crate::editor::TASK_CYCLE,
@@ -525,7 +522,6 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     // E78: undo puts the paragraph back, with its id and the caret.
     let mut d78 = run_g(src70, &[]);
     let id = d78.blocks()[0].id.clone();
-    let w = |_: &Line| 72usize;
     d78.run_command("thc.task_cycle");
     d78.run_command("history.undo");
     assert_eq!(render_g(&d78), src70, "E78");

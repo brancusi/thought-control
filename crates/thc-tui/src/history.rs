@@ -112,7 +112,7 @@ impl App {
             day,
             selected: if doc_open { None } else { self.selected.clone() },
             caret,
-            scroll: self.doc.as_ref().map_or(self.scroll, |d| d.scroll),
+            scroll: self.doc.as_ref().map_or(self.scroll, |d| d.scroll()),
             label,
             ms: self.ui.now_ms as i64,
         }
@@ -236,7 +236,7 @@ impl App {
         if let (Some((id, byte)), Some(d)) = (&p.caret, self.doc.as_mut()) {
             if d.set_caret_anchor(&crate::editor::Anchor { id: id.clone(), byte: *byte }) {
                 d.clear_selection();
-                d.scroll = p.scroll;
+                d.set_scroll(p.scroll, false);
             }
         } else if self.doc.is_none() {
             self.scroll = p.scroll;

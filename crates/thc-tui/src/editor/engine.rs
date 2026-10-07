@@ -256,11 +256,6 @@ impl Engine {
         o.blocks.get(i).is_some_and(|b| b.gap)
     }
 
-    /// Anything is folded (in the engine's view).
-    pub(super) fn has_folds(&self) -> bool {
-        !self.st.view.folds.is_empty()
-    }
-
     /// Line `i`'s children are folded away (in the engine's view).
     pub(super) fn is_folded(&self, i: usize) -> bool {
         self.lines.get(i).and_then(|l| l.mark).is_some_and(|m| self.st.view.folds.contains(&MarkId(m)))

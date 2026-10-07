@@ -357,7 +357,7 @@ impl Session {
                 let journal = matches!(d.target, crate::editor::Target::Journal { .. });
                 d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
             }
-            d.scroll = ds.scroll;
+            d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
         }
         self.follow();
         self.rev += 1;
@@ -399,7 +399,7 @@ impl Session {
             if !ds.caret_id.is_empty() {
                 d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
             }
-            d.scroll = ds.scroll;
+            d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
         }
         Ok(())
     }
@@ -670,7 +670,7 @@ impl Session {
             if !ds.caret_id.is_empty() {
                 d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
             }
-            d.scroll = ds.scroll;
+            d.set_scroll(ds.scroll, true);
             app.ui.doc_scroll_free = true;
         }
         app.history_tick(false);
@@ -689,13 +689,18 @@ impl Session {
                 target: Some(d.target.clone()),
                 caret_id: if d.caret_block().is_new { String::new() } else { a.id },
                 caret_byte: a.byte,
-                scroll: d.scroll,
+                scroll: d.scroll(),
                 dirty: d.blocks().iter().any(|l| l.edited()),
                 revision: d.revision(),
             }
         });
         if self.app.ui.document != doc {
             self.app.ui.document = doc;
+        }
+        // The engine's view keeps whether it was scrolled freely; the state records it.
+        let free = self.app.doc.as_ref().is_some_and(|d| d.scroll_free());
+        if self.app.ui.doc_scroll_free != free {
+            self.app.ui.doc_scroll_free = free;
         }
     }
 
@@ -705,7 +710,7 @@ impl Session {
         if w == 0 || h == 0 {
             return Err("a size is at least 1x1".into());
         }
-        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| d.scroll), self.app.render.clone());
+        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| (d.scroll(), d.scroll_free())), self.app.render.clone());
         let mut term = ratatui::Terminal::new(crate::quiet::Snap { inner: ratatui::backend::TestBackend::new(w, h), visible: false }).map_err(|e| e.to_string())?;
         term.draw(|f| crate::ui::draw_app(f, &mut self.app)).map_err(|e| e.to_string())?;
         let buf = term.backend().inner.buffer().clone();
@@ -717,8 +722,8 @@ impl Session {
         };
         if (w, h) != self.size {
             self.app.ui = saved.0;
-            if let (Some(d), Some(s)) = (self.app.doc.as_mut(), saved.1) {
-                d.scroll = s;
+            if let (Some(d), Some((s, free))) = (self.app.doc.as_mut(), saved.1) {
+                d.set_scroll(s, free);
             }
             self.app.render = saved.2;
         }

@@ -214,8 +214,6 @@ pub struct Doc {
     pub root: Option<String>,
     /// The engine's document (text, selection, folds, undo) and thc's lines beside it.
     pub(super) engine: Box<super::engine::Engine>,
-    /// The first visual row on screen.
-    pub scroll: usize,
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
@@ -239,7 +237,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, scroll: 0, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0 }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0 }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
