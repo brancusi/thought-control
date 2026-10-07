@@ -1,7 +1,6 @@
 //! `view`: a pure function from the state to a grid of cells, plus text and ANSI renderers
 //! for snapshots. A terminal front end copies the grid to the screen.
 
-use crate::helix::doc_formatter::DocumentFormatter;
 use crate::helix::graphemes::{grapheme_width, Grapheme};
 use crate::helix::Tendril;
 use crate::layout::Layout;
@@ -176,7 +175,6 @@ pub fn view(state: &State) -> Frame {
     let mut frame = Frame::new(width, height);
     let text_rows = state.text_rows();
     let layout = Layout::new(state);
-    let text = layout.text();
     let top = layout.top(&state.scroll);
     let hscroll = if layout.wraps() { 0 } else { state.scroll.col };
     let caret = state.caret();
@@ -189,9 +187,7 @@ pub fn view(state: &State) -> Frame {
     let selected = |pos: usize| ranges.iter().any(|&(f, t)| f <= pos && pos < t);
 
     if text_rows > 0 {
-        let start = text.line_to_char(top.line);
-        let formatter =
-            DocumentFormatter::new_at_prev_checkpoint(text, &layout.fmt, &layout.annotations, start);
+        let formatter = layout.formatter_at_row(top);
         for g in formatter {
             if g.visual_pos.row < top.row {
                 continue;
@@ -255,7 +251,14 @@ fn draw_status(state: &State, frame: &mut Frame, y: usize) {
     let caret = state.caret();
     let line = text.char_to_line(caret);
     let line_start = text.line_to_char(line);
-    let col = text.slice(line_start..caret).to_string().graphemes(true).count();
+    let prefix = text.slice(line_start..caret);
+    // Within a line, ASCII text has one grapheme per char (CRLF only ends a line), so a
+    // long ASCII line needs no segmentation.
+    let col = if prefix.len_bytes() == prefix.len_chars() {
+        prefix.len_chars()
+    } else {
+        prefix.to_string().graphemes(true).count()
+    };
     let selected: usize = state.selection.iter().map(|r| r.len()).sum();
     let mut right = format!("{}:{} ", line + 1, col + 1);
     if selected > 0 {

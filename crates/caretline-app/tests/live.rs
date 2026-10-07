@@ -255,7 +255,7 @@ fn a_running_editor_takes_pushed_state_and_messages() {
     assert!(replayed.status.success(), "{}", String::from_utf8_lossy(&replayed.stderr));
     let replayed: Value = serde_json::from_slice(&replayed.stdout).unwrap();
     assert_eq!(&replayed, state);
-    let r = client.ask(json!({"op": "trace.get"}));
+    let r = client.ask(json!({"op": "trace.get", "all": true}));
     let lines: Vec<String> = r["result"]["trace"].as_array().unwrap().iter().map(|l| l.to_string()).collect();
     assert_eq!(lines.len(), std::fs::read_to_string(&trace).unwrap().lines().count());
 

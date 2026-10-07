@@ -85,6 +85,11 @@ struct Args {
     /// Hide the status bar: every row shows text (also for --new-state).
     #[arg(long)]
     no_status_bar: bool,
+
+    /// Interactive: keep at most this many lines in the in-memory trace `trace.get` serves
+    /// (older segments are dropped first). The --trace file keeps everything.
+    #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
+    trace_limit: usize,
 }
 
 /// `caretline serve`: a headless engine speaking the state protocol.
@@ -116,6 +121,10 @@ struct ServeArgs {
     /// Hide the status bar: every row shows text.
     #[arg(long)]
     no_status_bar: bool,
+    /// Keep at most this many lines in the in-memory trace `trace.get` serves (older
+    /// segments are dropped first). The --trace file keeps everything.
+    #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
+    trace_limit: usize,
 }
 
 fn serve(args: ServeArgs) -> Result<(), String> {
@@ -143,7 +152,9 @@ fn serve(args: ServeArgs) -> Result<(), String> {
         ),
         None => None,
     };
-    let mut hub = hub::Hub::new(caretline_next::Session::new(state), trace);
+    let mut session = caretline_next::Session::new(state);
+    session.set_trace_limit(args.trace_limit);
+    let mut hub = hub::Hub::new(session, trace);
     hub.clock = !args.no_clock;
     let (tx, rx) = std::sync::mpsc::channel();
     match &args.socket {
@@ -260,6 +271,7 @@ fn run() -> Result<(), String> {
                 mouse: !args.no_mouse,
                 listen,
                 file: args.file.as_deref(),
+                trace_limit: args.trace_limit,
             },
         );
     }

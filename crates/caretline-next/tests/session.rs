@@ -206,18 +206,138 @@ fn subscribe_returns_a_control_and_events_describe_changes() {
     assert_eq!(h.control, Some(Control::Unsubscribe));
 }
 
+fn trace_lines(r: &Value) -> Vec<String> {
+    r["result"]["trace"].as_array().unwrap().iter().map(|l| l.to_string()).collect()
+}
+
 #[test]
 fn trace_replays_to_the_same_state() {
     let mut s = session();
     ask(&mut s, json!({"op": "keys", "keys": "one<cr>two<wait:2000><s-a-left><c-x>"}));
+    let before_set = s.rev();
     ask(&mut s, json!({"op": "state.set", "state": State::new("fresh\n", None, Viewport { width: 30, height: 5 })}));
     ask(&mut s, json!({"op": "msgs", "msgs": [{"msg": "move", "dir": "forward", "by": "word"}, {"msg": "insert_text", "text": "!"}]}));
-    let r = ask(&mut s, json!({"op": "trace.get"}));
-    let lines: Vec<String> = r["result"]["trace"].as_array().unwrap().iter().map(|l| l.to_string()).collect();
+
+    // The whole trace replays, through the replacement.
+    let r = ask(&mut s, json!({"op": "trace.get", "all": true}));
+    assert_eq!(r["result"]["from_rev"], 0);
+    let lines = trace_lines(&r);
     let (replayed, n) = replay_trace(&lines.join("\n")).unwrap();
     assert_eq!(&replayed, s.state());
     assert_eq!(n, lines.iter().filter(|l| l.starts_with("{\"msg\"")).count());
     assert_eq!(s.trace_jsonl().lines().count(), lines.len());
+
+    // By default: the current segment, from the state.set on, which replays on its own.
+    let r = ask(&mut s, json!({"op": "trace.get"}));
+    assert_eq!(r["result"]["from_rev"], before_set + 1);
+    let segment = trace_lines(&r);
+    assert_eq!(segment.len(), 3);
+    assert!(segment[0].starts_with("{\"state\""));
+    let (replayed, n) = replay_trace(&segment.join("\n")).unwrap();
+    assert_eq!((&replayed, n), (s.state(), 2));
+}
+
+#[test]
+fn trace_since_rev_and_checkpoints() {
+    let mut s = session();
+    ask(&mut s, json!({"op": "keys", "now_ms": 0, "keys": "abc"}));
+    assert_eq!(s.rev(), 3);
+
+    // The lines after a rev: what changed since.
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 1}));
+    assert_eq!(r["result"]["from_rev"], 1);
+    assert_eq!(trace_lines(&r).len(), 2);
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 3}));
+    assert_eq!(trace_lines(&r).len(), 0);
+
+    // A checkpoint starts a segment without changing the state or the rev.
+    let r = ask(&mut s, json!({"op": "trace.checkpoint"}));
+    assert_eq!(r["result"]["rev"], 3);
+    assert_eq!(s.rev(), 3);
+    ask(&mut s, json!({"op": "keys", "keys": "d"}));
+    let r = ask(&mut s, json!({"op": "trace.get"}));
+    assert_eq!(r["result"]["from_rev"], 3);
+    let segment = trace_lines(&r);
+    assert_eq!(segment.len(), 2);
+    let (replayed, _) = replay_trace(&segment.join("\n")).unwrap();
+    assert_eq!(&replayed, s.state());
+    // since_rev skips the checkpoint at the rev itself.
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 3}));
+    assert_eq!(trace_lines(&r), vec![r#"{"msg":{"msg":"insert_text","text":"d"}}"#.to_string()]);
+    // The full trace (the checkpoint included) still replays.
+    let (replayed, _) = replay_trace(&s.trace_jsonl()).unwrap();
+    assert_eq!(&replayed, s.state());
+
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 1, "all": true}));
+    assert_eq!(error_kind(&r), "bad_request");
+}
+
+#[test]
+fn the_trace_limit_drops_old_segments_and_cuts_long_ones() {
+    let mut s = session();
+    s.set_trace_limit(10);
+    for _ in 0..4 {
+        s.apply(Msg::InsertText { text: "x".into() });
+    }
+    s.set_state(State::new("new\n", None, Viewport { width: 30, height: 5 }));
+    for _ in 0..7 {
+        s.apply(Msg::InsertText { text: "y".into() });
+    }
+    // 1 + 4 + 1 + 7 lines: the first segment went; the second (8 lines) stays whole.
+    assert_eq!(s.trace().len(), 8);
+    assert_eq!(s.trace_start_rev(), 5);
+    assert_eq!(s.trace_lines_total(), 13);
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 2}));
+    assert_eq!(error_kind(&r), "trimmed");
+    let r = ask(&mut s, json!({"op": "trace.get", "since_rev": 5}));
+    assert_eq!(trace_lines(&r).len(), 7);
+
+    // A segment that outgrows the limit on its own is cut by an automatic checkpoint.
+    for _ in 0..10 {
+        s.apply(Msg::InsertText { text: "z".into() });
+    }
+    assert!(s.trace().len() <= 10, "{}", s.trace().len());
+    let (replayed, _) = replay_trace(&s.trace_jsonl()).unwrap();
+    assert_eq!(&replayed, s.state());
+    assert!(s.trace_lines_from(0).is_none(), "dropped lines are gone");
+    assert_eq!(s.trace_lines_from(s.trace_lines_total()).unwrap().len(), 0);
+}
+
+#[test]
+fn state_set_takes_a_minimal_state() {
+    let mut s = session();
+    let r = ask(
+        &mut s,
+        json!({"op": "state.set", "state": {
+            "text": "hello\nworld\n",
+            "selection": {"ranges": [{"anchor": 0, "head": 5}]},
+            "viewport": {"width": 20, "height": 4},
+            "config": {"soft_wrap": false}
+        }}),
+    );
+    assert!(r["result"]["rev"].is_u64(), "{r}");
+    let st = s.state();
+    assert_eq!(st.text.to_string(), "hello\nworld\n");
+    assert_eq!((st.selection.primary().anchor, st.selection.primary().head), (0, 5));
+    assert!(!st.dirty, "a pushed state counts as saved");
+    assert!(!st.config.soft_wrap);
+    assert_eq!(st.config.tab_width, 4);
+    // A working editor: type over the selection, then undo it.
+    ask(&mut s, json!({"op": "msgs", "msgs": [{"msg": "insert_text", "text": "bye"}]}));
+    assert_eq!(s.state().text.to_string(), "bye\nworld\n");
+    assert!(s.state().dirty);
+    ask(&mut s, json!({"op": "msgs", "msgs": [{"msg": "undo"}]}));
+    assert_eq!(s.state().text.to_string(), "hello\nworld\n");
+    assert!(!s.state().dirty);
+
+    // Text alone works too: the rest takes State::new's defaults.
+    let r = ask(&mut s, json!({"op": "state.set", "state": {"text": "a\r\nb\r\n"}}));
+    assert!(r["result"]["rev"].is_u64(), "{r}");
+    let fresh = State::new("a\r\nb\r\n", None, Viewport { width: 80, height: 24 });
+    assert_eq!(s.state(), &fresh);
+    // An explicit null saved_revision means never saved.
+    ask(&mut s, json!({"op": "state.set", "state": {"text": "x", "saved_revision": null}}));
+    assert!(s.state().dirty);
 }
 
 #[test]

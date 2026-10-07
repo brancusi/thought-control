@@ -6,6 +6,7 @@ use crate::helix::graphemes::ensure_grapheme_boundary_prev;
 use crate::helix::history::History;
 use crate::helix::line_ending::auto_detect_line_ending;
 use crate::helix::{LineEnding, Range, Rope, Selection, SmallVec};
+use crate::layout::WrapCache;
 
 /// Editor settings that change behaviour or layout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -73,23 +74,40 @@ pub enum RunKind {
 }
 
 /// An open run of edits: the next edit of the same kind within [`RUN_GAP_MS`] amends
-/// the same history revision.
+/// the same history revision, until the run is [`RUN_MAX_CHARS`] long (or, for typing,
+/// [`RUN_WORD_BREAK_CHARS`] long and the next text starts a new word).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EditRun {
     pub kind: RunKind,
     pub revision: usize,
     pub at_ms: u64,
+    /// Characters inserted or deleted so far in this run.
+    #[serde(default)]
+    pub chars: usize,
 }
 
 /// Edits further apart than this start a new undo step.
 pub const RUN_GAP_MS: u64 = 1500;
 
+/// A run never grows past this many characters: the next edit starts a new undo step. This
+/// also bounds the cost of amending a revision, which is linear in the run's length.
+pub const RUN_MAX_CHARS: usize = 256;
+
+/// Once a typing run holds this many characters, text that starts with whitespace (the
+/// start of the next word) begins a new undo step.
+pub const RUN_WORD_BREAK_CHARS: usize = 128;
+
 /// The editor state. Serializes to JSON and back without loss; [`crate::update`] and
 /// [`crate::view`] are pure functions of it.
+///
+/// When deserializing, only what a client would know is needed: every field is optional
+/// (see [`StateInput`]), so `{"text":"hello"}` is a working state with a fresh history.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(from = "StateInput")]
 pub struct State {
-    /// The document.
-    #[serde(with = "rope_as_string")]
+    /// The document. Change it through [`crate::update`]; after assigning it directly, call
+    /// [`State::sanitize`].
+    #[serde(serialize_with = "rope_as_string::serialize")]
     pub text: Rope,
     /// The selection: one or more ranges, each an anchor and a head (the caret). A range's
     /// `old_visual_position` holds the goal column for vertical motion.
@@ -117,6 +135,112 @@ pub struct State {
     pub run: Option<EditRun>,
     /// A first quit with unsaved changes arms this; a second quit then exits.
     pub quit_armed: bool,
+    /// Where long lines' rows start: a layout memo, not part of the state's value.
+    #[serde(skip)]
+    pub(crate) wrap: WrapCache,
+}
+
+/// The deserialized form of [`State`]: every field optional. Missing fields get what
+/// [`State::new`] would give: an empty text, a caret at 0, an 80x24 viewport, a fresh
+/// history, the default config (line ending detected from the text), and a document that
+/// counts as saved at the current history revision (`dirty` is always recomputed). Parse
+/// through [`State::from_json`] (or [`State::sanitize`] after) to repair out-of-range values.
+#[derive(Debug, Clone, Deserialize)]
+pub struct StateInput {
+    #[serde(default)]
+    pub text: String,
+    #[serde(default)]
+    pub selection: Option<Selection>,
+    #[serde(default)]
+    pub scroll: Scroll,
+    #[serde(default)]
+    pub viewport: Option<Viewport>,
+    #[serde(default)]
+    pub clipboard: String,
+    #[serde(default)]
+    pub path: Option<String>,
+    #[serde(default)]
+    pub history: Option<History>,
+    /// Absent: saved at the current revision. `null`: never saved.
+    #[serde(default, deserialize_with = "present")]
+    pub saved_revision: Option<Option<usize>>,
+    #[serde(default)]
+    pub saving: Option<usize>,
+    /// Ignored: recomputed from `saved_revision`.
+    #[serde(default)]
+    pub dirty: Option<bool>,
+    #[serde(default)]
+    pub config: Option<ConfigInput>,
+    #[serde(default)]
+    pub status: Option<String>,
+    #[serde(default)]
+    pub now_ms: u64,
+    #[serde(default)]
+    pub run: Option<EditRun>,
+    #[serde(default)]
+    pub quit_armed: bool,
+}
+
+/// The deserialized form of [`Config`] inside a [`StateInput`]: every field optional, with
+/// [`Config::default`]'s values, except the line ending, which is detected from the text.
+#[derive(Debug, Clone, Default, Deserialize)]
+pub struct ConfigInput {
+    pub tab_width: Option<u16>,
+    pub soft_wrap: Option<bool>,
+    pub scrolloff: Option<u16>,
+    pub line_ending: Option<LineEnding>,
+    pub status_bar: Option<bool>,
+}
+
+/// Tells a field that is present (even as `null`) from one that is absent.
+fn present<'de, D, T>(d: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(d).map(Some)
+}
+
+impl From<StateInput> for State {
+    fn from(input: StateInput) -> State {
+        let text = Rope::from(input.text.as_str());
+        let defaults = Config::default();
+        let c = input.config.unwrap_or_default();
+        let config = Config {
+            tab_width: c.tab_width.unwrap_or(defaults.tab_width),
+            soft_wrap: c.soft_wrap.unwrap_or(defaults.soft_wrap),
+            scrolloff: c.scrolloff.unwrap_or(defaults.scrolloff),
+            line_ending: c
+                .line_ending
+                .or_else(|| auto_detect_line_ending(&text))
+                .unwrap_or(defaults.line_ending),
+            status_bar: c.status_bar.unwrap_or(defaults.status_bar),
+        };
+        let history = input.history.unwrap_or_default();
+        let saved_revision = input
+            .saved_revision
+            .unwrap_or(Some(history.current_revision()));
+        let mut state = State {
+            text,
+            selection: input.selection.unwrap_or_else(|| Selection::point(0)),
+            scroll: input.scroll,
+            viewport: input.viewport.unwrap_or(Viewport { width: 80, height: 24 }),
+            clipboard: input.clipboard,
+            path: input.path,
+            history,
+            saved_revision,
+            saving: input.saving,
+            dirty: false,
+            config,
+            status: input.status,
+            now_ms: input.now_ms,
+            run: input.run,
+            quit_armed: input.quit_armed,
+            wrap: WrapCache::default(),
+        };
+        state.dirty = state.compute_dirty();
+        state
+    }
 }
 
 impl State {
@@ -146,6 +270,7 @@ impl State {
             now_ms: 0,
             run: None,
             quit_armed: false,
+            wrap: WrapCache::default(),
         };
         state.dirty = state.compute_dirty();
         state
@@ -163,8 +288,10 @@ impl State {
         Ok(state)
     }
 
-    /// Clamps the selection and view to the document. A no-op on any state `update` made.
+    /// Clamps the selection and view to the document. A no-op on any state `update` made
+    /// (apart from forgetting the layout memo, which changes nothing visible).
     pub fn sanitize(&mut self) {
+        self.wrap.clear();
         let text = self.text.slice(..);
         let len = text.len_chars();
         let fix = |pos: usize| ensure_grapheme_boundary_prev(text, pos.min(len));
@@ -231,14 +358,9 @@ impl State {
 
 mod rope_as_string {
     use crate::helix::Rope;
-    use serde::{Deserialize, Deserializer, Serializer};
+    use serde::Serializer;
 
     pub fn serialize<S: Serializer>(rope: &Rope, s: S) -> Result<S::Ok, S::Error> {
         s.collect_str(rope)
-    }
-
-    pub fn deserialize<'de, D: Deserializer<'de>>(d: D) -> Result<Rope, D::Error> {
-        let text = String::deserialize(d)?;
-        Ok(Rope::from(text.as_str()))
     }
 }

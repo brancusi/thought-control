@@ -263,6 +263,20 @@ assert_eq!((replayed, count), (live, 2));
 [architecture.md](architecture.md#rehydration)). `to_json` is pretty-printed; use
 `serde_json::to_string(&state)` for one line.
 
+Deserializing goes through `state::StateInput`, where every field is optional, so a minimal
+state works:
+
+```rust
+use caretline_next::State;
+
+let s = State::from_json(r#"{"text":"hello\n","viewport":{"width":40,"height":10}}"#).unwrap();
+assert!(!s.dirty && s.history.len() == 1); // clean, with a fresh history
+```
+
+Undo grouping constants live in `caretline_next::state`: `RUN_GAP_MS` (1500), `RUN_MAX_CHARS`
+(256) and `RUN_WORD_BREAK_CHARS` (128). See
+[architecture.md](architecture.md#undo-grouping-worked-through).
+
 ## Session
 
 A `Session` wraps a `State` with a revision counter and an in-memory trace. It is the library
@@ -271,12 +285,17 @@ face of the [state protocol](protocol.md).
 | Method | Does |
 |---|---|
 | `Session::new(state)` | Starts at rev 0, with the state as the trace's first line |
-| `state()`, `rev()`, `trace()`, `trace_jsonl()` | Read the state, the rev and the trace |
+| `state()`, `rev()`, `trace()`, `trace_jsonl()` | Read the state, the rev and every trace line kept |
+| `segment_trace()`, `segment_rev()` | The current segment (from the latest `state` line) and the rev it starts at |
+| `trace_since(rev)`, `trace_start_rev()` | The lines after `rev` (`None` once trimmed), and the oldest rev it answers for |
+| `checkpoint()` | Starts a new segment with the current state; the rev doesn't change |
+| `set_trace_limit(lines)` | Bounds the kept trace (default `session::DEFAULT_TRACE_LIMIT`, 100,000): older segments go first, and a segment that alone outgrows it is cut by an automatic checkpoint |
+| `trace_lines_total()`, `trace_lines_from(n)` | Lines recorded so far (dropped ones included) and the lines from absolute position `n`, for copying the trace to a file |
 | `apply(msg) -> Vec<Effect>` | Applies one message (rev + 1), returns effects unperformed |
 | `apply_all(msgs)` | Applies several |
 | `apply_with(msg, exec)` | Applies, performs effects with `exec`, and applies the messages `exec` returns (such as `Saved`) |
 | `keys(script)` | Runs a key script; returns the messages and effects |
-| `set_state(state)` | Replaces the state (sanitized), recorded in the trace; rev + 1 |
+| `set_state(state)` | Replaces the state (sanitized) and starts a new trace segment; rev + 1 |
 | `frame()` | `view` of the current state |
 | `render(w, h)` | The frame at another size, without changing the session |
 | `handle(line, exec)` | Answers one protocol request line (`protocol::Handled`): the response line, the `Change` it made and any `subscribe` control |

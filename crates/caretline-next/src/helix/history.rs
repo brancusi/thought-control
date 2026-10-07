@@ -132,10 +132,12 @@ impl History {
             return false;
         }
         let rev = &mut self.revisions[self.current];
-        rev.transaction = rev.transaction.clone().compose(transaction.clone());
+        let composed = std::mem::take(&mut rev.transaction).compose(transaction.clone());
+        rev.transaction = composed;
         // Undo the newest edit first, then the earlier ones. `compose` keeps the selection of
         // its right-hand side, which is the selection from before the run.
-        rev.inversion = transaction.invert(original_doc).compose(rev.inversion.clone());
+        let inversion = std::mem::take(&mut rev.inversion);
+        rev.inversion = transaction.invert(original_doc).compose(inversion);
         rev.timestamp = timestamp;
         true
     }

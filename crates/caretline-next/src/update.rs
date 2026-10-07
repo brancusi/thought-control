@@ -8,7 +8,8 @@ use crate::helix::line_ending::line_end_char_index;
 use crate::helix::{Range, RopeSlice, Selection, SmallVec, Tendril, Transaction};
 use crate::layout::{ensure_caret_visible, Layout};
 use crate::msg::{By, Dir, Effect, Msg};
-use crate::state::{EditRun, RunKind, Scroll, State, RUN_GAP_MS};
+use crate::helix::transaction::Operation;
+use crate::state::{EditRun, RunKind, Scroll, State, RUN_GAP_MS, RUN_MAX_CHARS, RUN_WORD_BREAK_CHARS};
 
 /// Applies one message. Returns the effects for the runtime to perform.
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
@@ -244,27 +245,62 @@ fn commit(state: &mut State, txn: Transaction, kind: Option<RunKind>, replaced_s
         selection: state.selection.clone(),
     };
     txn.apply(&mut state.text);
+    state.wrap.edited(txn.changes());
     if let Some(sel) = txn.selection() {
         state.selection = sel.clone();
     }
     let now = state.now_ms;
+    let changed = changed_chars(&txn);
     let continues = match (kind, state.run) {
         (Some(kind), Some(run)) => {
             !replaced_selection
                 && run.kind == kind
                 && run.revision == state.history.current_revision()
                 && now.saturating_sub(run.at_ms) < RUN_GAP_MS
+                && !run_is_full(run, &txn)
         }
         _ => false,
     };
-    if !(continues && state.history.amend_current_revision(&txn, &before.doc, now)) {
+    let amended = continues && state.history.amend_current_revision(&txn, &before.doc, now);
+    if !amended {
         state.history.commit_revision_at_timestamp(&txn, &before, now);
     }
+    let so_far = match state.run {
+        Some(run) if amended => run.chars,
+        _ => 0,
+    };
     state.run = kind.map(|kind| EditRun {
         kind,
         revision: state.history.current_revision(),
         at_ms: now,
+        chars: so_far + changed,
     });
+}
+
+/// Characters a transaction inserts or deletes.
+fn changed_chars(txn: &Transaction) -> usize {
+    txn.changes()
+        .changes()
+        .iter()
+        .map(|op| match op {
+            Operation::Retain(_) => 0,
+            Operation::Delete(n) => *n,
+            Operation::Insert(s) => s.chars().count(),
+        })
+        .sum()
+}
+
+/// Whether `run` should end before `txn`: it reached [`RUN_MAX_CHARS`], or it is a typing
+/// run past [`RUN_WORD_BREAK_CHARS`] and `txn` starts a new word.
+fn run_is_full(run: EditRun, txn: &Transaction) -> bool {
+    if run.chars >= RUN_MAX_CHARS {
+        return true;
+    }
+    run.kind == RunKind::Typing
+        && run.chars >= RUN_WORD_BREAK_CHARS
+        && txn.changes().changes().iter().any(|op| {
+            matches!(op, Operation::Insert(s) if s.chars().next().is_some_and(char::is_whitespace))
+        })
 }
 
 /// Builds a transaction from one change per range (in selection order), dropping overlaps,
@@ -335,6 +371,7 @@ fn delete(
 /// Applies an undo or redo transaction from the history.
 fn apply_history(state: &mut State, txn: &Transaction) {
     txn.apply(&mut state.text);
+    state.wrap.edited(txn.changes());
     state.selection = match txn.selection() {
         Some(sel) => sel.clone(),
         None => state.selection.clone().map(txn.changes()),

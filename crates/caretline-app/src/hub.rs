@@ -14,6 +14,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use caretline_next::protocol::{event_line, Change, Control, Executor, Subscription};
+use caretline_next::trace::TraceLine;
 use caretline_next::Session;
 
 pub type ClientId = u64;
@@ -94,20 +95,30 @@ impl Hub {
         }
     }
 
-    /// Appends trace lines not yet written to the trace file.
+    /// Appends trace lines not yet written to the trace file. If the session's trace limit
+    /// dropped some before they were written (one request applying more lines than the
+    /// limit), the current state is written instead, so the file still replays to it.
     fn flush_trace(&mut self) {
-        let lines = &self.session.trace()[self.traced..];
-        if let Some(f) = &mut self.trace
-            && !lines.is_empty() {
-                let mut buf = String::new();
-                for l in lines {
-                    buf.push_str(&l.to_line());
+        if let Some(f) = &mut self.trace {
+            let mut buf = String::new();
+            match self.session.trace_lines_from(self.traced) {
+                Some(lines) => {
+                    for l in lines {
+                        buf.push_str(&l.to_line());
+                        buf.push('\n');
+                    }
+                }
+                None => {
+                    buf.push_str(&TraceLine::State(Box::new(self.session.state().clone())).to_line());
                     buf.push('\n');
                 }
+            }
+            if !buf.is_empty() {
                 let _ = f.write_all(buf.as_bytes());
                 let _ = f.flush();
             }
-        self.traced = self.session.trace().len();
+        }
+        self.traced = self.session.trace_lines_total();
     }
 }
 

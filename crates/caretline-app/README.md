@@ -60,7 +60,7 @@ The rules follow a macOS text field: a motion without Shift collapses a selectio
 instead of moving from the caret (`←` goes to the start, `→` to the end, `↑` and `↓` start
 from the start or end); a word or line delete with a selection deletes only the selection;
 `↑` on the first row goes to the document start and `↓` on the last row to the end. Typing
-within 1.5 s is one undo step; every other command is its own step, and undo restores the
+within 1.5 s is one undo step (up to 256 characters, breaking at a word past 128); every other command is its own step, and undo restores the
 text, caret and selection exactly.
 
 Copy also writes the system clipboard (`pbcopy`, `wl-copy`, `xclip` or `xsel`, else OSC 52),
