@@ -18,22 +18,28 @@ const SIZE = '72x16';
 const typed = ' Lines wrap at word boundaries, never mid-word.';
 const steps = [['', 1600]];
 for (let i = 0; i < typed.length; i += 3) steps.push([typed.slice(i, i + 3), 70]);
+const down = (n) => '<down>'.repeat(n);
 steps.push(
   ['', 700],
-  ['<down>', 450],
-  ['<c-t>', 900],
-  ['<down>', 1100],
-  ['<down>', 450],
-  ['<c-t>', 800],
-  ['<c-t>', 800],
-  ['<down>', 400],
+  [down(1), 900],
+  [down(17) + '<home>', 900],
+  ['<c-n>', 500],
+  ['<c-n>', 900],
+);
+for (const ch of ['tw', 'o ']) steps.push([ch, 200]);
+steps.push(
+  ['', 1100],
+  ['<c-z>', 1200],
+  ['<esc>', 500],
+  [down(10), 900],
   ['<tab>', 900],
   ['<s-tab>', 700],
-  ['<a-down>', 900],
-  ['<a-up>', 700],
-  ['<down><down><down><down><down><down><down><down><down>', 700],
+  [down(5), 700],
   ['<c-o>', 1300],
   ['<c-o>', 800],
+  ['<end><c-g>', 1200],
+  [' (and here)', 1400],
+  ['<c-g>', 800],
   ['<c-d>', 2600],
 );
 

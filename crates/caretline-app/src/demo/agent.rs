@@ -23,9 +23,9 @@ pub const CONNECTING: &str = "agent · connecting…";
 /// What the agent types, line by line, into its own section.
 const SCRIPT: &[&str] = &[
     "- Hello! You're in “Yours”; I'll stay down here.",
-    "- [ ] Draft the release notes",
-    "- [ ] Check the installer on Linux",
-    "- [x] Fold the scenes into the binary",
+    "- Draft the release notes",
+    "- Check the installer on Linux",
+    "  - and on macOS, under Rosetta",
     "- Each keystroke of mine is a guarded write: when you type between my read and my write, the editor refuses mine as stale and I read again.",
 ];
 

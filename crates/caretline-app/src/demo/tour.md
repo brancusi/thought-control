@@ -1,44 +1,65 @@
 # Welcome to caretline
 
-A terminal editor where the whole editor is one value you can save, send and replay. Work down this page: try each step, then tick its box with ⌃T. The status bar always says what's next.
+A terminal editor where the whole editor is one value you can save, send and replay. Work down this page with ↓: the status bar names the keys for the section the caret is in.
 
 ## 1 · Type
 
 The caret is already at the end of this paragraph, so just start typing, and keep going past the edge of the window.
 
-- [ ] Done (⌃T ticks this box)
+## 2 · Move
 
-## 2 · Tasks and nesting
+⌥← and ⌥→ jump a word at a time. ↑ and ↓ move by the rows you see, not by lines, and keep their column: go down through this paragraph and watch the caret hold its place across wrapped rows and short ones.
+Short row.
+And a long row again, so the column has somewhere to come back to as you keep going down past the short one.
 
-- Press ⌃T on this line to make it a task, and again to tick it
-- Tab nests this item under the one above, ⇧Tab brings it back
-- ⌥↑ and ⌥↓ move an item, children and all
-- [ ] Done
+## 3 · Select
 
-## 3 · Select, undo, redo
+Hold ⇧ with any arrow to select, and ⇧⌥ to select by words. As in a macOS text field, ← on a selection goes to its start, → to its end, and Esc collapses it.
 
-Hold ⇧ with any arrow to select, ⌥ to go a word at a time. Type over the selection, then ⌃Z to undo and ⌃Y to redo: the text, the caret and the selection come back exactly.
+## 4 · Multiple carets
 
-- [ ] Done
+Put the caret just before the first "one" below and press ⌃N twice: a caret on each row, in the same column. Now type. Esc goes back to one caret.
 
-## 4 · Folds
+- one apple
+- one pear
+- one plum
 
-- Put the caret on this line and press ⌃O to fold its children away
+## 5 · Undo, exactly
+
+Select a few words and type over them, then ⌃Z: the text, the caret and the selection come back exactly as they were. ⌃Y redoes. Typing within a second and a half is one step.
+
+## 6 · Indent and move
+
+Tab and ⇧Tab indent and outdent a line with everything under it. ⌥↑ and ⌥↓ move it past its neighbours, children and all.
+
+- Pack the bag
+- Passport
+  - and the charger
+- Book
+
+## 7 · Folds
+
+- Put the caret on this line and press ⌃O to fold away the lines under it
   - a passport
   - a charger
   - a good book
-- [ ] Done
 
-## 5 · One state
+## 8 · Marks
 
-The text, every caret, the undo history, the folds, the scroll and the clock are one serializable value. Press ⌃D to write it to state.json and see how big it is.
+Every block carries a mark: an id that follows it through edits, moves, undo, and cut and paste. With the caret here, the status bar shows the block's mark. Move the line below with ⌥↑, cut and paste it, undo: the number stays.
 
-- [ ] Done
+- Hold on to me
 
-## 6 · Replay
+## 9 · A second view
 
-A session is that state plus every message since: each key, each tick of the clock. Press ⌃P to watch yours replay from the start, and land on the identical state.
+⌃G opens a second view of this document below this one: the same text, with its own caret and scroll. Type up here and watch it change there. ⌃G closes it.
 
-- [ ] Done
+## 10 · One state
 
-That's the tour. ⌃Q quits (twice to leave without saving). Next: caretline demo scenes, and caretline demo agent.
+The text, every caret, the undo history, the marks, the folds, the scroll and the clock are one serializable value. Press ⌃D to write it to state.json and see how big it is.
+
+## 11 · Replay
+
+A session is that state plus every message since: each key, each tick of the clock. Press ⌃P to watch yours replay from the start and land on the identical state.
+
+That's the tour. ⌃Q quits (twice to leave without saving). Next: caretline demo agent, where an agent edits beside you, and caretline demo scenes.

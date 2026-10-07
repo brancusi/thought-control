@@ -25,22 +25,28 @@ nothing to clean. When it quits, it says where the files are.
 
 ### `caretline demo`: the tour
 
-A short outline you work down by doing. The status bar always names the next step.
+A short document you work down with `↓`. The status bar names the keys for the section the
+caret is in.
 
-| Step | You try |
+| Section | You try |
 |---|---|
 | 1. Type | Type past the edge of the window: lines wrap at word boundaries |
-| 2. Tasks and nesting | `⌃T` turns an item into a task and ticks it; `Tab`/`⇧Tab` nest; `⌥↑`/`⌥↓` move an item with its children |
-| 3. Select, undo, redo | `⇧` with any arrow selects; `⌃Z` and `⌃Y` bring back the text, caret and selection exactly |
-| 4. Folds | `⌃O` folds the item under the caret, and opens it again |
-| 5. One state | `⌃D` writes the whole editor (text, carets, undo history, folds, scroll, clock) to `state.json` and says how big it is |
-| 6. Replay | `⌃P` replays your session, from the first state through every message, and checks it lands on the identical state |
+| 2. Move | `⌥←`/`⌥→` by word; `↑`/`↓` by visual row, keeping the goal column across short and wrapped rows |
+| 3. Select | `⇧` with any arrow selects, `⇧⌥` by word; `←`/`→` collapse to the selection's edge, `Esc` collapses it |
+| 4. Multiple carets | `⌃N` adds a caret on the row below, in the same column; typing edits every row at once; `Esc` goes back to one |
+| 5. Undo, exactly | `⌃Z` and `⌃Y` bring back the text, every caret and the selection exactly |
+| 6. Indent and move | `Tab`/`⇧Tab` indent and outdent a line with the lines under it; `⌥↑`/`⌥↓` move it past its neighbours |
+| 7. Folds | `⌃O` folds the lines under the caret's item, and opens them again |
+| 8. Marks | The status bar shows the caret's block mark, an id that survives moves, cut and paste, and undo |
+| 9. A second view | `⌃G` opens a second view of the same document below: its own caret and scroll |
+| 10. One state | `⌃D` writes the whole editor (text, carets, undo history, marks, folds, scroll, clock) to `state.json` and says how big it is |
+| 11. Replay | `⌃P` replays your session, from the first state through every message, and checks it lands on the identical state |
 
-Tick each step's `Done` box with `⌃T`. `⌃Q` quits (twice to leave without saving).
+`⌃Q` quits (twice to leave without saving).
 
-`⌃O`, `⌃D` and `⌃P` are the demo's own keys. In your own program the same things are a
-[`toggle_fold`](messages.md#views-and-folds) message, `State::to_json` and
-[`replay_trace`](api.md).
+`⌃N`, `⌃O`, `⌃G`, `⌃D` and `⌃P` are the demo's own keys. In your own program the same things
+are a selection in the [state](architecture.md), a [`toggle_fold`](messages.md#views-and-folds)
+message, [`view.open`](protocol.md#views), `State::to_json` and [`replay_trace`](api.md).
 
 ### `caretline demo scenes`: the frame path
 
@@ -82,7 +88,7 @@ caretline send --latest keys '<d-down>hello from another shell'
 
 ```sh
 caretline notes.md               # edit a file
-caretline --outline todo.md      # lists, tasks and folds
+caretline --outline todo.md      # lists, blocks and folds
 caretline --new-state notes.md --size 60x20 > s.json
 caretline --state s.json --keys 'Hello<cr>' --snapshot 60x20   # headless
 caretline notes.md --trace t.jsonl                             # record a session…
