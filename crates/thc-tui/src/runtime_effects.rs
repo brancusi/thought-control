@@ -23,6 +23,9 @@ fn perform(app: &mut App, effect: Effect) {
             let _ = app.reload();
         }
         Effect::SaveDoc => app.save_doc(true),
+        // Ids are the runtime's to mint (the model reads no randomness).
+        Effect::MintIds { n } => dispatch(app, Msg::IdsMinted { ids: (0..n).map(|_| thc_core::id::new_id()).collect() }),
+        Effect::Reopen => app.patch_doc(),
         Effect::Quit => app.quit = true,
         Effect::SetMouse { on } => app.mouse_request = Some(on),
         Effect::SpawnEditor { target } => app.editor_request = Some(target),
@@ -56,7 +59,7 @@ pub(crate) fn run(app: &mut App, effects: Vec<Effect>) {
 
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     let effects = update::update(
-        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, toast: &mut app.ui.toast },
+        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, toast: &mut app.ui.toast, doc: app.doc.as_mut() },
         msg,
     );
     run(app, effects);
