@@ -8,7 +8,7 @@ is a `Msg`. A pure `update` function applies a message and returns `Effect`s for
 outside world, and a pure `view` function turns the state into a grid of cells. The engine
 does no I/O and has no terminal code, so you can drive it from a terminal, a test, a script
 or another program, and replay any session exactly. The `caretline` binary
-([`caretline-app`](../../crates/caretline-app)) is the interactive editor and a headless
+([`caretline-cli`](../../crates/caretline-app)) is the interactive editor and a headless
 tool built on top.
 
 ```console
@@ -27,7 +27,7 @@ A prebuilt binary for macOS or Linux, checked against its sha256 and installed t
 `~/.local/bin`, then a guided tour that teaches by doing. Two more demos:
 `caretline demo scenes` (ASCII animations running inside the editor) and `caretline demo agent`
 (a scripted agent co-editing beside you over the editor's socket). With Rust instead:
-`cargo install --git https://github.com/brancusi/thought-control caretline-app`.
+`cargo install caretline-cli`.
 See the [Quickstart](quickstart.md).
 
 ## What it covers
@@ -79,8 +79,8 @@ caretline is published on crates.io as [`caretline`](https://crates.io/crates/ca
 
 | Crate in this repo | What it is | Used by |
 |---|---|---|
-| [`caretline`](../../crates/caretline) | caretline: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app`, `thc-tui` |
-| [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
+| [`caretline`](../../crates/caretline) | caretline: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-cli`, `thc-tui` |
+| [`caretline-cli`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
 | [`caretline-mcp`](../../crates/caretline-mcp) | The `caretline-mcp` binary: an [MCP server](mcp.md) for agents | |
 
 caretline has a block model ([outline documents](outline.md)), folds and multiple views per
@@ -108,5 +108,5 @@ operations for the vault.
 
 caretline is MIT, except `src/helix/`, which is vendored from
 [Helix](https://github.com/helix-editor/helix) and stays under the Mozilla Public License 2.0
-file by file. `caretline-app` is MIT. See [embedding.md](embedding.md#licensing) for what
+file by file. `caretline-cli` is MIT. See [embedding.md](embedding.md#licensing) for what
 that means for you.

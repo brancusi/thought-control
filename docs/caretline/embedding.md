@@ -307,7 +307,7 @@ written from Python
 |---|---|
 | `caretline`, except `src/helix/` | MIT |
 | its `src/helix/` (vendored from Helix) | MPL-2.0, per file |
-| `caretline-app` | MIT |
+| `caretline-cli` | MIT |
 
 MPL-2.0 is a **file-level** copyleft. In practice, for an embedder:
 

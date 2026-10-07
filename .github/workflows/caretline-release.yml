@@ -28,7 +28,7 @@ jobs:
         id: v
         run: |
           v="$(sed -n 's/^version = "\(.*\)"/\1/p' crates/caretline-app/Cargo.toml | head -1)"
-          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "caretline-app version isn't x.y.z: $v" >&2; exit 1; }
+          [[ "$v" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "caretline-cli version isn't x.y.z: $v" >&2; exit 1; }
           if [[ "$GITHUB_REF" == refs/tags/caretline-v* ]]; then
             [[ "${GITHUB_REF#refs/tags/caretline-v}" == "$v" ]] || { echo "Tag ${GITHUB_REF#refs/tags/} doesn't match crates/caretline-app ($v)." >&2; exit 1; }
             echo "publish=1" >> "$GITHUB_OUTPUT"
@@ -59,7 +59,7 @@ jobs:
 
               curl -fsSL https://caretline.app/install.sh | sh && caretline demo
 
-          Or with Rust: \`cargo install --git https://github.com/brancusi/thought-control caretline-app\`
+          Or with Rust: \`cargo install caretline-cli\`
 
           Each tarball holds the \`caretline\` binary; check it against its .sha256.
           EOF
@@ -101,10 +101,10 @@ jobs:
 
       - name: Tests
         if: matrix.test
-        run: cargo test -p caretline -p caretline-app
+        run: cargo test -p caretline -p caretline-cli
 
       - name: Build
-        run: cargo build --release --locked -p caretline-app --target "$T"
+        run: cargo build --release --locked -p caretline-cli --target "$T"
 
       - name: Smoke test
         # The x86_64 macOS build runs under Rosetta on the arm runner, when it is there.
