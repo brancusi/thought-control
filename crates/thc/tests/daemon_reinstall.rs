@@ -319,3 +319,46 @@ fn install_points_the_login_item_at_this_binary() {
     let calls = rig.calls();
     assert!(calls.contains("bootout") && calls.contains("bootstrap"), "{calls}");
 }
+
+/// Another registered vault with a daemon of its own (a plain `thc daemon start` there, which
+/// the login daemon then leaves alone) is restarted onto the new binary by the same setup step.
+#[test]
+fn reinstall_restarts_other_vaults_own_daemons() {
+    let rig = Rig::new("others", Kind::Launchd, None);
+    let side = rig.root.join("side");
+    let o = rig.thc().args(["vault", "new", "side"]).arg(&side).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    // Its own cache (the default for its path), as a plain start there would have.
+    let side_thc = || {
+        let mut c = rig.thc();
+        c.env_remove("THC_CACHE_DIR").env("THC_SERVICE_MANAGER", "launchd").args(["--vault", "side"]);
+        c
+    };
+    let side_status = || -> Value { serde_json::from_slice(&side_thc().args(["--json", "daemon", "status"]).output().unwrap().stdout).unwrap_or(Value::Null) };
+    // The side daemon first, so the login daemon's thread for that vault finds it taken.
+    let o = side_thc().args(["daemon", "start"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let side_first = side_status();
+    let o = rig.thc().args(["daemon", "start"]).output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let login_first = rig.wait_one();
+    assert_ne!(side_first["pid"], login_first["pid"], "{side_first}");
+
+    rig.reinstall();
+    let doctor: Value = serde_json::from_slice(&side_thc().args(["--json", "doctor"]).output().unwrap().stdout).unwrap();
+    assert!(doctor["issues"].to_string().contains("stale"), "{doctor}");
+
+    let mut c = rig.thc();
+    let o = c.env_remove("THC_SETUP_LOGIN").args(["--json", "setup", "--step", "login"]).output().unwrap();
+    let step: Value = serde_json::from_slice(&o.stdout).unwrap_or(Value::Null);
+    assert!(step["detail"].as_str().is_some_and(|d| d.contains("side: daemon restarted")), "{step}{}", String::from_utf8_lossy(&o.stderr));
+    let side_second = side_status();
+    assert_ne!(side_first["pid"], side_second["pid"]);
+    assert_eq!(side_second["exe_id"].as_str(), Some(rig.identity(&rig.bin).as_str()), "{side_second}");
+    let old = side_first["pid"].as_u64().unwrap() as i32;
+    assert!(unsafe { libc::kill(old, 0) } != 0, "the old side daemon is gone");
+    rig.wait_one();
+    if let Some(p) = side_second["pid"].as_u64() {
+        unsafe { libc::kill(p as i32, libc::SIGTERM) };
+    }
+}
