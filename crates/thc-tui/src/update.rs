@@ -29,6 +29,8 @@ pub(crate) enum Msg {
     /// An editing command on the open document: a caretline command id (`move.left`,
     /// `history.undo`) or thc's host command (`thc.task_cycle`).
     Editor { command: String, at: u64 },
+    /// Text typed at the caret of the open document.
+    Type { text: String },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
@@ -323,6 +325,11 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
                 d.fill_ids(ids);
             }
         }
+        Msg::Type { text } => {
+            if let Some(d) = state.doc {
+                d.insert(&text);
+            }
+        }
         Msg::Editor { command, at } => {
             use crate::editor::Outcome;
             let Some(d) = state.doc else { return vec![] };
@@ -481,6 +488,8 @@ mod editor_tests {
         assert_eq!(send(&mut d, &mut toast, cmd("history.undo")), vec![Effect::Reopen]);
         assert_eq!(send(&mut d, &mut toast, cmd("move.right")), vec![]);
         assert!(toast.is_none());
+        send(&mut d, &mut toast, Msg::Type { text: "!".into() });
+        assert_eq!(d.blocks()[0].text, "c!all the bank");
     }
 }
 

@@ -105,9 +105,7 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
     }
     if let KeyCode::Char(c) = k.code {
         if !ctrl && !alt && !k.modifiers.contains(KeyModifiers::SUPER) {
-            let d = app.doc.as_mut().unwrap();
-            let mut buf = [0u8; 4];
-            d.insert(c.encode_utf8(&mut buf));
+            crate::runtime_effects::dispatch(app, crate::update::Msg::Type { text: c.to_string() });
             // `[[` opens the link popup; the cursor starts on the first match.
             if c == '[' && app.link_query().is_some_and(|(_, q)| q.is_empty()) {
                 app.link_open = true;
