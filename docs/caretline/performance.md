@@ -28,6 +28,17 @@ how fast a client can produce input.
 | `state.get`, in process | 22 µs | 2.55 ms |
 | `state.get`, socket round trip | 2.86 ms (2.2 MB) | 10.9 ms (9.0 MB) |
 
+After 3,000 separate edits (each its own undo step):
+
+| Read | 1,000-line doc | 100,000-line doc |
+|---|---|---|
+| `state.get`, in process / socket | 0.88 ms / 1.94 ms (1,474 KB) | 3.90 ms / 10.4 ms (8,180 KB) |
+| `state.get` `history: false`, in process / socket | 27 µs / 85 µs (71 KB) | 2.88 ms / 8.21 ms (6,742 KB) |
+| `history.get`, in process / socket | 0.82 ms / 1.83 ms (1,403 KB) | 0.83 ms / 1.91 ms (1,438 KB) |
+
+Without the history, a state read costs what the text costs: 30× smaller and 20× faster on a
+1,000-line document. On a 100,000-line document the text dominates; use `render` and events.
+
 | Per message, in process | p50 |
 |---|---|
 | `tick` | 0.8 µs |
@@ -103,7 +114,6 @@ trace; when states arrive faster than the terminal paints, the screen shows the 
 
 | Gap | Impact | Plan |
 |---|---|---|
-| `state.get` includes the whole undo history | 1.5 MB after 3,000 small edits; 9 MB on a 100,000-line document | `state.get {history: false}` and a separate `history.get` |
 | Outline blocks are re-derived on every edit | ≈ 1 ms per key at 5,000 blocks | make derivation incremental if pages approach 50,000 blocks |
 | No synchronized output | frames can tear in the terminal | wrap each repaint in synchronized-update mode (DEC 2026) |
 | Repaints follow input, not the display | wasted work past the display rate | coalesce to one paint per refresh; redraw changed cells only |

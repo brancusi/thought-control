@@ -23,6 +23,7 @@ pub const OPS: &[&str] = &[
     "hello",
     "state.get",
     "state.set",
+    "history.get",
     "msgs",
     "keys",
     "render",
@@ -63,6 +64,8 @@ pub struct Subscription {
     pub msgs: bool,
     /// Include a rendered frame in each event.
     pub frame: Option<FrameSpec>,
+    /// Include the state, without its undo history, in each event.
+    pub state: bool,
 }
 
 /// A state change a request (or the runtime) made.
@@ -128,6 +131,12 @@ struct Request {
     /// subscribe: the messages with every event (default true).
     #[serde(default)]
     with_msgs: Option<bool>,
+    /// subscribe: the state, without its undo history, with every event.
+    #[serde(default)]
+    with_state: bool,
+    /// state.get: include the undo history (default true; `false` leaves it to history.get).
+    #[serde(default)]
+    history: Option<bool>,
     /// trace.get: only the lines after this rev.
     #[serde(default)]
     since_rev: Option<u64>,
@@ -297,6 +306,8 @@ struct Event<'a> {
     msgs: Option<&'a [Msg]>,
     #[serde(skip_serializing_if = "Option::is_none")]
     frame: Option<RenderedFrame>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    state: Option<crate::state::WithoutHistory<'a>>,
 }
 
 /// The `{event:"state"}` line a subscriber receives for `change`. `source` says where the
@@ -311,6 +322,7 @@ pub fn event_line(session: &Session, change: &Change, sub: &Subscription, source
         view: change.view,
         msgs: sub.msgs.then_some(change.msgs.as_slice()),
         frame,
+        state: sub.state.then(|| session.state().without_history()),
     })
     .expect("event serializes")
 }
@@ -365,17 +377,28 @@ impl Session {
             ))),
             "state.get" => {
                 #[derive(Serialize)]
+                struct R<S: Serialize> {
+                    rev: u64,
+                    state: S,
+                }
+                let full = req.history.unwrap_or(true);
+                let line = |state: &State| match full {
+                    true => to_line(id, R { rev: self.rev(), state }),
+                    false => to_line(id, R { rev: self.rev(), state: state.without_history() }),
+                };
+                match req.view.unwrap_or(0) {
+                    0 => Ok(reply(line(self.state()))),
+                    v => Ok(reply(line(&self.state_of(v).ok_or_else(|| no_view(v))?))),
+                }
+            }
+            "history.get" => {
+                #[derive(Serialize)]
                 struct R<'a> {
                     rev: u64,
-                    state: &'a State,
+                    #[serde(flatten)]
+                    part: crate::state::HistoryPart<'a>,
                 }
-                match req.view.unwrap_or(0) {
-                    0 => Ok(reply(to_line(id, R { rev: self.rev(), state: self.state() }))),
-                    v => {
-                        let state = self.state_of(v).ok_or_else(|| no_view(v))?;
-                        Ok(reply(to_line(id, R { rev: self.rev(), state: &state })))
-                    }
-                }
+                Ok(reply(to_line(id, R { rev: self.rev(), part: self.state().history_part() })))
             }
             "state.set" => {
                 check_rev(self.rev())?;
@@ -458,7 +481,7 @@ impl Session {
                 Ok(reply(to_line(id, R { rev: self.rev(), frame })))
             }
             "subscribe" => {
-                let sub = Subscription { msgs: req.with_msgs.unwrap_or(true), frame: req.frame };
+                let sub = Subscription { msgs: req.with_msgs.unwrap_or(true), frame: req.frame, state: req.with_state };
                 Ok(Handled {
                     response: to_line(id, serde_json::json!({ "rev": self.rev(), "subscribed": true })),
                     change: None,
