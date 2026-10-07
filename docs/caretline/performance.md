@@ -142,11 +142,21 @@ and the rest of the frames are applied (and traced) without being drawn.
 - **Frame shape.** Push frames with `frame`, not `state.set`: it parses no state and rebuilds
   nothing.
 
+## Outline derivation
+
+After an edit the outline is derived again only around the change: the document keeps the
+outline it had and the chars that changed since, re-reads from the block before the change
+(outside any fence) until the text runs in step with the old outline again, and reuses the
+rest shifted. Block ids and attributes are read from the marks for every block. A change the
+reuse can't follow (a block that started only by its mark loses it, a mark on a reused line
+that isn't a block start) falls back to a whole derivation. Debug builds check every
+incremental result against the whole derivation. `Document::take_touched` gives a host the
+same changed range, so a host mirroring blocks re-reads only those.
+
 ## Known gaps
 
 | Gap | Impact | Plan |
 |---|---|---|
-| Outline blocks are re-derived on every edit | ≈ 1 ms per key at 5,000 blocks | make derivation incremental if pages approach 50,000 blocks |
 | No engine animation uses the frame clock yet | the clock is plumbing: frames only advance `now_ms` | animate in `update` from `Msg::Frame` (smooth scrolling, a caret trail) |
 | Windows | no Unix sockets, so no `--listen` or `serve --socket` | a named-pipe transport; out of scope for now |
 

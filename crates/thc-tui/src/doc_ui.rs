@@ -240,8 +240,11 @@ fn layout(app: &mut App, w: usize) -> (Vec<Row>, Option<(usize, isize)>) {
         // Whether the meta gets its own row follows the saved meta, never the live chip: lines
         // below don't jump while a token is typed (the chip may run into the margin instead).
         let meta = meta_of(ctx, &d.blocks()[i], None);
-        let last_row_end_col = width(&d.blocks()[i].text[wr[0].0..wr[0].1]);
-        let own_row = !meta.is_empty() && (w < 60 || (MARKS + HANG + d.blocks()[i].depth * 4 + last_row_end_col + 2 > w.saturating_sub(left_edge(ctx, w)).saturating_sub(width(&meta))));
+        // (Measured only when there's a meta: most lines have none, and this runs per line.)
+        let own_row = !meta.is_empty() && (w < 60 || {
+            let last_row_end_col = width(&d.blocks()[i].text[wr[0].0..wr[0].1]);
+            MARKS + HANG + d.blocks()[i].depth * 4 + last_row_end_col + 2 > w.saturating_sub(left_edge(ctx, w)).saturating_sub(width(&meta))
+        });
         for (k, (s, e)) in wr.iter().enumerate() {
             if i == d.caret().line && d.caret().byte >= *s && (d.caret().byte < *e || (d.caret().byte == *e && (k + 1 == wr.len() || d.blocks()[i].text.as_bytes().get(*e) == Some(&b'\n')))) && caret.is_none() {
                 // On the first row the marker is drawn in the hang: columns count from after it,
@@ -479,7 +482,7 @@ fn month(app: &App, date: chrono::NaiveDate) -> Vec<TLine<'static>> {
 
 /// The document's words (its own lines), for the `wordcount` element.
 pub fn word_count(app: &App) -> usize {
-    app.doc.as_ref().map_or(0, |d| d.blocks().iter().map(|l| l.text.split_whitespace().count()).sum())
+    app.doc.as_ref().map_or(0, |d| d.word_count())
 }
 
 /// One visible row of the document on screen, for the mouse (mouse.md §3): which line and bytes
@@ -520,8 +523,9 @@ impl DocContext {
 /// A content fingerprint also catches in-place edits (including folds and same-size text
 /// replacements), not just saves. It reads no clock, store, or interior cache.
 fn source_revision(app: &App) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    use std::hash::{BuildHasher, Hash, Hasher};
+    // A fast fixed-seed hash: this runs over every line twice a frame.
+    let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
     app.vault.paths.vault.hash(&mut h);
     app.screen_width.hash(&mut h);
     app.show_detail.hash(&mut h);

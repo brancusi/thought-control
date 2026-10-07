@@ -212,11 +212,52 @@ fn e22_tab_nests_every_selected_item_and_keeps_the_selection() {
 }
 
 #[test]
-fn e22_a_paragraph_doesnt_nest() {
+fn e22_tab_nests_any_block_under_the_one_above() {
+    // A paragraph nests under a paragraph, a bullet or a task, one level at a time.
+    golden("One ‖ ▮Two", "<tab>", "One ‖   ▮Two");
+    golden("- one ¦ ▮Two", "<tab>", "- one ¦   ▮Two");
+    golden("- [ ] one ‖ ▮Two", "<tab>", "- [ ] one ‖   ▮Two");
+    golden("One ‖   ▮Two", "<tab>", "One ‖   ▮Two");
+    // An item nests under a paragraph.
+    golden("One ‖ - ▮two", "<tab>", "One ‖   - ▮two");
+    // Shift-Tab takes it back.
+    golden("One ‖   ▮Two", "<s-tab>", "One ‖ ▮Two");
+    golden("One ‖     ▮Three", "<s-tab>", "One ‖   ▮Three");
+}
+
+#[test]
+fn e22_tab_on_a_later_line_of_a_paragraph_makes_it_a_child() {
+    // `Para line`, Enter, `first subtask`, Tab: the line under the paragraph becomes its own
+    // paragraph, nested under it.
+    let mut s = doc("Para line▮");
+    keys(&mut s, "<cr>first subtask<tab>");
+    assert_eq!(show(&s), "Para line ‖   first subtask▮");
+    assert_eq!(ids(&s).len(), 2);
+    // Enter, Enter under it: the next paragraph keeps its depth (a sibling).
+    keys(&mut s, "<cr><cr>second");
+    assert_eq!(show(&s), "Para line ‖   first subtask ‖   second▮");
+    // Shift-Tab takes the child back to the top level, a paragraph of its own.
+    keys(&mut s, "<s-tab>");
+    assert_eq!(show(&s), "Para line ‖   first subtask ‖ second▮");
+    // Undo takes back each step.
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "Para line ‖   first subtask ‖   second▮");
+}
+
+#[test]
+fn e22_nothing_to_nest_under() {
     let mut s = doc("Para▮");
     keys(&mut s, "<tab>");
     assert_eq!(show(&s), "Para▮");
-    assert_eq!(s.view.status.as_deref(), Some("paragraphs don't nest"));
+    assert_eq!(s.view.status.as_deref(), Some("nothing to nest under"));
+    keys(&mut s, "<s-tab>");
+    assert_eq!(s.view.status.as_deref(), Some("already at the top level"));
+}
+
+#[test]
+fn a_paragraph_moves_with_its_children() {
+    golden("A ‖ B▮ ‖   b1 ‖   - b2", "<a-up>", "B▮ ‖   b1 ‖   - b2 ‖ A");
+    golden("B▮ ‖   b1 ‖   - b2 ‖ A", "<a-down>", "A ‖ B▮ ‖   b1 ‖   - b2");
 }
 
 #[test]
@@ -846,8 +887,8 @@ fn block_left_restored_and_notices() {
     let fx = keys(&mut s, "<c-z>");
     assert!(fx.contains(&Effect::Restored), "{fx:?}");
     s.view.config.status_bar = false;
-    let fx = keys(&mut s, "<tab>");
-    assert!(fx.contains(&Effect::Notice { text: "paragraphs don't nest".into() }), "{fx:?}");
+    let fx = keys(&mut s, "<s-tab>");
+    assert!(fx.contains(&Effect::Notice { text: "already at the top level".into() }), "{fx:?}");
 }
 
 #[test]
@@ -901,4 +942,27 @@ fn the_api_example_runs() {
     update(&mut s, Msg::InsertText { text: "Call Ana".into() });
     update(&mut s, Msg::Indent);
     assert_eq!(markdown::to_file(&s), "- [ ] Pay rent\n  - [ ] Call Ana\n");
+}
+
+#[test]
+fn a_paragraphs_children_copy_indented_and_paste_back_nested() {
+    let mut s = doc("⟦Para line ‖   first subtask⏎more ‖   - [ ] a task▮⟧ ‖ After");
+    let copied = clip(&keys(&mut s, "<c-c>"));
+    assert_eq!(copied.as_deref(), Some("Para line\n\n  first subtask\n  more\n\n  - [ ] a task"));
+    // Pasted as Markdown: the same nesting.
+    let mut t = doc("▮");
+    send(&mut t, [Msg::Paste { text: copied }]);
+    // (Markdown joins a paragraph's lines.)
+    assert_eq!(show(&t), "Para line ‖   first subtask more ‖   - [ ] a task▮");
+}
+
+#[test]
+fn a_paragraphs_children_round_trip_through_a_file() {
+    use caretline_next::outline::markdown::{load, to_file};
+    let md = "Para line\n\n  first subtask\n  more\n\n  - [ ] a task\n\nAfter\n";
+    let s = load(md, None, Viewport { width: 80, height: 24 }, OutlineConfig::default());
+    let o = s.blocks().unwrap();
+    let shape: Vec<(u16, Kind)> = o.blocks.iter().map(|b| (b.depth, b.kind)).collect();
+    assert_eq!(shape, [(0, Kind::Para), (1, Kind::Para), (1, Kind::Task), (0, Kind::Para)]);
+    assert_eq!(to_file(&s), md);
 }

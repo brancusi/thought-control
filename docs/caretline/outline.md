@@ -35,6 +35,9 @@ It faces the river.                                              (continuation)
   quote (`> `) or a code fence (three backticks).
 - **Every other line continues the block above it** (a soft break). A continuation line
   holds plain content, without indentation.
+- **Paragraphs nest like items.** A nested paragraph's first line is its indentation and its
+  content (`  first subtask` is a paragraph at depth 1); Enter in it starts paragraphs at
+  the same depth, and its children move with it (`move_block`).
 - **Block starts** are the first line, every line with a [mark](architecture.md#block-marks),
   and every line outside a fence that starts with a marker (after optional indentation). A
   start without a mark gets one in the same update, so typing `- ` at the start of a
@@ -116,7 +119,8 @@ Each rule is one Transaction and one undo step. The mark column says what happen
 | Backspace or Delete | On a selected atomic block | Removes the block; the status says what | Its id goes (undo brings it back, selected) |
 | `insert_text` | On a selected atomic block | A new paragraph after it with the text | New id |
 | | `[ ] `, `[x] ` or `[] ` completed at the start of a paragraph's line | The box becomes a task marker (`- [ ] `): that line is a task, on a later line a block of its own | New id on a later line |
-| `indent` / `outdent` (Tab / Shift-Tab) | The caret's block, or every block the selection touches | One level deeper (at most one below the last non-empty block above) or shallower, keeping the selection. Paragraphs don't nest: the status says so | Kept |
+| `indent` / `outdent` (Tab / Shift-Tab) | The caret's block, or every block the selection touches | One level deeper (at most one below the last non-empty block above) or shallower, keeping the selection. Any block nests under any block: a paragraph under a paragraph, a bullet or a task, an item under a paragraph. With nothing to nest under (or nothing to outdent), the status says so | Kept |
+| | `indent` on a later line of a paragraph (a caret, no selection) | That line becomes a paragraph of its own, one level under the paragraph (Logseq-style: `Para line`, Enter, `first subtask`, Tab) | New id for the line |
 | `task_cycle` (`Ctrl-T`) | The caret's block, or every block the selection touches | The first block's next state applies to all: text → `[cycle[0]]` → `[cycle[1]]` → text. A bullet's marker becomes a task's | Kept |
 | | Inside a multi-line paragraph | Each selected line becomes its own task; the lines before and after stay paragraphs, tight against them | The first piece keeps the id; the others get new ones with no blank row |
 | | A task back to text, next to a paragraph with no blank row between | Joins it (the reverse of the split) | The joined ids go |
@@ -151,7 +155,7 @@ Each rule is one Transaction and one undo step. The mark column says what happen
 `outline::markdown` reads and writes Markdown:
 
 - `parse_markdown(text, plain)` reads pasted Markdown into `NewBlock`s (paragraph lines
-  joined, list items nested by their first indent, `- [ ]` and bare `[ ]` tasks, headings,
+  joined, list items and paragraphs nested by their first indent, `- [ ]` and bare `[ ]` tasks, headings,
   quotes and rules as one-line paragraphs, fences, tables and front matter as one paragraph
   with its line breaks).
 - `to_markdown(state, outline, from, to)` writes a selection for the clipboard.

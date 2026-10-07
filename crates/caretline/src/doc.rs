@@ -573,11 +573,13 @@ impl<L: BlockLine> Doc<L> {
             Command::KillToStart => b.kill_to_start(),
             Command::Indent => {
                 if !b.nest(1) {
-                    return Outcome::Nothing("paragraphs don't nest");
+                    return Outcome::Nothing("nothing to nest under");
                 }
             }
             Command::Outdent => {
-                b.nest(-1);
+                if !b.nest(-1) {
+                    return Outcome::Nothing("already at the top level");
+                }
             }
             Command::TaskCycle => {
                 if b.task_cycle() == "done" {

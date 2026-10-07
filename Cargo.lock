@@ -2216,6 +2216,7 @@ dependencies = [
  "caretline",
  "caretline-next",
  "chrono",
+ "foldhash 0.2.0",
  "libc",
  "ratatui",
  "rusqlite",

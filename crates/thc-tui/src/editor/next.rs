@@ -69,6 +69,8 @@ pub(crate) struct Next {
     pub(super) changed_at: Option<Instant>,
     clock: Instant,
     pool: IdPool,
+    /// Layouts for `rows_of`, by (text revision, width): one per text column in use.
+    row_layouts: Vec<(u64, usize, Layout)>,
 }
 
 /// thc's outline: two spaces per depth, its task vocabulary, the ⌃T cycle, whole-line images.
@@ -133,9 +135,7 @@ fn list_len(b: &BlockInfo) -> usize {
 /// A line as a block to insert.
 fn new_block(l: &Line, mark: Option<MarkId>, cfg: &OutlineConfig) -> NewBlock {
     let kind = cn_kind(l.kind());
-    // A paragraph nests by its indentation (the engine's own paragraphs don't).
-    let text = if l.kind() == Kind::Para && l.depth > 0 { format!("{}{}", " ".repeat(cfg.indent as usize * l.depth), l.text) } else { l.text.clone() };
-    NewBlock { depth: l.depth as u16, kind, status: (kind == cn::Kind::Task).then(|| status_char(cfg, l.status.as_deref())), text, gap: l.gap, mark }
+    NewBlock { depth: l.depth as u16, kind, status: (kind == cn::Kind::Task).then(|| status_char(cfg, l.status.as_deref())), text: l.text.clone(), gap: l.gap, mark }
 }
 
 /// The blank row before a line by default (the engine's rule, over thc's lines): a paragraph
@@ -205,6 +205,7 @@ impl Next {
             changed_at: None,
             clock: Instant::now(),
             pool: IdPool::default(),
+            row_layouts: Vec::new(),
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -236,6 +237,12 @@ impl Next {
     /// step.
     pub(super) fn lines_mut(&mut self) -> &mut Vec<Line> {
         self.dirty = true;
+        self.host_rev = self.host_rev.wrapping_add(1);
+        &mut self.lines
+    }
+
+    /// The mirror, for fields the engine never reads (save state, meta): nothing to take in.
+    pub(super) fn lines_state_mut(&mut self) -> &mut Vec<Line> {
         self.host_rev = self.host_rev.wrapping_add(1);
         &mut self.lines
     }
@@ -338,12 +345,22 @@ impl Next {
     /// deleted by the next save.
     fn sync(&mut self, last_saved: &HashMap<String, Line>) {
         let cfg = cfg();
+        let touched = self.st.doc.take_touched();
         let o = self.st.doc.blocks().expect("an outline document");
         let rope = self.st.doc.text.clone();
-        // The common case, an edit inside blocks: the same marks in the same order.
+        // The common case, an edit inside blocks: the same marks in the same order. Only the
+        // blocks the text changed in are read again (a blank row can change anywhere).
         if self.lines.len() == o.blocks.len() && self.lines.iter().zip(&o.blocks).all(|(l, b)| l.mark == Some(b.id.0)) {
-            for (l, b) in self.lines.iter_mut().zip(&o.blocks) {
-                read_block(l, b, &rope, &cfg);
+            let (from, to) = match touched {
+                Some((a, b)) => (o.index_at(rope.slice(..), a), o.index_at(rope.slice(..), b)),
+                None => (1, 0),
+            };
+            for (i, (l, b)) in self.lines.iter_mut().zip(&o.blocks).enumerate() {
+                if (from..=to).contains(&i) {
+                    read_block(l, b, &rope, &cfg);
+                } else {
+                    l.gap = b.attrs.gap;
+                }
             }
             return;
         }
@@ -475,22 +492,33 @@ impl Next {
 
     /// The rows line `i` wraps into at `w` columns, as byte ranges of its text (the first from
     /// 0, its marker included, as the old wrap gives them): the engine's own wrap.
-    pub(super) fn rows_of(&mut self, i: usize, w: usize, wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>) -> Vec<(usize, usize)> {
+    pub(super) fn rows_of(&mut self, i: usize, w: usize, wraps: &mut super::doc::Wraps) -> Vec<(usize, usize)> {
         self.flush();
         use std::hash::{Hash, Hasher};
-        let cfg = cfg();
         let l = &self.lines[i];
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        ("next", block_text(l, &cfg), l.depth).hash(&mut h);
+        // What the block's text is made of (`block_text`), without building it.
+        let mut h = super::doc::content_hasher();
+        ("next", &l.text, l.depth, l.kind(), l.status.as_deref()).hash(&mut h);
         let key = (h.finish(), w);
         if let Some(r) = wraps.get(&key) {
             return r.clone();
         }
         let o = self.st.doc.blocks().expect("an outline document");
         let b = &o.blocks[i];
-        let mut view = cn::View::new(Viewport { width: 4000, height: 1 });
-        view.layout = Some(OutlineLayout { marks: 0, hang: 0, indent: 4, column: (w + 4 * b.depth as usize).min(3000) as u16, min_column: 1, ..OutlineLayout::default() });
-        let lay = Layout::of(&self.st.doc, &view);
+        // Every depth wraps at `w` here (no marks, hang or indent): one layout per width and
+        // text, not one per line.
+        let rev = self.st.doc.rev;
+        self.row_layouts.retain(|(r, _, _)| *r == rev);
+        let k = match self.row_layouts.iter().position(|(_, lw, _)| *lw == w) {
+            Some(k) => k,
+            None => {
+                let mut view = cn::View::new(Viewport { width: 4000, height: 1 });
+                view.layout = Some(OutlineLayout { marks: 0, hang: 0, indent: 0, column: w.min(3000) as u16, min_column: 1, ..OutlineLayout::default() });
+                self.row_layouts.push((rev, w, Layout::of(&self.st.doc, &view)));
+                self.row_layouts.len() - 1
+            }
+        };
+        let lay = &self.row_layouts[k].2;
         let rope = &self.st.doc.text;
         let cs = b.start + list_len(b);
         let base = rope.char_to_byte(cs);
@@ -635,7 +663,6 @@ impl Doc {
         match cmd {
             EditCmd::Undo => return Outcome::Nothing("nothing to undo"),
             EditCmd::Redo => return Outcome::Nothing("nothing to redo"),
-            EditCmd::Indent => return Outcome::Nothing("paragraphs don't nest · - makes a bullet"),
             _ => {}
         }
         match fx.into_iter().rev().find_map(|e| if let Effect::Notice { text } = e { Some(text) } else { None }) {
@@ -819,7 +846,7 @@ mod tests {
         let texts = ["one two three four five six seven eight nine ten eleven", "a\nb", "", "trailing\n", "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字", "👨\u{200d}👩\u{200d}👧 family 👨\u{200d}👩\u{200d}👧 again and again and again", &"x".repeat(50)];
         let blocks: Vec<Block> = texts.iter().enumerate().map(|(i, t)| blk(&format!("n{i}"), 0, "para", t)).collect();
         let mut d = open(&blocks);
-        let mut wraps = HashMap::new();
+        let mut wraps = super::super::doc::Wraps::default();
         for w in [20, 24, 33] {
             for (i, t) in texts.iter().enumerate() {
                 let rows = d.next_mut().rows_of(i, w, &mut wraps);

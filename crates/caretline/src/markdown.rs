@@ -230,12 +230,8 @@ pub fn checkbox(status: Option<&str>) -> &'static str {
 /// Blocks as Markdown (copy). Each entry is a block, the part of its text that's selected, and a
 /// suffix the host adds after the text (thc: its fields as tokens, ` due:2026-10-09 !high`).
 pub fn to_markdown<Id>(parts: &[(&Block<Id>, &str, &str)]) -> String {
-    let base = parts
-        .iter()
-        .filter(|(l, _, _)| l.kind != Kind::Para)
-        .map(|(l, _, _)| l.depth)
-        .min()
-        .unwrap_or(0);
+    // Depth relative to the shallowest block copied (a paragraph's children are indented under it).
+    let base = parts.iter().map(|(l, _, _)| l.depth).min().unwrap_or(0);
     let mut out = String::new();
     let mut prev_para: Option<bool> = None;
     for (l, text, suffix) in parts {
@@ -245,11 +241,14 @@ pub fn to_markdown<Id>(parts: &[(&Block<Id>, &str, &str)]) -> String {
         {
             out.push('\n');
         }
+        let pad = "  ".repeat(l.depth.saturating_sub(base));
         if para {
-            out.push_str(text);
-            out.push_str(suffix);
+            let mut rows = text.split('\n');
+            out.push_str(&format!("{pad}{}{}", rows.next().unwrap_or(""), suffix));
+            for r in rows {
+                out.push_str(&format!("\n{pad}{r}"));
+            }
         } else {
-            let pad = "  ".repeat(l.depth.saturating_sub(base));
             let cell = if l.kind == Kind::Task {
                 checkbox(l.status.as_deref())
             } else {

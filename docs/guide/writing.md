@@ -42,7 +42,7 @@ it.
 |---|---|
 | Just type | Write |
 | `Enter` | A new line. Twice: a new note. In a list: the next item |
-| `Tab` / `⇧Tab` | Indent / outdent a list item |
+| `Tab` / `⇧Tab` | Indent / outdent a note: any note nests under the one above, paragraphs too. Tab on a paragraph's later line makes that line its child |
 | `⌃T` | Text → task → done → text |
 | `⇧` + arrows | Select |
 | `⌃C` / `⌃X` | Copy / cut (paste with your terminal, usually ⌘V) |

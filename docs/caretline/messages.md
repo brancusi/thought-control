@@ -165,7 +165,7 @@ don't clear the status message, don't end a typing run and don't disarm a pendin
 | `WriteFile { path, text }` | `{"effect":"write_file","path":"notes.md","text":"…"}` | Write the file, then send `saved` or `save_failed` |
 | `ClipboardSet { text }` | `{"effect":"clipboard_set","text":"…"}` | Put the text on the system clipboard |
 | `Quit` | `{"effect":"quit"}` | Exit |
-| `Notice { text }` | `{"effect":"notice","text":"paragraphs don't nest"}` | Show a message: an outline document's status message when the status bar is off |
+| `Notice { text }` | `{"effect":"notice","text":"nothing to nest under"}` | Show a message: an outline document's status message when the status bar is off |
 | `Completed { id }` | `{"effect":"completed","id":3}` | Nothing required. A task reached done in an outline (a host may save at once) |
 | `Restored` | `{"effect":"restored"}` | Nothing required. Undo or redo changed an outline (a host re-reads what it keeps per block) |
 | `BlockLeft { from, to }` | `{"effect":"block_left","from":2,"to":3}` | Nothing required. The caret moved to another block of an outline |

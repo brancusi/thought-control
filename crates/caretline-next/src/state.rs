@@ -212,6 +212,9 @@ pub struct Document {
     /// views. Emptied by every update.
     #[serde(skip)]
     pub(crate) journal: Journal,
+    /// Where the text changed since a host last asked ([`Document::take_touched`]).
+    #[serde(skip)]
+    pub(crate) touched: Touched,
 }
 
 /// One view of a [`Document`]: where its carets are, what it shows, and how.
@@ -393,6 +396,7 @@ impl Document {
             derived: OutlineCache::default(),
             edits: EditCount::default(),
             journal: Journal::default(),
+            touched: Touched::all(),
         };
         doc.dirty = doc.compute_dirty();
         doc
@@ -419,6 +423,7 @@ impl Document {
         self.marks.repair(self.text.slice(..));
         self.fit_mark_log();
         self.derived.clear();
+        self.touched = Touched::all();
         if self.outline.is_some() {
             crate::outline::mint_missing(self);
         }
@@ -582,6 +587,7 @@ impl From<StateInput> for State {
             derived: OutlineCache::default(),
             edits: EditCount::default(),
             journal: Journal::default(),
+            touched: Touched::all(),
         };
         let view = View {
             selection: input.selection.unwrap_or_else(|| Selection::point(0)),
@@ -843,6 +849,91 @@ pub(crate) struct EditCount(pub u64);
 impl PartialEq for EditCount {
     fn eq(&self, _: &EditCount) -> bool {
         true
+    }
+}
+
+/// The chars of the current text that changed since a host last asked: a range, or
+/// everything (a new or repaired document). A memo for hosts that mirror the text (they
+/// re-read only what changed), not part of the value.
+#[derive(Debug, Clone)]
+pub struct Touched {
+    range: Option<(usize, usize)>,
+    all: bool,
+}
+
+impl Default for Touched {
+    /// Unknown history: everything.
+    fn default() -> Touched {
+        Touched::all()
+    }
+}
+
+impl PartialEq for Touched {
+    fn eq(&self, _: &Touched) -> bool {
+        true
+    }
+}
+
+impl Touched {
+    pub(crate) fn all() -> Touched {
+        Touched { range: None, all: true }
+    }
+
+    /// Notes a change applied to the text: the range so far is mapped through it, then
+    /// joined with what it changed (in the new text's chars).
+    pub(crate) fn note(&mut self, cs: &ChangeSet) {
+        if !self.all && !cs.is_empty() {
+            self.range = Some(changed_span(self.range, cs));
+        }
+    }
+}
+
+/// The chars that differ after `cs` from a text whose chars `range` already differed from
+/// another: `range` mapped through `cs`, joined with what `cs` changed (new text's chars).
+pub(crate) fn changed_span(range: Option<(usize, usize)>, cs: &ChangeSet) -> (usize, usize) {
+    use crate::helix::transaction::{Assoc, Operation};
+    let mut pos = 0usize;
+    let mut span: Option<(usize, usize)> = None;
+    for op in cs.changes() {
+        match op {
+            Operation::Retain(n) => pos += n,
+            Operation::Delete(_) => {
+                let (a, b) = span.unwrap_or((pos, pos));
+                span = Some((a.min(pos), b.max(pos)));
+            }
+            Operation::Insert(t) => {
+                let end = pos + t.chars().count();
+                let (a, b) = span.unwrap_or((pos, end));
+                span = Some((a.min(pos), b.max(end)));
+                pos = end;
+            }
+        }
+    }
+    let mapped = range.map(|(x, y)| (cs.map_pos(x, Assoc::Before), cs.map_pos(y, Assoc::After)));
+    match (mapped, span) {
+        (Some((x, y)), Some((a, b))) => (x.min(a), y.max(b)),
+        (Some(r), None) | (None, Some(r)) => r,
+        (None, None) => (pos, pos),
+    }
+}
+
+impl Document {
+    /// The chars of the text that changed since the last call, as `[from, to)` in the current
+    /// text (`to` may reach the end): `None` when nothing did, the whole text after a load or a
+    /// repair. For a host that mirrors the text and re-reads only what changed.
+    pub fn take_touched(&mut self) -> Option<(usize, usize)> {
+        let t = std::mem::replace(&mut self.touched, Touched { range: None, all: false });
+        let n = self.text.len_chars();
+        if t.all {
+            return Some((0, n));
+        }
+        t.range.map(|(a, b)| (a.min(n), b.min(n)))
+    }
+
+    /// Everything counts as changed for the next [`Document::take_touched`] (after the text
+    /// or marks were set directly).
+    pub fn touch_all(&mut self) {
+        self.touched = Touched::all();
     }
 }
 
