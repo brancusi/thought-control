@@ -78,6 +78,10 @@ What's **not** in the state:
 - **Runtime handles:** the vault connection, channels, terminal capabilities, the last frame's
   hit regions and the image protocol. They live beside the state, not in it.
 
+Within `ui_state_version` 1 the state only gains fields. Panels that don't exist yet (the
+sidebar's stack of pages) arrive as new fields, and a client that doesn't know them can ignore
+them.
+
 ### Writing a state
 
 `state.set` (`thc ui set FILE`) replaces the state. **Fields you leave out take their
