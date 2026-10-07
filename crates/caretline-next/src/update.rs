@@ -15,7 +15,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let mut effects = Vec::new();
     let passive = matches!(
         msg,
-        Msg::Tick { .. } | Msg::Resize { .. } | Msg::Saved | Msg::SaveFailed { .. }
+        Msg::Tick { .. }
+            | Msg::Resize { .. }
+            | Msg::Saved
+            | Msg::SaveFailed { .. }
+            | Msg::ShowStatus { .. }
     );
     if !passive {
         state.status = None;
@@ -200,6 +204,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
         Msg::Tick { now_ms } => {
             state.now_ms = now_ms;
+        }
+        Msg::ShowStatus { text } => {
+            // One line: a newline would break the status bar.
+            let line = text.lines().next().unwrap_or("").to_string();
+            state.status = (!line.is_empty()).then_some(line);
         }
     }
 
@@ -454,7 +463,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
         By::LineEnd | By::DocEnd => Dir::Forward,
         _ => dir,
     };
-    let page = state.viewport.text_rows().max(1) as isize;
+    let page = state.text_rows().max(1) as isize;
     let wrapped = Layout::new(state);
     let unwrapped = Layout::unwrapped(state);
     let text = wrapped.text();
@@ -538,7 +547,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
 
 /// Scrolls the view; the caret moves only if it would leave the view, keeping its column.
 fn scroll(state: &mut State, rows: i32) {
-    let h = state.viewport.text_rows();
+    let h = state.text_rows();
     if h == 0 {
         return;
     }

@@ -26,7 +26,9 @@ cargo run -p caretline-app -- notes.md                # or run it from the check
 | `… --dump-state OUT.json` | Write the final state (`-` for stdout) |
 | `… --effects` | Print the effects `update` returned, one JSON per line |
 | `… --size WxH` | Resize before applying messages |
-| `caretline serve`, `caretline send`, `--listen` | The state protocol. **Landing next**, see [protocol.md](protocol.md) |
+| `caretline serve`, `caretline send`, `--listen` | The state protocol, see [protocol.md](protocol.md) |
+| `caretline bench` | Protocol throughput and latency (build with `--release`) |
+| `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
 
 A run is **headless** when any of `--snapshot`, `--dump-state`, `--msgs`, `--keys` or
 `--replay` is given. Headless runs never perform effects: no file is written and the

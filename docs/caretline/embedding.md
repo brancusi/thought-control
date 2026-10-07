@@ -5,7 +5,7 @@ There are two ways to put caretline in your project:
 | Way | You get | Best when |
 |---|---|---|
 | [As a library](#as-a-library) | `State`, `update` and `view` in your Rust process | Your app is in Rust and owns its terminal or window |
-| [As a process](#as-a-process) | `caretline serve` speaking JSON lines | Your app is in another language, or you want isolation (landing next) |
+| [As a process](#as-a-process) | `caretline serve` speaking JSON lines | Your app is in another language, or you want isolation |
 
 Either way, caretline owns the editing rules and you own everything else: input, drawing,
 files, the clipboard and the clock.
@@ -236,9 +236,6 @@ Draw each panel with `draw_editor(f, rects[i], &panels.editors[i])` from the exa
 
 ## As a process
 
-> **Landing next:** `caretline serve` is on the `editor/state-protocol` branch. See
-> [protocol.md](protocol.md).
-
 Spawn `caretline serve`, write JSON requests to its stdin and read one JSON response per
 line from its stdout. Any language that can run a process works.
 
@@ -298,6 +295,9 @@ written from Python
 - To show the editor in your UI, ask for `render` with `format: "cells"` and draw the rows
   and spans yourself.
 - One `serve` process is one editor. For several panels, start several.
+- `serve --no-status-bar` gives every row to text, for a panel that draws its own chrome.
+- `serve` ticks to the real time before each request, so typing groups into undo steps by
+  time. Pass `now_ms` on a request, or start `serve --no-clock`, to control time yourself.
 
 ## Licensing
 

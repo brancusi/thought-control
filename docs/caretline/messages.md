@@ -86,7 +86,7 @@ the last row to the end, as in a macOS text field.
 | `Quit` | `{"msg":"quit"}` | Returns `quit`. With unsaved changes, the first quit only warns and a second one quits |
 | `Resize { width, height }` | `{"msg":"resize","width":80,"height":24}` | Sets the viewport (clamped to at least 1 × 1) |
 | `Tick { now_ms }` | `{"msg":"tick","now_ms":1000}` | Reports the time. Undo grouping uses it |
-| `ShowStatus { text }` | `{"msg":"show_status","text":"hi"}` | **Landing next** with the protocol. Shows a one-line message in the status bar |
+| `ShowStatus { text }` | `{"msg":"show_status","text":"hi"}` | Shows a one-line message in the status bar (the first line of `text`) |
 
 `tick`, `resize`, `saved`, `save_failed` (and `show_status`) are **passive**. They don't
 clear the status message, don't end a typing run and don't disarm a pending quit.

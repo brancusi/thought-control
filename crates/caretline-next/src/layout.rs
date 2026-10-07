@@ -1,6 +1,7 @@
 //! Layout on top of Helix's `DocumentFormatter`: visual rows, the caret's place on screen,
 //! and keeping it in view. Shared by `update` (motion, scrolling) and `view` (drawing).
 
+use crate::helix::chars::char_is_line_ending;
 use crate::helix::doc_formatter::{DocumentFormatter, TextFormat};
 use crate::helix::position::char_idx_at_visual_block_offset;
 use crate::helix::text_annotations::TextAnnotations;
@@ -70,9 +71,14 @@ impl Layout {
 
     /// The number of visual rows document line `line` takes.
     pub fn line_rows(&self, line: usize) -> usize {
-        if !self.fmt.soft_wrap {
+        if !self.fmt.soft_wrap || self.fits_one_row(line) {
             return 1;
         }
+        self.formatted_rows(line)
+    }
+
+    /// The rows the formatter gives line `line`.
+    fn formatted_rows(&self, line: usize) -> usize {
         let start = self.text().line_to_char(line);
         let formatter =
             DocumentFormatter::new_at_prev_checkpoint(self.text(), &self.fmt, &self.annotations, start);
@@ -84,6 +90,29 @@ impl Layout {
             rows = g.visual_pos.row + 1;
         }
         rows
+    }
+
+    /// Whether a line surely fits on one row, by an upper bound on its width (every char
+    /// at least one cell, a tab a full stop, plus a cell for the line break or the end of
+    /// the text): the formatter only wraps once a row reaches the viewport width. Saves
+    /// formatting the common short line.
+    fn fits_one_row(&self, line: usize) -> bool {
+        use unicode_width::UnicodeWidthChar;
+        let width = self.fmt.viewport_width as usize;
+        let tab = self.fmt.tab_width as usize;
+        let mut sum = 1;
+        for c in self.text().line(line).chars() {
+            sum += match c {
+                '\t' => tab,
+                c if char_is_line_ending(c) => 0,
+                c if c.is_ascii() => 1,
+                c => c.width().unwrap_or(0).max(1),
+            };
+            if sum >= width {
+                return false;
+            }
+        }
+        true
     }
 
     /// The visual place of char position `pos`: its row position and column.
@@ -207,7 +236,7 @@ impl Layout {
 /// from the edges where possible.
 pub fn ensure_caret_visible(state: &mut State) {
     let layout = Layout::new(state);
-    let h = state.viewport.text_rows();
+    let h = state.text_rows();
     let w = state.viewport.width as usize;
     let (caret, col) = layout.pos_coords(state.caret());
     let mut top = layout.top(&state.scroll);
@@ -219,11 +248,15 @@ pub fn ensure_caret_visible(state: &mut State) {
         } else if dist > (h - 1 - so) as isize {
             top = layout.step_rows(caret, -((h - 1 - so) as isize)).0;
         }
-        // Don't leave empty rows below the end of the document.
-        let end = layout.pos_coords(layout.text().len_chars()).0;
-        let max_top = layout.step_rows(end, -(h as isize - 1)).0;
-        if top > max_top && max_top <= caret {
-            top = max_top;
+        // Don't leave empty rows below the end of the document. Every line takes at least
+        // one row, so this can only happen when the last line is fewer than `h` lines below
+        // the top; skipping the walk otherwise keeps updates cheap in long documents.
+        if layout.last_line().saturating_sub(top.line) < h {
+            let end = layout.pos_coords(layout.text().len_chars()).0;
+            let max_top = layout.step_rows(end, -(h as isize - 1)).0;
+            if top > max_top && max_top <= caret {
+                top = max_top;
+            }
         }
     } else {
         top = caret;
@@ -241,4 +274,36 @@ pub fn ensure_caret_visible(state: &mut State) {
         row: top.row,
         col: scroll_col,
     };
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::state::Viewport;
+
+    /// The short-line shortcut never claims one row for a line the formatter wraps.
+    #[test]
+    fn fits_one_row_agrees_with_the_formatter() {
+        let pieces = ["a", "word ", "\t", "界", "🙂", "👨‍👩‍👧", "🇫🇷", "e\u{301}", "\u{1}", "  ", "long-unbroken-token"];
+        let mut seed = 0x2545_f491_u32;
+        let mut next = move || {
+            seed ^= seed << 13;
+            seed ^= seed >> 17;
+            seed ^= seed << 5;
+            seed
+        };
+        for _ in 0..3000 {
+            let mut line = String::new();
+            for _ in 0..(next() % 40) {
+                line.push_str(pieces[next() as usize % pieces.len()]);
+            }
+            let text = format!("{line}\nnext\n");
+            let width = 11 + (next() % 60) as u16;
+            let state = State::new(&text, None, Viewport { width, height: 10 });
+            let layout = Layout::new(&state);
+            if layout.fits_one_row(0) {
+                assert_eq!(layout.formatted_rows(0), 1, "{line:?} at width {width}");
+            }
+        }
+    }
 }

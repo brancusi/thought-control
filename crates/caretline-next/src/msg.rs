@@ -90,6 +90,9 @@ pub enum Msg {
     Resize { width: u16, height: u16 },
     /// The current time. Typing runs (one undo step) are measured with it.
     Tick { now_ms: u64 },
+    /// Show a one-line message in the status bar (until the next input). Passive: it
+    /// doesn't end an edit run or disarm a pending quit.
+    ShowStatus { text: String },
 }
 
 /// Work for the runtime. `update` never performs I/O; it returns these instead.

@@ -35,7 +35,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | Serializable state | Yes | `State` round-trips through JSON, history and goal column included |
 | Deterministic replay | Yes | A trace (state + messages) replays to the identical state and frame |
 | Headless snapshots | Yes | `--snapshot WxH` as plain text or ANSI |
-| State protocol (`serve`, `--listen`, `send`) | Landing next | See [protocol.md](protocol.md) |
+| State protocol (`serve`, `--listen`, `send`) | Yes | Drive a headless engine or a live editor over JSON lines. See [protocol.md](protocol.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
 | Markdown structure (lists, tasks, folds) | Not yet | The older `caretline` crate has these; see below |
@@ -50,7 +50,7 @@ flowchart TB
     rope --> helix --> elm
     elm --> tty["Interactive terminal<br/><code>caretline FILE</code>"]
     elm --> cli["Headless CLI<br/><code>--keys --msgs --snapshot --replay</code>"]
-    elm --> proto["State protocol (landing next)<br/><code>serve</code> · <code>--listen</code> · <code>send</code>"]
+    elm --> proto["State protocol<br/><code>serve</code> · <code>--listen</code> · <code>send</code>"]
     elm --> lib["Your program<br/>(Rust library or child process)"]
 ```
 
@@ -82,7 +82,7 @@ yet have that crate's block model or its multiple views per document. The binary
 | Call it from Rust | [api.md](api.md) |
 | Look up a message, an effect or a key | [messages.md](messages.md) |
 | Use the `caretline` command | [cli.md](cli.md) |
-| Drive it over JSON lines | [protocol.md](protocol.md) (landing next) |
+| Drive it over JSON lines | [protocol.md](protocol.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |
 | Write or debug a test | [testing.md](testing.md) |
 

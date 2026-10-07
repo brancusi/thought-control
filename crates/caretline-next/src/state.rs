@@ -18,6 +18,14 @@ pub struct Config {
     pub scrolloff: u16,
     /// The line ending inserted by Enter and used to normalize pasted text.
     pub line_ending: LineEnding,
+    /// Draw the status bar on the last row. Off, every row shows text (for embedders and
+    /// panels that show their own chrome).
+    #[serde(default = "yes")]
+    pub status_bar: bool,
+}
+
+fn yes() -> bool {
+    true
 }
 
 impl Default for Config {
@@ -27,6 +35,7 @@ impl Default for Config {
             soft_wrap: true,
             scrolloff: 2,
             line_ending: LineEnding::LF,
+            status_bar: true,
         }
     }
 }
@@ -192,6 +201,15 @@ impl State {
 
     pub fn compute_dirty(&self) -> bool {
         self.saved_revision != Some(self.history.current_revision())
+    }
+
+    /// Rows available for text: the viewport, less the status bar when it is shown.
+    pub fn text_rows(&self) -> usize {
+        if self.config.status_bar {
+            self.viewport.text_rows()
+        } else {
+            self.viewport.height as usize
+        }
     }
 
     /// The primary caret.

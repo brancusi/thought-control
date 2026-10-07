@@ -16,3 +16,4 @@ ratatui = "0.30"
 crossterm = "0.29"
 serde_json = { workspace = true }
 clap = { workspace = true }
+libc = { workspace = true }

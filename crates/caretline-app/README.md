@@ -103,6 +103,7 @@ caretline --replay t.jsonl --snapshot 80x24
   {"msg":"paste","text":"two\nlines"}
   {"msg":"tick","now_ms":2000}
   {"msg":"resize","width":60,"height":20}
+  {"msg":"show_status","text":"a note in the status bar"}
   ```
 
   `by` is one of `grapheme`, `word`, `line`, `visual_line`, `line_start`, `line_end`, `page`,
@@ -130,6 +131,26 @@ selection.
 
  wrapped.md                     9 sel  3:21
 ```
+
+## The state protocol
+
+A running editor can be read and driven from outside, and a headless engine can be kept
+running, through a JSON Lines protocol: get or replace the whole state, push messages or
+key scripts, render frames (text, ANSI or a cell grid), subscribe to changes and fetch the
+trace. Everything goes through the same `update`, in one order, and lands in the trace.
+
+```sh
+caretline notes.md --listen                      # the editor, also serving a socket
+caretline send --latest keys '<c-end><cr>hello'  # from another shell: it redraws at once
+caretline send --latest state.get --raw          # read the state back
+caretline serve notes.md                         # a headless engine on stdin/stdout
+caretline serve --socket /tmp/cl.sock            # … or on a socket, for many clients
+caretline bench                                  # throughput and latency
+```
+
+Pushed messages' effects (saves, the clipboard, quit) are returned to the client, not
+performed, unless the request asks. The library side is `caretline_next::Session`. See
+[docs/caretline/protocol.md](../../docs/caretline/protocol.md) for every operation, with examples.
 
 ## Fixtures
 
