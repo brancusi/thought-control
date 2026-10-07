@@ -46,7 +46,7 @@ fn draw_rail(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     let th = app.theme;
     let g = th.glyphs();
     let w = area.width as usize;
-    let page = matches!(app.doc.as_ref().map(|d| &d.target), Some(crate::doc::Target::Page { .. }));
+    let page = matches!(app.doc.as_ref().map(|d| &d.target), Some(crate::editor::Target::Page { .. }));
     let open_id = app.page_open.clone();
     let mut lines: Vec<Line> = Vec::new();
     let head = if page { "PAGES" } else { "DAYS" };
@@ -249,7 +249,7 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
     // A link's title under the pointer underlines in accent: a click follows it (sidebar.md §7).
     if let (Some((hx, hy)), true) = (app.hover, app.overlay.is_none() && app.prompt.is_none()) {
         if let Some((line, byte, false)) = crate::doc_ui::hit_rows(app, &render.doc_hits, hx, hy) {
-            let text = &app.doc.as_ref().unwrap().lines()[line].text;
+            let text = &app.doc.as_ref().unwrap().blocks()[line].text;
             if let Some(r) = crate::doc_app::link_title_range(text, byte) {
                 let accent = app.theme.s(Token::Accent).fg;
                 let buf = f.buffer_mut();
@@ -919,14 +919,14 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
     // automatic, and the few keys you need now. `?` leads with the same keys and words.
     if let (Some(d), true) = (app.doc.as_ref(), app.overlay.is_none()) {
         let what = match &d.target {
-            crate::doc::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
-            crate::doc::Target::Page { title, .. } => format!("{} {title}", g.page),
+            crate::editor::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
+            crate::editor::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
-        let failed = d.lines().iter().any(|l| l.save_error.is_some());
-        let late = d.lines().iter().any(|l| l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3));
+        let failed = d.blocks().iter().any(|l| l.save_error.is_some());
+        let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
-        let blank = d.lines().iter().all(|l| l.text.trim().is_empty());
+        let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());
         let save: (String, Token, bool) = if app.doc_first_ever && blank && app.doc_write {
             ("just type".into(), Token::Muted, false)
         } else if failed {
@@ -939,7 +939,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // writing.md §4: `§ sun 04 oct · 412 words · autosaved   ⌃T task  ⌃O open  ⌃P ⌃N day  Esc done
         // F1 keys`, fitted by measure: first `F1 keys` goes, then the document's name. A page has
         // no day keys. While the `[[` popup is open it shows the popup's own keys.
-        let journal = matches!(d.target, crate::doc::Target::Journal { .. });
+        let journal = matches!(d.target, crate::editor::Target::Journal { .. });
         let sep = || Span::styled(format!(" {} ", g.sep), th.s(Token::Muted));
         let words = crate::doc_ui::word_count(app);
         let (text, tok, ok) = save.clone();
@@ -2271,7 +2271,7 @@ fn node_meta(render: &RenderOutput, app: &App, n: &Node, show_context: bool, und
             items.push(vec![Span::styled(format!("!{p}"), if p == "high" { th.strong() } else { th.s(Token::Muted) })]);
         }
         if let Some(r) = n.repeat.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()) {
-            let t = if short_repeat { g.repeat.to_string() } else { format!("{} {}", g.repeat, crate::doc::short_repeat(r)) };
+            let t = if short_repeat { g.repeat.to_string() } else { format!("{} {}", g.repeat, crate::editor::short_repeat(r)) };
             items.push(vec![Span::styled(t, th.s(Token::Muted))]);
         }
         if n.created_by.starts_with("agent") && app.view != View::Log {
@@ -4311,7 +4311,7 @@ mod render_tests {
     fn state(app: &App) -> String {
         format!("{:?}", (
             app.view, app.cursor, app.scroll, &app.selected, app.screen_width,
-            app.doc.as_ref().map(|d| (d.lines().to_vec(), d.view.caret, d.view.anchor, d.view.goal, d.scroll)),
+            app.doc.as_ref().map(|d| (d.blocks().to_vec(), d.caret(), d.anchor(), d.goal(), d.scroll)),
             &app.collapsed, &app.scope_override, app.focus_mode, app.show_detail,
         ))
     }
@@ -4336,12 +4336,11 @@ mod render_tests {
                 app.set_view(if document { View::Journal } else { View::Inbox });
                 if document {
                     let doc = app.doc.as_mut().unwrap();
-                    *doc.lines_mut() = vec![
-                        crate::doc::Line::new(0, thc_core::outline::Kind::Para, "A wide 字 and a wrapped paragraph. ".repeat(8).as_str()),
-                        crate::doc::Line::new(0, thc_core::outline::Kind::Task, "A task"),
-                    ];
-                    doc.view.caret = crate::doc::Pos { line: 1, byte: 3 };
-                    doc.view.anchor = Some(crate::doc::Pos { line: 0, byte: 0 });
+                    doc.set_blocks(vec![
+                        crate::editor::Line::new(0, thc_core::outline::Kind::Para, "A wide 字 and a wrapped paragraph. ".repeat(8).as_str()),
+                        crate::editor::Line::new(0, thc_core::outline::Kind::Task, "A task"),
+                    ]);
+                    doc.select_range(Some(crate::editor::BlockPos { line: 0, byte: 0 }), crate::editor::BlockPos { line: 1, byte: 3 });
                 }
                 for focus in [false, true] {
                     app.focus_mode = focus;
@@ -4412,12 +4411,12 @@ mod render_tests {
         app.toast = None;
         app.set_view(View::Journal);
         let doc = app.doc.as_mut().unwrap();
-        *doc.lines_mut() = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "A long paragraph 字".repeat(20).as_str())];
-        doc.view.caret = crate::doc::Pos::default();
+        doc.set_blocks(vec![crate::editor::Line::new(0, thc_core::outline::Kind::Para, "A long paragraph 字".repeat(20).as_str())]);
+        doc.set_caret(crate::editor::BlockPos::default());
         update_frame(&mut app, Rect::new(0, 0, 120, 40));
         assert!(!render(&app, (120, 40)).doc_hits.is_empty());
         // A shorter replacement would panic if the old byte ranges were used.
-        app.doc.as_mut().unwrap().lines_mut()[0].text = "字".into();
+        app.doc.as_mut().unwrap().set_text_unannounced(0, "字");
         assert!(render(&app, (120, 40)).doc_hits.is_empty());
         update_frame(&mut app, Rect::new(0, 0, 120, 40));
         assert!(!render(&app, (120, 40)).doc_hits.is_empty());
@@ -4425,7 +4424,7 @@ mod render_tests {
         update_frame(&mut app, Rect::new(0, 0, 100, 32));
         assert!(!render(&app, (100, 32)).doc_hits.is_empty());
         // Same length and caret, different fold membership, also needs preparation.
-        { let d = app.doc.as_mut().unwrap(); let id = d.lines()[0].id.clone(); d.view.folds.insert(id); }
+        { let d = app.doc.as_mut().unwrap(); let id = d.blocks()[0].id.clone(); d.fold(&id); }
         assert!(render(&app, (100, 32)).doc_hits.is_empty());
     }
 
@@ -4458,8 +4457,8 @@ mod render_tests {
             std::fs::create_dir_all(path.parent().unwrap()).unwrap();
             std::fs::write(path, vec![b'a'; bytes]).unwrap();
             let doc = app.doc.as_mut().unwrap();
-            *doc.lines_mut() = vec![crate::doc::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")];
-            doc.view.caret = crate::doc::Pos::default();
+            doc.set_blocks(vec![crate::editor::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")]);
+            doc.set_caret(crate::editor::BlockPos::default());
             app.doc_write = false;
             update_frame(app, Rect::new(0, 0, 120, 40));
         }
@@ -4588,8 +4587,8 @@ mod render_tests {
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
         app.set_view(View::Journal);
-        app.doc.as_mut().unwrap().lines_mut()[0].text = "call due:+2h".into();
-        app.doc.as_mut().unwrap().touch_content();
+        let line_id = app.doc.as_ref().unwrap().blocks()[0].id.clone();
+        app.doc.as_mut().unwrap().replace_content(&line_id, "call due:+2h");
         app.doc_write = true;
         let device = app.vault.device.clone();
         let version = |text: &str| thc_core::model::ConflictVersion {

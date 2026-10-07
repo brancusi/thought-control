@@ -145,7 +145,7 @@ pub(crate) fn capture(app: &mut App, revision: &str) {
         let mut ids: Vec<&str> = app.page_open.iter().chain(app.log_node.iter()).map(String::as_str).collect();
         if let Some(doc) = &app.doc {
             ids.extend(doc.root.as_deref());
-            if let crate::doc::Target::Page { id, .. } = &doc.target {
+            if let crate::editor::Target::Page { id, .. } = &doc.target {
                 ids.push(id);
             }
         }

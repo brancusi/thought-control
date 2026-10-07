@@ -3,7 +3,7 @@
 //! This is the first P3 migration; legacy input/persistence paths remain outside it.
 use crate::{
     app::{Toast, ToastKind},
-    doc::{Pos, Target},
+    editor::{BlockPos, Target},
     theme::Token,
 };
 use std::time::Instant;
@@ -13,7 +13,7 @@ pub(crate) struct DocumentIdentity {
     pub vault: std::path::PathBuf,
     pub target: Target,
     pub revision: u64,
-    pub caret: Pos,
+    pub caret: BlockPos,
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Viewport {
@@ -140,7 +140,7 @@ mod tests {
             vault: "/scratch/one".into(),
             target: Target::Journal { date: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap() },
             revision: 7,
-            caret: Pos { line: 110, byte: 0 },
+            caret: BlockPos { line: 110, byte: 0 },
         }
     }
     fn apply(scroll: &mut usize, doc_scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {

@@ -61,7 +61,7 @@ fn rows(app: &App) -> HashMap<String, u16> {
     let d = app.doc.as_ref().unwrap();
     let mut m = HashMap::new();
     for h in &app.render.doc_hits {
-        if let Some(l) = d.lines().get(h.line) {
+        if let Some(l) = d.blocks().get(h.line) {
             m.entry(l.id.clone()).and_modify(|y: &mut u16| *y = (*y).min(h.y)).or_insert(h.y);
         }
     }
@@ -73,7 +73,7 @@ fn heights(app: &App) -> HashMap<String, u16> {
     let d = app.doc.as_ref().unwrap();
     let mut m: HashMap<String, std::collections::BTreeSet<u16>> = HashMap::new();
     for h in &app.render.doc_hits {
-        if let Some(l) = d.lines().get(h.line) {
+        if let Some(l) = d.blocks().get(h.line) {
             m.entry(l.id.clone()).or_default().insert(h.y);
         }
     }
@@ -106,25 +106,24 @@ fn a_kind_change_never_moves_another_line() {
         for (line, byte) in targets {
             {
                 let d = app.doc.as_mut().unwrap();
-                if line >= d.lines().len() || byte > d.lines()[line].text.len() {
+                if line >= d.blocks().len() || byte > d.blocks()[line].text.len() {
                     continue;
                 }
-                d.view.anchor = None;
-                d.view.caret = crate::doc::Pos { line, byte };
+                d.select_range(None, crate::editor::BlockPos { line, byte });
             }
             term.draw(|f| crate::ui::draw_app(f, &mut app)).unwrap();
             let before = rows(&app);
             let heights0 = heights(&app);
             let pic0 = picture(&term);
             let d0 = app.doc.as_ref().unwrap();
-            let ids0: Vec<String> = d0.lines().iter().map(|l| l.id.clone()).collect();
+            let ids0: Vec<String> = d0.blocks().iter().map(|l| l.id.clone()).collect();
             let gaps0 = d0.gaps();
             key(&mut app, KeyCode::Char('t'), KeyModifiers::CONTROL);
             term.draw(|f| crate::ui::draw_app(f, &mut app)).unwrap();
             let after = rows(&app);
             let heights1 = heights(&app);
             let d1 = app.doc.as_ref().unwrap();
-            let ids1: Vec<String> = d1.lines().iter().map(|l| l.id.clone()).collect();
+            let ids1: Vec<String> = d1.blocks().iter().map(|l| l.id.clone()).collect();
             // The changed notes: this line, notes made by a split, notes gone in a join.
             let me = &ids0[line];
             let changed0: Vec<&String> = ids0.iter().filter(|id| *id == me || !ids1.contains(id)).collect();

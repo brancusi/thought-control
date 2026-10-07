@@ -5,12 +5,11 @@
 //! Notation (editing.md §0): `▮` the caret; `⟦…⟧` a selection with `▮` at the caret's end;
 //! ` ‖ ` between notes; `⏎` a soft break; `- `, `- [ ] `, `- [x] ` markers, two spaces per depth.
 
-use crate::doc::{Doc, Line, Pos, Target};
-use caretline::{Command, Motion};
+use crate::editor::{BlockPos, Doc, EditCmd, Line, Motion, Target};
 use thc_core::outline::Kind;
 
 /// A document from the notation, with its caret and anchor.
-fn parse(src: &str) -> (Vec<Line>, Pos, Option<Pos>) {
+fn parse(src: &str) -> (Vec<Line>, BlockPos, Option<BlockPos>) {
     let mut lines = Vec::new();
     let (mut caret, mut anchor_mark, mut sel_open, mut sel_close) = (None, None, None, None);
     for (i, raw) in src.split(" ‖ ").enumerate() {
@@ -29,9 +28,9 @@ fn parse(src: &str) -> (Vec<Line>, Pos, Option<Pos>) {
         let mut text = String::new();
         for c in t.chars() {
             match c {
-                '▮' => caret = Some(Pos { line: i, byte: text.len() }),
-                '⟦' => sel_open = Some(Pos { line: i, byte: text.len() }),
-                '⟧' => sel_close = Some(Pos { line: i, byte: text.len() }),
+                '▮' => caret = Some(BlockPos { line: i, byte: text.len() }),
+                '⟦' => sel_open = Some(BlockPos { line: i, byte: text.len() }),
+                '⟧' => sel_close = Some(BlockPos { line: i, byte: text.len() }),
                 '⏎' => text.push('\n'),
                 c => text.push(c),
             }
@@ -54,7 +53,7 @@ fn parse(src: &str) -> (Vec<Line>, Pos, Option<Pos>) {
 fn render(d: &Doc) -> String {
     let sel = d.selection();
     let mut out = Vec::new();
-    for (i, l) in d.lines().iter().enumerate() {
+    for (i, l) in d.blocks().iter().enumerate() {
         let marker = match (l.kind(), l.status.as_deref()) {
             (Kind::Task, Some("done")) => "- [x] ",
             (Kind::Task, _) => "- [ ] ",
@@ -63,13 +62,13 @@ fn render(d: &Doc) -> String {
         };
         let mut s = format!("{}{marker}", "  ".repeat(if l.kind() == Kind::Para { 0 } else { l.depth }));
         let mark = |b: usize| -> String {
-            let p = Pos { line: i, byte: b };
+            let p = BlockPos { line: i, byte: b };
             let mut m = String::new();
             if let Some((a, e)) = sel {
                 if p == a {
                     m.push('⟦');
                 }
-                if p == d.view.caret {
+                if p == d.caret() {
                     m.push('▮');
                 }
                 if p == e {
@@ -78,7 +77,7 @@ fn render(d: &Doc) -> String {
                 // ▮ goes inside ⟦…⟧: at the end, before ⟧; at the start, after ⟦.
                 return m;
             }
-            if p == d.view.caret {
+            if p == d.caret() {
                 m.push('▮');
             }
             m
@@ -99,13 +98,12 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
     let (lines, caret, anchor) = parse(before);
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
     let mut d = Doc::new(Target::Journal { date: today }, None, &[], today);
-    *d.lines_mut() = lines;
-    d.view.caret = caret;
-    d.view.anchor = anchor;
+    d.set_blocks(lines);
+    d.select_range(anchor, caret);
     let w = |_: &Line| 72usize;
     for k in keys {
-        let mv = |m| Command::Move { motion: m, select: false };
-        let sh = |m| Command::Move { motion: m, select: true };
+        let mv = |m| EditCmd::Move { motion: m, select: false };
+        let sh = |m| EditCmd::Move { motion: m, select: true };
         let cmd = match *k {
             "←" => Some(mv(Motion::Left)),
             "→" => Some(mv(Motion::Right)),
@@ -115,17 +113,17 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
             "⌥→" => Some(mv(Motion::WordRight)),
             "⇧←" => Some(sh(Motion::Left)),
             "⇧→" => Some(sh(Motion::Right)),
-            "⌫" => Some(Command::Backspace),
-            "Del" => Some(Command::Delete),
-            "⌥⌫" => Some(Command::DeleteWordBack),
-            "⌘⌫" => Some(Command::KillToStart),
-            "⌃K" => Some(Command::KillToEnd),
-            "Enter" => Some(Command::Newline),
-            "Tab" => Some(Command::Indent),
-            "⌃T" => Some(Command::TaskCycle),
-            "⌘A" => Some(Command::SelectAll),
-            "⌘Z" => Some(Command::Undo),
-            "⇧⌘Z" => Some(Command::Redo),
+            "⌫" => Some(EditCmd::Backspace),
+            "Del" => Some(EditCmd::Delete),
+            "⌥⌫" => Some(EditCmd::DeleteWordBack),
+            "⌘⌫" => Some(EditCmd::KillToStart),
+            "⌃K" => Some(EditCmd::KillToEnd),
+            "Enter" => Some(EditCmd::Newline),
+            "Tab" => Some(EditCmd::Indent),
+            "⌃T" => Some(EditCmd::TaskCycle),
+            "⌘A" => Some(EditCmd::SelectAll),
+            "⌘Z" => Some(EditCmd::Undo),
+            "⇧⌘Z" => Some(EditCmd::Redo),
             _ => None,
         };
         if let Some(c) = cmd {
@@ -147,11 +145,10 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
                 if !text.contains('\n') {
                     d.insert(&text);
                 } else {
-                    let (lines, _) = crate::doc::parse_paste(&text, false);
-                    d.paste_lines(lines);
+                    d.paste(&text, false);
                 }
             }
-            "Esc" => d.view.anchor = None,
+            "Esc" => d.clear_selection(),
             t if t.starts_with("type ") => d.insert(&t["type ".len()..]),
             other => panic!("unknown key {other}"),
         }
@@ -288,7 +285,7 @@ fn random_doc(r: &mut Rng) -> Doc {
     use unicode_segmentation::UnicodeSegmentation;
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
     let mut d = Doc::new(Target::Journal { date: today }, None, &[], today);
-    *d.lines_mut() = (0..1 + r.below(5))
+    let mut lines: Vec<Line> = (0..1 + r.below(5))
         .map(|_| {
             let kind = [Kind::Para, Kind::Bullet, Kind::Task][r.below(3)];
             let text: Vec<&str> = (0..r.below(5)).map(|_| WORDS[r.below(WORDS.len())]).collect();
@@ -298,25 +295,27 @@ fn random_doc(r: &mut Rng) -> Doc {
         })
         .collect();
     // A first line at depth 0 (a list can't start indented).
-    d.lines_mut()[0].depth = 0;
+    lines[0].depth = 0;
+    d.set_blocks(lines);
     let pos = |r: &mut Rng, d: &Doc| {
-        let line = r.below(d.lines().len());
-        let t = &d.lines()[line].text;
+        let line = r.below(d.blocks().len());
+        let t = &d.blocks()[line].text;
         let bounds: Vec<usize> = t.grapheme_indices(true).map(|(i, _)| i).chain(std::iter::once(t.len())).collect();
-        Pos { line, byte: bounds[r.below(bounds.len())] }
+        BlockPos { line, byte: bounds[r.below(bounds.len())] }
     };
-    d.view.caret = pos(r, &d);
-    d.view.anchor = (r.below(2) == 0).then(|| pos(r, &d));
+    let caret = pos(r, &d);
+    let anchor = (r.below(2) == 0).then(|| pos(r, &d));
+    d.select_range(anchor, caret);
     d
 }
 
 /// What the document is: each note's (depth, kind, status, text), the caret and the selection.
-fn state(d: &Doc) -> (Vec<(usize, Kind, Option<String>, String)>, Pos, Option<(Pos, Pos)>) {
-    (d.lines().iter().map(|l| (l.depth, l.kind(), l.status.clone(), l.text.clone())).collect(), d.view.caret, d.selection())
+fn state(d: &Doc) -> (Vec<(usize, Kind, Option<String>, String)>, BlockPos, Option<(BlockPos, BlockPos)>) {
+    (d.blocks().iter().map(|l| (l.depth, l.kind(), l.status.clone(), l.text.clone())).collect(), d.caret(), d.selection())
 }
 
 fn texts(d: &Doc) -> Vec<String> {
-    d.lines().iter().map(|l| l.text.clone()).collect()
+    d.blocks().iter().map(|l| l.text.clone()).collect()
 }
 
 #[test]
@@ -328,13 +327,13 @@ fn editing_invariants_hold_on_random_documents() {
         // EI1: a motion without ⇧ leaves no selection. EI2: with ⇧ the anchor never moves.
         let mut d = random_doc(&mut r);
         let m = motions[r.below(motions.len())];
-        d.apply(Command::Move { motion: m, select: false }, &w);
+        d.apply(EditCmd::Move { motion: m, select: false }, &w);
         assert!(d.selection().is_none(), "EI1 case {case}: {m:?} left a selection: {}", render(&d));
         let mut d = random_doc(&mut r);
-        let before_anchor = d.view.anchor.unwrap_or(d.view.caret);
+        let before_anchor = d.anchor().unwrap_or(d.caret());
         let had = d.selection().is_some();
-        d.apply(Command::Move { motion: m, select: true }, &w);
-        assert_eq!(d.view.anchor.unwrap_or(before_anchor), before_anchor, "EI2 case {case}: {m:?}");
+        d.apply(EditCmd::Move { motion: m, select: true }, &w);
+        assert_eq!(d.anchor().unwrap_or(before_anchor), before_anchor, "EI2 case {case}: {m:?}");
         let _ = had;
         // EI4: copy changes nothing.
         let mut d = random_doc(&mut r);
@@ -344,13 +343,12 @@ fn editing_invariants_hold_on_random_documents() {
         // EI7: with a selection, every delete gives the same document.
         let d0 = random_doc(&mut r);
         if d0.selection().is_some() {
-            let results: Vec<Vec<String>> = [Command::Backspace, Command::Delete, Command::DeleteWordBack, Command::KillToEnd, Command::KillToStart]
+            let results: Vec<Vec<String>> = [EditCmd::Backspace, EditCmd::Delete, EditCmd::DeleteWordBack, EditCmd::KillToEnd, EditCmd::KillToStart]
                 .iter()
                 .map(|c| {
                     let mut d = random_doc(&mut Rng(0));
-                    *d.lines_mut() = d0.lines().to_vec();
-                    d.view.caret = d0.view.caret;
-                    d.view.anchor = d0.view.anchor;
+                    d.set_blocks(d0.blocks().to_vec());
+                    d.select_range(d0.anchor(), d0.caret());
                     d.apply(*c, &w);
                     texts(&d)
                 })
@@ -360,18 +358,16 @@ fn editing_invariants_hold_on_random_documents() {
             }
             // EI6: typing over it is before[..start] + c + before[end..] (notes joined).
             let mut d = random_doc(&mut Rng(0));
-            *d.lines_mut() = d0.lines().to_vec();
-            d.view.caret = d0.view.caret;
-            d.view.anchor = d0.view.anchor;
+            d.set_blocks(d0.blocks().to_vec());
+            d.select_range(d0.anchor(), d0.caret());
             let (s, e) = d.selection().unwrap();
-            let want = format!("{}c{}", &d0.lines()[s.line].text[..s.byte], &d0.lines()[e.line].text[e.byte..]);
+            let want = format!("{}c{}", &d0.blocks()[s.line].text[..s.byte], &d0.blocks()[e.line].text[e.byte..]);
             d.insert("c");
-            assert_eq!(d.lines()[s.line].text, want, "EI6 case {case}: {}", render(&d0));
+            assert_eq!(d.blocks()[s.line].text, want, "EI6 case {case}: {}", render(&d0));
             // EI8: copy, then paste over the same selection, changes nothing in the text.
             let mut d = random_doc(&mut Rng(0));
-            *d.lines_mut() = d0.lines().to_vec();
-            d.view.caret = d0.view.caret;
-            d.view.anchor = d0.view.anchor;
+            d.set_blocks(d0.blocks().to_vec());
+            d.select_range(d0.anchor(), d0.caret());
             let clip = d.copy_text();
             if !clip.contains('\n') {
                 d.insert(&clip);
@@ -386,22 +382,22 @@ fn editing_invariants_hold_on_random_documents() {
             match r.below(6) {
                 0 => d.insert("z"),
                 1 => {
-                    d.apply(Command::Backspace, &w);
+                    d.apply(EditCmd::Backspace, &w);
                 }
                 2 => {
-                    d.apply(Command::Newline, &w);
+                    d.apply(EditCmd::Newline, &w);
                 }
                 3 => {
-                    d.apply(Command::Delete, &w);
+                    d.apply(EditCmd::Delete, &w);
                 }
                 4 => {
-                    d.apply(Command::DeleteWordBack, &w);
+                    d.apply(EditCmd::DeleteWordBack, &w);
                 }
                 _ => d.insert("yy"),
             }
         }
         for _ in 0..n {
-            d.apply(Command::Undo, &w);
+            d.apply(EditCmd::Undo, &w);
         }
         let (lines0, caret0, sel0) = start.clone();
         let (lines1, caret1, sel1) = state(&d);
@@ -410,11 +406,11 @@ fn editing_invariants_hold_on_random_documents() {
         // EI12: ⌘A then ⌫ leaves one empty note, and ⌘Z restores everything.
         let mut d = random_doc(&mut r);
         let start = state(&d);
-        d.apply(Command::SelectAll, &w);
+        d.apply(EditCmd::SelectAll, &w);
         let selected = state(&d);
-        d.apply(Command::Backspace, &w);
-        assert!(d.lines().len() == 1 && d.lines()[0].text.is_empty(), "EI12 case {case}: {}", render(&d));
-        d.apply(Command::Undo, &w);
+        d.apply(EditCmd::Backspace, &w);
+        assert!(d.blocks().len() == 1 && d.blocks()[0].text.is_empty(), "EI12 case {case}: {}", render(&d));
+        d.apply(EditCmd::Undo, &w);
         assert_eq!(state(&d).0, start.0, "EI12 case {case}: ⌘Z restores the text");
         assert_eq!(state(&d), selected, "EI12 case {case}: and the selection");
     }
@@ -453,20 +449,17 @@ fn run_g(before: &str, keys: &[&str]) -> Doc {
     let mut d = run(&joined, &[], &mut clip);
     // The blank lines as written: explicit only where the kinds wouldn't give them.
     for (i, (_, gap)) in segs.iter().enumerate().skip(1) {
-        if d.default_gap(i) != *gap || (d.lines()[i].kind() == Kind::Para && d.lines()[i - 1].kind() == Kind::Para) {
-            d.lines_mut()[i].gap = (d.default_gap(i) != *gap).then_some(*gap);
+        if d.default_gap(i) != *gap || (d.blocks()[i].kind() == Kind::Para && d.blocks()[i - 1].kind() == Kind::Para) {
+            d.set_saved_gap(i, (d.default_gap(i) != *gap).then_some(*gap));
         }
-    }
-    for l in d.lines_mut().iter_mut() {
-        l.saved_gap = l.gap;
     }
     let w = |_: &Line| 72usize;
     for k in keys {
         let c = match *k {
-            "⌃T" => Command::TaskCycle,
-            "⌘Z" => Command::Undo,
-            "Tab" => Command::Indent,
-            "⌫" => Command::Backspace,
+            "⌃T" => EditCmd::TaskCycle,
+            "⌘Z" => EditCmd::Undo,
+            "Tab" => EditCmd::Indent,
+            "⌫" => EditCmd::Backspace,
             other => panic!("unknown key {other}"),
         };
         d.apply(c, &w);
@@ -506,16 +499,16 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     let src70 = "First line⏎sec▮ond line⏎third line";
     check_g("E70", src70, &["⌃T"], "First line ¦ [ ] sec▮ond line ¦ third line");
     let mut d70 = run_g(src70, &[]);
-    let id0 = d70.lines()[0].id.clone();
-    d70.apply(Command::TaskCycle, &|_: &Line| 72usize);
-    assert_eq!(d70.lines()[0].id, id0, "E70: the first piece keeps the id");
-    assert!(d70.lines()[1].is_new && d70.lines()[2].is_new, "E70: the other pieces are new notes");
+    let id0 = d70.blocks()[0].id.clone();
+    d70.apply(EditCmd::TaskCycle, &|_: &Line| 72usize);
+    assert_eq!(d70.blocks()[0].id, id0, "E70: the first piece keeps the id");
+    assert!(d70.blocks()[1].is_new && d70.blocks()[2].is_new, "E70: the other pieces are new notes");
     // E71: the first line: the task keeps the id.
     let mut d71 = run_g("fir▮st⏎second", &[]);
-    let id = d71.lines()[0].id.clone();
-    d71.apply(Command::TaskCycle, &|_: &Line| 72usize);
+    let id = d71.blocks()[0].id.clone();
+    d71.apply(EditCmd::TaskCycle, &|_: &Line| 72usize);
     assert_eq!(render_g(&d71), "[ ] fir▮st ¦ second", "E71");
-    assert_eq!(d71.lines()[0].id, id, "E71: the task keeps the id");
+    assert_eq!(d71.blocks()[0].id, id, "E71: the task keeps the id");
     // E72: each selected line its own task.
     check_g("E72", "a⏎⟦b⏎c▮⟧⏎d", &["⌃T"], "a ¦ [ ] ⟦b ¦ [ ] c▮⟧ ¦ d");
     // E73: a list item with a soft break is one item.
@@ -530,21 +523,21 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ‖   [ ] B▮");
     // E78: undo puts the paragraph back, with its id and the caret.
     let mut d78 = run_g(src70, &[]);
-    let id = d78.lines()[0].id.clone();
+    let id = d78.blocks()[0].id.clone();
     let w = |_: &Line| 72usize;
-    d78.apply(Command::TaskCycle, &w);
-    d78.apply(Command::Undo, &w);
+    d78.apply(EditCmd::TaskCycle, &w);
+    d78.apply(EditCmd::Undo, &w);
     assert_eq!(render_g(&d78), src70, "E78");
-    assert_eq!(d78.lines()[0].id, id, "E78: the id");
+    assert_eq!(d78.blocks()[0].id, id, "E78: the id");
     // E79: deleting the marker: a paragraph, no gap added.
     check_g("E79", "[ ] ▮A ¦ [ ] B", &["⌫", "⌫", "⌫", "⌫"], "▮A ¦ [ ] B");
     // E81: back to text joins the neighbours it touches: the reverse of E70.
     let mut d81 = run_g(src70, &[]);
-    let id = d81.lines()[0].id.clone();
-    d81.apply(Command::TaskCycle, &w);
-    d81.apply(Command::TaskCycle, &w);
-    d81.apply(Command::TaskCycle, &w);
+    let id = d81.blocks()[0].id.clone();
+    d81.apply(EditCmd::TaskCycle, &w);
+    d81.apply(EditCmd::TaskCycle, &w);
+    d81.apply(EditCmd::TaskCycle, &w);
     assert_eq!(render_g(&d81), "First line⏎sec▮ond line⏎third line", "E81");
-    assert_eq!(d81.lines()[0].id, id, "E81: the upper note's id");
+    assert_eq!(d81.blocks()[0].id, id, "E81: the upper note's id");
     done();
 }

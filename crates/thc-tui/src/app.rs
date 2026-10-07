@@ -409,13 +409,13 @@ pub struct App {
     pub pending_since: Option<Instant>,
     /// Documents opened this session, most recent first: the empty ⌃O finder offers them, the
     /// previous one preselected, so ⌃O Enter goes back.
-    pub recent_docs: Vec<crate::doc::Target>,
+    pub recent_docs: Vec<crate::editor::Target>,
     pub quit: bool,
     pub editor_request: Option<String>,
     /// `:mouse on|off` asked for capture to change; the event loop applies it (mouse.md §2).
     pub mouse_request: Option<bool>,
     /// The open document (a journal day, an open page): tui-editor.md.
-    pub doc: Option<crate::doc::Doc>,
+    pub doc: Option<crate::editor::Doc>,
     /// Write (typing) or Navigate (single-key commands) inside the document.
     pub doc_write: bool,
     /// The journal opened with no day ever written: the footer says `just type`.
@@ -428,7 +428,7 @@ pub struct App {
     /// A document opened from inside another (⌃O on an issue's line, a followed link): the
     /// document Esc goes back to, the line to put the caret on there, and the page it was opened
     /// for (Esc from anywhere else ignores it).
-    pub doc_back: Option<(crate::doc::Target, String, String)>,
+    pub doc_back: Option<(crate::editor::Target, String, String)>,
     /// A drop just attached: (its line's id, the pasted text, the undo depth then). The
     /// next ⌃Z, if nothing happened since, turns it back into that text.
     pub last_drop: Option<(String, String, usize)>,
@@ -444,7 +444,7 @@ pub struct App {
     /// The wheel moved the view: it stays put until a key brings the caret back (mouse.md §4).
     pub doc_scroll_free: bool,
     /// Where a drag started (line, byte).
-    pub drag_from: Option<crate::doc::Pos>,
+    pub drag_from: Option<crate::editor::BlockPos>,
     /// Navigation history, ⌘[ / ⌘] (history.rs).
     pub history: crate::history::History,
     /// A history step into another vault: restored once the TUI has reopened there.
@@ -453,7 +453,7 @@ pub struct App {
     pub scope_override: HashMap<String, String>,
     /// A plain click landed on a link's title: it's followed on release, unless it became a
     /// drag (mouse.md §2, editing.md E63).
-    pub click_link: Option<crate::doc::Pos>,
+    pub click_link: Option<crate::editor::BlockPos>,
     /// The last left press: when, where and how many in a row (double and triple click).
     pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
     /// A new link close to an existing page (writing.md §5): (line id, typed, existing, stub
@@ -2561,7 +2561,7 @@ impl App {
     pub fn yours_is_current(&self, d: &thc_core::model::ConflictDetail) -> bool {
         let s = &self.vault.store;
         let text = |v: &Option<thc_core::model::ConflictVersion>| v.as_ref().map(|v| s.render_text(&v.text));
-        if let Some(line) = self.doc.as_ref().and_then(|doc| doc.lines().iter().find(|l| l.id == d.node)) {
+        if let Some(line) = self.doc.as_ref().and_then(|doc| doc.blocks().iter().find(|l| l.id == d.node)) {
             if text(&d.current).as_deref() == Some(line.text.as_str()) {
                 return true;
             }
@@ -3466,20 +3466,18 @@ impl App {
         // An issue opened from its page: back to that page, the caret on the issue.
         if let Some((back, line, _)) = self.doc_back.take().filter(|b| self.page_open.as_deref() == Some(b.2.as_str())) {
             match back {
-                crate::doc::Target::Page { id, .. } => {
+                crate::editor::Target::Page { id, .. } => {
                     self.page_open = Some(id);
                     self.set_view(View::Pages);
                 }
-                crate::doc::Target::Journal { date } => {
+                crate::editor::Target::Journal { date } => {
                     self.page_open = None;
                     self.journal_date = date;
                     self.set_view(View::Journal);
                 }
             }
             if let Some(d) = self.doc.as_mut() {
-                if let Some(i) = d.lines().iter().position(|l| l.id == line) {
-                    d.view.caret = crate::doc::Pos { line: i, byte: 0 };
-                }
+                d.set_caret_anchor(&crate::editor::Anchor { id: line, byte: 0 });
             }
             return;
         }

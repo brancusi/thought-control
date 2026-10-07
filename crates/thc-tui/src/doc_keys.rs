@@ -1,8 +1,7 @@
 //! Keys inside a document (tui-editor.md §2, §4): Write by default, Esc to Navigate.
 
 use crate::app::App;
-use crate::doc::{Line, Pos, Target};
-use crate::motion::Motion;
+use crate::editor::{BlockPos, EditCmd, Line, Motion, Outcome, Target};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use thc_core::outline::Kind;
@@ -96,8 +95,8 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
     // Typing on a ≠ line opens the compare first: text writes to a conflicted node are refused.
     if matches!(k.code, KeyCode::Char(_) | KeyCode::Backspace | KeyCode::Delete | KeyCode::Enter) && !ctrl && !alt {
         let d = app.doc.as_ref().unwrap();
-        if d.line().conflict {
-            app.selected = Some(d.line().id.clone());
+        if d.caret_block().conflict {
+            app.selected = Some(d.caret_block().id.clone());
             app.open_compare();
             return true;
         }
@@ -167,7 +166,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // from (navigation.md §2).
         "doc.done" => {
             if d.selection().is_some() {
-                d.view.anchor = None;
+                d.clear_selection();
                 return true;
             }
             app.leave_doc();
@@ -184,12 +183,13 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // a line deleted here, edited elsewhere, then undone, kept the old text and never saved).
         // The first ⌃Z after a drop: the attachment becomes the pasted path, as text (like undoing
         // an autocorrect); the next ⌃Z removes that.
-        "doc.undo" if app.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.lines().iter().any(|l| &l.id == id)) => {
+        "doc.undo" if app.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.blocks().iter().any(|l| &l.id == id)) => {
             let (id, raw, _) = app.last_drop.take().unwrap();
             let d = app.doc.as_mut().unwrap();
-            if let Some(i) = d.lines().iter().position(|l| l.id == id) {
-                d.lines_mut()[i].text = raw.trim().to_string();
-                d.view.caret = Pos { line: i, byte: d.lines()[i].text.len() };
+            if let Some(i) = d.blocks().iter().position(|l| l.id == id) {
+                let text = raw.trim();
+                d.replace_content(&id, text);
+                d.set_caret(BlockPos { line: i, byte: text.len() });
             }
             app.save_doc(true);
             app.info("kept the path as text · ⌃Z again removes it");
@@ -214,26 +214,26 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
             app.info(if app.paste_plain { "next paste is plain" } else { "next paste reads Markdown" });
         }
         // ⌃J on an attachment's line: a new line after it (a break inside it would break it).
-        "line.soft_break" if crate::doc_ui::image_line(&d.line().text).is_some() => {
-            d.view.caret.byte = d.line().text.len();
+        "line.soft_break" if crate::doc_ui::image_line(&d.caret_block().text).is_some() => {
+            d.set_caret(BlockPos { line: d.caret().line, byte: d.caret_block().text.len() });
             d.newline();
         }
         // Enter on an attachment's line starts a new line after it; it never opens it (that's ⌃O
         // or a double-click: editing.md §7).
-        "line.newline" if d.selection().is_none() && crate::doc_ui::image_line(&d.line().text).is_some() => {
-            d.view.caret.byte = d.line().text.len();
+        "line.newline" if d.selection().is_none() && crate::doc_ui::image_line(&d.caret_block().text).is_some() => {
+            d.set_caret(BlockPos { line: d.caret().line, byte: d.caret_block().text.len() });
             d.newline();
         }
         "focus.toggle" => app.set_focus_mode(!app.focus_mode),
         "clip.paste_system" => app.paste_system(),
-        // Editing and motion: caretline commands, applied to the document.
+        // Editing and motion: the editor's commands, applied to the document.
         other if command_for(other, shift, page as isize).is_some() => {
             let cmd = command_for(other, shift, page as isize).unwrap();
             match d.apply(cmd, width_of) {
-                caretline::Outcome::Done => {}
-                caretline::Outcome::Nothing(why) => app.info(why),
-                caretline::Outcome::Completed => app.save_doc(true),
-                caretline::Outcome::Restored => app.patch_doc(),
+                Outcome::Done => {}
+                Outcome::Nothing(why) => app.info(why),
+                Outcome::Completed => app.save_doc(true),
+                Outcome::Restored => app.patch_doc(),
             }
         }
         // The views, help, the palette, quit, today: global actions bound in write; save first.
@@ -296,10 +296,8 @@ pub fn paste(app: &mut App, text: &str) {
         app.doc_after_key();
         return;
     }
-    let (lines, images) = crate::doc::parse_paste(text, app.paste_plain);
+    let (n, images) = d.paste(text, app.paste_plain);
     app.paste_plain = false;
-    let n = lines.len();
-    d.paste_lines(lines);
     app.save_doc(false);
     let mut msg = format!("pasted {n} line{}", if n == 1 { "" } else { "s" });
     if images > 0 {
@@ -341,7 +339,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         MouseEventKind::Down(button @ (MouseButton::Left | MouseButton::Middle)) => {
             // The ≠ mark opens the compare (mouse.md §3).
             if let Some(line) = crate::doc_ui::conflict_mark_at(app, m.column, m.row) {
-                let id = app.doc.as_ref().unwrap().lines()[line].id.clone();
+                let id = app.doc.as_ref().unwrap().blocks()[line].id.clone();
                 app.selected = Some(id);
                 app.open_compare();
                 return true;
@@ -353,36 +351,25 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             app.click_link = None;
             let d = app.doc.as_mut().unwrap();
             // The task box is a button: open ⇄ done.
-            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.lines()[line].kind() == Kind::Task {
-                d.view.anchor = None;
-                d.view.caret = Pos { line, byte: 0 };
+            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.blocks()[line].kind() == Kind::Task {
+                d.select_range(None, BlockPos { line, byte: 0 });
                 if d.task_box(line) == "done" {
                     app.save_doc(true);
                 }
                 app.doc_after_key();
                 return true;
             }
-            let p = Pos { line, byte };
+            let p = BlockPos { line, byte };
             match clicks {
-                2 => d.select_word(p),
-                3 => d.select_note(line),
-                _ => {
-                    if shift {
-                        if d.view.anchor.is_none() {
-                            d.view.anchor = Some(d.view.caret);
-                        }
-                    } else {
-                        d.view.anchor = None;
-                    }
-                    d.view.caret = p;
-                    d.view.goal = None;
-                }
+                2 => d.select_word_at(p),
+                3 => d.select_block(line),
+                _ => d.click(p, shift),
             }
             app.drag_from = (clicks == 1 && !shift).then_some(p);
             // A double-click on an attachment opens it; a single click only puts the caret there
             // (editing.md §6-7: a click to move around used to open Preview).
             if clicks == 2 && !shift && button == MouseButton::Left {
-                if let Some((_, path)) = crate::doc_ui::image_line(&app.doc.as_ref().unwrap().lines()[line].text) {
+                if let Some((_, path)) = crate::doc_ui::image_line(&app.doc.as_ref().unwrap().blocks()[line].text) {
                     app.drag_from = None;
                     app.open_attachment(&path);
                     app.doc_after_key();
@@ -390,7 +377,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 }
             }
             // ⌃-click or middle-click on a link opens it (saving first).
-            let on_link = crate::doc_app::link_at(&app.doc.as_ref().unwrap().lines()[line].text, byte).is_some();
+            let on_link = crate::doc_app::link_at(&app.doc.as_ref().unwrap().blocks()[line].text, byte).is_some();
             if on_link && (ctrl || button == MouseButton::Middle) {
                 app.doc_after_key();
                 app.doc_open();
@@ -398,7 +385,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             }
             // A plain click on a link's title follows it when released (E63); on the `[[` / `]]`,
             // or with ⌥, it only places the caret (E64, E65).
-            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&app.doc.as_ref().unwrap().lines()[line].text, byte) {
+            if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&app.doc.as_ref().unwrap().blocks()[line].text, byte) {
                 app.click_link = Some(p);
             }
             app.doc_after_key();
@@ -407,18 +394,15 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         // A drag selects by grapheme across rows, lines and notes.
         MouseEventKind::Drag(MouseButton::Left) => {
             let (Some(from), Some((line, byte, _))) = (app.drag_from, crate::doc_ui::hit(app, m.column, m.row)) else { return app.drag_from.is_some() };
-            let d = app.doc.as_mut().unwrap();
-            d.view.anchor = Some(from);
-            d.view.caret = Pos { line, byte };
-            d.view.goal = None;
+            app.doc.as_mut().unwrap().drag(from, BlockPos { line, byte });
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
             let dragged = app.drag_from.take().is_some();
             if let Some(p) = app.click_link.take() {
                 let d = app.doc.as_ref().unwrap();
-                if d.view.caret == p && d.view.anchor.is_none_or(|a| a == p) {
-                    app.doc.as_mut().unwrap().view.anchor = None;
+                if d.caret() == p && d.anchor().is_none_or(|a| a == p) {
+                    app.doc.as_mut().unwrap().clear_selection();
                     app.doc_after_key();
                     app.doc_open();
                     return true;
@@ -426,10 +410,10 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             }
             let mut selected = false;
             if let Some(d) = app.doc.as_mut() {
-                if d.view.anchor == Some(d.view.caret) {
-                    d.view.anchor = None;
+                if d.anchor() == Some(d.caret()) {
+                    d.clear_selection();
                 }
-                selected = d.view.anchor.is_some();
+                selected = d.anchor().is_some();
             }
             if dragged && selected {
                 native_selection_hint(app);
@@ -470,9 +454,9 @@ fn dropped_file(text: &str) -> Option<std::path::PathBuf> {
     (p.is_absolute() && p.is_file()).then_some(p)
 }
 
-/// The keymap's write actions that are caretline commands (editing and motion).
-fn command_for(action: &str, shift: bool, page: isize) -> Option<caretline::Command> {
-    use caretline::Command as C;
+/// The keymap's write actions that are editor commands (editing and motion).
+fn command_for(action: &str, shift: bool, page: isize) -> Option<EditCmd> {
+    use EditCmd as C;
     let mv = |motion| Some(C::Move { motion, select: shift });
     match action {
         "line.newline" => Some(C::Newline),

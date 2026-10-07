@@ -211,7 +211,7 @@ pub(crate) fn capture(app: &mut App, revision: &str) {
     }
     if app.view == View::Journal {
         let store = &app.vault.store;
-        if matches!(app.doc.as_ref().map(|d| &d.target), Some(crate::doc::Target::Journal { date }) if *date == app.journal_date) {
+        if matches!(app.doc.as_ref().map(|d| &d.target), Some(crate::editor::Target::Journal { date }) if *date == app.journal_date) {
             out.calendar.days = app.derived.data.document.populated_days.clone();
         } else {
             let first = app.journal_date.with_day(1).unwrap();

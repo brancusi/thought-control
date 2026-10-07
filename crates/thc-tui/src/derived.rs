@@ -26,7 +26,7 @@ pub(crate) struct Attachment {
 struct AttachmentSource {
     vault: PathBuf,
     store_revision: String,
-    target: crate::doc::Target,
+    target: crate::editor::Target,
     root: Option<String>,
     revision: u64,
 }
@@ -92,7 +92,7 @@ pub(crate) fn prepare(app: &mut App) {
     app.derived.data.presentation = crate::presentation_snapshot::capture(app);
     app.derived.data.bindings = crate::binding_snapshot::capture(app);
     app.derived.clock = thc_core::dates::now_local().format("%H:%M").to_string();
-    let source = app.doc.as_ref().and_then(|d| d.lines().get(d.view.caret.line))
+    let source = app.doc.as_ref().and_then(|d| d.blocks().get(d.caret().line))
         .map(|l| (app.today, l.text.clone()));
     if source != app.derived.chip_source {
         app.derived.caret_chip = source.as_ref().and_then(|(today, text)| crate::doc_ui::chip(text, *today));
@@ -145,7 +145,7 @@ fn prepare_attachments(app: &mut App, store_revision: &str) {
         revision: doc.revision(),
     };
     if app.derived.attachment_source.as_ref() != Some(&source) {
-        let paths: HashSet<String> = doc.lines().iter().filter_map(|line| crate::doc_ui::image_line(&line.text).map(|(_, path)| path)).collect();
+        let paths: HashSet<String> = doc.blocks().iter().filter_map(|line| crate::doc_ui::image_line(&line.text).map(|(_, path)| path)).collect();
         app.derived.attachment_paths = paths.into_iter().collect();
         app.derived.attachment_source = Some(source);
     }
@@ -176,7 +176,7 @@ fn retry_due(now: std::time::Instant, at: std::time::Instant, revision: &str, pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::doc::{Line, Pos};
+    use crate::editor::{BlockPos, Line};
     use thc_core::outline::Kind;
 
     #[test]
@@ -186,8 +186,8 @@ mod tests {
         let mut app = App::new(vault).unwrap();
         app.set_view(View::Journal);
         let doc = app.doc.as_mut().unwrap();
-        *doc.lines_mut() = vec![Line::new(0, Kind::Para, "![item](files/item.txt)")];
-        doc.view.caret = Pos::default();
+        doc.set_blocks(vec![Line::new(0, Kind::Para, "![item](files/item.txt)")]);
+        doc.set_caret(BlockPos::default());
         let at = app.derived.now;
         prepare_attachments(&mut app, "one");
         let vault = app.vault.paths.vault.clone();
@@ -197,7 +197,7 @@ mod tests {
         // Hundreds of redraws/caret moves must neither rescan nor probe the missing file.
         let paths = app.derived.attachment_paths.as_ptr();
         for n in 0..200 {
-            app.doc.as_mut().unwrap().view.caret.byte = n % 10;
+            app.doc.as_mut().unwrap().set_caret(BlockPos { line: 0, byte: n % 10 });
             app.derived.now = at + std::time::Duration::from_millis(n as u64);
             prepare_attachments(&mut app, "one");
             assert_eq!(paths, app.derived.attachment_paths.as_ptr());
@@ -209,7 +209,7 @@ mod tests {
 
         // An actual edit changes the path list, even inside one coalesced undo step.
         let doc = app.doc.as_mut().unwrap();
-        doc.view.caret = Pos { line: 0, byte: doc.lines()[0].text.len() };
+        doc.set_caret(BlockPos { line: 0, byte: doc.blocks()[0].text.len() });
         doc.newline();
         doc.newline();
         doc.insert("![next](files/next.txt)");

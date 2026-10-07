@@ -2,7 +2,7 @@
 //! through `outline::plan`, and patching it from changes made elsewhere.
 
 use crate::app::{App, View};
-use crate::doc::{Doc, Line, Target};
+use crate::editor::{Doc, Target};
 use std::time::{Duration, Instant};
 use thc_core::builder::TxBuilder;
 use thc_core::outline::{self, Kind};
@@ -14,7 +14,7 @@ pub(crate) struct Job {
     ops: Vec<outline::BlockOp>,
     afters: std::collections::HashMap<String, Option<String>>,
     parsed: Vec<String>,
-    sent: crate::doc::Sent,
+    sent: crate::editor::Sent,
 }
 
 pub(crate) struct Done {
@@ -22,7 +22,7 @@ pub(crate) struct Done {
     result: Result<Vec<outline::OpResult>, String>,
     afters: std::collections::HashMap<String, Option<String>>,
     parsed: Vec<String>,
-    sent: crate::doc::Sent,
+    sent: crate::editor::Sent,
 }
 
 /// Saves in order on one thread, through the daemon's `blocks.apply`.
@@ -200,7 +200,7 @@ impl App {
     pub fn load_footer(&mut self) {
         let Some(d) = self.doc.as_ref() else { self.doc_footer = None; return };
         let s = &self.vault.store;
-        let here: std::collections::HashSet<&str> = d.lines().iter().map(|l| l.id.as_str()).collect();
+        let here: std::collections::HashSet<&str> = d.blocks().iter().map(|l| l.id.as_str()).collect();
         let origin = |id: &str| -> String {
             let mut cur = s.node(id).ok().flatten();
             while let Some(n) = cur.clone() {
@@ -228,7 +228,7 @@ impl App {
                 repeat: n.repeat.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()).map(str::to_string),
                 tags: vec![], rev: None, text_rev: None, conflict: false, done_at: n.done_at.clone(), gap: None,
             };
-            let why = crate::doc::meta_text(&block, self.today);
+            let why = crate::editor::meta_text(&block, self.today);
             let o = origin(&n.id);
             FooterRow { id: n.id.clone(), status: n.status.clone(), text: s.render_text(&n.text), meta: if why.is_empty() { o } else { format!("{o} · {why}") } }
         };
@@ -415,34 +415,23 @@ impl App {
     /// vault's cache, never synced) so reopening it lands there.
     pub(crate) fn remember_caret(&mut self) {
         let Some(d) = self.doc.as_ref() else { return };
-        let l = d.line();
         // A new, empty line isn't a place to come back to: the line above it is.
-        let (id, byte) = if l.is_new && l.text.is_empty() {
-            match d.view.caret.line.checked_sub(1).and_then(|i| d.lines().get(i)) {
-                Some(p) => (p.id.clone(), p.text.len()),
-                None => return,
-            }
-        } else {
-            (l.id.clone(), d.view.caret.byte)
-        };
-        self.carets.insert(caret_key(&d.target), (id, byte, d.scroll));
+        let Some(a) = d.place_anchor() else { return };
+        self.carets.insert(caret_key(&d.target), (a.id, a.byte, d.scroll));
         save_carets(&self.vault.paths.cache, &self.carets);
     }
 
     fn reopen_keeping_unsaved(&mut self) {
         let Some(d) = self.doc.take() else { return };
         let mine = crate::recover::unsaved(&d);
-        let caret_id = d.line().id.clone();
-        let caret_byte = d.view.caret.byte;
+        let caret = d.caret_anchor();
         self.open_doc(d.target.clone());
         if let (Some(rec), Some(nd)) = (mine, self.doc.as_mut()) {
             crate::recover::apply(nd, &rec);
         }
         if let Some(nd) = self.doc.as_mut() {
-            if let Some(i) = nd.lines().iter().position(|l| l.id == caret_id) {
-                nd.view.caret = crate::doc::Pos { line: i, byte: caret_byte.min(nd.lines()[i].text.len()) };
-            }
-            self.doc_line_id = Some(nd.line().id.clone());
+            nd.set_caret_anchor(&caret);
+            self.doc_line_id = Some(nd.caret_block().id.clone());
         }
     }
 
@@ -472,22 +461,14 @@ impl App {
             // A journal day opens ready to type: on a fresh line after the day's own lines.
             d.caret_to_end(true);
         } else {
-            if d.lines().is_empty() {
-                d.lines_mut().push(Line::new(0, Kind::Para, ""));
-            }
-            d.view.caret = crate::doc::Pos { line: 0, byte: 0 };
+            d.caret_to_start();
         }
         // Where you left it (writing.md §1, "the caret remembers"): this document's caret on this
         // device, if its line is still here. A day never opened here starts at the end.
         if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
-            if let Some(i) = d.lines().iter().position(|l| l.id == line) {
-                // (The fresh line a day opens with isn't needed when the caret goes back.)
-                if matches!(d.target, Target::Journal { .. }) && d.lines().len() > 1 && d.lines().last().is_some_and(|l| l.is_new && l.text.is_empty()) && i + 1 < d.lines().len() {
-                    d.lines_mut().pop();
-                }
-                let b = byte.min(d.lines()[i].text.len());
-                let b = (0..=b).rev().find(|x| d.lines()[i].text.is_char_boundary(*x)).unwrap_or(0);
-                d.view.caret = crate::doc::Pos { line: i, byte: b };
+            // (The fresh line a day opens with isn't needed when the caret goes back.)
+            let journal = matches!(d.target, Target::Journal { .. });
+            if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, journal) {
                 d.scroll = scroll.min(i);
             }
         }
@@ -496,7 +477,7 @@ impl App {
         if let Some(rec) = recovered {
             recovered_n = crate::recover::apply(&mut d, &rec);
         }
-        self.doc_line_id = Some(d.line().id.clone());
+        self.doc_line_id = Some(d.caret_block().id.clone());
         self.doc = Some(d);
         if recovered_n > 0 {
             self.save_doc(true);
@@ -510,10 +491,10 @@ impl App {
                 .conn
                 .query_row("SELECT count(*) FROM nodes p WHERE p.journal IS NOT NULL AND p.deleted=0 AND EXISTS (SELECT 1 FROM nodes c WHERE c.parent=p.id AND c.deleted=0)", [], |r| r.get::<_, i64>(0))
                 .is_ok_and(|n| n == 0);
-        if self.doc.as_ref().is_some_and(|d| d.lines().iter().any(|l| l.conflict)) {
+        if self.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.conflict)) {
             self.fill_conflict_names();
             // Opened with the caret on a line moved here: the bar says why, as on arriving.
-            if let Some(id) = self.doc.as_ref().map(|d| d.line()).filter(|l| l.conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE)).map(|l| l.id.clone()) {
+            if let Some(id) = self.doc.as_ref().map(|d| d.caret_block()).filter(|l| l.conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE)).map(|l| l.id.clone()) {
                 self.say_why_moved(&id);
             }
         }
@@ -539,24 +520,16 @@ impl App {
             return;
         }
         let started = Instant::now();
-        for l in d.lines_mut().iter_mut() {
-            if plan.parsed.contains(&l.id) {
-                l.saving_since = Some(started);
-            }
-        }
+        d.mark_saving(&plan.parsed, Some(started));
         // Review fixture: a save that never lands, as if more than 3 s late (◌ in the marks).
         if std::env::var_os("THC_TUI_FAKE_SAVE_LATE").is_some() {
-            for l in d.lines_mut().iter_mut().filter(|l| plan.parsed.contains(&l.id)) {
-                l.saving_since = started.checked_sub(Duration::from_secs(4));
-            }
+            d.mark_saving(&plan.parsed, started.checked_sub(Duration::from_secs(4)));
             return;
         }
         // Review fixture: a save that fails (the footer's `not saved · :retry`).
         if std::env::var_os("THC_TUI_FAKE_SAVE_FAIL").is_some() {
-            for l in d.lines_mut().iter_mut().filter(|l| plan.parsed.contains(&l.id)) {
-                l.saving_since = None;
-                l.save_error = Some("the disk is full (fixture)".into());
-            }
+            d.mark_saving(&plan.parsed, None);
+            d.mark_save_failed(&plan.parsed, "the disk is full (fixture)");
             return;
         }
         // The daemon is live: hand the save to the writer thread; typing never waits.
@@ -595,11 +568,7 @@ impl App {
             }
             Err(e) => {
                 // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
-                for l in d.lines_mut().iter_mut() {
-                    if plan.parsed.contains(&l.id) {
-                        l.save_error = Some(e.clone());
-                    }
-                }
+                d.mark_save_failed(&plan.parsed, &e);
                 self.error(format!("not saved: {e} · :retry"));
             }
         }
@@ -637,9 +606,7 @@ impl App {
                     d.apply_results(&results, &done.afters, &done.parsed, &done.sent, today)
                 }
                 (Some(d), Err(e)) => {
-                    for l in d.lines_mut().iter_mut().filter(|l| done.parsed.contains(&l.id)) {
-                        l.save_error = Some(e.clone());
-                    }
+                    d.mark_save_failed(&done.parsed, &e);
                     vec![format!("not saved: {e} · :retry")]
                 }
                 (None, Err(e)) => vec![format!("not saved: {e}")],
@@ -677,7 +644,7 @@ impl App {
         let names: Vec<(String, String)> = self
             .doc
             .as_ref()
-            .map(|d| d.lines().iter().filter(|l| l.conflict && l.conflict_with.is_none()).map(|l| l.id.clone()).collect::<Vec<_>>())
+            .map(|d| d.blocks().iter().filter(|l| l.conflict && l.conflict_with.is_none()).map(|l| l.id.clone()).collect::<Vec<_>>())
             .unwrap_or_default()
             .into_iter()
             .filter_map(|id| {
@@ -686,11 +653,8 @@ impl App {
             .collect();
         if let Some(d) = self.doc.as_mut() {
             for (id, who) in names {
-                if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == id) {
-                    l.conflict_with = Some(who.clone());
-                    if who != crate::doc_ui::MOVED_HERE {
-                        named = Some(who);
-                    }
+                if d.name_conflict(&id, &who) && who != crate::doc_ui::MOVED_HERE {
+                    named = Some(who);
                 }
             }
         }
@@ -701,26 +665,20 @@ impl App {
     pub fn doc_tick(&mut self) {
         self.drain_saves(false);
         let Some(d) = self.doc.as_mut() else { return };
-        let idle = d.engine.changed_at().is_some_and(|t| t.elapsed() >= Duration::from_millis(1500));
-        if !idle {
+        if !d.idle_elapsed(Duration::from_millis(1500)) {
             return;
         }
-        d.engine.mark_committed();
         let Some(op) = d.plan_idle() else { return };
         let Some(root) = d.root.clone() else { return self.save_doc(false) };
         let today = self.today;
-        let id = d.line().id.clone();
-        let text = d.line().text.clone();
+        let id = d.caret_block().id.clone();
+        let text = d.caret_block().text.clone();
         match self.vault.transact(move |st| outline::plan(st, &root, &[op], today)) {
             Ok((_, mut results)) => {
                 outline::refresh_revs(&self.vault.store, &mut results);
-                if let (Some(d), Some(r)) = (self.doc.as_mut(), results.first()) {
-                    if let (Some(l), Some(b)) = (d.lines_mut().iter_mut().find(|l| l.id == id), r.block.as_ref()) {
-                        l.base = b.text_rev.clone();
-                        l.saved = Some(text);
-                        // Yours landed with its base: a remote text held for this line is moot.
-                        l.remote_text = None;
-                    }
+                if let (Some(d), Some(b)) = (self.doc.as_mut(), results.first().and_then(|r| r.block.as_ref())) {
+                    // Yours landed with its base: a remote text held for this line is moot.
+                    d.idle_saved(&id, b.text_rev.clone(), text);
                 }
                 self.log_sizes = self.vault.log.files().unwrap_or_default();
             }
@@ -733,28 +691,16 @@ impl App {
         self.near_miss_typed();
         self.doc_scroll_free = false;
         let Some(d) = self.doc.as_mut() else { return };
-        let now = d.line().id.clone();
+        let now = d.caret_block().id.clone();
         if self.doc_line_id.as_deref() != Some(now.as_str()) {
             // The line left: a remote change waiting on it lands now (unless you typed on it:
             // then the save writes yours with its base and the core keeps both).
-            let mut changed = false;
             if let Some(prev) = self.doc_line_id.clone() {
-                if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == prev) {
-                    if let Some(t) = l.remote_text.take() {
-                        if !l.edited() {
-                            l.text = t.clone();
-                            l.saved = Some(t);
-                            changed = true;
-                        }
-                    }
-                }
-            }
-            if changed {
-                d.touch_content();
+                d.apply_held_text(&prev);
             }
             // Onto a line moved here (its parent was deleted elsewhere): the bar says why
             // (daemon.md §4.0a).
-            let moved = d.line().conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE);
+            let moved = d.caret_block().conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE);
             self.doc_line_id = Some(now.clone());
             if moved {
                 self.say_why_moved(&now);
@@ -780,8 +726,8 @@ impl App {
             self.save_doc(false);
             // A line left with a shape change held for it: take it up now.
             if self.doc.as_ref().is_some_and(|d| {
-                let caret = &d.line().id;
-                d.lines().iter().any(|l| l.remote_shape && &l.id != caret && !l.edited())
+                let caret = &d.caret_block().id;
+                d.blocks().iter().any(|l| l.remote_shape && &l.id != caret && !l.edited())
             }) {
                 self.patch_doc();
             }
@@ -806,120 +752,19 @@ impl App {
         }
         let Some(d) = self.doc.as_mut() else { return };
         let Some(root) = d.root.clone() else { return };
-        let ids: Vec<String> = d.lines().iter().filter(|l| !l.is_new).map(|l| l.id.clone()).collect();
+        let ids: Vec<String> = d.blocks().iter().filter(|l| !l.is_new).map(|l| l.id.clone()).collect();
         let Ok((blocks, gone)) = outline::render_ids(&self.vault.store, &root, &ids) else { return };
-        let caret_id = d.line().id.clone();
-        let mut announce: Option<bool> = None;
-        for b in blocks {
-            let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == b.id) else { continue };
-            l.take_fields(&b, today);
-            l.status = b.status.clone();
-            l.saved_status = b.status.clone();
-            // A gap set elsewhere (another device, thc edit) is taken as it is.
-            if l.gap == l.saved_gap {
-                l.gap = b.gap;
-            }
-            l.saved_gap = b.gap;
-            l.conflict = b.conflict;
-            if l.id == caret_id || l.edited() {
-                // Never rewritten under the caret: announced now, applied when it's left.
-                if b.text != l.saved.clone().unwrap_or_default() && l.remote_text.as_deref() != Some(b.text.as_str()) {
-                    l.remote_text = Some(b.text.clone());
-                    announce = Some(l.edited());
-                }
-                continue;
-            }
-            if l.text != b.text {
-                l.text = b.text.clone();
-            }
-            l.base = b.text_rev.clone();
-            l.saved = Some(b.text.clone());
+        let all = outline::render_for_editor(&self.vault.store, &root).ok();
+        let patched = d.patch(blocks, gone, all.as_deref(), &root, today);
+        if patched.reopen {
+            self.reopen_keeping_unsaved();
+            return;
         }
-        for id in gone {
-            if id == caret_id {
-                // Deleted elsewhere while you're on it: it goes when you leave it.
-                if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == id) {
-                    l.remote_shape = true;
-                }
-                continue;
-            }
-            if let Some(i) = d.lines().iter().position(|l| l.id == id && !l.edited()) {
-                d.lines_mut().remove(i);
-                if d.view.caret.line > i {
-                    d.view.caret.line -= 1;
-                }
-            }
-        }
-        // Notes new to this document (made by another device or an agent): in at their place
-        // in the vault's order, after the note they follow here. The caret's line keeps its
-        // place in the text (two-device soak: they never appeared until the day was reopened).
-        if let Ok(all) = outline::render_for_editor(&self.vault.store, &root) {
-            // The vault's shape for lines saved here and untouched: a kind, parent or place
-            // changed elsewhere means reopening (keeping what's typed). Patching only text let
-            // the next save move a line back where it was here, undoing the other device's move.
-            {
-                let mut prev_sib: std::collections::HashMap<&str, Option<&str>> = std::collections::HashMap::new();
-                let mut last_under: std::collections::HashMap<Option<&str>, &str> = std::collections::HashMap::new();
-                for b in &all {
-                    let par = b.parent.as_deref().filter(|p| *p != root.as_str());
-                    prev_sib.insert(b.id.as_str(), last_under.get(&par).copied());
-                    last_under.insert(par, b.id.as_str());
-                }
-                let caret_id = d.line().id.clone();
-                let mut reshaped = false;
-                for l in d.lines_mut().iter_mut().filter(|l| !l.is_new) {
-                    let Some(b) = all.iter().find(|b| b.id == l.id) else { continue };
-                    let par = b.parent.clone().filter(|p| *p != root);
-                    let saved_par = l.saved_parent.clone().filter(|p| *p != root);
-                    if Some(b.kind) != l.saved_kind || par != saved_par || prev_sib.get(b.id.as_str()).copied().flatten().map(str::to_string) != l.saved_after {
-                        // On it or typed on it: held until it's left, like a remote text.
-                        if l.edited() || l.id == caret_id {
-                            l.remote_shape = true;
-                        } else {
-                            reshaped = true;
-                        }
-                    }
-                }
-                if reshaped {
-                    self.reopen_keeping_unsaved();
-                    return;
-                }
-            }
-            // (A line deleted here and not saved yet is still in the vault: it stays out.)
-            let mut have: std::collections::HashSet<String> = d.lines().iter().map(|l| l.id.clone()).chain(d.engine.deleted().iter().cloned()).collect();
-            for (i, b) in all.iter().enumerate() {
-                if have.contains(&b.id) {
-                    continue;
-                }
-                let prev = all[..i].iter().rev().find(|p| have.contains(&p.id)).map(|p| p.id.clone());
-                let at = prev.and_then(|p| d.lines().iter().position(|l| l.id == p)).map_or(0, |x| x + 1);
-                d.lines_mut().insert(at, crate::doc::Line::from_block(b, today));
-                d.mark_arrived(&b.id);
-                if at <= d.view.caret.line {
-                    d.view.caret.line += 1;
-                }
-                have.insert(b.id.clone());
-            }
-            // Each saved line's neighbour as the vault has it now (or the next save moves lines
-            // that didn't move).
-            let mut prev_sib: std::collections::HashMap<&str, Option<&str>> = std::collections::HashMap::new();
-            let mut last_under: std::collections::HashMap<Option<&str>, &str> = std::collections::HashMap::new();
-            for b in &all {
-                let par = b.parent.as_deref().filter(|p| *p != root.as_str());
-                prev_sib.insert(b.id.as_str(), last_under.get(&par).copied());
-                last_under.insert(par, b.id.as_str());
-            }
-            for l in d.lines_mut().iter_mut().filter(|l| !l.is_new) {
-                if let Some(p) = prev_sib.get(l.id.as_str()) {
-                    l.saved_after = p.map(str::to_string);
-                }
-            }
-        }
-        if announce.is_some() {
-            self.doc_announce = announce;
+        if patched.announce.is_some() {
+            self.doc_announce = patched.announce;
         }
         // A conflict that arrived with this refresh says who, too.
-        if d.lines().iter().any(|l| l.conflict && l.conflict_with.is_none()) {
+        if patched.unnamed_conflicts {
             self.fill_conflict_names();
         }
     }
@@ -927,7 +772,7 @@ impl App {
     /// Navigate on a document line: the existing single-key commands act on its node.
     pub fn doc_select_line(&mut self) {
         let Some(d) = self.doc.as_ref() else { return };
-        let l = d.line();
+        let l = d.caret_block();
         if l.is_new {
             // A line not saved yet has no node: commands have nothing to act on.
             self.selected = None;
@@ -955,8 +800,8 @@ impl App {
     fn check_near_miss(&mut self, all: bool) {
         let Some(d) = self.doc.as_ref() else { return };
         let s = &self.vault.store;
-        let caret = d.view.caret.line;
-        for (i, l) in d.lines().iter().enumerate() {
+        let caret = d.caret().line;
+        for (i, l) in d.blocks().iter().enumerate() {
             if (!all && i == caret) || !(l.is_new || l.edited()) || !l.text.contains("[[") {
                 continue;
             }
@@ -981,12 +826,13 @@ impl App {
     /// the chip shows while you're still on the line, and ⌃O takes the page before any stub.
     pub fn near_miss_typed(&mut self) {
         let Some(d) = self.doc.as_ref() else { return };
-        let l = d.line();
-        if !l.text[..d.view.caret.byte].ends_with("]]") {
+        let l = d.caret_block();
+        let caret = d.caret().byte;
+        if !l.text[..caret].ends_with("]]") {
             return;
         }
         let s = &self.vault.store;
-        let Some(title) = links_in(&l.text[..d.view.caret.byte]).pop() else { return };
+        let Some(title) = links_in(&l.text[..caret]).pop() else { return };
         if s.find_root_by_title(&title, false).ok().flatten().is_some() {
             return;
         }
@@ -1007,9 +853,8 @@ impl App {
         }
         self.near_miss = None;
         let Some(d) = self.doc.as_mut() else { return false };
-        let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == line_id) else { return false };
-        l.text = l.text.replace(&format!("[[{typed}]]"), &format!("[[{existing}]]"));
-        d.touch_content();
+        let Some(text) = d.blocks().iter().find(|l| l.id == line_id).map(|l| l.text.replace(&format!("[[{typed}]]"), &format!("[[{existing}]]"))) else { return false };
+        d.replace_content(&line_id, &text);
         self.save_doc(true);
         let s = &self.vault.store;
         if let Some(stub) = s.find_root_by_title(&typed, false).ok().flatten() {
@@ -1079,22 +924,10 @@ impl App {
         };
         let line = thc_core::attach::line(caption, &st.path);
         let d = self.doc.as_mut()?;
-        d.begin_recovery();
         // Its own note (a paragraph whose whole text is the image): on the caret's line when
-        // that's empty, else a new line after it; then a fresh line below to type on.
-        let i = d.view.caret.line;
-        let depth = d.lines()[i].depth;
-        let at = if d.lines()[i].text.trim().is_empty() && d.lines()[i].is_new {
-            d.lines_mut()[i] = crate::doc::Line::new(depth, thc_core::outline::Kind::Para, &line);
-            i
-        } else {
-            d.lines_mut().insert(i + 1, crate::doc::Line::new(depth, thc_core::outline::Kind::Para, &line));
-            i + 1
-        };
-        let id = d.lines()[at].id.clone();
-        d.lines_mut().insert(at + 1, crate::doc::Line::new(depth, thc_core::outline::Kind::Para, ""));
-        d.view.caret = crate::doc::Pos { line: at + 1, byte: 0 };
-        d.view.anchor = None;
+        // that's empty, else a new line after it; then a fresh line below to type on. One undo
+        // step.
+        let id = d.insert_blocks(&[&line, ""]).swap_remove(0);
         self.save_doc(true);
         let dims = match (st.w, st.h) {
             (Some(w), Some(h)) => format!(" · {w}×{h}"),
@@ -1126,7 +959,7 @@ impl App {
             return;
         }
         let Some(d) = self.doc.as_ref() else { return };
-        let l = d.line();
+        let l = d.caret_block();
         // An attachment's line opens its file (attachments.md §3).
         if let Some((_, path)) = crate::doc_ui::image_line(&l.text) {
             return self.open_attachment(&path);
@@ -1135,14 +968,14 @@ impl App {
             self.selected = Some(l.id.clone());
             return self.open_compare();
         }
-        let link = link_at(&l.text, d.view.caret.byte);
+        let link = link_at(&l.text, d.caret().byte);
         // ⌃O on an issue's line (not on a link in it): the issue opens as its own document, and
         // Esc comes back here (issues.md §1).
         let issue = (link.is_none() && !l.is_new).then(|| l.id.clone()).and_then(|id| self.vault.store.node(&id).ok().flatten()).filter(|n| self.is_issue(n));
         let here = (d.target.clone(), l.id.clone());
         self.save_doc(true);
         // The saved line's id (a new line has its id only once it's saved).
-        let here = (here.0, self.doc.as_ref().map_or(here.1, |d| d.line().id.clone()));
+        let here = (here.0, self.doc.as_ref().map_or(here.1, |d| d.caret_block().id.clone()));
         if let Some(n) = issue {
             self.doc_back = matches!(here.0, Target::Page { .. }).then(|| (here.0, here.1, n.id.clone()));
             self.page_open = Some(n.id.clone());
@@ -1195,7 +1028,7 @@ impl App {
     /// The open `[[` before the caret on its line: (byte where `[[` starts, the query typed).
     pub fn link_query(&self) -> Option<(usize, String)> {
         let d = self.doc.as_ref()?;
-        let t = &d.line().text[..d.view.caret.byte];
+        let t = &d.caret_block().text[..d.caret().byte];
         let start = t.rfind("[[")?;
         let q = &t[start + 2..];
         (!q.contains("]]") && !q.contains('\n')).then(|| (start, q.to_string()))
@@ -1384,11 +1217,7 @@ impl App {
     pub fn link_insert(&mut self, title: &str) {
         let Some((start, _)) = self.link_query() else { return };
         let Some(d) = self.doc.as_mut() else { return };
-        let end = d.view.caret.byte;
-        d.select(false);
-        d.view.anchor = Some(crate::doc::Pos { line: d.view.caret.line, byte: start });
-        d.insert(&format!("[[{title}]]"));
-        let _ = end;
+        d.replace_before_caret(start, &format!("[[{title}]]"));
         self.link_open = false;
         self.link_sel = None;
     }
