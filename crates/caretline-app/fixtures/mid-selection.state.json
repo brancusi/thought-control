@@ -1,0 +1,63 @@
+{
+  "text": "Selections have an anchor and a head.\nShift and the arrows grow one from the caret's end,\nand a plain arrow collapses it to the edge.\n",
+  "selection": {
+    "ranges": [
+      {
+        "anchor": 18,
+        "head": 58,
+        "old_visual_position": null
+      }
+    ],
+    "primary_index": 0
+  },
+  "scroll": {
+    "line": 0,
+    "row": 0,
+    "col": 0
+  },
+  "viewport": {
+    "width": 50,
+    "height": 6
+  },
+  "clipboard": "",
+  "path": "select.md",
+  "history": {
+    "revisions": [
+      {
+        "parent": 0,
+        "last_child": null,
+        "transaction": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "inversion": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "timestamp": 0
+      }
+    ],
+    "current": 0
+  },
+  "saved_revision": 0,
+  "saving": null,
+  "dirty": false,
+  "config": {
+    "tab_width": 4,
+    "soft_wrap": true,
+    "scrolloff": 2,
+    "line_ending": "LF"
+  },
+  "status": null,
+  "now_ms": 0,
+  "run": null,
+  "quit_armed": false
+}
