@@ -107,7 +107,13 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
     if let ExtChange::Replace { from, to, text: ins } = change {
         let from = (*from).min(len);
         let to = (*to).clamp(from, len);
-        return Ok(Some(edit(doc, vec![least(text, from, to, lines(ins))], |_, _| {})));
+        // A change inside one block's lines is that block's: it keeps its mark even where the
+        // deleted text, read alone, is a whole line (an empty line's break: "a\n\n" → "a\n").
+        let keep = doc.blocks().and_then(|o| {
+            let b = o.block_at(text, from);
+            (b.start <= from && to <= b.end && b.id != MarkId(u64::MAX)).then(|| (b.id, b.start, b.attrs))
+        });
+        return Ok(Some(edit(doc, vec![least(text, from, to, lines(ins))], move |m, _| keep_mark(m, keep))));
     }
     let o = doc.blocks().ok_or("block changes need an outline document")?;
     let cfg = doc.outline.clone().expect("outline");
@@ -116,7 +122,8 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
         ExtChange::Replace { .. } => unreachable!(),
         ExtChange::ReplaceContent { id, text: content } => {
             let b = block(*id)?;
-            Ok(Some(edit(doc, vec![least(text, b.content_start(), b.end, lines(content))], |_, _| {})))
+            let keep = Some((b.id, b.start, b.attrs));
+            Ok(Some(edit(doc, vec![least(text, b.content_start(), b.end, lines(content))], move |m, _| keep_mark(m, keep))))
         }
         ExtChange::SetShape { id, depth, kind, status } => {
             let b = block(*id)?;
@@ -195,6 +202,15 @@ fn least(text: crate::helix::RopeSlice, from: usize, to: usize, new: String) -> 
 
 /// Applies changes (sorted, in current positions) to the text and the marks, outside the
 /// history; `fix` adjusts the marks after they are mapped. Returns the change set.
+/// Puts a block's mark back at its start if a change inside the block took it (its start is
+/// before the change, so it's still a line start where it was).
+fn keep_mark(marks: &mut crate::marks::Marks, keep: Option<(MarkId, usize, crate::marks::BlockAttrs)>) {
+    let Some((id, pos, attrs)) = keep else { return };
+    if !marks.contains(id) && marks.at(pos).is_none() {
+        let _ = marks.insert(crate::marks::Mark { pos, id, attrs });
+    }
+}
+
 fn edit(
     doc: &mut Document,
     changes: Vec<(usize, usize, String)>,
