@@ -179,6 +179,7 @@ fn style(role: Role) -> Style {
         Role::Selection => Style::default().bg(Color::Blue).fg(Color::White),
         Role::Status => Style::default().add_modifier(Modifier::REVERSED),
         Role::StatusAccent => Style::default().add_modifier(Modifier::REVERSED | Modifier::BOLD),
+        Role::Hang => Style::default().add_modifier(Modifier::DIM),
     }
 }
 
