@@ -237,7 +237,7 @@ fn run(session: &mut Session, req: Request, host: &Host) -> Result<Handled, Prot
             reply(ok_line(id, json!({"rev": session.rev, "from_rev": from, "trace": lines})))
         }
         "trace.checkpoint" => {
-            session.checkpoint();
+            session.checkpoint_saved();
             reply(ok_line(id, json!({"rev": session.rev})))
         }
         other => Err(err("unknown_op", format!("unknown op {other:?} · hello lists them"))),

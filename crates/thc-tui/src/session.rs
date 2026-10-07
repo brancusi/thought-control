@@ -9,6 +9,7 @@
 
 use crate::app::App;
 use crate::ui_state::{DocumentState, UiState};
+use thc_core::vault::Frontier;
 use ratatui::crossterm::event::{KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
 use ratatui::layout::Rect;
 use serde::{Deserialize, Serialize};
@@ -52,6 +53,15 @@ pub enum Msg {
     /// another device's change, an idle save, an update check), as a merge patch. The runtime
     /// records it so a trace and subscribers see every change; replay applies it.
     External { patch: Value },
+    /// A frame was drawn: what waits for it ran (the save of a line just left). Recorded when
+    /// something did; replay runs it there.
+    Frame,
+    /// The runtime's idle step for the open document passed its idle point: the typing so far
+    /// becomes one undo step and is saved. Recorded when it happens; replay does it there.
+    Idle,
+    /// The runtime polled the vault and found changes from elsewhere (another process, another
+    /// device): it reloads what's shown. Recorded when it finds some; replay polls there.
+    Poll,
     /// Test fixtures: another actor writes to the vault (`THC_TUI_KEYS` only).
     Fixture { fixture: Fixture },
 }
@@ -155,11 +165,14 @@ pub struct Session {
     pub announcing: bool,
     /// The state as the last message left it: a difference is an external change.
     last_seen: UiState,
+    /// How far the store had read the vault's log at the last trace line (`Vault::frontier`):
+    /// a `state` line pins it, and a message line carries what other writers added since.
+    frontier: Option<Frontier>,
 }
 
 impl Session {
     pub fn new(app: App, size: (u16, u16)) -> Session {
-        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None, unannounced: Vec::new(), announcing: false, last_seen: UiState::default() };
+        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None, unannounced: Vec::new(), announcing: false, last_seen: UiState::default(), frontier: None };
         s.sync_document();
         s.checkpoint();
         s
@@ -187,9 +200,64 @@ impl Session {
     pub fn checkpoint(&mut self) {
         self.sync_document();
         self.last_seen = self.app.ui.clone();
-        let line = json!({"state": self.app.ui.to_json(), "size": [self.size.0, self.size.1], "rev": self.rev});
+        self.frontier = self.app.vault.frontier().ok();
+        let line = self.state_line();
         self.segment = self.trace.len();
         self.push_trace(line);
+    }
+
+    /// `trace.checkpoint`: the open document's lines saved first (waiting for the save), so the
+    /// vault the new segment pins holds every line on screen, then a checkpoint.
+    pub fn checkpoint_saved(&mut self) {
+        if self.app.doc.is_some() {
+            self.app.save_doc(true);
+            self.app.drain_saves(true);
+            // The save's look ends the old segment.
+            self.sync_external();
+        }
+        self.checkpoint();
+    }
+
+    /// A `state` line: the state, the size, the rev, and the vault it applies to (`log`, the
+    /// frontier: replay rebuilds the vault as of it, so the trace's own writes land once).
+    fn state_line(&self) -> Value {
+        let mut line = json!({"state": self.app.ui.to_json(), "size": [self.size.0, self.size.1], "rev": self.rev});
+        if let Some(f) = &self.frontier {
+            line["log"] = json!(f);
+        }
+        // What the frames show from the process and terminal rather than the state: replay
+        // draws them as this session did, not as the replaying process would.
+        let d = &self.app.derived;
+        line["env"] = json!({"pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
+        line
+    }
+
+    /// A `state` line's `env`, taken up by a replay (see `state_line`).
+    pub fn set_env(&mut self, env: &Value) {
+        let d = &mut self.app.derived;
+        d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
+        if let Some(b) = env.get("inline_images").and_then(Value::as_bool) {
+            d.inline_images = b;
+        }
+    }
+
+    /// The lines other writers added to the vault's log since the last trace line (an agent's
+    /// `thc add`, another device's sync), as written; this session's own writes are left out,
+    /// since replaying its messages makes them again.
+    fn drain_log(&mut self) -> Vec<Value> {
+        let (Some(old), Ok(now)) = (self.frontier.as_ref(), self.app.vault.frontier()) else { return vec![] };
+        if *old == now {
+            return vec![];
+        }
+        let lines = match self.app.vault.foreign_lines(old, &now) {
+            Ok(l) => l,
+            Err(e) => {
+                self.app.error(format!("ui trace: {e:#}"));
+                vec![]
+            }
+        };
+        self.frontier = Some(now);
+        lines
     }
 
     fn push_trace(&mut self, line: Value) {
@@ -210,7 +278,7 @@ impl Session {
                 // One segment alone outgrew the limit: start a fresh one here.
                 self.trace.clear();
                 self.trace_from = self.rev;
-                let line = json!({"state": self.app.ui.to_json(), "size": [self.size.0, self.size.1], "rev": self.rev});
+                let line = self.state_line();
                 self.trace.push(line);
             }
         }
@@ -284,7 +352,10 @@ impl Session {
         let _ = self.app.reload();
         if let (Some(ds), Some(d)) = (doc, self.app.doc.as_mut()) {
             if !ds.caret_id.is_empty() {
-                d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+                // The caret goes back as it does on reopening (a remembered caret): a day's
+                // fresh last line is only there when the caret is on it.
+                let journal = matches!(d.target, crate::editor::Target::Journal { .. });
+                d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
             }
             d.scroll = ds.scroll;
         }
@@ -366,8 +437,24 @@ impl Session {
     /// Apply one message. Err: it was refused and nothing changed (not even the rev).
     pub fn apply(&mut self, msg: Msg) -> Result<Vec<Effect>, String> {
         self.check(&msg)?;
-        let line = serde_json::to_value(&msg).expect("Msg serializes");
-        match msg {
+        // What other writers added before this message is what it ran on: its line carries it.
+        let before = self.frontier.clone();
+        let foreign = self.drain_log();
+        if let Err(e) = self.run(&msg) {
+            self.frontier = before;
+            return Err(e);
+        }
+        if matches!(msg, Msg::Fixture { .. }) {
+            // A fixture's write is the message's own: replaying the message makes it again.
+            self.frontier = self.app.vault.frontier().ok().or(self.frontier.take());
+        }
+        self.record(&msg, foreign);
+        Ok(self.pending_effects())
+    }
+
+    /// What a message does to the state (and, for writes, the vault).
+    fn run(&mut self, msg: &Msg) -> Result<(), String> {
+        match msg.clone() {
             Msg::Tick { now_ms, utc_offset_min } => self.app.ui.tick(now_ms, utc_offset_min),
             Msg::Key { key } => {
                 let k = crate::script::key_event(&key).expect("checked");
@@ -401,18 +488,90 @@ impl Session {
             }
             Msg::Fixture { fixture } => self.fixture(fixture),
             Msg::External { patch } => self.external(&patch)?,
+            Msg::Frame => {
+                self.app.after_frame();
+            }
+            Msg::Idle => {
+                self.app.doc_tick();
+            }
+            Msg::Poll => {
+                if let Err(e) = self.app.poll_external() {
+                    self.app.error(format!("sync: {e:#}"));
+                }
+            }
         }
+        Ok(())
+    }
+
+    /// One of the runtime's own steps that read or write the vault outside any message (`Frame`,
+    /// `Idle`, `Poll`), run now; recorded as that message only when it did something, so a replay runs
+    /// it at the same point. What the step changed in the state is left for the next `external`
+    /// message, as before: the step's line carries its data, the patch its look.
+    pub fn runtime(&mut self, msg: Msg) {
+        // Anything still unrecorded is recorded first, apart from the step.
+        self.sync_external();
+        let did = match &msg {
+            Msg::Frame => self.app.after_frame(),
+            Msg::Idle => self.app.doc_tick(),
+            Msg::Poll => match self.app.poll_external() {
+                Ok(did) => did,
+                Err(e) => {
+                    self.app.error(format!("sync: {e:#}"));
+                    false
+                }
+            },
+            _ => unreachable!("not a runtime step: {msg:?}"),
+        };
+        if did {
+            // A poll took in what it found during the step: the line carries that too.
+            let foreign = self.drain_log();
+            self.record(&msg, foreign);
+        }
+    }
+
+    /// Writes this TUI made since `mark` (`Vault::frontier` before them) that no message makes again ($EDITOR's round trip):
+    /// recorded as a `poll` that carries them, so a replay takes them in as it would another
+    /// writer's. (Before the mark, its own writes are its messages', left out as usual.)
+    pub fn outside_writes(&mut self, mark: Option<Frontier>) {
+        self.sync_external();
+        let (Some(old), Some(mark), Ok(now)) = (self.frontier.clone(), mark, self.app.vault.frontier()) else { return };
+        let lines = self.app.vault.log_lines(&old, &mark, true).and_then(|mut a| {
+            a.extend(self.app.vault.log_lines(&mark, &now, false)?);
+            Ok(a)
+        });
+        let lines = match lines {
+            Ok(l) => l,
+            Err(e) => {
+                self.app.error(format!("ui trace: {e:#}"));
+                return;
+            }
+        };
+        self.frontier = Some(now);
+        if !lines.is_empty() {
+            self.record(&Msg::Poll, lines);
+        }
+    }
+
+    /// The bookkeeping after a message: layout follows, the rev moves, and the line goes into
+    /// the trace (with `_log`, what other writers added that it ran on) and to subscribers.
+    fn record(&mut self, msg: &Msg, foreign: Vec<Value>) {
+        let line = serde_json::to_value(msg).expect("Msg serializes");
         self.follow();
         self.sync_document();
-        self.last_seen = self.app.ui.clone();
+        // A runtime step's look is the next `external` patch's, measured from before it.
+        if !matches!(msg, Msg::Frame | Msg::Idle | Msg::Poll) {
+            self.last_seen = self.app.ui.clone();
+        }
         self.rev += 1;
         if self.announcing {
             self.unannounced.push(line.clone());
         }
         let mut line = line;
         line["_rev"] = json!(self.rev);
+        if !foreign.is_empty() {
+            line["_log"] = Value::Array(foreign);
+        }
         self.push_trace(line);
-        Ok(self.pending_effects())
     }
 
     /// Layout follows the caret and the list cursor at the session's size: part of applying a
@@ -659,46 +818,73 @@ fn cells(buf: &ratatui::buffer::Buffer) -> Value {
     Value::Array(rows)
 }
 
-/// Replay a trace (JSON lines: `state` lines and messages) onto a session; the frames after
-/// every line with `every`, else only the last.
-pub fn replay(session: &mut Session, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>, String> {
+/// Opens a headless session for replay on a scratch copy of the vault: as of a frontier (a
+/// `state` line's `log`), or as the vault is now for a trace that has none.
+pub type Open<'a> = dyn FnMut(Option<&Frontier>) -> Result<Session, String> + 'a;
+
+/// Replay a trace (JSON lines: `state` lines and messages); the frames after every line with
+/// `every`, else only the last. Frames are drawn at `size`, or else at the session's size (the
+/// trace's own, as its `state` lines and `resize` messages set it). Layout follows the trace's
+/// size either way, as the live TUI's did, so `size` gives the frame `thc ui render WxH` drew of
+/// the live TUI.
+///
+/// Each `state` line with a `log` frontier starts a session of its own, on the vault as of that
+/// frontier: the writes the trace's messages make land once, on the vault they were made on. A
+/// line's `_log` (what other writers added that the line ran on) goes into the vault before the
+/// line runs, and the runtime's own steps (`idle`, `poll`) run where they ran live.
+pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>, String> {
     let mut frames = Vec::new();
-    let mut size_set = size.is_some();
-    if let Some(s) = size {
-        session.size = s;
-    }
+    let mut session: Option<Session> = None;
+    let draw = |s: &mut Session, frames: &mut Vec<String>| -> Result<(), String> {
+        let (w, h) = size.unwrap_or(s.size);
+        let r = s.render(w, h, format)?;
+        frames.push(r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default()));
+        Ok(())
+    };
     for (i, line) in trace.lines().enumerate() {
         if line.trim().is_empty() {
             continue;
         }
-        let v: Value = serde_json::from_str(line).map_err(|e| format!("line {}: not JSON: {e}", i + 1))?;
+        let at = |e: String| format!("line {}: {e}", i + 1);
+        let mut v: Value = serde_json::from_str(line).map_err(|e| at(format!("not JSON: {e}")))?;
         if let Some(state) = v.get("state") {
-            if !size_set {
-                if let Some([w, h]) = v.get("size").and_then(|s| serde_json::from_value::<[u16; 2]>(s.clone()).ok()).map(|a| [a[0], a[1]]) {
-                    session.size = (w, h);
-                    size_set = true;
-                }
+            let pin: Option<Frontier> = v.get("log").map(|l| serde_json::from_value(l.clone())).transpose().map_err(|e| at(format!("log: {e}")))?;
+            if session.is_none() || pin.is_some() {
+                session = Some(open(pin.as_ref()).map_err(at)?);
             }
-            session.restore(state).map_err(|e| format!("line {}: {e}", i + 1))?;
+            let s = session.as_mut().expect("opened");
+            if let Some(a) = v.get("size").and_then(|s| serde_json::from_value::<[u16; 2]>(s.clone()).ok()) {
+                s.size = (a[0], a[1]);
+            }
+            s.restore(state).map_err(at)?;
+            if let Some(env) = v.get("env") {
+                s.set_env(env);
+            }
         } else {
-            let mut v = v;
-            if let Some(o) = v.as_object_mut() {
-                o.remove("_rev");
+            if session.is_none() {
+                session = Some(open(None).map_err(at)?);
             }
-            let msg: Msg = serde_json::from_value(v).map_err(|e| format!("line {}: {e}", i + 1))?;
-            session.apply(msg).map_err(|e| format!("line {}: {e}", i + 1))?;
-            session.drop_effects();
+            let s = session.as_mut().expect("opened");
+            let log = v.as_object_mut().and_then(|o| {
+                o.remove("_rev");
+                o.remove("_log")
+            });
+            let msg: Msg = serde_json::from_value(v).map_err(|e| at(e.to_string()))?;
+            if let Some(Value::Array(lines)) = log {
+                s.app.vault.ingest_lines(&lines).map_err(|e| at(format!("_log: {e:#}")))?;
+            }
+            s.apply(msg).map_err(at)?;
+            s.drop_effects();
         }
         if every {
-            let (w, h) = session.size;
-            let r = session.render(w, h, format)?;
-            frames.push(r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default()));
+            draw(session.as_mut().expect("opened"), &mut frames)?;
         }
     }
     if !every {
-        let (w, h) = session.size;
-        let r = session.render(w, h, format)?;
-        frames.push(r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default()));
+        if session.is_none() {
+            session = Some(open(None)?);
+        }
+        draw(session.as_mut().expect("opened"), &mut frames)?;
     }
     Ok(frames)
 }
