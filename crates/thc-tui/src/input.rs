@@ -116,11 +116,30 @@ pub fn palette_matches(app: &App, q: &str) -> Vec<crate::app::PaletteEntry> {
         let by_cmd = p.cmd.strip_prefix(':').and_then(|c| fuzzy(&q, c));
         fuzzy(&q, &p.label.to_lowercase()).max(by_cmd)
     };
-    let mut m: Vec<(i64, usize)> = entries.iter().enumerate().filter_map(|(i, p)| score(p).map(|s| (s, i))).collect();
+    let mut m: Vec<(i64, crate::app::PaletteEntry)> = entries.iter().filter_map(|p| score(p).map(|s| (s, p.clone()))).collect();
     if !q.is_empty() {
+        // `:` goes to a page or a day as ⌃O does (gj4x1): the finder's rows join the commands,
+        // ranked with them; a page named exactly what was typed comes first. Never `+ new page`:
+        // a stray name in the palette doesn't create one.
+        let name = q.trim_start_matches(['¶', '§']).trim();
+        for (label, go) in app.finder_matches(name) {
+            let (keys, title) = match &go {
+                crate::app::Go::Page(id) => (format!("go:page:{id}"), label.trim_start_matches("¶ ").to_lowercase()),
+                crate::app::Go::Day(d) => (format!("go:day:{d}"), label.trim_start_matches("§ ").to_lowercase()),
+                crate::app::Go::New(_) => continue,
+            };
+            let s = match fuzzy(name, &title) {
+                _ if title == name => 1000,
+                Some(s) if title.starts_with(name) => s + 50,
+                Some(s) => s,
+                // A day read from a date (`+3d`, `fri`) or a page the finder matched otherwise.
+                None => 0,
+            };
+            m.push((s, crate::app::PaletteEntry { label, keys, cmd: String::new(), shown: String::new() }));
+        }
         m.sort_by_key(|(s, _)| -*s);
     }
-    m.into_iter().map(|(_, i)| entries[i].clone()).collect()
+    m.into_iter().map(|(_, e)| e).collect()
 }
 
 /// A stored date as a person would type it, for an editor's prefill (tui-editor §5): `fri`
@@ -1068,6 +1087,15 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
 }
 
 fn run_palette(app: &mut App, id: &str) {
+    // A page or a day (gj4x1): go there as the finder would; it isn't a recent command.
+    if let Some(go) = id.strip_prefix("go:") {
+        if let Some(pid) = go.strip_prefix("page:") {
+            app.finder_go(crate::app::Go::Page(pid.to_string()));
+        } else if let Some(d) = go.strip_prefix("day:").and_then(|d| d.parse::<chrono::NaiveDate>().ok()) {
+            app.finder_go(crate::app::Go::Day(d));
+        }
+        return;
+    }
     app.recent_cmds.retain(|k| k != id);
     app.recent_cmds.insert(0, id.to_string());
     app.recent_cmds.truncate(3);
