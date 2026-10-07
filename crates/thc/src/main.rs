@@ -1612,7 +1612,11 @@ fn show(ctx: &mut Ctx, id: Option<String>, depth: usize) -> Result<()> {
         Some("doing" | "done") => thc_core::status::times(ctx.store(), std::slice::from_ref(&id))?.remove(&id),
         _ => None,
     };
-    let now_ms = chrono::Local::now().timestamp_millis();
+    // "Now" honours THC_NOW, as `thc status` does, so the day shown and an open task's worked time agree.
+    let now_ms = {
+        use chrono::TimeZone;
+        chrono::Local.from_local_datetime(&thc_core::dates::now_local()).earliest().map_or_else(|| chrono::Local::now().timestamp_millis(), |d| d.timestamp_millis())
+    };
     if ctx.out.json {
         let mut v = node_json(ctx.store(), &n);
         if let Some(t) = &times {
