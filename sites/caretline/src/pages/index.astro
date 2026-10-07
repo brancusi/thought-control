@@ -4,6 +4,8 @@ import Base from '../layouts/Base.astro';
 import Field from '../components/Field.astro';
 import FieldBoot from '../components/FieldBoot.astro';
 import Install from '../components/Install.astro';
+import TryIt from '../components/TryIt.astro';
+import TourPreview from '../components/TourPreview.astro';
 import Playground from '../components/Playground.astro';
 import { ONE_LINER, REPO, CRATE, DOCS_RS } from '../lib/site';
 
@@ -110,7 +112,8 @@ assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "h
           <div class="hero__side">
             <p class="hero__lede">{ONE_LINER}</p>
             <Install />
-            <p class="hero__links"><a href={CRATE}>crates.io/crates/caretline</a><span class="dim">·</span><a href={DOCS_RS}>docs.rs/caretline</a><span class="dim">·</span><span class="dim">0.1.0, MIT + MPL-2.0</span></p>
+            <p class="hero__links"><a href={CRATE}>crates.io/crates/caretline</a><span class="dim">·</span><a href={DOCS_RS}>docs.rs/caretline</a><span class="dim">·</span><span class="dim">0.2.0, MIT + MPL-2.0</span></p>
+            <TryIt />
             <div class="hero__cta">
               <a class="btn btn--lit" href="/docs/">Read the docs</a>
               <a class="btn" href="#frames">See the frames</a>
@@ -119,6 +122,17 @@ assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "h
             </div>
           </div>
         </div>
+      </div>
+    </section>
+
+    <section class="section" id="try">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">caretline demo</span>
+          <h2>A tour you take by doing.</h2>
+          <p>One line installs the binary and opens a guided outline. The status bar names the next step: type, make a task, nest, fold, then dump the whole editor to JSON and watch your own session replay to the identical state. <a href="/docs/quickstart/">Quickstart</a></p>
+        </div>
+        <TourPreview />
       </div>
     </section>
 
@@ -242,7 +256,7 @@ assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "h
   .hero__copy { display: grid; gap: var(--s-8); grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: end; padding-top: var(--s-12); }
   @media (max-width: 56rem) { .hero__copy { grid-template-columns: minmax(0, 1fr); } }
   .hero h1 { font-size: var(--t-hero); letter-spacing: -0.035em; line-height: 1.05; font-weight: 500; }
-  .hero__side { display: grid; gap: var(--s-6); min-width: 0; }
+  .hero__side { display: grid; grid-template-columns: minmax(0, 1fr); gap: var(--s-6); min-width: 0; }
   .hero__lede { color: var(--muted); font-size: var(--t-md); line-height: 1.55; max-width: 44ch; }
   .hero__links { display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; margin-top: calc(var(--s-6) * -0.5); font: 400 var(--t-xs)/1.5 var(--font-mono); color: var(--muted); }
   .hero__links a { color: var(--muted); }

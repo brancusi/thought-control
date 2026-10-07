@@ -6,14 +6,19 @@ It comes from the `caretline-app` crate. Every output on this page is from a rea
 ## Install
 
 ```sh
-cargo install --locked --path crates/caretline-app   # installs `caretline`
+curl -fsSL https://caretline.app/install.sh | sh && caretline demo   # a prebuilt binary, then the tour
+cargo install --git https://github.com/brancusi/thought-control caretline-app   # or build it
+cargo install --locked --path crates/caretline-app   # from a checkout
 cargo run -p caretline-app -- notes.md                # or run it from the checkout
 ```
+
+See the [Quickstart](quickstart.md) for what the installer does and what the demos show.
 
 ## Commands at a glance
 
 | Command | Does |
 |---|---|
+| `caretline demo [tour\|scenes\|agent]` | Built-in demos, no files needed: see the [Quickstart](quickstart.md). `--snapshot WxH` prints a demo's first frame; `demo agent --headless` runs the agent against a headless editor and prints a JSON report |
 | `caretline [FILE]` | Edit FILE interactively (created on first save) |
 | `caretline FILE --trace T.jsonl` | Edit, recording the session to a trace |
 | `caretline FILE --no-mouse` | Edit without capturing the mouse |
@@ -285,23 +290,25 @@ See [protocol.md](protocol.md#collaborating-with-a-person).
 
 ## Animate a live editor
 
-`crates/caretline-app/examples/scenes.rs` pushes six ASCII scenes (donut, cube, tunnel, plasma,
-fire, warp) into a running editor with the [`frame`](protocol.md#frames) op, paced against
-absolute deadlines, and reports the frames per second it achieved:
+`caretline demo scenes` plays six ASCII scenes (warp, donut, cube, tunnel, plasma, fire) inside
+the editor, pushed by a client on its own socket with the [`frame`](protocol.md#frames) op (see
+the [Quickstart](quickstart.md)). With `--bench`, it plays them into an editor that is already
+running instead, paced against absolute deadlines, and reports the frames per second it
+achieved:
 
 ```sh
-caretline notes.md --listen                               # in one terminal
-cargo run --release -p caretline-app --example scenes     # in another
-cargo run --release -p caretline-app --example scenes -- --fps 120 --scene donut,plasma --seconds 5
+caretline notes.md --listen                                       # in one terminal
+caretline demo scenes --bench                                     # in another
+caretline demo scenes --bench --fps 120 --scene donut,plasma --seconds 5
 ```
 
 | Flag | Does |
 |---|---|
-| `--fps 60,120,0` | Target rates to play each scene at (`0` is unthrottled). Default `60,120,0` |
-| `--seconds S` | How long each scene plays at each rate (default 3) |
-| `--scene NAMES` | Some of `donut,cube,tunnel,plasma,fire,warp` (default all) |
+| `--fps 60,120,0` | Target rates to play each scene at (`0` is unthrottled). Default `60,120,0`. Without `--bench`, one rate (default 60) |
+| `--seconds S` | How long each scene plays at each rate (default 3; without `--bench`, 8 per scene) |
+| `--scene NAMES` | Some of `warp,donut,cube,tunnel,plasma,fire` (default all) |
 | `--socket PATH` | The editor's socket (default: the newest live editor) |
-| `--frames N`, `--size WxH`, `--spin-ms MS` | Frames precomputed per scene (180), the scene size (the editor's text area), how long before a deadline to stop sleeping and spin (1 ms) |
+| `--frames N`, `--size WxH` | Frames precomputed per scene (180), the scene size (the editor's text area) |
 
 For 120 fps on screen, the terminal must paint that fast too: in WezTerm set
 `config.max_fps = 120`, on a 120 Hz display.

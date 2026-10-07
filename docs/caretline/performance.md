@@ -3,7 +3,7 @@
 How fast caretline is, where the limits are, and how to go faster. The numbers come from release
 builds on an Apple-silicon Mac. `caretline bench` reproduces the engine and protocol numbers; the
 stress figures came from driving a live `caretline FILE --listen` editor over its socket from a
-script, and the animation figures from the Rust demo client (`examples/scenes.rs`).
+script, and the animation figures from the Rust demo client (`caretline demo scenes --bench`).
 
 ## Summary
 
@@ -85,7 +85,7 @@ document costs a few microseconds more than the middle.
 Six full-screen ASCII scenes (124×65 text cells, 8–11 KB per frame, highlighted cells drawn in
 the selection's colour) were precomputed and pushed into a live editor with the
 [`frame`](protocol.md#frames) op by the Rust demo client
-(`cargo run --release -p caretline-app --example scenes`), paced against absolute deadlines.
+(`caretline demo scenes --bench`), paced against absolute deadlines.
 The editor ran in a 124×66 pseudo-terminal whose output was read and thrown away, so these are
 the editor's numbers, not a terminal's paint rate. Each scene played 3 s at each rate.
 

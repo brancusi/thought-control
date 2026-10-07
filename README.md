@@ -20,6 +20,10 @@ $ thc q 'status:open (due<=+7d or priority:high) -#someday sort:due' --json
 {"count":2,"items":[{"id":"yt2nrdwwrbpb","short":"yt2nr","kind":"task", …}]}
 ```
 
+**caretline**, the editor engine inside `thc`, also stands alone. Try it in one line:
+`curl -fsSL https://caretline.app/install.sh | sh && caretline demo` (see
+[docs/caretline/quickstart.md](docs/caretline/quickstart.md)).
+
 **New here?** Start with [the guide](docs/guide/README.md): your first ten minutes, every view,
 how writing works, and every key.
 
