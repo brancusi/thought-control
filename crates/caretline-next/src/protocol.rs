@@ -29,6 +29,7 @@ pub const OPS: &[&str] = &[
     "subscribe",
     "unsubscribe",
     "trace.get",
+    "trace.checkpoint",
 ];
 
 /// A frame format.
@@ -121,6 +122,12 @@ struct Request {
     /// subscribe: the messages with every event (default true).
     #[serde(default)]
     with_msgs: Option<bool>,
+    /// trace.get: only the lines after this rev.
+    #[serde(default)]
+    since_rev: Option<u64>,
+    /// trace.get: every line kept, not just the current segment.
+    #[serde(default)]
+    all: bool,
 }
 
 #[derive(Serialize)]
@@ -426,9 +433,35 @@ impl Session {
                 #[derive(Serialize)]
                 struct R<'a> {
                     rev: u64,
+                    /// The rev the returned lines start from.
+                    from_rev: u64,
                     trace: &'a [TraceLine],
                 }
-                Ok(reply(to_line(id, R { rev: self.rev(), trace: self.trace() })))
+                let (from_rev, trace) = match (req.since_rev, req.all) {
+                    (Some(_), true) => {
+                        return Err(err("bad_request", "trace.get takes since_rev or all, not both"))
+                    }
+                    (Some(since), false) => {
+                        let lines = self.trace_since(since).ok_or_else(|| {
+                            err(
+                                "trimmed",
+                                format!(
+                                    "the trace now starts at rev {}; ask for since_rev >= {} or the current segment",
+                                    self.trace_start_rev(),
+                                    self.trace_start_rev()
+                                ),
+                            )
+                        })?;
+                        (since.min(self.rev()), lines)
+                    }
+                    (None, true) => (self.trace_start_rev(), self.trace()),
+                    (None, false) => (self.segment_rev(), self.segment_trace()),
+                };
+                Ok(reply(to_line(id, R { rev: self.rev(), from_rev, trace })))
+            }
+            "trace.checkpoint" => {
+                let rev = self.checkpoint();
+                Ok(reply(to_line(id, serde_json::json!({ "rev": rev }))))
             }
             other => Err(err(
                 "unknown_op",

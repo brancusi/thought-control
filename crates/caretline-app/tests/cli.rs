@@ -93,3 +93,26 @@ fn version_flag() {
     let out = run(bin().arg("--version"));
     assert!(out.starts_with("caretline "));
 }
+
+/// A `--state` file needs only what a client knows: no history, run or saved revision.
+#[test]
+fn a_minimal_state_file_is_a_working_editor() {
+    let dir = std::env::temp_dir().join(format!("caretline-min-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).unwrap();
+    let state = dir.join("min.json");
+    std::fs::write(
+        &state,
+        r#"{"text":"hello\nworld\n","selection":{"ranges":[{"anchor":0,"head":5}]},"viewport":{"width":20,"height":4},"config":{"soft_wrap":false}}"#,
+    )
+    .unwrap();
+    let typed = run(bin().arg("--state").arg(&state).args(["--keys", "bye", "--snapshot", "20x4"]));
+    assert_eq!(typed.lines().take(2).collect::<Vec<_>>(), ["bye", "world"]);
+    let undone = run(bin().arg("--state").arg(&state).args(["--keys", "bye<c-z>", "--snapshot", "20x4"]));
+    assert_eq!(undone.lines().take(2).collect::<Vec<_>>(), ["hello", "world"]);
+    std::fs::write(&state, r#"{"text":"just text"}"#).unwrap();
+    let dumped = run(bin().arg("--state").arg(&state).args(["--dump-state", "-"]));
+    let v: serde_json::Value = serde_json::from_str(&dumped).unwrap();
+    assert_eq!(v["viewport"], serde_json::json!({"width": 80, "height": 24}));
+    assert_eq!(v["dirty"], false);
+    let _ = std::fs::remove_dir_all(&dir);
+}

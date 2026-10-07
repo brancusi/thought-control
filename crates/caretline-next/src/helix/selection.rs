@@ -2,7 +2,8 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: module paths; serde derives on `Range` and `Selection`; removed the tree-sitter `Range::from_node` and the regex-based selection functions (with their tests).
+// Changes from upstream: module paths; serde derives on `Range` and `Selection` (with
+// `old_visual_position` and `primary_index` optional when deserializing); removed the tree-sitter `Range::from_node` and the regex-based selection functions (with their tests).
 
 //! Selections are the primary editing construct. Even cursors are
 //! defined as a selection range.
@@ -64,6 +65,7 @@ pub struct Range {
     pub head: usize,
     /// The previous visual offset (softwrapped lines and columns) from
     /// the start of the line
+    #[serde(default)]
     pub old_visual_position: Option<(u32, u32)>,
 }
 
@@ -415,6 +417,7 @@ impl From<Range> for crate::helix::stdx::Range {
 #[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Selection {
     ranges: SmallVec<[Range; 1]>,
+    #[serde(default)]
     primary_index: usize,
 }
 

@@ -2,7 +2,8 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: module paths; `Highlight` comes from a local shim instead of the syntax module.
+// Changes from upstream: module paths; `Highlight` comes from a local shim instead of the syntax module;
+// `resume_at_row` and `indent_level` (caretline additions) let layout restart inside a long line.
 
 //! The `DocumentFormatter` forms the bridge between the raw document text
 //! and onscreen positioning. It yields the text graphemes as an iterator
@@ -236,6 +237,49 @@ impl<'t> DocumentFormatter<'t> {
             line_pos: block_line_idx,
             inline_annotation_graphemes: None,
         }
+    }
+
+    /// Creates a formatter at the start of a soft-wrapped row inside a line: `char_idx` is the
+    /// row's first char, `row` its visual row within line `line_idx`, `col` the column of its
+    /// first grapheme, and `indent` the line's indent level as
+    /// [`DocumentFormatter::indent_level`] reported on an earlier row. It yields what a
+    /// formatter started at the line's start would from that point on, so layout of a long
+    /// line can start near the place it needs instead of at the line start. Only for soft
+    /// wrap without annotations.
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn resume_at_row(
+        text: RopeSlice<'t>,
+        text_fmt: &'t TextFormat,
+        annotations: &'t TextAnnotations,
+        char_idx: usize,
+        line_idx: usize,
+        row: usize,
+        col: usize,
+        indent: Option<usize>,
+    ) -> Self {
+        annotations.reset_pos(char_idx);
+        DocumentFormatter {
+            text_fmt,
+            annotations,
+            visual_pos: Position { row, col },
+            graphemes: text.slice(char_idx..).graphemes(),
+            char_pos: char_idx,
+            exhausted: false,
+            indent_level: indent,
+            peeked_grapheme: None,
+            word_buf: Vec::with_capacity(64),
+            word_i: 0,
+            line_pos: line_idx,
+            inline_annotation_graphemes: None,
+        }
+    }
+
+    /// The current line's indent level, once known (see [`DocumentFormatter::resume_at_row`]).
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn indent_level(&self) -> Option<usize> {
+        self.indent_level
     }
 
     fn next_inline_annotation_grapheme(

@@ -29,6 +29,7 @@ cargo run -p caretline-app -- notes.md                # or run it from the check
 | `caretline serve`, `caretline send`, `--listen` | The state protocol, see [protocol.md](protocol.md) |
 | `caretline bench` | Protocol throughput and latency (build with `--release`) |
 | `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
+| `… --trace-limit LINES` | Editor and `serve`: bound the in-memory trace `trace.get` serves (default 100,000 lines; see [protocol.md](protocol.md#traces)) |
 
 A run is **headless** when any of `--snapshot`, `--dump-state`, `--msgs`, `--keys` or
 `--replay` is given. Headless runs never perform effects: no file is written and the
@@ -71,6 +72,22 @@ Ship the editor docs.
 `--new-state` uses 80x24 unless you pass `--size`. The state is pretty-printed JSON: the
 text, the selection, the scroll, the viewport, the undo history and the config. You can edit
 it by hand; loading repairs anything out of range.
+
+You can also write a state from scratch. Only `text` is needed; everything else takes
+`--new-state`'s defaults (a caret at 0, 80x24, a fresh history, a clean document):
+
+```console
+$ cat > min.json <<'EOF'
+{"text": "hello\nworld\n", "selection": {"ranges": [{"anchor": 0, "head": 5}]}, "viewport": {"width": 20, "height": 4}}
+EOF
+$ caretline --state min.json --keys 'bye' --snapshot 20x4
+bye
+world
+
+ [scratch] [+]  1:4
+```
+
+See [architecture.md](architecture.md#rehydration) for every default.
 
 ### 2. Drive it with keys, and save the result
 
@@ -170,7 +187,10 @@ caretline --replay t.jsonl --dump-state -   # the final state
 ```
 
 `--trace` appends, so restarting into the same file adds a new `state` line and replay
-continues from it. The fixture `session.trace.jsonl` is a recorded session:
+continues from it. The file gets every line, also past `--trace-limit`, which bounds only
+the in-memory trace. `--replay` reads any trace: a full file, the output of
+`caretline send trace.get --raw` (one segment), or of `trace.get all`; a `state` line in the
+middle (a `state.set` or checkpoint) restarts the replay from that state. The fixture `session.trace.jsonl` is a recorded session:
 
 ```console
 $ caretline --replay crates/caretline-app/fixtures/session.trace.jsonl --snapshot 36x8

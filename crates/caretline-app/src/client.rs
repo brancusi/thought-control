@@ -15,7 +15,7 @@ use crate::hub::discovery_dir;
 #[command(
     name = "caretline send",
     about = "Send state-protocol requests to a running caretline and print the responses",
-    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get | trace.get | unsubscribe\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-state FILE|-\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH]          (streams events until interrupted)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
+    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get | unsubscribe | trace.checkpoint\n  trace.get [all | since REV]\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-state FILE|-\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH]          (streams events until interrupted)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
 )]
 struct SendArgs {
     /// The server's socket.
@@ -97,7 +97,16 @@ fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
         s if s.trim_start().starts_with('{') => {
             serde_json::from_str(s).map_err(|e| format!("request: {e}"))?
         }
-        "hello" | "state.get" | "trace.get" | "unsubscribe" => json!({ "op": op }),
+        "hello" | "state.get" | "unsubscribe" | "trace.checkpoint" => json!({ "op": op }),
+        "trace.get" => match words.get(1).map(String::as_str) {
+            None => json!({ "op": op }),
+            Some("all") => json!({ "op": op, "all": true }),
+            Some("since") => {
+                let rev: u64 = arg(2, "a rev")?.parse().map_err(|_| "since needs a rev number".to_string())?;
+                json!({ "op": op, "since_rev": rev })
+            }
+            Some(other) => return Err(format!("trace.get takes all or since REV, not {other:?}")),
+        },
         "render" => {
             let mut r = json!({ "op": "render" });
             if let Some(s) = words.get(1) {

@@ -17,7 +17,7 @@ The same operations are available in process through
 $ printf 'hello world\nsecond line\n' > notes.md
 $ printf '%s\n' '{"id":1,"op":"hello"}' '{"id":2,"op":"keys","keys":"<a-right><s-a-right>"}' '{"id":3,"op":"render","w":30,"h":4}' \
     | caretline serve notes.md --size 30x4 --no-clock
-{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get"]}}
+{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint"]}}
 {"id":2,"result":{"rev":2,"effects":[],"msgs":[{"msg":"move","dir":"forward","by":"word","extend":false},{"msg":"move","dir":"forward","by":"word","extend":true}]}}
 {"id":3,"result":{"rev":2,"w":30,"h":4,"format":"text","cursor":[11,0],"frame":"hello world\nsecond line\n\n notes.md         6 sel  1:12\n"}}
 ```
@@ -40,16 +40,67 @@ result carries the current `rev`.
 |---|---|---|
 | `hello` | | `proto` (1), `version`, `rev`, `ops` |
 | `state.get` | | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON) |
-| `state.set` | `state`, optional `if_rev` | `rev`. Replaces the state (repaired as on load) |
+| `state.set` | `state` (only `text` needed, see [Minimal state](#minimal-state)), optional `if_rev` | `rev`. Replaces the state (repaired as on load) and starts a new trace segment |
 | `msgs` | `msgs` (array of [messages](messages.md)), optional `if_rev`, `apply_effects`, `now_ms` | `rev`, `effects`, `msgs` (every message applied: a leading `tick`, the request's messages, and fed-back results such as `saved`), and `executed: true` when effects were performed |
 | `keys` | `keys` (a [key script](messages.md#key-scripts)), optional `if_rev`, `apply_effects`, `now_ms` | Like `msgs`; `msgs` shows what the script became |
 | `render` | optional `w`, `h` (default: the state's viewport), `format` | `rev`, `w`, `h`, `format`, `cursor` (`[x, y]` or null), and `frame` or `rows` |
 | `subscribe` | optional `frame` (`{w, h, format}`), `with_msgs` (default true) | `rev`, `subscribed: true`. Then events, below |
 | `unsubscribe` | | `rev`, `subscribed: false` |
-| `trace.get` | | `rev`, `trace`: the initial state and every message and replacement since, as [trace lines](architecture.md#traces-make-sessions-reproducible) |
+| `trace.get` | optional `since_rev` or `all` | `rev`, `from_rev`, `trace`: by default the current segment, as [trace lines](architecture.md#traces-make-sessions-reproducible). See [Traces](#traces) |
+| `trace.checkpoint` | | `rev`. Starts a new trace segment with the current state. Changes neither the state nor the rev |
 
 `render` never changes the state. A size other than the viewport is rendered on a copy, so
 the frame is byte for byte what `caretline --state S --snapshot WxH` prints.
+
+### Minimal state
+
+`state.set` (and a `--state` file) needs only what a client knows. Every field but `text` is
+optional and takes `State::new`'s default: a caret at 0, an 80x24 viewport, a fresh undo
+history, the default config with the line ending detected from the text, no open edit run,
+and a document that counts as saved (clean). `dirty` is always recomputed. A missing
+`saved_revision` means saved at the current history revision; `"saved_revision": null` means
+never saved. Inside `selection`, `old_visual_position` and `primary_index` are optional.
+
+```console
+$ caretline send '{"op":"state.set","state":{"text":"hello\nworld\n","selection":{"ranges":[{"anchor":0,"head":5}]},"viewport":{"width":40,"height":10},"config":{"soft_wrap":false}}}'
+{"result":{"rev":4}}
+```
+
+A live editor resizes a pushed state to its terminal. See
+[architecture.md](architecture.md#rehydration) for every default.
+
+### Traces
+
+The session keeps its trace as **segments**. Each starts with a `state` line and holds every
+message applied after it, so each replays on its own with `caretline --replay`. A segment
+starts when the session starts, at every `state.set`, and at every `trace.checkpoint`.
+
+| Request | Returns |
+|---|---|
+| `{"op":"trace.get"}` | The current segment: the latest `state` line and every message since. `from_rev` is the rev it starts at |
+| `{"op":"trace.get","since_rev":N}` | The lines after rev `N`: what changed since you saw `N`. It starts with a `state` line only if a segment began after `N`, so it replays onto the state you had at `N`. `from_rev` is `N` |
+| `{"op":"trace.get","all":true}` | Every line kept, from the session start unless the limit dropped older segments. `from_rev` is the rev it starts at |
+
+The default is the current segment because it is always replayable and stays small after a
+`state.set`, while `all` grows for the life of the editor. Use `trace.checkpoint` to mark a
+point (the start of a test, say) and then read just what happened after it.
+
+```console
+$ caretline send '{"op":"trace.checkpoint"}'
+{"result":{"rev":41}}
+$ caretline send keys 'hi'
+$ caretline send trace.get --raw     # the checkpoint's state, a tick, two insert_text
+$ caretline send trace.get since 41 --raw
+$ caretline send trace.get all --raw
+```
+
+**The size is bounded.** A session keeps at most 100,000 lines (`--trace-limit LINES` on
+`serve` and the editor). Past that, it drops the segments before the current one; a segment
+that alone outgrows the limit is cut by an automatic checkpoint, a `state` line at the
+current rev. `since_rev` older than what's kept is an error of kind `trimmed`, which names
+the oldest rev still available. A `--trace` file is separate: it receives every line and is
+never trimmed. Every trace, segment and file still replays with `caretline --replay`, since a
+later `state` line just restarts the replay from that state.
 
 ### Time
 
@@ -100,7 +151,7 @@ the key's message. A client request is usually one more than its messages: the l
 Use `rev` two ways.
 
 - **Did something change?** Compare the `rev` you last saw. The difference is the number of
-  changes you missed, and `trace.get` has them.
+  changes you missed, and `trace.get` with `since_rev` has them.
 - **Write only if nothing changed:** pass `if_rev` on `state.set`, `msgs` or `keys`. If the
   rev differs, nothing is applied and you get a `stale` error. Re-read, then decide.
 
@@ -160,6 +211,7 @@ A subscriber also gets events for its own requests, after the response.
 | `unknown_op` | The op isn't one of `hello`'s `ops` |
 | `bad_keys` | The key script doesn't parse (`unknown key <oops>`) |
 | `stale` | `if_rev` didn't match the current rev |
+| `trimmed` | `trace.get` asked for a `since_rev` older than the kept trace |
 | `unsupported` | `apply_effects` on a server that can't perform effects |
 
 ```json
@@ -179,6 +231,7 @@ Within protocol version 1, results only gain fields. Ignore fields you don't kno
 
 - `serve --trace T.jsonl` appends the initial state and every change to a trace, which
   `caretline --replay` reads. `serve --no-clock` stops the [real-time ticks](#time).
+  `--trace-limit LINES` bounds the in-memory trace (see [Traces](#traces)).
 - `--no-status-bar` (on `serve`, the editor and `--new-state`) sets `config.status_bar` to
   false: every row shows text, for embedders and panels with their own chrome.
 - `--listen` with no path uses `$TMPDIR/caretline-<pid>.sock`, or
@@ -204,7 +257,9 @@ socket. Build with `--release` for meaningful numbers. On an Apple-silicon Mac:
 | `state.get`, 1,000 lines, fresh history | ~23 µs | ~80 µs |
 | `state.get`, 100,000 lines (6.6 MB) | ~2.5 ms | ~7 ms |
 
-Update and render cost follows the visible rows, not the document length. `state.get` grows
+Update and render cost follows the visible rows, not the document length, and stays flat
+along a long line: a typing run of one `insert_text` request per character costs about
+10 µs per character at 1,000 and at 64,000 characters, on one line or as prose. `state.get` grows
 with the text and the undo history, so for a large document prefer `render` and events.
 
 ### Discovery
@@ -224,7 +279,8 @@ A small client for any server.
 
 | Request words | Sends |
 |---|---|
-| `hello`, `state.get`, `trace.get`, `unsubscribe` | That op |
+| `hello`, `state.get`, `unsubscribe`, `trace.checkpoint` | That op |
+| `trace.get [all \| since REV]` | `trace.get`: the current segment, everything kept, or the lines after `REV` |
 | `render [WxH] [text\|ansi\|cells]` | `render` |
 | `keys SCRIPT` | `keys` |
 | `msgs FILE\|-\|JSON` | `msgs` from a file, stdin or inline JSON |
@@ -256,7 +312,7 @@ The status bar says `listening on …/caretline-<pid>.sock`. In another shell:
 
 ```console
 $ caretline send hello
-{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get"]}}
+{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint"]}}
 $ caretline send keys '<d-down>from another shell'
 {"result":{"rev":23,"effects":[],"msgs":[{"msg":"tick","now_ms":1791353251020},{"msg":"move","dir":"forward","by":"doc_end","extend":false},{"msg":"insert_text","text":"f"}, …]}}
 $ caretline send render 40x5 --raw
@@ -286,7 +342,7 @@ caretline send subscribe 80x24
 To save a copy of the live session and replay it later:
 
 ```sh
-caretline send trace.get --raw > live.jsonl
+caretline send trace.get all --raw > live.jsonl     # or just trace.get: since the last state.set
 caretline --replay live.jsonl --snapshot 80x24
 ```
 

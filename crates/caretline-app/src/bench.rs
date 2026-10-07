@@ -128,6 +128,27 @@ pub fn main(argv: &[String]) -> Result<(), String> {
     let el = t.elapsed();
     println!("  Session::handle (JSON request and response)  {:>10.0} req/s   ({} per request)", n as f64 / el.as_secs_f64(), fmt(el / n as u32));
 
+    println!("One typing run, one insert_text request per char (no clock), into an empty document");
+    for pattern in ["x", "The quick brown fox jumps over the lazy dog. "] {
+        let chars: Vec<char> = pattern.chars().collect();
+        let label = if pattern == "x" { "one long line" } else { "prose" };
+        for n in [1_000usize, 4_000, 16_000, 64_000] {
+            let mut s = Session::new(State::new("", None, Viewport { width: 100, height: 40 }));
+            let reqs: Vec<String> = (0..n)
+                .map(|i| {
+                    let msg = Msg::InsertText { text: chars[i % chars.len()].to_string() };
+                    format!("{{\"op\":\"msgs\",\"msgs\":[{}]}}", serde_json::to_string(&msg).unwrap())
+                })
+                .collect();
+            let t = Instant::now();
+            for r in &reqs {
+                s.handle(r, None);
+            }
+            let el = t.elapsed();
+            println!("  {label:<14} {n:>6} chars: {:>9}  ({} per char)", fmt(el), fmt(el / n as u32));
+        }
+    }
+
     for lines in [1_000usize, 100_000] {
         let mut s = session(lines);
         println!("In-process, {lines}-line document");

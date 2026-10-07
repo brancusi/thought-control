@@ -204,6 +204,8 @@ pub struct Interactive<'a> {
     pub listen: Option<PathBuf>,
     /// The file name to advertise in the discovery file.
     pub file: Option<&'a str>,
+    /// The in-memory trace limit (see `Session::set_trace_limit`).
+    pub trace_limit: usize,
 }
 
 pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String> {
@@ -217,7 +219,9 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
         ),
         None => None,
     };
-    let mut hub = Hub::new(Session::new(state), trace);
+    let mut session = Session::new(state);
+    session.set_trace_limit(opts.trace_limit);
+    let mut hub = Hub::new(session, trace);
     let (tx, rx) = mpsc::channel::<Input>();
 
     // Bind before touching the terminal, so a bad path is an ordinary error.

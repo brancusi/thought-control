@@ -26,7 +26,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | Selections | Yes | Anchor and head per range, macOS text-field collapse rules |
 | Multi-range selections | Engine only | `update` edits every range. No key creates extra ranges yet, but a state or a `Msg` sequence can |
 | Transactions with position mapping | Yes | Every edit is a Helix `Transaction`; selections map through its changes |
-| Undo and redo | Yes | Helix's revision tree. A typing run within 1.5 s is one step. Undo restores text and selection |
+| Undo and redo | Yes | Helix's revision tree. A typing run within 1.5 s is one step (up to 256 characters, breaking at a word past 128). Undo restores text and selection |
 | Soft wrap | Yes | Visual-line motion with a goal column, page up and down, `Home`/`End` per visual row |
 | No-wrap mode | Yes | `config.soft_wrap = false` scrolls sideways |
 | Clipboard | Yes, as effects | `copy`/`cut` return `clipboard_set`; the runtime talks to the system clipboard |
