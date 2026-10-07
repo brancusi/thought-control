@@ -57,6 +57,20 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("history.redo", "doc.redo"),
 ];
 
+/// thc's own editor commands (host commands registered on every document) → thc's `write`
+/// action.
+pub const HOST_ACTIONS: &[(&str, &str)] = &[(crate::editor::TASK_CYCLE, "doc.task_cycle")];
+
+/// The command a `write` action runs on the document: caretline's (a move's `select.*` form
+/// with ⇧) or one of thc's host commands. None: the action isn't an editor command.
+pub fn command_for(action: &str, shift: bool) -> Option<&'static str> {
+    if let Some((c, _)) = HOST_ACTIONS.iter().find(|(_, a)| *a == action) {
+        return Some(c);
+    }
+    let cmds: Vec<&'static str> = ACTIONS.iter().filter(|(_, a)| *a == action).map(|(c, _)| *c).collect();
+    cmds.iter().find(|c| c.starts_with("select.") == shift).or(cmds.first()).copied()
+}
+
 /// The thc action for a caretline command.
 pub fn action(command: &str) -> Option<&'static str> {
     ACTIONS.iter().find(|(c, _)| *c == command).map(|(_, a)| *a)

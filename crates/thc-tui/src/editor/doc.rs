@@ -2,9 +2,9 @@
 //! type into. Lines are nodes; the core `outline` module turns the buffer into block ops (one
 //! transaction per save, `base` on every edit so a concurrent change becomes a conflict).
 //!
-//! This file is the pure part: thc's lines (a block's shape and text plus its save state) and
-//! the save diff. The editing rules and undo are caretline's (`next.rs` mirrors its blocks).
-//! The rest of thc-tui reaches it only through the seam in `editor/mod.rs`.
+//! This file is the pure part: thc's lines (a block's node id and save state, with a copy of
+//! its shape and text) and the save diff. The text, the selection, the editing rules and undo
+//! are caretline's (`engine.rs`). The rest of thc-tui reaches it only through `editor/mod.rs`.
 
 use super::BlockPos;
 use std::collections::{HashMap, HashSet};
@@ -208,16 +208,6 @@ pub(super) struct Pos {
     pub byte: usize,
 }
 
-/// Where you are in a document: the caret, the selection's other end, folds (the main
-/// column's view; the engine's view follows it).
-#[derive(Clone, Debug, Default)]
-pub(super) struct HostView {
-    pub caret: Pos,
-    pub anchor: Option<Pos>,
-    pub goal: Option<usize>,
-    pub folds: HashSet<String>,
-}
-
 /// What the document is.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -230,11 +220,8 @@ pub struct Doc {
     pub target: Target,
     /// The document's root node (None: a journal day not created yet; its first save makes it).
     pub root: Option<String>,
-    /// The lines, pending deletes and undo: the engine's document, whose rules edit it, shared
-    /// by every view of the page or day.
-    pub(super) engine: Box<super::next::Next>,
-    /// Where you are in it: caret, selection, goal column, folds (the main column's view).
-    pub(super) view: HostView,
+    /// The engine's document (text, selection, folds, undo) and thc's lines beside it.
+    pub(super) engine: Box<super::engine::Engine>,
     /// The first visual row on screen.
     pub scroll: usize,
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
@@ -246,67 +233,6 @@ pub struct Doc {
     words: std::cell::Cell<Option<(u64, usize)>>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
-}
-
-/// A document as data (the model is serializable): the target, the
-/// engine's document and view, thc's lines (save state included), what's pending, and the
-/// main column's caret, selection, folds and scroll.
-#[derive(serde::Serialize, serde::Deserialize)]
-#[allow(dead_code)] // Replay fixtures and tests now; crash recovery next.
-struct DocJson {
-    target: Target,
-    root: Option<String>,
-    engine: serde_json::Value,
-    caret: (usize, usize),
-    anchor: Option<(usize, usize)>,
-    folds: Vec<String>,
-    scroll: usize,
-    last_saved: HashMap<String, Line>,
-    now_ms: u64,
-}
-
-#[allow(dead_code)] // Replay fixtures and tests now; crash recovery next.
-impl Doc {
-    /// The document as JSON.
-    pub fn to_json(&mut self) -> Option<String> {
-        let n = &mut self.engine;
-        let mut folds: Vec<String> = self.view.folds.iter().cloned().collect();
-        folds.sort();
-        let j = DocJson {
-            target: self.target.clone(),
-            root: self.root.clone(),
-            engine: n.to_value(),
-            caret: (self.view.caret.line, self.view.caret.byte),
-            anchor: self.view.anchor.map(|a| (a.line, a.byte)),
-            folds,
-            scroll: self.scroll,
-            last_saved: self.last_saved.clone(),
-            now_ms: self.now_ms,
-        };
-        Some(serde_json::to_string(&j).expect("a document serializes"))
-    }
-
-    /// A document from [`Doc::to_json`].
-    pub fn from_json(json: &str) -> Result<Doc, String> {
-        let j: DocJson = serde_json::from_str(json).map_err(|e| e.to_string())?;
-        let next = super::next::Next::from_value(j.engine)?;
-        let mut view = HostView::default();
-        view.caret = Pos { line: j.caret.0, byte: j.caret.1 };
-        view.anchor = j.anchor.map(|(line, byte)| Pos { line, byte });
-        view.folds = j.folds.into_iter().collect();
-        Ok(Doc {
-            target: j.target,
-            root: j.root,
-            engine: Box::new(next),
-            view,
-            scroll: j.scroll,
-            host_revision: 0,
-            last_saved: j.last_saved,
-            wraps: Wraps::default(),
-            words: Default::default(),
-            now_ms: j.now_ms,
-        })
-    }
 }
 
 /// Rows by (a line's content hash, width).
@@ -330,9 +256,8 @@ impl Doc {
             }
             before.push((l.depth, l.id.clone()));
         }
-        let view = HostView::default();
-        let engine = Box::new(super::next::Next::load(lines));
-        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default(), now_ms: 0 }
+        let engine = Box::new(super::engine::Engine::load(lines));
+        Doc { target, root, engine, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default(), now_ms: 0 }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -343,7 +268,7 @@ impl Doc {
     /// How many ids the document wants handed in before input ([`Doc::fill_ids`]): the model
     /// mints none.
     pub fn ids_wanted(&self) -> usize {
-        super::next::POOL.saturating_sub(self.engine.pool_len())
+        super::engine::POOL.saturating_sub(self.engine.pool_len())
     }
 
     /// Ids minted by the runtime, for the notes the next edits make.
@@ -356,12 +281,6 @@ impl Doc {
         self.engine.pool().take()
     }
 
-    /// The host's changes to the lines, taken into the engine now (the engine takes them
-    /// before its next step; a caller about to read the undo depth wants them in).
-    pub fn take_host_changes(&mut self) {
-        self.engine.take_host_changes();
-    }
-
     /// The runtime's clock (ms on the UI's logical clock, `UiState::now_ms`), before it hands the document input: idle saves,
     /// flashes and the engine's typing runs read it; the model reads no clock itself.
     pub fn tick(&mut self, now_ms: u64) {
@@ -371,8 +290,8 @@ impl Doc {
 
     /// The engine's text (tests: the mirror against it).
     #[cfg(test)]
-    pub fn engine_text(&self) -> Option<String> {
-        Some(self.engine.text())
+    pub fn engine_text(&self) -> String {
+        self.engine.text()
     }
 
     /// The document's words (its own lines), remembered for the revision.
@@ -408,36 +327,35 @@ impl Doc {
 
     /// The caret's line.
     pub(super) fn line(&self) -> &Line {
-        &self.lines()[self.view.caret.line]
+        &self.lines()[self.engine.selection().1.line]
     }
 
     /// The selection, ordered (start, end), when there is one.
     pub fn selection(&self) -> Option<(BlockPos, BlockPos)> {
-        let a = self.view.anchor?;
-        let c = self.view.caret;
-        let ok = |p: Pos| self.lines().get(p.line).is_some_and(|l| p.byte <= l.text.len() && l.text.is_char_boundary(p.byte));
-        (a != c && ok(a) && ok(c)).then(|| if a < c { (a.into(), c.into()) } else { (c.into(), a.into()) })
+        let (a, c) = self.engine.selection();
+        let a = a?;
+        Some(if a < c { (a.into(), c.into()) } else { (c.into(), a.into()) })
     }
 
-    /// A message for caretline through the main view, the vault's save state at hand.
-    pub(super) fn next_run(&mut self, msg: caretline::Msg) -> Vec<caretline::Effect> {
-        let Doc { engine, view, last_saved, .. } = self;
-        engine.run(view, last_saved, msg)
+    /// A message for caretline, the vault's save state at hand (for lines an undo brings back).
+    pub(super) fn run(&mut self, msg: caretline::Msg) -> Vec<caretline::Effect> {
+        let Doc { engine, last_saved, .. } = self;
+        engine.run(last_saved, msg)
     }
 
     pub fn insert(&mut self, s: &str) {
-        self.next_run(caretline::Msg::InsertText { text: s.to_string() });
+        self.run(caretline::Msg::InsertText { text: s.to_string() });
     }
 
     pub fn newline(&mut self) {
-        self.next_run(caretline::Msg::InsertNewline);
+        self.run(caretline::Msg::InsertNewline);
     }
 
     pub fn delete_selection(&mut self) -> bool {
         if self.selection().is_none() {
             return false;
         }
-        self.next_run(caretline::Msg::DeleteBackward);
+        self.run(caretline::Msg::DeleteBackward);
         true
     }
 
@@ -447,33 +365,29 @@ impl Doc {
         let (Some(mark), Kind::Task) = (l.mark, l.kind()) else { return "" };
         let done = l.status.as_deref() == Some("done");
         let ch = if done { ' ' } else { 'x' };
-        self.next_run(caretline::Msg::Command { name: super::tasks::SET_STATUS.into(), args: serde_json::json!({ "id": mark, "status": ch.to_string() }) });
+        self.run(caretline::Msg::Command { name: super::tasks::SET_STATUS.into(), args: serde_json::json!({ "id": mark, "status": ch.to_string() }) });
         if done { "reopened" } else { "done" }
     }
 
-    /// One undo step before the host puts lines in (recovered lines, an attachment).
-    pub fn begin_undo_step(&mut self) {
+    /// The host's changes in `f` (recovered lines, an attachment) as one undo step: the engine
+    /// takes them in together when `f` returns.
+    pub fn undo_step<R>(&mut self, f: impl FnOnce(&mut Doc) -> R) -> R {
         self.engine.begin_undo_step();
-    }
-
-    pub(super) fn select(&mut self, select: bool) {
-        if !select {
-            self.view.anchor = None;
-        } else if self.view.anchor.is_none() {
-            self.view.anchor = Some(self.view.caret);
-        }
+        let r = f(self);
+        self.engine.end_undo_step();
+        r
     }
 
     /// A double-click: the word at `p`.
     pub fn select_word_at(&mut self, p: BlockPos) {
-        let pos = self.next_char_of(p.into());
-        self.next_run(caretline::Msg::SelectWordAt { pos });
+        let pos = self.char_of(p.into());
+        self.run(caretline::Msg::SelectWordAt { pos });
     }
 
     /// A triple-click: the whole note at line `line`.
     pub fn select_block(&mut self, line: usize) {
         if let Some(m) = self.lines().get(line).and_then(|l| l.mark) {
-            self.next_run(caretline::Msg::SelectBlock { id: caretline::MarkId(m) });
+            self.run(caretline::Msg::SelectBlock { id: caretline::MarkId(m) });
         }
     }
 
@@ -498,11 +412,6 @@ impl Doc {
     }
 
     #[cfg(test)]
-    pub fn default_gap(&self, i: usize) -> bool {
-        self.engine.default_gap(i)
-    }
-
-    #[cfg(test)]
     pub fn gaps(&self) -> HashMap<String, bool> {
         self.lines().iter().enumerate().map(|(i, l)| (l.id.clone(), self.effective_gap(i))).collect()
     }
@@ -522,8 +431,8 @@ impl Doc {
             self.touch_content();
         }
         let i = self.lines().len() - 1;
-        self.view.caret = Pos { line: i, byte: self.lines()[i].text.len() };
-        self.view.anchor = None;
+        let byte = self.lines()[i].text.len();
+        self.engine.select(None, Pos { line: i, byte });
     }
 }
 
@@ -595,6 +504,7 @@ impl Doc {
     /// (unless `all`), in document order; `raw` saves the caret's line as text only (the idle
     /// save).
     pub fn plan_save(&mut self, all: bool) -> SavePlan {
+        let caret = self.caret().line;
         // A note is at most one deeper than the note above it (an empty line isn't a note): an
         // edit that removed or flattened a parent leaves no gap the vault can't hold (fuzz).
         // (Each pass reads first and changes only when it must: a change to
@@ -621,7 +531,6 @@ impl Doc {
                 lines[i].depth = d;
             }
         }
-        let caret = self.view.caret.line;
         // A saved note emptied to nothing (and left) goes: an empty line isn't a note, and an
         // empty node kept its old place, which other notes were then placed after (fuzz). The
         // line stays as a plain empty line; its children are placed by this save before the
@@ -731,6 +640,7 @@ impl Doc {
             lines: self.engine.lines().iter().filter(|_| !ops.is_empty()).map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
             created: ops.iter().filter_map(|o| if let BlockOp::Create { id, .. } = o { Some(id.clone()) } else { None }).collect(),
         };
+        self.engine.settle();
         SavePlan { ops, parsed, afters, sent }
     }
 
@@ -814,9 +724,6 @@ impl Doc {
                     l.take_fields(b, today);
                     if parsed.contains(&l.id) && l.id != caret_id && !moved_text.contains(&l.id) && b.text.len() < l.text.len() {
                         l.text = b.text.clone();
-                        if self.view.caret.line == i {
-                            self.view.caret.byte = self.view.caret.byte.min(l.text.len());
-                        }
                     }
                     if parsed.contains(&l.id) && l.meta != had_meta && !l.meta.is_empty() {
                         l.flash_until = Some(now + 300);
@@ -848,6 +755,7 @@ impl Doc {
                 }
             }
         }
+        self.engine.settle();
         messages
     }
 }
@@ -862,7 +770,7 @@ impl Doc {
         if self.selection().is_none() {
             return String::new();
         }
-        let fx = self.next_run(caretline::Msg::Copy);
+        let fx = self.run(caretline::Msg::Copy);
         let text = fx.into_iter().find_map(|f| if let caretline::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default();
         self.engine.with_fields(text)
     }
@@ -879,7 +787,6 @@ impl Doc {
 
 #[cfg(test)]
 mod tests {
-    use super::super::{EditCmd, Motion};
     use super::*;
 
     const W: fn(&Line) -> usize = |_| 72;
@@ -908,12 +815,12 @@ mod tests {
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
         d.newline(); // a blank line: two notes
         assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.apply(EditCmd::Backspace, &W); // at the start of a paragraph: join, the break kept
+        d.run_command("edit.backspace", &W, 20); // at the start of a paragraph: join, the break kept
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
         assert_eq!(d.caret(), BlockPos { line: 0, byte: 7 });
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.apply(EditCmd::Redo, &W);
+        d.run_command("history.redo", &W, 20);
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
     }
 
@@ -925,14 +832,14 @@ mod tests {
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
-        d.apply(EditCmd::Indent, &W);
+        d.run_command("structure.indent", &W, 20);
         d.newline();
         d.newline(); // an empty item ends the list: an empty paragraph line
         assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Para "]);
         at(&mut d, 0, 4);
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         assert_eq!(d.lines()[0].kind(), Kind::Task);
-        assert_eq!(d.apply(EditCmd::TaskCycle, &W), crate::editor::Outcome::Completed);
+        assert_eq!(d.run_command("thc.task_cycle", &W, 20), crate::editor::Outcome::Completed);
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
     }
 
@@ -949,10 +856,10 @@ mod tests {
     fn move_with_children_and_selection_delete() {
         let mut d = doc(&[(0, Kind::Bullet, "A"), (1, Kind::Bullet, "A1"), (0, Kind::Bullet, "B")]);
         at(&mut d, 2, 0);
-        d.apply(EditCmd::MoveLine(-1), &W);
+        d.run_command("structure.move_up", &W, 20);
         assert_eq!(texts(&d), ["Bullet B", "Bullet A", " Bullet A1"]);
         assert_eq!(d.caret().line, 0);
-        assert!(matches!(d.apply(EditCmd::MoveLine(-1), &W), crate::editor::Outcome::Nothing(_)));
+        assert!(matches!(d.run_command("structure.move_up", &W, 20), crate::editor::Outcome::Nothing(_)));
         d.select_range(Some(BlockPos { line: 2, byte: 1 }), BlockPos { line: 0, byte: 1 });
         d.delete_selection();
         assert_eq!(texts(&d), ["Bullet B1"]);
@@ -995,15 +902,15 @@ mod tests {
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
             let n = d.lines()[0].text.len();
             at(&mut d, 0, n);
-            d.apply(EditCmd::Backspace, &W);
+            d.run_command("edit.backspace", &W, 20);
             assert_eq!(d.lines()[0].text, "a", "⌫ removes all of {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
             at(&mut d, 0, 1);
-            d.apply(EditCmd::Delete, &W);
+            d.run_command("edit.delete_forward", &W, 20);
             assert_eq!(d.lines()[0].text, "a", "⌦ removes all of {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}b"))]);
             at(&mut d, 0, 1);
-            d.apply(EditCmd::Move { motion: Motion::Right, select: false }, &W);
+            d.run_command("move.right", &W, 20);
             assert_eq!(d.caret().byte, 1 + g.len(), "→ over {g:?}");
         }
     }
@@ -1015,11 +922,11 @@ mod tests {
         l.is_new = false;
         l.saved = Some(l.text.clone());
         l.saved_kind = Some(Kind::Para);
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         let first = d.plan_save(true);
         assert!(first.ops.iter().any(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })));
         assert!(!first.ops.iter().any(|op| matches!(op, BlockOp::Status { .. })), "Kind(Task) already initializes todo");
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         let second = d.plan_save(true);
         let kind = second.ops.iter().position(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })).unwrap();
         let status = second.ops.iter().position(|op| matches!(op, BlockOp::Status { status, .. } if status == "done")).unwrap();
@@ -1031,21 +938,21 @@ mod tests {
     #[test]
     fn task_cycle_and_marker_steps() {
         let mut d = doc(&[(0, Kind::Para, "call")]);
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Task, Some("todo")));
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Para, None));
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         at(&mut d, 0, 0);
-        d.apply(EditCmd::Backspace, &W);
+        d.run_command("edit.backspace", &W, 20);
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None));
-        d.apply(EditCmd::Backspace, &W);
+        d.run_command("edit.backspace", &W, 20);
         assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Para, "call"));
         let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
         d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 2, byte: 1 });
-        d.apply(EditCmd::TaskCycle, &W);
+        d.run_command("thc.task_cycle", &W, 20);
         assert!(d.lines().iter().all(|l| l.kind() == Kind::Task), "{:?}", texts(&d));
     }
 
@@ -1072,7 +979,7 @@ mod tests {
         assert_eq!(texts(&d), ["Para abc", "Para def"], "A4: a split");
         assert_eq!(d.lines()[0].id, id, "the first part keeps the id");
         at(&mut d, 1, 0);
-        d.apply(EditCmd::Backspace, &W);
+        d.run_command("edit.backspace", &W, 20);
         assert_eq!(texts(&d), ["Para abc\ndef"], "A5: a join keeps the break");
         assert_eq!(d.lines()[0].id, id);
         let mut d = doc(&[(0, Kind::Para, "")]);

@@ -280,14 +280,11 @@ fn layout(app: &mut App, w: usize) -> (Vec<Row>, Option<(usize, isize)>) {
 }
 
 /// Line `i` is hidden under a folded parent above (folds are the view's).
-pub(crate) fn folded_hidden(lines: &[Line], i: usize, folds: &std::collections::HashSet<String>) -> bool {
-    if folds.is_empty() {
-        return false;
-    }
+pub(crate) fn folded_hidden(lines: &[Line], i: usize, folded: impl Fn(usize) -> bool) -> bool {
     let mut depth = lines[i].depth;
-    for l in lines[..i].iter().rev() {
+    for (k, l) in lines[..i].iter().enumerate().rev() {
         if l.depth < depth {
-            if folds.contains(&l.id) {
+            if folded(k) {
                 return true;
             }
             depth = l.depth;
