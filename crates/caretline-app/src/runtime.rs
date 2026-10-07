@@ -217,6 +217,86 @@ pub struct Interactive<'a> {
     pub frame_clock: u16,
     /// Print repaint statistics on exit.
     pub stats: bool,
+    /// A built-in demo driving this editor (`caretline demo`).
+    pub demo: Option<Box<dyn Demo>>,
+}
+
+/// What a demo does with a key.
+pub enum KeyAction {
+    /// Not the demo's: the keymap gets it.
+    Pass,
+    /// Handled by the demo.
+    Consumed,
+    /// Quit the editor.
+    Quit,
+}
+
+/// A built-in demo (`caretline demo`): hooks into the event loop for keys of its own, a
+/// status hint, timed work (a replay), a second pane and frames of its own. Everything it
+/// changes goes through the session like any other input, so the trace records it.
+pub trait Demo {
+    /// A terminal key, before the keymap.
+    fn key(&mut self, _hub: &mut Hub, _key: &Key) -> KeyAction {
+        KeyAction::Pass
+    }
+    /// Runs after every batch of input (and once at the start).
+    fn after(&mut self, _hub: &mut Hub) {}
+    /// Advances anything timed. Returns when it next wants to run.
+    fn poll(&mut self, _hub: &mut Hub, _now: Instant) -> Option<Instant> {
+        None
+    }
+    /// Rows at the bottom of a `height`-row terminal for a pane showing the first other view
+    /// (0: no pane).
+    fn pane_rows(&self, _hub: &Hub, _height: u16) -> u16 {
+        0
+    }
+    /// A frame to draw instead of the editor's own (a replay). Paired with `generation`.
+    fn overlay(&self) -> Option<Frame> {
+        None
+    }
+    /// Goes up whenever `overlay` would draw something new.
+    fn generation(&self) -> u64 {
+        0
+    }
+}
+
+/// Applies messages from a demo, performing their effects (a save, a quit).
+pub fn dispatch_demo(hub: &mut Hub, msgs: Vec<Msg>) -> bool {
+    let mut quit = false;
+    dispatch_local(hub, msgs, &mut quit, "runtime");
+    quit
+}
+
+/// The editor's frame with the pane below it: the first other view, its caret drawn as a
+/// selected cell (the terminal has one cursor, the person's).
+pub fn compose(hub: &Hub, pane_rows: u16) -> Frame {
+    compose_state(hub.session.state(), hub.session.views(), pane_rows)
+}
+
+/// [`compose`] for a state and its other views.
+pub fn compose_state(state: &State, views: &[(u32, caretline::View)], pane_rows: u16) -> Frame {
+    let top = caretline::view(state);
+    let Some((_, v)) = views.first().filter(|_| pane_rows > 0) else { return top };
+    let mut s = State::from_parts(state.doc.clone(), v.clone());
+    if (s.view.viewport.width, s.view.viewport.height) != (top.width, pane_rows) {
+        caretline::update(&mut s, Msg::Resize { width: top.width, height: pane_rows });
+    }
+    let mut pane = caretline::view(&s);
+    if let Some((x, y)) = pane.cursor.take() {
+        let i = y as usize * pane.width as usize + x as usize;
+        if let Some(cell) = pane.cells.get_mut(i) {
+            cell.role = Role::Selection;
+        }
+    }
+    stack(top, pane)
+}
+
+/// One frame above another (the same width).
+pub fn stack(mut top: Frame, bottom: Frame) -> Frame {
+    top.height += bottom.height;
+    top.cells.extend(bottom.cells);
+    top.rows.extend(bottom.rows);
+    top
 }
 
 /// What the event loop counts, for `--stats`.
@@ -289,7 +369,7 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
     let started = Instant::now();
     let mut stats = Stats::default();
     let pacing = Pacing { max_fps: opts.max_fps, frame_clock: opts.frame_clock };
-    let result = event_loop(&mut hub, rx, status, pacing, &mut stats);
+    let result = event_loop(&mut hub, rx, status, pacing, &mut stats, opts.demo);
     restore_terminal(kitty, mouse);
     if opts.stats {
         let secs = started.elapsed().as_secs_f64();
@@ -369,7 +449,32 @@ struct Pacing {
 
 type Term = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
 
-fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing: Pacing, stats: &mut Stats) -> Result<(), String> {
+/// Sizes view 0 to the terminal less the demo's pane, and the pane's view to the pane.
+fn fit_views(hub: &mut Hub, demo: &Option<Box<dyn Demo>>, term: Option<(u16, u16)>, quit: &mut bool) {
+    let (Some(demo), Some((w, h))) = (demo, term) else { return };
+    let rows = demo.pane_rows(hub, h).min(h.saturating_sub(2));
+    let v = hub.session.state().view.viewport;
+    let top = h - rows;
+    if (v.width, v.height) != (w, top) {
+        dispatch_local(hub, vec![Msg::Resize { width: w, height: top }], quit, "runtime");
+    }
+    if rows > 0
+        && let Some((id, view)) = hub.session.views().first()
+        && (view.viewport.width, view.viewport.height) != (w, rows)
+    {
+        let id = *id;
+        hub.session.apply_on(id, Msg::Resize { width: w, height: rows });
+    }
+}
+
+fn event_loop(
+    hub: &mut Hub,
+    rx: Receiver<Input>,
+    status: Option<String>,
+    pacing: Pacing,
+    stats: &mut Stats,
+    mut demo: Option<Box<dyn Demo>>,
+) -> Result<(), String> {
     // One buffered write per repaint, wrapped in a synchronized update (below).
     let backend = CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout()));
     let mut terminal = Terminal::new(backend).map_err(|e| format!("terminal: {e}"))?;
@@ -389,8 +494,12 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
         start.push(Msg::FrameClock { fps: pacing.frame_clock });
     }
     dispatch_local(hub, start, &mut quit, "runtime");
+    fit_views(hub, &demo, term, &mut quit);
+    if let Some(d) = &mut demo {
+        d.after(hub);
+    }
 
-    let mut process = |hub: &mut Hub, input: Input, quit: &mut bool| match input {
+    let process = |hub: &mut Hub, demo: &mut Option<Box<dyn Demo>>, term: &mut Option<(u16, u16)>, input: Input, quit: &mut bool| match input {
         Input::Connect { client, out } => hub.connect(client, out),
         Input::Disconnect { client } => hub.disconnect(client),
         Input::Line { client, line } => {
@@ -398,7 +507,7 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
             // sets apply_effects.
             let change = hub.request(client, &line, Some(&mut |e| perform(e, quit)));
             // A replaced state keeps the terminal's size.
-            if let (Some(c), Some((w, h))) = (change, term) {
+            if let (Some(c), Some((w, h))) = (change, *term) {
                 let v = hub.session.state().view.viewport;
                 if c.state_set && (w, h) != (v.width, v.height) {
                     dispatch_local(hub, vec![Msg::Resize { width: w, height: h }], quit, "runtime");
@@ -407,7 +516,24 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
         }
         Input::Terminal(ev) => {
             if let Event::Resize(w, h) = ev {
-                term = Some((w, h));
+                *term = Some((w, h));
+                if demo.is_some() {
+                    fit_views(hub, demo, *term, quit);
+                    return;
+                }
+            }
+            if let (Some(d), Event::Key(k)) = (demo.as_mut(), &ev)
+                && matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+                && let Some(key) = to_key(k)
+            {
+                match d.key(hub, &key) {
+                    KeyAction::Pass => {}
+                    KeyAction::Consumed => return,
+                    KeyAction::Quit => {
+                        *quit = true;
+                        return;
+                    }
+                }
             }
             let msgs = terminal_msgs(hub.session.state(), ev);
             if !msgs.is_empty() {
@@ -427,7 +553,7 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
     let gap = if pacing.max_fps > 0 { Duration::from_secs_f64(1.0 / pacing.max_fps as f64) } else { Duration::ZERO };
     let epoch = Instant::now();
     let slot = |t: Instant| if gap.is_zero() { 0 } else { (t - epoch).as_nanos() / gap.as_nanos() };
-    let mut drawn: Option<u64> = None;
+    let mut drawn: Option<(u64, u64)> = None;
     let mut painted_slot: Option<u128> = None;
     // The frame clock's next deadline, on an absolute schedule so it doesn't drift.
     let mut next_frame: Option<Instant> = None;
@@ -447,21 +573,30 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
             }
             None => next_frame = None,
         }
-        let dirty = drawn != Some(hub.session.rev());
+        let demo_wake = demo.as_mut().and_then(|d| d.poll(hub, now));
+        let key = |hub: &Hub, demo: &Option<Box<dyn Demo>>| (hub.session.rev(), demo.as_ref().map_or(0, |d| d.generation()));
+        let dirty = drawn != Some(key(hub, &demo));
         let free = gap.is_zero() || painted_slot != Some(slot(now));
         if dirty && free {
             let t = Instant::now();
-            draw(&mut terminal, &hub.session.frame())?;
+            let frame = match &demo {
+                Some(d) => match d.overlay() {
+                    Some(f) => f,
+                    None => compose(hub, term.map_or(0, |(_, h)| d.pane_rows(hub, h).min(h.saturating_sub(2)))),
+                },
+                None => hub.session.frame(),
+            };
+            draw(&mut terminal, &frame)?;
             stats.paints += 1;
             stats.paint_time += t.elapsed();
-            drawn = Some(hub.session.rev());
+            drawn = Some(key(hub, &demo));
             painted_slot = Some(slot(t));
         }
         let paint_at = painted_slot.map(|k| epoch + gap * (k + 1) as u32);
-        // Sleep until input, the next repaint a pending change is waiting for, or the next
-        // clock frame, whichever is first.
-        let dirty = drawn != Some(hub.session.rev());
-        let wake = [dirty.then_some(paint_at).flatten(), next_frame].into_iter().flatten().min();
+        // Sleep until input, the next repaint a pending change is waiting for, the next
+        // clock frame or the demo's next step, whichever is first.
+        let dirty = drawn != Some(key(hub, &demo));
+        let wake = [dirty.then_some(paint_at).flatten(), next_frame, demo_wake].into_iter().flatten().min();
         let input = match wake {
             Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
                 Ok(input) => Some(input),
@@ -475,16 +610,22 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing
         };
         if let Some(input) = input {
             stats.inputs += 1;
-            process(hub, input, &mut quit);
+            process(hub, &mut demo, &mut term, input, &mut quit);
             // Apply everything already queued before drawing again.
             while !quit {
                 match rx.try_recv() {
                     Ok(input) => {
                         stats.inputs += 1;
-                        process(hub, input, &mut quit)
+                        process(hub, &mut demo, &mut term, input, &mut quit)
                     }
                     Err(_) => break,
                 }
+            }
+            if demo.is_some() {
+                fit_views(hub, &demo, term, &mut quit);
+            }
+            if let Some(d) = &mut demo {
+                d.after(hub);
             }
         }
     }

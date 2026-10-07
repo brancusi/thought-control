@@ -1,6 +1,7 @@
 // The docs' order, sidebar titles and one-line descriptions. Slugs are the file names,
 // lower-cased; README.md is the docs index.
 export const DOCS: { id: string; slug: string; title: string; blurb: string; group: string }[] = [
+  { id: 'quickstart', slug: 'quickstart', title: 'Quickstart', blurb: 'Try it in one line: install the binary, then the tour, the scenes and an agent co-editing.', group: 'Start' },
   { id: 'readme', slug: '', title: 'Overview', blurb: 'What caretline is, what it covers, and the layers.', group: 'Start' },
   { id: 'architecture', slug: 'architecture', title: 'Architecture', blurb: 'State, Msg, update, Effect and view; purity, revisions and replay; Helix inside.', group: 'Start' },
   { id: 'api', slug: 'api', title: 'Rust API', blurb: 'The public API by task, with a complete example.', group: 'Use it' },

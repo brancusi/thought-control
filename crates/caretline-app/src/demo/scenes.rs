@@ -1,110 +1,32 @@
-//! ASCII animation scenes pushed into a live caretline editor with the `frame` op, paced
-//! against absolute deadlines. A demo of the frame path and a measurement of it.
+//! `caretline demo scenes`: ASCII animations (a warp field with the CARETLINE logo, a
+//! donut, a cube, a tunnel, plasma, fire) pushed into the real editor with the protocol's
+//! `frame` op, from a client on the editor's own socket, paced against absolute deadlines.
+//!
+//! `--bench` plays them into an editor that is already running instead, at several target
+//! rates, and reports the frames per second achieved and how late frames left:
 //!
 //! ```sh
-//! caretline notes.md --listen                                # in one terminal
-//! cargo run --release -p caretline-app --example scenes      # in another
-//! cargo run --release -p caretline-app --example scenes -- --fps 120 --scene donut,plasma
+//! caretline notes.md --listen                                  # in one terminal
+//! caretline demo scenes --bench                                # in another
+//! caretline demo scenes --bench --fps 120 --scene donut,plasma --seconds 5
 //! ```
 //!
-//! Each scene is precomputed (text plus highlight ranges), then played at every target rate
-//! for `--seconds` (`--fps 0` is unthrottled: the next frame goes as soon as the editor
-//! answers the last). It prints the frames per second achieved and how late each frame left
-//! against its deadline. Pacing: frame `k` is due at `start + k / fps`; the client sleeps
-//! until about 1 ms before that and spins the rest, so it neither drifts nor oversleeps.
+//! Pacing: frame `k` is due at `start + k / fps`; the client sleeps until about 1 ms before
+//! that and spins the rest, so it neither drifts nor oversleeps.
 
 use std::f64::consts::PI;
-use std::io::{BufRead, BufReader, Write};
-use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use caretline::{Key, KeyCode, Session, State, Viewport};
 use serde_json::{json, Value};
 
-const USAGE: &str = "scenes [--socket PATH] [--fps 60,120,0] [--seconds S] [--scene all|donut,cube,tunnel,plasma,fire,warp] [--frames N] [--size WxH] [--spin-ms MS]";
-
-struct Opts {
-    socket: Option<PathBuf>,
-    fps: Vec<u32>,
-    seconds: f64,
-    scenes: Vec<String>,
-    frames: usize,
-    size: Option<(usize, usize)>,
-    /// How long before a deadline to stop sleeping and spin.
-    spin: Duration,
-}
-
-fn opts() -> Result<Opts, String> {
-    let mut o = Opts { socket: None, fps: vec![60, 120, 0], seconds: 3.0, scenes: Vec::new(), frames: 180, size: None, spin: Duration::from_millis(1) };
-    let mut args = std::env::args().skip(1);
-    while let Some(a) = args.next() {
-        let mut val = || args.next().ok_or_else(|| format!("{a} needs a value\nusage: {USAGE}"));
-        match a.as_str() {
-            "--socket" => o.socket = Some(val()?.into()),
-            "--fps" => o.fps = val()?.split(',').map(|f| f.trim().parse().map_err(|_| format!("bad fps {f:?}"))).collect::<Result<_, _>>()?,
-            "--seconds" => o.seconds = val()?.parse().map_err(|_| "bad --seconds")?,
-            "--spin-ms" => o.spin = Duration::from_secs_f64(val()?.parse::<f64>().map_err(|_| "bad --spin-ms")? / 1e3),
-            "--frames" => o.frames = val()?.parse().map_err(|_| "bad --frames")?,
-            "--scene" => o.scenes = val()?.split(',').filter(|s| *s != "all").map(str::to_string).collect(),
-            "--size" => {
-                let v = val()?;
-                let (w, h) = v.split_once('x').ok_or("--size is WxH")?;
-                o.size = Some((w.parse().map_err(|_| "bad width")?, h.parse().map_err(|_| "bad height")?));
-            }
-            "-h" | "--help" => return Err(format!("usage: {USAGE}")),
-            other => return Err(format!("unknown argument {other:?}\nusage: {USAGE}")),
-        }
-    }
-    Ok(o)
-}
-
-/// The newest live editor in `$TMPDIR/caretline/*.json` that answers.
-fn discover() -> Result<PathBuf, String> {
-    let dir = std::env::temp_dir().join("caretline");
-    let mut found: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&dir)
-        .map_err(|_| "no live caretline: start one with `caretline FILE --listen`".to_string())?
-        .flatten()
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-        .collect();
-    found.sort();
-    for (_, f) in found.iter().rev() {
-        let Ok(text) = std::fs::read_to_string(f) else { continue };
-        let Ok(info) = serde_json::from_str::<Value>(&text) else { continue };
-        if let Some(sock) = info["socket"].as_str()
-            && UnixStream::connect(sock).is_ok()
-        {
-            return Ok(sock.into());
-        }
-    }
-    Err("no live caretline: start one with `caretline FILE --listen`".into())
-}
-
-struct Conn {
-    w: UnixStream,
-    r: BufReader<UnixStream>,
-    line: String,
-}
-
-impl Conn {
-    fn send(&mut self, req: &str) -> Result<(), String> {
-        self.w.write_all(req.as_bytes()).and_then(|_| self.w.write_all(b"\n")).map_err(|e| format!("send: {e}"))?;
-        self.line.clear();
-        self.r.read_line(&mut self.line).map_err(|e| format!("read: {e}"))?;
-        if self.line.is_empty() {
-            return Err("the editor closed the connection".into());
-        }
-        Ok(())
-    }
-
-    fn ask(&mut self, req: Value) -> Result<Value, String> {
-        self.send(&req.to_string())?;
-        let v: Value = serde_json::from_str(&self.line).map_err(|e| format!("reply: {e}"))?;
-        if v.get("error").is_some() {
-            return Err(format!("{}", v["error"]));
-        }
-        Ok(v["result"].clone())
-    }
-}
+use super::agent::Conn;
+use super::DemoArgs;
+use crate::hub::Hub;
+use crate::runtime::{self, Demo, KeyAction};
 
 /// A frame: rows of chars and the cells to highlight.
 struct Grid {
@@ -130,6 +52,12 @@ impl Grid {
     /// The `frame` request's body after `{"op":"frame",`: the text and the highlights as
     /// char ranges (rows are `w` chars and a line break).
     fn body(&self) -> String {
+        let (text, ranges) = self.parts();
+        format!(r#""text":{},"highlights":{}}}"#, Value::from(text), json!(ranges))
+    }
+
+    /// The frame's text and its highlights as char ranges.
+    fn parts(&self) -> (String, Vec<[usize; 2]>) {
         let mut text = String::with_capacity((self.w + 1) * self.h);
         let mut ranges = Vec::new();
         for y in 0..self.h {
@@ -152,7 +80,7 @@ impl Grid {
                 }
             }
         }
-        format!(r#""text":{},"highlights":{}}}"#, Value::from(text), json!(ranges))
+        (text, ranges)
     }
 }
 
@@ -392,7 +320,7 @@ fn scene(name: &str) -> Option<Box<dyn Scene>> {
     })
 }
 
-const ALL: [&str; 6] = ["donut", "cube", "tunnel", "plasma", "fire", "warp"];
+const ALL: [&str; 6] = ["warp", "donut", "cube", "tunnel", "plasma", "fire"];
 
 /// One playback's result.
 struct Run {
@@ -478,41 +406,226 @@ fn ms(d: Duration) -> String {
     format!("{:.0} µs", d.as_secs_f64() * 1e6)
 }
 
-fn main() {
-    if let Err(e) = run() {
-        eprintln!("scenes: {e}");
-        std::process::exit(1);
+
+/// The scenes to play: `--scene`, or all of them, warp first.
+fn names(args: &DemoArgs) -> Result<Vec<&'static str>, String> {
+    let Some(list) = &args.scene else { return Ok(ALL.to_vec()) };
+    let mut out = Vec::new();
+    for n in list.split(',').map(str::trim).filter(|n| !n.is_empty() && *n != "all") {
+        out.push(*ALL.iter().find(|a| **a == n).ok_or_else(|| format!("unknown scene {n:?}; scenes: {}", ALL.join(", ")))?);
+    }
+    Ok(if out.is_empty() { ALL.to_vec() } else { out })
+}
+
+/// The status line under a scene.
+fn status(name: &str, i: usize, n: usize, fps: f64) -> String {
+    format!("{name} · {}/{n} · {fps:.0} fps · ←/→ scene · q quits", i + 1)
+}
+
+/// Which scene the person picked, shared with the player.
+struct Control {
+    index: AtomicUsize,
+    /// Set when the person picks one, so the player restarts its clock.
+    picked: AtomicBool,
+}
+
+struct ScenesDemo {
+    control: Arc<Control>,
+    count: usize,
+}
+
+impl Demo for ScenesDemo {
+    fn key(&mut self, _hub: &mut Hub, key: &Key) -> KeyAction {
+        let m = key.mods;
+        let step = |d: isize| {
+            let i = self.control.index.load(Ordering::Relaxed) as isize;
+            self.control.index.store((i + d).rem_euclid(self.count as isize) as usize, Ordering::Relaxed);
+            self.control.picked.store(true, Ordering::Relaxed);
+        };
+        match key.code {
+            KeyCode::Esc => return KeyAction::Quit,
+            KeyCode::Char(c) if m.ctrl && matches!(c.to_ascii_lowercase(), 'c' | 'q') => return KeyAction::Quit,
+            KeyCode::Char('q') if !m.ctrl && !m.alt && !m.cmd => return KeyAction::Quit,
+            KeyCode::Right | KeyCode::Tab | KeyCode::Char(' ') | KeyCode::Char('n') => step(1),
+            KeyCode::Left | KeyCode::BackTab | KeyCode::Char('p') => step(-1),
+            _ => {}
+        }
+        KeyAction::Consumed
     }
 }
 
-fn run() -> Result<(), String> {
-    let o = opts()?;
-    let path = match &o.socket {
+pub fn main(args: &DemoArgs) -> Result<(), String> {
+    if args.bench {
+        return bench(args);
+    }
+    let names = names(args)?;
+    let fps: u32 = match &args.fps {
+        Some(f) => f.trim().parse().map_err(|_| format!("bad --fps {f:?}: one rate, like 60"))?,
+        None => 60,
+    };
+    let fps = fps.clamp(1, 240);
+    let seconds = args.seconds.unwrap_or(8.0).max(0.5);
+    if let Some(size) = &args.snapshot {
+        let (w, h) = crate::parse_size(size)?;
+        let frame = first_frame(names[0], names.len(), fps, w, h);
+        print!("{}", if args.format == "ansi" { frame.to_ansi() } else { frame.to_text() });
+        return Ok(());
+    }
+    let socket = crate::hub::default_socket_path()?;
+    let control = Arc::new(Control { index: AtomicUsize::new(0), picked: AtomicBool::new(false) });
+    {
+        let (socket, control, names) = (socket.clone(), control.clone(), names.clone());
+        std::thread::spawn(move || {
+            let _ = play_live(&socket, &names, fps, seconds, &control);
+        });
+    }
+    let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
+    let mut state = State::new("", None, Viewport { width, height });
+    state.view.status = Some("warming up…".into());
+    let demo = ScenesDemo { control, count: names.len() };
+    runtime::run_interactive(
+        state,
+        runtime::Interactive {
+            trace: None,
+            mouse: false,
+            listen: Some(socket),
+            file: None,
+            // Every frame is a new trace segment; keep only a little.
+            trace_limit: 64,
+            max_fps: 120,
+            frame_clock: 0,
+            stats: false,
+            demo: Some(Box::new(demo)),
+        },
+    )
+}
+
+/// The first scene a moment in, as the editor draws it at `w`x`h`.
+fn first_frame(name: &str, count: usize, fps: u32, w: u16, h: u16) -> caretline::Frame {
+    let mut session = Session::new(State::new("", None, Viewport { width: w, height: h }));
+    let rows = (h as usize).saturating_sub(1).max(1);
+    let mut sc = scene(name).expect("a known scene");
+    let (text, ranges) = sc.frame(2.0, (w as usize).saturating_sub(1).max(1), rows).parts();
+    let ranges: Vec<(usize, usize)> = ranges.iter().map(|r| (r[0], r[1])).collect();
+    session.push_frame(&text, &ranges, None, Some(status(name, 0, count, fps as f64)));
+    session.frame()
+}
+
+/// Plays the scenes into the editor at `socket` until it goes away: each for `seconds`, or
+/// until the person picks another.
+fn play_live(socket: &std::path::Path, names: &[&str], fps: u32, seconds: f64, control: &Control) -> Result<(), String> {
+    let mut c = Conn::connect_within(socket, Duration::from_secs(5))?;
+    let period = Duration::from_secs_f64(1.0 / fps as f64);
+    let size = |c: &mut Conn| -> Result<(usize, usize), String> {
+        let v = c.ask(json!({"op": "view.list"}))?;
+        // One column short of the view: a row as wide as the view would soft-wrap.
+        let w = (v["views"][0]["w"].as_u64().unwrap_or(80) as usize).saturating_sub(1).max(1);
+        let h = v["views"][0]["h"].as_u64().unwrap_or(24).saturating_sub(1).max(1) as usize;
+        Ok((w, h))
+    };
+    let (mut w, mut h) = size(&mut c)?;
+    let mut current = usize::MAX;
+    let mut sc: Option<Box<dyn Scene>> = None;
+    let mut started = Instant::now();
+    let mut k: u64 = 0;
+    let mut clock = Instant::now();
+    let mut rate = fps as f64;
+    let mut window = (Instant::now(), 0u32);
+    loop {
+        let i = control.index.load(Ordering::Relaxed) % names.len();
+        if i != current || control.picked.swap(false, Ordering::Relaxed) {
+            current = i;
+            sc = scene(names[i]);
+            started = Instant::now();
+        }
+        if k.is_multiple_of(30) {
+            (w, h) = size(&mut c)?;
+        }
+        let t = started.elapsed().as_secs_f64();
+        if t > seconds {
+            control.index.store((i + 1) % names.len(), Ordering::Relaxed);
+            continue;
+        }
+        let Some(s) = sc.as_mut() else { return Err("no scene".into()) };
+        let body = s.frame(t, w, h).body();
+        let st = Value::from(status(names[i], i, names.len(), rate));
+        let req = format!(r#"{{"op":"frame","status":{st},{body}"#);
+        let due = clock + period * (k as u32);
+        if Instant::now() > due + period * 4 {
+            // Fell behind (a stall): start the schedule again rather than burst.
+            clock = Instant::now();
+            k = 0;
+        } else {
+            wait_until(due, Duration::from_millis(1));
+        }
+        c.send(&req)?;
+        k += 1;
+        window.1 += 1;
+        let el = window.0.elapsed().as_secs_f64();
+        if el >= 1.0 {
+            rate = window.1 as f64 / el;
+            window = (Instant::now(), 0);
+        }
+    }
+}
+
+/// The newest live editor in `$TMPDIR/caretline/*.json` that answers.
+fn discover() -> Result<PathBuf, String> {
+    let dir = crate::hub::discovery_dir();
+    let mut found: Vec<(std::time::SystemTime, PathBuf)> = std::fs::read_dir(&dir)
+        .map_err(|_| "no live caretline: start one with `caretline FILE --listen`".to_string())?
+        .flatten()
+        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
+        .collect();
+    found.sort();
+    for (_, f) in found.iter().rev() {
+        let Ok(text) = std::fs::read_to_string(f) else { continue };
+        let Ok(info) = serde_json::from_str::<Value>(&text) else { continue };
+        if let Some(sock) = info["socket"].as_str()
+            && std::os::unix::net::UnixStream::connect(sock).is_ok()
+        {
+            return Ok(sock.into());
+        }
+    }
+    Err("no live caretline: start one with `caretline FILE --listen`".into())
+}
+
+/// `--bench`: every scene at every target rate into a running editor, with the numbers.
+fn bench(args: &DemoArgs) -> Result<(), String> {
+    let path = match &args.socket {
         Some(p) => p.clone(),
         None => discover()?,
     };
-    let s = UnixStream::connect(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-    let mut c = Conn { w: s.try_clone().map_err(|e| e.to_string())?, r: BufReader::new(s), line: String::new() };
+    let rates: Vec<u32> = match &args.fps {
+        Some(f) => f.split(',').map(|f| f.trim().parse().map_err(|_| format!("bad fps {f:?}"))).collect::<Result<_, _>>()?,
+        None => vec![60, 120, 0],
+    };
+    let seconds = args.seconds.unwrap_or(3.0);
+    let spin = Duration::from_millis(1);
+    let mut c = Conn::connect(&path)?;
     let views = c.ask(json!({"op": "view.list"}))?;
-    let (w, h) = match o.size {
-        Some(s) => s,
+    let (w, h) = match &args.size {
+        Some(s) => {
+            let (w, h) = crate::parse_size(s)?;
+            (w as usize, h as usize)
+        }
         // The text area: the view, less the status bar.
         None => (views["views"][0]["w"].as_u64().unwrap_or(80) as usize, views["views"][0]["h"].as_u64().unwrap_or(24).saturating_sub(1).max(1) as usize),
     };
-    let names: Vec<String> = if o.scenes.is_empty() { ALL.iter().map(|s| s.to_string()).collect() } else { o.scenes.clone() };
-    println!("caretline at {}: {w}x{h} text cells, {} frames per scene", path.display(), o.frames);
+    let names = names(args)?;
+    println!("caretline at {}: {w}x{h} text cells, {} frames per scene", path.display(), args.frames);
 
     let mut rows = Vec::new();
     for name in &names {
-        let mut sc = scene(name).ok_or_else(|| format!("unknown scene {name:?}; scenes: {}", ALL.join(", ")))?;
+        let mut sc = scene(name).ok_or_else(|| format!("unknown scene {name:?}"))?;
         c.ask(json!({"op": "frame", "text": format!("precomputing {name}…"), "status": format!("precomputing {name}")}))?;
         let t0 = Instant::now();
-        let bodies: Vec<String> = (0..o.frames).map(|k| sc.frame(k as f64 / 60.0, w, h).body()).collect();
+        let bodies: Vec<String> = (0..args.frames.max(1)).map(|k| sc.frame(k as f64 / 60.0, w, h).body()).collect();
         let avg = bodies.iter().map(String::len).sum::<usize>() / bodies.len().max(1);
         println!("{name}: {} frames in {:.2} s, {:.1} KB per request", bodies.len(), t0.elapsed().as_secs_f64(), avg as f64 / 1024.0);
-        for &fps in &o.fps {
+        for &fps in &rates {
             let tag = if fps == 0 { format!("{name} · unthrottled") } else { format!("{name} · {fps} fps target") };
-            let r = play(&mut c, &bodies, o.seconds, fps, o.spin, &tag)?;
+            let r = play(&mut c, &bodies, seconds, fps, spin, &tag)?;
             let line = if fps == 0 {
                 format!("{name:<8} unthrottled   {:>8.1} frames/s", r.fps())
             } else {
@@ -525,4 +638,23 @@ fn run() -> Result<(), String> {
     let summary = format!("\n  caretline frame demo, {w}x{h}\n\n  {}\n", rows.join("\n  "));
     c.ask(json!({"op": "frame", "text": summary, "status": "scenes: done"}))?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_scene_draws_a_frame_with_text() {
+        for name in ALL {
+            let mut sc = scene(name).unwrap();
+            // Fire builds up from its first frames.
+            for k in 0..30 {
+                sc.frame(k as f64 / 60.0, 40, 12);
+            }
+            let (text, _) = sc.frame(0.5, 40, 12).parts();
+            assert_eq!(text.lines().count(), 12, "{name}");
+            assert!(text.chars().any(|c| !c.is_whitespace()), "{name} is blank");
+        }
+    }
 }
