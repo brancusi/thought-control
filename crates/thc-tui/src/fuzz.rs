@@ -1061,6 +1061,16 @@ mod soak_found {
         }
     }
 
+    /// A saved note emptied to its line breaks: the save clears its text, and the engine kept
+    /// the note's mark when the break went (it read the break as a whole empty line). Case 1045.
+    #[test]
+    fn an_emptied_note_of_line_breaks_keeps_its_place() {
+        let ops = vec![Enter, Redo, Enter, Type("🙂"), Enter, Redo, Move(KeyCode::Left), Type("🙂"), Bs, Bs, Bs, Select(KeyCode::Right), Select(KeyCode::Right)];
+        if let Err(e) = run(&ops, 4, "soak1045") {
+            panic!("{e}");
+        }
+    }
+
     #[test]
     fn late_move_and_edit_in_one_save_keeps_the_typing() {
         late_move_and_edit_in_one_save();
