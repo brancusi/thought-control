@@ -1,0 +1,75 @@
+---
+import '@fontsource-variable/geist-mono';
+import '@fontsource-variable/geist';
+import '../styles/site.css';
+import Mark from '../components/Mark.astro';
+import { REPO, CRATE, DOCS_RS } from '../lib/site';
+
+interface Props { title?: string; description: string; nav?: 'home' | 'docs' | 'brand' }
+const { title, description, nav } = Astro.props;
+const full = title ? `${title} · caretline` : 'caretline · the text editor as a state machine';
+const canonical = new URL(Astro.url.pathname, Astro.site);
+---
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>{full}</title>
+  <meta name="description" content={description} />
+  <link rel="canonical" href={canonical} />
+  <meta property="og:title" content={full} />
+  <meta property="og:description" content={description} />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonical} />
+  <meta name="theme-color" content="#08090d" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#f5f6f9" media="(prefers-color-scheme: light)" />
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
+  <script is:inline>
+    try { const t = localStorage.getItem('caretline-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
+  </script>
+  <slot name="head" />
+</head>
+<body>
+  <header class="top">
+    <div class="wrap top__row">
+      <a class="brand" href="/" aria-label="caretline home"><Mark size={26} /><span>caretline</span></a>
+      <nav class="nav" aria-label="Site">
+        <a href="/docs/" aria-current={nav === 'docs' ? 'page' : undefined}>docs</a>
+        <a class="hide-sm" href="/#engine">playground</a>
+        <a class="hide-sm" href="/brand/" aria-current={nav === 'brand' ? 'page' : undefined}>brand</a>
+        <a href={REPO}>github</a>
+        <button class="icon-btn" type="button" data-theme-toggle aria-label="Switch between light and dark">◐</button>
+      </nav>
+    </div>
+  </header>
+  <slot />
+  <footer class="foot">
+    <div class="wrap foot__row">
+      <span>caretline · MIT, with vendored Helix files under MPL-2.0</span>
+      <nav aria-label="Footer">
+        <a href="/docs/">docs</a><a href="/docs/performance/">performance</a><a href="/brand/">brand</a><a href={DOCS_RS}>docs.rs</a><a href={CRATE}>crates.io</a><a href={REPO}>github</a>
+      </nav>
+    </div>
+  </footer>
+  <script is:inline>
+    (function () {
+      const b = document.querySelector('[data-theme-toggle]');
+      if (!b) return;
+      b.addEventListener('click', function () {
+        const root = document.documentElement;
+        const dark = root.dataset.theme ? root.dataset.theme === 'dark' : matchMedia('(prefers-color-scheme: dark)').matches || !matchMedia('(prefers-color-scheme: light)').matches;
+        root.dataset.theme = dark ? 'light' : 'dark';
+        try { localStorage.setItem('caretline-theme', root.dataset.theme); } catch {}
+      });
+      document.querySelectorAll('[data-copy-text]').forEach(function (btn) {
+        btn.addEventListener('click', function () {
+          const text = btn.getAttribute('data-copy-text');
+          const done = function () { const o = btn.textContent; btn.textContent = 'copied'; setTimeout(function () { btn.textContent = o; }, 1400); };
+          if (navigator.clipboard) navigator.clipboard.writeText(text).then(done, function () {});
+        });
+      });
+    })();
+  </script>
+</body>
+</html>
