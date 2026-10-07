@@ -115,6 +115,7 @@ Each rule is one Transaction and one undo step. The mark column says what happen
 | | Inside a block | As in plain text, but never past the content start or into the next line | |
 | Backspace or Delete | On a selected atomic block | Removes the block; the status says what | Its id goes (undo brings it back, selected) |
 | `insert_text` | On a selected atomic block | A new paragraph after it with the text | New id |
+| | `[ ] `, `[x] ` or `[] ` completed at the start of a paragraph's line | The box becomes a task marker (`- [ ] `): that line is a task, on a later line a block of its own | New id on a later line |
 | `indent` / `outdent` (Tab / Shift-Tab) | The caret's block, or every block the selection touches | One level deeper (at most one below the last non-empty block above) or shallower, keeping the selection. Paragraphs don't nest: the status says so | Kept |
 | `task_cycle` (`Ctrl-T`) | The caret's block, or every block the selection touches | The first block's next state applies to all: text → `[cycle[0]]` → `[cycle[1]]` → text. A bullet's marker becomes a task's | Kept |
 | | Inside a multi-line paragraph | Each selected line becomes its own task; the lines before and after stay paragraphs, tight against them | The first piece keeps the id; the others get new ones with no blank row |
@@ -130,10 +131,11 @@ Each rule is one Transaction and one undo step. The mark column says what happen
 | | Whole blocks from the register, at a block's end | They follow the block's subtree as siblings, at its depth | The cut ids come back |
 | | Whole blocks from the register, inside a block's text | As pasted Markdown | New ids |
 | | The register (or the same text from the system clipboard) | Pasted as it was cut | The cut ids come back |
+| | Whole blocks from the register, over a selection of whole blocks | The selected blocks go and the register's take their place, in one step (so a copy pasted back over its own selection changes nothing) | The cut ids come back |
 | `paste_plain` (`Alt-V`) | | Paragraphs with their line breaks kept; nothing becomes a list | New ids |
 | `copy` / `cut` | Inside one block | Plain text | A cut keeps the removed ids in the register |
 | | Across blocks | Markdown: the first block's text from the selection's start (its marker only from its content start), then each block with its marker and indentation, a blank line around paragraphs | |
-| | Whole blocks (from a block's content start to another block's end, or to the start of the block after them, as Shift-↓ selects) | The register takes their lines with markers and indentation; a cut takes the lines out, leaving no empty item | A cut keeps the ids in the register |
+| | Whole blocks (from a block's content start to another block's end, or to the start of the block after them, as Shift-↓ selects; an empty last block whose marker is selected is taken too) | The register takes their lines with markers and indentation; a cut takes the lines out, leaving no empty item | A cut keeps the ids in the register |
 
 ### Effects
 

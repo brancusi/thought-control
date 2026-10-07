@@ -259,7 +259,9 @@ fn newline_at(state: &mut State, soft: bool, merge: bool) {
 fn type_text(state: &mut State, typed: &str) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let i = focused_atomic(&o, state.doc.text.slice(..), &r)?;
+    let Some(i) = focused_atomic(&o, state.doc.text.slice(..), &r) else {
+        return task_shorthand(state, &o, r, typed);
+    };
     if typed.is_empty() || typed.contains(['\n', '\r']) {
         return None;
     }
@@ -271,6 +273,37 @@ fn type_text(state: &mut State, typed: &str) -> Option<Vec<Effect>> {
     edit(state, vec![(b.end, b.end, Some(format!("{le}{typed}")))], caret_at(caret), false, |m, _| {
         m.mint(at);
     });
+    Some(Vec::new())
+}
+
+/// A bare task box typed at the start of a paragraph's line (`[ ] `, `[x] `, `[] `) is
+/// shorthand for a task: it becomes `- [c] `, and that line a task (on a later line, a new
+/// block). One step, the typed space included.
+fn task_shorthand(state: &mut State, o: &Outline, r: Range, typed: &str) -> Option<Vec<Effect>> {
+    if !r.is_empty() || !typed.ends_with(' ') || typed.contains(['\n', '\r']) {
+        return None;
+    }
+    let cfg = state.doc.outline.clone()?;
+    let text = state.doc.text.slice(..);
+    let p = r.head;
+    let b = o.block_at(text, p);
+    if !b.is_plain_para() {
+        return None;
+    }
+    let line = text.char_to_line(p);
+    let ls = text.line_to_char(line);
+    let indent = if line == b.first_line { b.indent } else { 0 };
+    let before: String = text.slice(ls + indent.min(p - ls)..p).chars().chain(typed.chars()).collect();
+    let inner = before.strip_prefix('[')?.strip_suffix("] ")?;
+    let ch = match inner.chars().count() {
+        0 => cfg.cycle[0],
+        1 => inner.chars().next().filter(|&c| cfg.is_task_char(c))?,
+        _ => return None,
+    };
+    let from = ls + indent.min(p - ls);
+    let ins = format!("- [{ch}] ");
+    let caret = from + ins.chars().count();
+    edit(state, vec![(from, p, Some(ins))], caret_at(caret), false, |_, _| {});
     Some(Vec::new())
 }
 
@@ -918,10 +951,12 @@ fn whole_blocks(state: &State, o: &Outline, r: Range) -> Option<(usize, usize)> 
     }
     let j = o.index_at(text, r.to());
     let b = &o.blocks[j];
-    if j > i0 && (r.to() == b.start || r.to() == b.content_start()) {
-        return Some((i0, j - 1));
+    // At an empty block's content start the selection is also at its end: it takes that
+    // block too, as deleting the selection would (its marker is selected).
+    if j > i0 && r.to() == b.end {
+        return Some((i0, j));
     }
-    (j > i0 && r.to() == b.end).then_some((i0, j))
+    (j > i0 && (r.to() == b.start || r.to() == b.content_start())).then(|| (i0, j - 1))
 }
 
 /// Copies (or cuts) blocks `i0..=i1` whole: their lines, markers and indentation included,
@@ -964,9 +999,19 @@ fn copy_blocks(state: &mut State, o: &Outline, i0: usize, i1: usize, cut: bool) 
 /// ids come back. `None` when the caret is elsewhere.
 fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
     let clip = state.doc.clipboard.clone();
-    let r = single(state)?;
-    if !clip.blocks || !r.is_empty() {
+    let mut r = single(state)?;
+    if !clip.blocks {
         return None;
+    }
+    // Over a selection of whole blocks (what a copy of them selects): they go, and the
+    // register takes their place, in one step.
+    let mut merge = false;
+    if !r.is_empty() {
+        let o = state.blocks()?;
+        whole_blocks(state, &o, r)?;
+        update::delete(state, None, |_, _, head| (head, head));
+        merge = true;
+        r = single(state)?;
     }
     let o = state.blocks()?;
     let cfg = state.doc.outline.clone()?;
@@ -1004,6 +1049,7 @@ fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
     let body = body_lines.join(&le);
     let reg_line = |offset: usize| line_offsets.partition_point(|&s| s <= offset).saturating_sub(1);
     let carried: Vec<(usize, ClipMark)> = clip.marks.iter().map(|c| (reg_line(c.offset), *c)).collect();
+    let starts: Vec<usize> = ro.blocks.iter().map(|x| x.first_line).collect();
     let (from, to, ins, first_line) = if empty {
         (b.start, b.end, body, b.first_line)
     } else if before {
@@ -1014,7 +1060,7 @@ fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
     };
     let caret = from + ins.chars().count() - if before { le.chars().count() } else { 0 };
     let own = empty.then_some(b.id);
-    edit(state, vec![(from, to, Some(ins))], caret_at(caret), false, move |m, new| {
+    edit(state, vec![(from, to, Some(ins))], caret_at(caret), merge, move |m, new| {
         // The emptied item's id stays on the first pasted line unless the register brings one.
         let lead = carried.iter().any(|(l, _)| *l == 0);
         if let Some(id) = own {
@@ -1028,6 +1074,14 @@ fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
             let pos = new.line_to_char(first_line + l);
             if m.at(pos).is_none() && !m.contains(c.id) {
                 let _ = m.insert(Mark { pos, id: c.id, attrs: c.attrs });
+            }
+        }
+        // Every pasted block starts a block here, an empty paragraph too (nothing else would
+        // tell it from a line of the block above).
+        for l in starts {
+            let pos = new.line_to_char(first_line + l);
+            if m.at(pos).is_none() {
+                m.mint(pos);
             }
         }
     });
