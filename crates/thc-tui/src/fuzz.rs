@@ -325,20 +325,21 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
             let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape)) || app.doc_saver.as_ref().is_some_and(|s| s.patch_waiting());
             let texts_before: Option<Vec<String>> = (matches!(op, Op::Move(_) | Op::Select(_)) && !holding).then(|| app.doc.as_ref().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default());
             apply(&mut app, *op);
-            // The late writer answers now and then: one result at a time, at random.
-            if let Some(rng) = rng.as_mut() {
-                if rng.below(3) == 0 {
-                    settle_one(&mut app);
-                }
-            }
             // Motion (motion.md §6): never edits (I7). (The engine keeps every caret on a stop,
-            // I1: its own goldens and fuzz check that.)
+            // I1: its own goldens and fuzz check that.) Checked before a late result lands: a
+            // result folds in the vault's text (tokens parsed out), whatever the op was.
             if let Some(tb) = texts_before {
                 if let Some(d) = app.doc.as_ref() {
                     let ta: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).collect();
                     if ta != tb {
                         return Err(format!("step {step}: a motion changed the text: {tb:?} → {ta:?}"));
                     }
+                }
+            }
+            // The late writer answers now and then: one result at a time, at random.
+            if let Some(rng) = rng.as_mut() {
+                if rng.below(3) == 0 {
+                    settle_one(&mut app);
                 }
             }
             // A pop-up an op opened (a compare on a ≠ line) is closed; a document stays open.
@@ -1067,6 +1068,16 @@ mod soak_found {
     fn an_emptied_note_of_line_breaks_keeps_its_place() {
         let ops = vec![Enter, Redo, Enter, Type("🙂"), Enter, Redo, Move(KeyCode::Left), Type("🙂"), Bs, Bs, Bs, Select(KeyCode::Right), Select(KeyCode::Right)];
         if let Err(e) = run(&ops, 4, "soak1045") {
+            panic!("{e}");
+        }
+    }
+
+    /// A late result folding in the vault's text lands with whatever op comes next: the
+    /// motion check reads the text before it does (case 341).
+    #[test]
+    fn a_late_result_isnt_the_motions() {
+        let ops = vec![Enter, Move(KeyCode::End), Type("end."), TaskCycle, Enter, Type("🙂"), LeaveReturn, Undo, Enter, Bs, Redo, Remote(0), Undo, Enter, Type("🙂"), Type("alpha"), Enter, Enter, Type("alpha"), Type("end."), Cut, Enter, Select(KeyCode::Left), Select(KeyCode::Left), Enter, Bs, Type("end."), Bs, Remote(0), Move(KeyCode::PageUp), Enter, Type("two words"), Type("漢字"), Undo, Type("漢字"), Enter, Undo, Type("two words"), Paste("plain text pasted"), Enter, Type("漢字"), Cut, Cut, Type("漢字"), Type("漢字"), Type("two words"), Type("漢字"), MoveLine(false), Type("end."), LeaveReturn, Marker("* "), TaskCycle, Remote(2), BackTab, LeaveReturn, Marker("- "), Move(KeyCode::Right), Tab, Undo, Redo, Bs, Select(KeyCode::Up), TaskCycle, Remote(0), Bs, Enter, Type("two words"), LeaveReturn, LeaveReturn, Type("bé"), Tab, Move(KeyCode::Home), Enter, Tab, Move(KeyCode::Left), Undo, BackTab, Type("alpha"), Move(KeyCode::Up), LeaveReturn, Marker("[ ] "), MoveLine(false), Move(KeyCode::Up), Type("x"), MoveLine(true), Type("two words"), Tab, Paste("line a\nline b"), Click(36, 9), MoveLine(true), Type("alpha"), Type("🙂"), Type("🙂"), Type("x"), Cut, Select(KeyCode::Up), Cut, Enter, Bs, Undo, Click(30, 5), Marker("[ ] "), Type("end."), LeaveReturn, BackTab, MoveLine(false), TaskCycle, Move(KeyCode::Right), LeaveReturn, Type("alpha"), Select(KeyCode::Left), Undo, Cut, Type("bé"), LeaveReturn, BackTab, Enter, Move(KeyCode::End), Type("🙂"), Cut, Click(11, 5), Enter, Click(71, 9), Select(KeyCode::Up)];
+        if let Err(e) = run_with(&ops, 4, "soak341", Some(0xBADC_0FFE ^ 341)) {
             panic!("{e}");
         }
     }
