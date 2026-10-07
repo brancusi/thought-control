@@ -6,7 +6,7 @@ Guidance for AI agents. It has two parts: **using `thc`** to manage notes and to
 
 ---
 
-<!-- thc:begin v0.10.0 -->
+<!-- thc:begin v0.10.1 -->
 ## Part 1: Using `thc` as an agent
 
 `thc` is a CLI for a personal stash of notes, todos, dates and reminders. Treat it the way
