@@ -93,22 +93,27 @@ fn typing_in_a_5000_block_outline() {
     for i in 0..5000 {
         md.push_str(&format!("- [ ] item number {i} with some words\n"));
     }
-    let mut s = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
+    let base = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
     let keys = if cfg!(debug_assertions) { 20 } else { 400 };
-    for pos in [10, s.doc.text.len_chars() - 3] {
-        s.view.selection = caretline_next::helix::Selection::point(pos);
-        let t = Instant::now();
-        for k in 0..keys {
-            caretline_next::update(&mut s, Msg::InsertText { text: "x".into() });
-            if k % 50 == 49 {
-                caretline_next::update(&mut s, Msg::InsertNewline);
+    // Without and with the outline layout (markers in a hang, a column per depth).
+    for layout in [None, Some(caretline_next::OutlineLayout::default())] {
+        let mut s = base.clone();
+        s.view.layout = layout.clone();
+        for pos in [10, s.doc.text.len_chars() - 3] {
+            s.view.selection = caretline_next::helix::Selection::point(pos);
+            let t = Instant::now();
+            for k in 0..keys {
+                caretline_next::update(&mut s, Msg::InsertText { text: "x".into() });
+                if k % 50 == 49 {
+                    caretline_next::update(&mut s, Msg::InsertNewline);
+                }
+                std::hint::black_box(view(&s));
             }
-            std::hint::black_box(view(&s));
-        }
-        let per_key = t.elapsed() / keys as u32;
-        eprintln!("outline typing at {pos}: {per_key:?} per key");
-        if !cfg!(debug_assertions) {
-            assert!(per_key < Duration::from_millis(4), "{per_key:?} per key");
+            let per_key = t.elapsed() / keys as u32;
+            eprintln!("outline typing at {pos} (layout {}): {per_key:?} per key", layout.is_some());
+            if !cfg!(debug_assertions) {
+                assert!(per_key < Duration::from_millis(4), "{per_key:?} per key");
+            }
         }
     }
 }

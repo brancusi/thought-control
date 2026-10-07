@@ -791,24 +791,19 @@ pub(crate) fn word_left(text: RopeSlice, pos: usize) -> usize {
 fn vertical(layout: &Layout, origin: usize, n: isize, goal: usize) -> usize {
     let (at, _) = layout.pos_coords(origin);
     let (mut target, moved) = layout.step_rows(at, n);
-    // Virtual rows (a block's blank row) are never caret stops: step over them.
-    if moved == n && layout.is_virtual(target) {
-        if n > 0 {
-            target.row = layout.gap(target.line);
-        } else {
-            let (t, m) = layout.step_rows(target, -1);
-            if m == 0 {
-                return 0;
-            }
-            target = t;
-        }
-    }
     if moved != n {
         // Ran out of rows: clamp to the document's edge.
-        if moved == 0 || n < 0 {
-            return if n < 0 { 0 } else { layout.text().len_chars() };
+        return if n < 0 { 0 } else { layout.text().len_chars() };
+    }
+    // Virtual rows (a block's blank row, a host's rows after it) are never caret stops:
+    // keep going the same way to a row of text.
+    let step = n.signum();
+    while layout.is_virtual(target) {
+        let (t, m) = layout.step_rows(target, step);
+        if m == 0 {
+            return if step < 0 { 0 } else { layout.text().len_chars() };
         }
-        return layout.text().len_chars();
+        target = t;
     }
     layout.pos_at(target, goal)
 }
@@ -960,8 +955,7 @@ fn scrolled_top(layout: &Layout, state: &State, rows: i32) -> crate::layout::Row
     let h = state.text_rows().max(1);
     let top = layout.top(&state.view.scroll);
     let (mut new_top, _) = layout.step_rows(top, rows as isize);
-    let end = layout.pos_coords(layout.text().len_chars()).0;
-    let max_top = layout.step_rows(end, -(h as isize - 1)).0;
+    let max_top = layout.step_rows(layout.end(), -(h as isize - 1)).0;
     if rows > 0 && new_top > max_top {
         new_top = max_top.max(top);
     }

@@ -188,6 +188,7 @@ pub fn role_name(role: Role) -> &'static str {
         Role::Selection => "selection",
         Role::Status => "status",
         Role::StatusAccent => "status_accent",
+        Role::Hang => "hang",
     }
 }
 

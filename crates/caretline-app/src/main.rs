@@ -92,6 +92,11 @@ struct Args {
     #[arg(long)]
     outline: bool,
 
+    /// With --outline: the outline layout (markers in a hang, a column per depth, folds),
+    /// with plain hang glyphs.
+    #[arg(long)]
+    layout: bool,
+
     /// Interactive: keep at most this many lines in the in-memory trace `trace.get` serves
     /// (older segments are dropped first). The --trace file keeps everything.
     #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
@@ -130,6 +135,9 @@ struct ServeArgs {
     /// Serve FILE as an outline document (see docs/caretline/outline.md).
     #[arg(long)]
     outline: bool,
+    /// With --outline: the outline layout, with plain hang glyphs.
+    #[arg(long)]
+    layout: bool,
     /// Keep at most this many lines in the in-memory trace `trace.get` serves (older
     /// segments are dropped first). The --trace file keeps everything.
     #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
@@ -141,12 +149,15 @@ fn serve(args: ServeArgs) -> Result<(), String> {
     let mut state = match &args.state {
         Some(path) => State::from_json(&read_input(path)?).map_err(|e| format!("{path}: {e}"))?,
         None => match &args.file {
-            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), Viewport { width, height }, args.outline),
-            None => new_state("", None, Viewport { width, height }, args.outline),
+            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), Viewport { width, height }, args.outline || args.layout),
+            None => new_state("", None, Viewport { width, height }, args.outline || args.layout),
         },
     };
-    if args.outline && state.doc.outline.is_none() {
+    if (args.outline || args.layout) && state.doc.outline.is_none() {
         state.enable_outline(OutlineConfig::default());
+    }
+    if args.layout && state.view.layout.is_none() {
+        state.view.layout = Some(caretline_next::OutlineLayout { hang_glyphs: true, ..Default::default() });
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         state.doc.path = Some(path.clone());
@@ -248,7 +259,7 @@ fn run() -> Result<(), String> {
             }
             None => Viewport { width: 80, height: 24 },
         };
-        let mut state = new_state(&text, Some(path.clone()), viewport, args.outline);
+        let mut state = new_state(&text, Some(path.clone()), viewport, args.outline || args.layout);
         state.view.config.status_bar = !args.no_status_bar;
         println!("{}", state.to_json());
         return Ok(());
@@ -262,12 +273,15 @@ fn run() -> Result<(), String> {
         let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
         let viewport = Viewport { width, height };
         match &args.file {
-            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), viewport, args.outline),
-            None => new_state("", None, viewport, args.outline),
+            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), viewport, args.outline || args.layout),
+            None => new_state("", None, viewport, args.outline || args.layout),
         }
     };
-    if args.outline && state.doc.outline.is_none() {
+    if (args.outline || args.layout) && state.doc.outline.is_none() {
         state.enable_outline(OutlineConfig::default());
+    }
+    if args.layout && state.view.layout.is_none() {
+        state.view.layout = Some(caretline_next::OutlineLayout { hang_glyphs: true, ..Default::default() });
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         // A file given with a state names where the state saves.
