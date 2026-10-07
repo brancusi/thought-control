@@ -28,6 +28,7 @@ pub enum Kind {
 /// One block of a document: its host-opaque `id`, nesting `depth`, kind, a task's `status`, its
 /// text (a `\n` is a soft break inside it) and whether its children are folded.
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[cfg_attr(feature = "serde", derive(serde::Serialize, serde::Deserialize))]
 pub struct Block<Id> {
     pub id: Id,
     pub depth: usize,

@@ -9,7 +9,6 @@
 use super::BlockPos;
 use caretline::buffer::{BlockLine, Buffer};
 use std::collections::HashMap;
-use std::time::Instant;
 use thc_core::outline::{Block, BlockOp, Kind};
 
 /// Crockford base32 as the core writes ids (FORMAT.md).
@@ -18,7 +17,7 @@ pub fn new_id() -> String {
 }
 
 /// One line of the document: a node, its shape and its save state.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Line {
     /// The block itself (caretline's): id, depth, kind, status, text (soft breaks are `\n`) and
     /// fold. Its fields read and write through `Line` (Deref).
@@ -36,10 +35,10 @@ pub struct Line {
     pub saved_status: Option<String>,
     pub is_new: bool,
     pub conflict: bool,
-    /// The meta flashes accent until then (values settling after a save).
-    pub flash_until: Option<Instant>,
-    /// A save in flight since (◌ after 3 s), or the last save's error.
-    pub saving_since: Option<Instant>,
+    /// The meta flashes accent until then (values settling after a save), in ms ([`super::ms`]).
+    pub flash_until: Option<u64>,
+    /// A save in flight since (◌ after 3 s), in ms ([`super::ms`]).
+    pub saving_since: Option<u64>,
     pub save_error: Option<String>,
     /// Changed elsewhere while you're on it (§9): the new text, applied when you leave.
     pub remote_text: Option<String>,
@@ -272,7 +271,8 @@ use crate::text::{width, wrap, wrap_with};
 use crate::text::{next_char, prev_char};
 
 /// What the document is.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "lowercase")]
 pub enum Target {
     Page { id: String, title: String },
     Journal { date: chrono::NaiveDate },
@@ -296,6 +296,69 @@ pub struct Doc {
     pub(super) wraps: Wraps,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
+    /// The clock as the runtime last gave it ([`Doc::tick`], ms on [`super::ms`]'s scale).
+    pub(super) now_ms: u64,
+}
+
+/// A document on caretline-next as data (S7: the model is serializable): the target, the
+/// engine's document and view, thc's lines (save state included), what's pending, and the
+/// main column's caret, selection, folds and scroll.
+#[derive(serde::Serialize, serde::Deserialize)]
+#[allow(dead_code)] // Replay fixtures and tests now; crash recovery next.
+struct DocJson {
+    target: Target,
+    root: Option<String>,
+    engine: serde_json::Value,
+    caret: (usize, usize),
+    anchor: Option<(usize, usize)>,
+    folds: Vec<String>,
+    scroll: usize,
+    last_saved: HashMap<String, Line>,
+    now_ms: u64,
+}
+
+#[allow(dead_code)] // Replay fixtures and tests now; crash recovery next.
+impl Doc {
+    /// The document as JSON (caretline-next only: the old engine's isn't data).
+    pub fn to_json(&mut self) -> Option<String> {
+        let Engine::Next(n) = &mut self.engine else { return None };
+        let mut folds: Vec<String> = self.view.folds.iter().cloned().collect();
+        folds.sort();
+        let j = DocJson {
+            target: self.target.clone(),
+            root: self.root.clone(),
+            engine: n.to_value(),
+            caret: (self.view.caret.line, self.view.caret.byte),
+            anchor: self.view.anchor.map(|a| (a.line, a.byte)),
+            folds,
+            scroll: self.scroll,
+            last_saved: self.last_saved.clone(),
+            now_ms: self.now_ms,
+        };
+        Some(serde_json::to_string(&j).expect("a document serializes"))
+    }
+
+    /// A document from [`Doc::to_json`], on caretline-next.
+    pub fn from_json(json: &str) -> Result<Doc, String> {
+        let j: DocJson = serde_json::from_str(json).map_err(|e| e.to_string())?;
+        let next = super::next::Next::from_value(j.engine)?;
+        let mut view = caretline::View::new(caretline::Rect::default());
+        view.caret = Pos { line: j.caret.0, byte: j.caret.1 };
+        view.anchor = j.anchor.map(|(line, byte)| Pos { line, byte });
+        view.folds = j.folds.into_iter().collect();
+        Ok(Doc {
+            target: j.target,
+            root: j.root,
+            engine: Engine::Next(Box::new(next)),
+            view,
+            scroll: j.scroll,
+            host_revision: 0,
+            last_saved: j.last_saved,
+            wraps: Wraps::default(),
+            words: Default::default(),
+            now_ms: j.now_ms,
+        })
+    }
 }
 
 /// Rows by (a line's content hash, width).
@@ -324,12 +387,45 @@ impl Doc {
             super::EngineKind::Old => Engine::Old(caretline::Doc::new(lines)),
             super::EngineKind::Next => Engine::Next(Box::new(super::next::Next::load(lines))),
         };
-        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default() }
+        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default(), now_ms: 0 }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
     pub fn revision(&self) -> u64 {
         self.engine.rev().wrapping_add(self.host_revision)
+    }
+
+    /// How many ids the document wants handed in before input ([`Doc::fill_ids`]): the model
+    /// mints none. (The old engine mints its own.)
+    pub fn ids_wanted(&self) -> usize {
+        match &self.engine {
+            Engine::Old(_) => 0,
+            Engine::Next(n) => super::next::POOL.saturating_sub(n.pool_len()),
+        }
+    }
+
+    /// Ids minted by the runtime, for the notes the next edits make.
+    pub fn fill_ids(&mut self, ids: Vec<String>) {
+        if let Engine::Next(n) = &mut self.engine {
+            n.pool().fill(ids);
+        }
+    }
+
+    /// An id for a note this document makes (from the pool on caretline-next).
+    pub(super) fn take_id(&mut self) -> String {
+        match &mut self.engine {
+            Engine::Old(_) => new_id(),
+            Engine::Next(n) => n.pool().take(),
+        }
+    }
+
+    /// The runtime's clock (ms, [`super::ms`]), before it hands the document input: idle saves,
+    /// flashes and the engine's typing runs read it; the model reads no clock itself.
+    pub fn tick(&mut self, now_ms: u64) {
+        self.now_ms = now_ms;
+        if let Engine::Next(n) = &mut self.engine {
+            n.now_ms = now_ms;
+        }
     }
 
     /// The document's words (its own lines), remembered for the revision.
@@ -681,10 +777,12 @@ impl Engine {
         }
     }
 
-    pub(super) fn changed_at(&self) -> Option<Instant> {
+    /// How long ago (ms) the last unsaved edit was, at `now`.
+    pub(super) fn changed_since(&self, now: u64) -> Option<u64> {
         match self {
-            Engine::Old(e) => e.changed_at(),
-            Engine::Next(n) => n.changed_at,
+            // The old engine keeps its own clock.
+            Engine::Old(e) => e.changed_at().map(|t| t.elapsed().as_millis() as u64),
+            Engine::Next(n) => n.changed_at.map(|t| now.saturating_sub(t)),
         }
     }
 
@@ -785,10 +883,12 @@ impl Doc {
         // delete runs (deletes go last).
         let emptied_at = |i: usize, l: &Line| !l.is_new && l.text.trim().is_empty() && (all || i != caret) && !l.conflict;
         let mut emptied = Vec::new();
-        if self.engine.lines().iter().enumerate().any(|(i, l)| emptied_at(i, l)) {
+        let n = self.engine.lines().iter().enumerate().filter(|(i, l)| emptied_at(*i, l)).count();
+        if n > 0 {
+            let mut ids: Vec<String> = (0..n).map(|_| self.take_id()).collect();
             for (i, l) in self.engine.lines_mut().iter_mut().enumerate() {
                 if emptied_at(i, l) {
-                    emptied.push(std::mem::replace(&mut l.id, new_id()));
+                    emptied.push(std::mem::replace(&mut l.id, ids.pop().expect("an id each")));
                     l.is_new = true;
                     l.text.clear();
                     l.saved = None;
@@ -891,6 +991,7 @@ impl Doc {
     /// Fold a save's results back: new revisions and fields; a line just parsed loses its tokens
     /// from the text (only shorter, and never the caret's line).
     pub fn apply_results(&mut self, results: &[thc_core::outline::OpResult], plan_afters: &HashMap<String, Option<String>>, parsed: &[String], sent: &Sent, today: chrono::NaiveDate) -> Vec<String> {
+        let now = self.now_ms;
         let mut messages = Vec::new();
         let caret_id = self.line().id.clone();
         // Lines edited since the plan (before any result here: one line can have several, a
@@ -959,7 +1060,7 @@ impl Doc {
                         }
                     }
                     if parsed.contains(&l.id) && l.meta != had_meta && !l.meta.is_empty() {
-                        l.flash_until = Some(Instant::now() + std::time::Duration::from_millis(300));
+                        l.flash_until = Some(now + 300);
                     }
                     if parsed.contains(&l.id) {
                         if let Some(bad) = b.text.split_whitespace().find(|w| ["due:", "sched:", "at:"].iter().any(|p| w.starts_with(p))) {

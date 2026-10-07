@@ -923,7 +923,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             crate::editor::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
         let failed = d.blocks().iter().any(|l| l.save_error.is_some());
-        let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3));
+        let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| crate::editor::ms(app.derived.now).saturating_sub(t) >= 3000));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
         let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());

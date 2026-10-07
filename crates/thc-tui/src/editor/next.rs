@@ -27,13 +27,17 @@ use cn::marks::Mark;
 use cn::outline::{BlockInfo, Hang, NewBlock, OutlineConfig};
 use cn::{BlockAttrs, By, Dir, Effect, ExtChange, MarkId, Msg, OutlineLayout, Viewport};
 use std::collections::{HashMap, HashSet};
-use std::time::Instant;
 use thc_core::outline::Kind;
 
-/// Node ids for blocks the engine makes (a split, Enter, a paste). The runtime may fill it
-/// ahead; when it runs dry an id is minted here.
+/// Node ids for blocks the engine makes (a split, Enter, a paste). The runtime fills it ahead
+/// (`Doc::fill_ids`, before input), so the model mints none; only if it runs dry within one
+/// step is an id minted here.
 #[derive(Default)]
 pub struct IdPool(Vec<String>);
+
+/// How many ids the runtime keeps in the pool: more than one step makes (a paste of a long
+/// outline asks for more, and the pool runs dry for it).
+pub const POOL: usize = 64;
 
 impl IdPool {
     pub fn take(&mut self) -> String {
@@ -41,9 +45,12 @@ impl IdPool {
     }
 
     /// Ids minted elsewhere, for later.
-    #[allow(dead_code)]
     pub fn fill(&mut self, ids: impl IntoIterator<Item = String>) {
         self.0.extend(ids);
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
     }
 }
 
@@ -66,8 +73,10 @@ pub(crate) struct Next {
     /// The host changed the mirror, so the host's caret is the one to keep.
     force_push: bool,
     host_rev: u64,
-    pub(super) changed_at: Option<Instant>,
-    clock: Instant,
+    /// When the last unsaved edit was (ms, the document's clock).
+    pub(super) changed_at: Option<u64>,
+    /// The document's clock (`Doc::tick`).
+    pub(super) now_ms: u64,
     pool: IdPool,
     /// Layouts for `rows_of`, by (text revision, width): one per text column in use.
     row_layouts: Vec<(u64, usize, Layout)>,
@@ -186,10 +195,11 @@ impl Next {
         st.view.config.status_bar = false;
         st.view.layout = Some(OutlineLayout::default());
         st.doc.outline = Some(cfg.clone());
-        for (i, (l, pos)) in lines.iter_mut().zip(starts).enumerate() {
-            let _ = st.doc.marks.insert(Mark { pos, id: MarkId(i as u64), attrs: BlockAttrs { gap: l.gap } });
+        let marks = lines.iter_mut().zip(starts).enumerate().map(|(i, (l, pos))| {
             l.mark = Some(i as u64);
-        }
+            Mark { pos, id: MarkId(i as u64), attrs: BlockAttrs { gap: l.gap } }
+        });
+        let _ = st.doc.marks.insert_all(marks.collect());
         st.outline_changed();
         let source: HashMap<u64, Line> = lines.iter().filter_map(|l| Some((l.mark?, l.clone()))).collect();
         let mut n = Next {
@@ -203,7 +213,7 @@ impl Next {
             force_push: false,
             host_rev: 0,
             changed_at: None,
-            clock: Instant::now(),
+            now_ms: 0,
             pool: IdPool::default(),
             row_layouts: Vec::new(),
         };
@@ -241,6 +251,61 @@ impl Next {
         &mut self.lines
     }
 
+    pub(super) fn pool(&mut self) -> &mut IdPool {
+        &mut self.pool
+    }
+
+    pub(super) fn pool_len(&self) -> usize {
+        self.pool.len()
+    }
+
+    #[allow(dead_code)]
+    /// The document as data: the engine's state (text, marks, history), thc's lines and what's
+    /// pending. The host's changes are taken in first.
+    pub(super) fn to_value(&mut self) -> serde_json::Value {
+        self.flush();
+        let mut graveyard: Vec<(&u64, &Line)> = self.graveyard.iter().collect();
+        graveyard.sort_by_key(|(m, _)| **m);
+        serde_json::json!({
+            "state": serde_json::from_str::<serde_json::Value>(&self.st.to_json()).expect("the engine's state is JSON"),
+            "lines": self.lines,
+            "deleted": self.deleted,
+            "graveyard": graveyard,
+            "pool": self.pool.0,
+            "changed_at": self.changed_at,
+            "now_ms": self.now_ms,
+        })
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn from_value(v: serde_json::Value) -> Result<Next, String> {
+        let field = |k: &str| v.get(k).cloned().ok_or_else(|| format!("no {k}"));
+        let st = cn::State::from_json(&field("state")?.to_string()).map_err(|e| e.to_string())?;
+        let lines: Vec<Line> = serde_json::from_value(field("lines")?).map_err(|e| e.to_string())?;
+        let deleted: Vec<String> = serde_json::from_value(field("deleted")?).map_err(|e| e.to_string())?;
+        let graveyard: Vec<(u64, Line)> = serde_json::from_value(field("graveyard")?).map_err(|e| e.to_string())?;
+        let pool: Vec<String> = serde_json::from_value(field("pool")?).map_err(|e| e.to_string())?;
+        let mut n = Next {
+            st,
+            lines,
+            deleted,
+            graveyard: graveyard.into_iter().collect(),
+            dirty: false,
+            undoable: false,
+            synced: None,
+            force_push: true,
+            host_rev: 0,
+            changed_at: serde_json::from_value(field("changed_at")?).map_err(|e| e.to_string())?,
+            now_ms: serde_json::from_value(field("now_ms")?).map_err(|e| e.to_string())?,
+            pool: IdPool(pool),
+            row_layouts: Vec::new(),
+        };
+        // The engine's view is laid out by the host each step; the mirror is the engine's.
+        n.st.doc.touch_all();
+        n.sync(&HashMap::new());
+        Ok(n)
+    }
+
     /// The mirror, for fields the engine never reads (save state, meta): nothing to take in.
     pub(super) fn lines_state_mut(&mut self) -> &mut Vec<Line> {
         self.host_rev = self.host_rev.wrapping_add(1);
@@ -274,12 +339,11 @@ impl Next {
     /// mirror and the caret back out.
     pub(super) fn run(&mut self, view: &mut caretline::View<String>, last_saved: &HashMap<String, Line>, msg: Msg) -> Vec<Effect> {
         self.prepare(view);
-        let now_ms = self.clock.elapsed().as_millis() as u64;
-        cn::update(&mut self.st, Msg::Tick { now_ms });
+        cn::update(&mut self.st, Msg::Tick { now_ms: self.now_ms });
         let rev = self.st.doc.rev;
         let fx = cn::update(&mut self.st, msg);
         if self.st.doc.rev != rev {
-            self.changed_at = Some(Instant::now());
+            self.changed_at = Some(self.now_ms);
         }
         self.sync(last_saved);
         self.pull_view(view);
@@ -535,6 +599,11 @@ impl Next {
         self.flush();
         use std::hash::{Hash, Hasher};
         let l = &self.lines[i];
+        // A short plain line is one row (the engine measures an ASCII char as one cell and
+        // wraps only a row that reaches the width): no layout needed.
+        if l.text.len() + 1 < w && l.text.bytes().all(|b| (0x20..0x7f).contains(&b)) && (l.kind() != Kind::Para || !l.text.starts_with("```")) {
+            return vec![(0, l.text.len())];
+        }
         // What the block's text is made of (`block_text`), without building it.
         let mut h = super::doc::content_hasher();
         ("next", &l.text, l.depth, l.kind(), l.status.as_deref()).hash(&mut h);
@@ -882,6 +951,52 @@ mod tests {
         same(&mut d);
         d.apply(EditCmd::Undo, &W);
         assert_eq!(texts(&d), ["alpha", ""], "undo takes back the typing, not the parse");
+    }
+
+    /// The document is data: serialized mid-session and read back, it is the same document,
+    /// and the same edits after it do the same things (text, ids, caret, undo, what saves).
+    #[test]
+    fn a_document_survives_json_and_edits_the_same_after() {
+        let blocks = [blk("a", 0, "para", "alpha beta"), blk("b", 0, "bullet", "one"), blk("c", 1, "task", "two"), blk("d", 0, "para", "gamma")];
+        let mut d = open(&blocks);
+        d.tick(1_000);
+        d.fill_ids((0..64).map(|i| format!("id{i:010}")).collect());
+        let script: Vec<Result<EditCmd, &str>> = vec![
+            Ok(EditCmd::Move { motion: crate::editor::Motion::End, select: false }),
+            Err(" and more"),
+            Ok(EditCmd::Newline),
+            Err("new note"),
+            Ok(EditCmd::Indent),
+            Ok(EditCmd::Move { motion: crate::editor::Motion::Down, select: false }),
+            Ok(EditCmd::TaskCycle),
+            Ok(EditCmd::Backspace),
+            Ok(EditCmd::Undo),
+            Err("x"),
+            Ok(EditCmd::MoveLine(-1)),
+            Ok(EditCmd::Undo),
+            Ok(EditCmd::Redo),
+        ];
+        let run = |d: &mut Doc, step: &Result<EditCmd, &str>| match step {
+            Ok(c) => {
+                d.apply(*c, &W);
+            }
+            Err(t) => d.insert(t),
+        };
+        let mid = 5;
+        for s in &script[..mid] {
+            run(&mut d, s);
+        }
+        let json = d.to_json().expect("next documents are data");
+        let mut e = Doc::from_json(&json).expect("reads back");
+        assert_eq!(e.to_json().unwrap(), json, "the same document");
+        let shape = |d: &Doc| -> Vec<(String, usize, Kind, Option<String>, String, bool)> { d.blocks().iter().map(|l| (l.id.clone(), l.depth, l.kind(), l.status.clone(), l.text.clone(), l.is_new)).collect() };
+        for (k, s) in script[mid..].iter().enumerate() {
+            run(&mut d, s);
+            run(&mut e, s);
+            assert_eq!(shape(&d), shape(&e), "step {k} {s:?}");
+            assert_eq!(d.caret(), e.caret(), "step {k} {s:?}");
+        }
+        assert_eq!(format!("{:?}", d.plan_save(true).ops), format!("{:?}", e.plan_save(true).ops));
     }
 
     /// Recovered lines (crash recovery): changed text and lines put back are one undo step.

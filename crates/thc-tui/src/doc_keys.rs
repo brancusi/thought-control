@@ -270,6 +270,7 @@ pub(crate) fn base64(b: &[u8]) -> String {
 /// A bracketed paste: Markdown as outline lines in one undo step, saved at once so tokens are
 /// read like any saved line. Over 500 lines asks first (not yet: pastes that big say so).
 pub fn paste(app: &mut App, text: &str) {
+    app.clock_tick();
     app.doc_parked = false;
     // A dropped file arrives as its path (attachments.md §2): attached at once, and the
     // first ⌃Z keeps the path instead. ⌥V first makes it plain text.

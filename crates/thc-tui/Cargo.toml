@@ -7,7 +7,7 @@ license.workspace = true
 
 [dependencies]
 anyhow.workspace = true
-chrono.workspace = true
+chrono = { workspace = true, features = ["serde"] }
 ratatui = "0.30"
 rusqlite.workspace = true
 serde.workspace = true
@@ -15,7 +15,7 @@ serde_json.workspace = true
 toml.workspace = true
 libc.workspace = true
 thc-core = { path = "../thc-core" }
-caretline = { path = "../caretline" }
+caretline = { path = "../caretline", features = ["serde"] }
 caretline-next = { path = "../caretline-next" }
 unicode-width = "0.2"
 unicode-segmentation = "1"
