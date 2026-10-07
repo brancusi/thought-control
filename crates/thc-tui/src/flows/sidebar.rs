@@ -127,7 +127,6 @@ fn editing_in_a_panel_shows_in_the_main_view() {
 }
 
 #[test]
-#[ignore = "kh7ya"]
 fn back_from_a_panel_on_the_same_page_shows_the_cursor() {
     let mut f = with_garden_beside();
     f.named("⌥S back from a panel on the same page");
