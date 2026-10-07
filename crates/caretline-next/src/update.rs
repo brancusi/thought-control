@@ -401,6 +401,8 @@ pub(crate) fn commit_with(
     if text_changed {
         txn.apply(&mut state.doc.text);
         state.view.wrap.edited(txn.changes());
+        state.doc.touched.note(txn.changes());
+        state.doc.derived.edited(txn.changes());
         state.doc.journal.0.push(txn.changes().clone());
     }
     let removed = state.doc.marks.map(old_text.slice(..), state.doc.text.slice(..), txn.changes());
@@ -517,7 +519,7 @@ fn mark_delta(start: &Marks, start_text: &crate::helix::Rope, forward: &Transact
 
 /// Whatever is derived from the marks or the text must be recomputed.
 pub(crate) fn after_marks_changed(state: &mut State) {
-    state.doc.derived.clear();
+    state.doc.derived.marks_changed();
 }
 
 /// The marks a cut of `[from, to]` took, as offsets into the cut text.
@@ -664,10 +666,12 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
     let old = state.doc.text.clone();
     txn.apply(&mut state.doc.text);
     state.view.wrap.edited(txn.changes());
+    state.doc.touched.note(txn.changes());
+    state.doc.derived.edited(txn.changes());
     state.doc.journal.0.push(txn.changes().clone());
     state.doc.edits.0 = state.doc.edits.0.wrapping_add(1);
     state.fit_mark_log();
-    state.doc.derived.clear();
+    state.doc.derived.marks_changed();
     let delta = &state.doc.mark_log[rev];
     if !state.doc.marks.is_empty() || !delta.is_empty() {
         let fixup = if undo { delta.undo.clone() } else { delta.redo.clone() };
