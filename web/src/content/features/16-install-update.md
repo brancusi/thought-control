@@ -31,6 +31,7 @@ $ thc update --rollback    # put the previous version back
 
 - **From inside the app:** when a release is out, the footer says `update <version> · :update`. `:update` updates and puts you back exactly where you were.
 - **Choose how eager:** `update = "notify"` (the default) mentions new versions in `thc today`; `"auto"` installs them; `"off"` stays quiet. The service checks every 6 hours.
+- **Never an old service left behind:** reinstalling or updating restarts the background service onto the new binary (through launchd or systemd) and waits for it to answer. `thc doctor` says so if one is ever running an older copy.
 - **Agent files refresh too:** an update rewrites the skills it installed for Claude Code and Codex.
 - **Open windows notice** an update run elsewhere, and `:update` reloads them in place.
 - **See what changed, right in thc.** Click the version at the bottom right, or type `:about`: every release since you last looked, then this thc's version, vault, background service and terminal, then the whole changelog, searchable with `/`. After an update the version reads `· new` until you've had a look.

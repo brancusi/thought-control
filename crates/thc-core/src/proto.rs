@@ -111,6 +111,22 @@ pub fn read_info(paths: &Paths) -> Option<DaemonInfo> {
     serde_json::from_str(&s).ok()
 }
 
+/// Which file a binary path names right now: `dev:inode`. A daemon records its own at start, so
+/// a client can tell it runs a copy that was since replaced (an install renames a new file over
+/// the old one, which keeps the path and the version string when the version didn't change).
+pub fn exe_identity(path: &Path) -> Option<String> {
+    use std::os::unix::fs::MetadataExt;
+    let m = std::fs::metadata(path).ok()?;
+    Some(format!("{}:{}", m.dev(), m.ino()))
+}
+
+/// This process's binary as it was when first asked (call it early: on Linux the path of a
+/// replaced binary gains " (deleted)").
+pub fn own_exe_identity() -> Option<String> {
+    static ID: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+    ID.get_or_init(|| std::env::current_exe().ok().and_then(|p| exe_identity(&p))).clone()
+}
+
 pub fn pid_alive(pid: u32) -> bool {
     // SAFETY: signal 0 only checks for existence/permission.
     unsafe { libc::kill(pid as i32, 0) == 0 }
