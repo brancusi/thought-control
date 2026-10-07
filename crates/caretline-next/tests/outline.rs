@@ -337,6 +337,34 @@ fn whole_blocks_cut_and_pasted_into_an_empty_item_replace_it() {
     assert_eq!(s.doc.text.to_string(), "- [ ] Friday\n- Notes\n- ", "one undo step");
 }
 
+/// Copying whole blocks, then pasting over the same selection, changes nothing: an empty block
+/// the selection ends in is taken whole (its marker is selected), and an empty paragraph
+/// pasted back is still a block of its own.
+#[test]
+fn whole_blocks_pasted_over_their_own_selection_change_nothing() {
+    for before in ["- [ ] two ‖ x. ‖   - ▮⟦ ¦   - [ ] ⟧", "longer ‖ ⟦ ‖ ▮⟧a a", "two ‖ ⟦▮x. ‖ ⟧ab"] {
+        let mut s = doc(before);
+        let text = s.doc.text.to_string();
+        let n = ids(&s).len();
+        let copied = clip(&send(&mut s, [Msg::Copy])).expect("a copy");
+        send(&mut s, [Msg::Paste { text: Some(copied.clone()) }]);
+        assert_eq!(s.doc.text.to_string(), text, "{before:?}: the text, after pasting {copied:?}");
+        assert_eq!(ids(&s).len(), n, "{before:?}: the blocks");
+    }
+}
+
+/// `[ ] `, `[x] ` or `[] ` typed at the start of a paragraph's line is a task: the box gets
+/// its list marker, and on a later line the task is a block of its own.
+#[test]
+fn a_bare_task_box_typed_at_a_line_start_makes_a_task() {
+    golden("▮", "[ ] call", "- [ ] call▮");
+    golden("▮", "[x] paid", "- [x] paid▮");
+    golden("▮", "[] call", "- [ ] call▮");
+    golden("intro⏎▮", "[ ] call", "intro ‖ - [ ] call▮");
+    golden("say ▮", "[ ] hi", "say [ ] hi▮");
+    golden("▮", "[q] hi", "[q] hi▮");
+}
+
 #[test]
 fn whole_blocks_pasted_at_an_items_end_follow_it_as_siblings() {
     let mut s = markdown::load(WEEKEND, None, Viewport { width: 60, height: 12 }, OutlineConfig::default());
