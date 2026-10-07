@@ -352,12 +352,11 @@ fn a_link_hint_on_another_line_holds_still_while_typing() {
 }
 
 #[test]
-#[ignore = "4z7zh"]
 fn a_click_near_the_top_or_bottom_never_scrolls() {
     // On a long page, scrolled into the middle: a click on the first or last text row places
     // the caret there and the text stays where it is under the mouse.
     let mut f = flow_with("a click near the view's edges", Size::Long, (120, 30));
-    f.keys("<c-o>Long Page<cr>").keys("<pgdn><pgdn>");
+    f.known("zjvvd", Known::Restore).keys("<c-o>Long Page<cr>").keys("<pgdn><pgdn>");
     let r = f.shot.doc_view.unwrap();
     let rows: Vec<u16> = f.s.app.render.doc_hits.iter().map(|h| h.y).collect();
     let (top, bottom) = (*rows.iter().min().unwrap(), *rows.iter().filter(|y| **y < r.y + r.height).max().unwrap());
@@ -365,7 +364,7 @@ fn a_click_near_the_top_or_bottom_never_scrolls() {
 }
 
 #[test]
-#[ignore = "rm2ez"]
+#[ignore = "hyrg2"]
 fn a_wide_character_at_the_end_of_a_row_wraps() {
     // Fill a row to its last free column, then type a wide character: it goes to the next row,
     // never into the scrollbar's column.

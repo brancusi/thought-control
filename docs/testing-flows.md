@@ -91,8 +91,10 @@ anything else. `dump()` prints the frame.
 - **The state round-trips through JSON** (`UiState` to text and back is equal).
 - **The caret:** while writing, the cursor shows inside the document's view, and hit-testing the
   cursor's cell gives the document's caret (line and byte).
-- **Another writer** (`Motion::Agent`: `agent_add`, `remote_edit`): the scroll and every row
-  above the caret's note stay; the header's badges and the footer may change.
+- **Another writer** (`Motion::Agent`: `agent_add`, `remote_edit`): the cursor stays where it
+  was on screen (what you're typing doesn't move); the header's badges and the footer may change.
+- **A click** (`Motion::Click`: `click_caret`, `alt_click`): as a caret move, and the view
+  doesn't scroll at all; the text stays under the mouse.
 - **No shifting** (`Motion::Typing` and `Motion::Caret` steps): the document's view keeps its
   place; every row outside it (header, tabs, footer) is unchanged, except the footer's hints,
   its counts and a toast; the view scrolls only when the caret is on its first or last row.
