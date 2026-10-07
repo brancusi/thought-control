@@ -196,6 +196,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     let left_down = m.kind == K::Down(MouseButton::Left);
     if m.kind == K::Moved {
         app.hover = Some((x, y));
+        app.pointer_on_link = crate::cmd_click::link_under(app, x, y, at.as_ref());
         // Hover selects a menu row (mouse.md "Overlays are menus").
         match at {
             Some(crate::ui::Click::Menu(i)) => {

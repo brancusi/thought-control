@@ -291,6 +291,15 @@ impl Doc {
         self.engine.state().view.free
     }
 
+    /// The view stays where it is until the caret moves by a key or the text changes: a click
+    /// puts the caret where the pointer is, and never scrolls (mouse.md, interaction.md §3).
+    pub fn hold_view(&mut self) {
+        self.engine.flush();
+        let st = self.engine.state_mut();
+        st.view.free = true;
+        cn::layout::clamp_scroll(st);
+    }
+
     /// The view follows the caret again.
     pub fn follow_caret(&mut self) {
         let st = self.engine.state_mut();

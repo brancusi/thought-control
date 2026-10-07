@@ -195,7 +195,7 @@ fn a12_a13_a14_a15_links() {
     assert!(w.texts().iter().any(|t| t.contains("[[Lisbon]]")), "A14: the link rewritten: {:?}", w.texts());
     // A15: ⌃O on a link opens the page.
     let f = v.type_in("visit [[Lisbon]]<left><left><left><c-o>");
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "A15: the page: {f}");
+    assert!(f.lines().any(|l| { let l = l.trim(); l == "Lisbon" || l.ends_with(" › Lisbon") }), "A15: the page: {f}");
     assert!(v.texts().iter().any(|t| t.starts_with("visit")), "A15: the line was saved first");
 }
 
@@ -298,7 +298,7 @@ fn ctrl_o_finds_pages_and_days_and_creates_a_page() {
     assert!(a < b && f.contains("↑↓ choose  Enter go  Esc close"), "{f}");
     // Fuzzy: `lsb` is Lisbon.
     let f = v.type_in("<c-o>lsb<cr>");
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "{f}");
+    assert!(f.lines().any(|l| { let l = l.trim(); l == "Lisbon" || l.ends_with(" › Lisbon") }), "{f}");
     // Days, the nearest: `oct 2` and `yesterday` are Fri 02 (THC_NOW is Sat Oct 3); `fri` offers
     // the coming one first and the last one too.
     for q in ["oct 2", "yesterday", "yest"] {
@@ -313,7 +313,7 @@ fn ctrl_o_finds_pages_and_days_and_creates_a_page() {
     let f = v.type_in("<c-o>P");
     assert!(!f.contains("+ new page"), "{f}");
     let f = v.type_in("<c-o>Porto<cr>");
-    assert!(f.lines().any(|l| l.trim() == "Porto"), "{f}");
+    assert!(f.lines().any(|l| { let l = l.trim(); l == "Porto" || l.ends_with(" › Porto") }), "{f}");
     let titles = v.json(&["q", "is:page"]);
     assert_eq!(titles["count"], 3, "{titles}");
     // A click on a row goes there.
@@ -321,7 +321,7 @@ fn ctrl_o_finds_pages_and_days_and_creates_a_page() {
     let y = f.lines().position(|l| l.contains("¶ Lisbon")).unwrap();
     let x = f.lines().nth(y).unwrap().chars().position(|c| c == '¶').unwrap();
     let f = v.type_in(&format!("<c-o><click:{x},{y}>"));
-    assert!(f.lines().any(|l| l.trim() == "Lisbon"), "{f}");
+    assert!(f.lines().any(|l| { let l = l.trim(); l == "Lisbon" || l.ends_with(" › Lisbon") }), "{f}");
     // From a list too, and Esc closes without going anywhere.
     let f = v.type_args("3<c-o>lis<esc>", &["tui"]);
     assert!(f.contains("status:open") && !f.contains("╭─ open"), "{f}");

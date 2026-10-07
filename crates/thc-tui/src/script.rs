@@ -165,7 +165,7 @@ fn fixture(inner: &str) -> Option<Fixture> {
     Some(Fixture::Remote { id: id.to_string(), text: text.to_string() })
 }
 
-/// The mouse tokens (mouse.md §9): `click dclick tclick sclick cclick aclick mclick :x,y`,
+/// The mouse tokens (mouse.md §9): `click dclick tclick sclick cclick aclick mclick cmdclick :x,y`,
 /// `drag:x1,y1,x2,y2`, `wheel:up|down[:n][@x,y]`, `hover:x,y`. A press and its release each
 /// become a message; a drag a press, a move per cell and a release.
 fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
@@ -177,7 +177,7 @@ fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
     let m = |kind, x, y, mods: &str| Msg::Mouse { mouse: Mouse { kind, x, y, mods: mods.to_string(), clicks: None } };
     let click = |kind, x, y, mods: &str, n: u8| Msg::Mouse { mouse: Mouse { kind, x, y, mods: mods.to_string(), clicks: Some(n) } };
     Ok(Some(match name {
-        "click" | "dclick" | "tclick" | "sclick" | "cclick" | "aclick" | "mclick" => {
+        "click" | "dclick" | "tclick" | "sclick" | "cclick" | "aclick" | "mclick" | "cmdclick" => {
             let (x, y) = xy(arg)?;
             let (down, up, mods, n) = match name {
                 "dclick" => (MouseKind::Down, MouseKind::Up, "", 2),
@@ -185,6 +185,7 @@ fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
                 "sclick" => (MouseKind::Down, MouseKind::Up, "s", 1),
                 "cclick" => (MouseKind::Down, MouseKind::Up, "c", 1),
                 "aclick" => (MouseKind::Down, MouseKind::Up, "m", 1),
+                "cmdclick" => (MouseKind::Down, MouseKind::Up, "d", 1),
                 "mclick" => (MouseKind::MiddleDown, MouseKind::MiddleUp, "", 1),
                 _ => (MouseKind::Down, MouseKind::Up, "", 1),
             };

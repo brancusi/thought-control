@@ -128,7 +128,7 @@ order they happened.
 |---|---|---|
 | `tick` | `now_ms`, `utc_offset_min` | The clock moved (see [Time](#time)) |
 | `key` | `key` | One key as a [key-script token](#key-scripts): `j`, `<cr>`, `<c-o>` |
-| `mouse` | `kind` (`down` `up` `drag` `moved` `scroll_up` `scroll_down` `middle_down` `middle_up`), `x`, `y`, `mods` (`c` `m` `s`), `clicks` | A pointer event. Without `clicks`, a press within 400 ms on the same cell counts up (double, triple) |
+| `mouse` | `kind` (`down` `up` `drag` `moved` `scroll_up` `scroll_down` `middle_down` `middle_up`), `x`, `y`, `mods` (`c` `m` `s` `d`: ⌃ ⌥ ⇧ ⌘), `clicks` | A pointer event. Without `clicks`, a press within 400 ms on the same cell counts up (double, triple) |
 | `paste` | `text` | A bracketed paste (into the open document) |
 | `resize` | `w`, `h` | The terminal's size |
 | `focus` | `gained` | The terminal gained or lost focus (losing it saves) |
@@ -179,7 +179,7 @@ doesn't close the person's TUI by accident.
 | any character | itself (`j`, `G`, `?`) |
 | `<cr>` `<esc>` `<tab>` `<bs>` `<del>` `<space>` `<up>` `<down>` `<left>` `<right>` `<home>` `<end>` `<pgup>` `<pgdn>` `<f1>`…`<f12>` `<lt>` | named keys (`<lt>` is `<`) |
 | `<c-x>` `<m-x>` `<s-x>` `<d-x>` | ⌃ ⌥ ⇧ ⌘ with a key, combined in that order: `<c-m-left>`, `<s-tab>` |
-| `<click:x,y>` `<dclick:x,y>` `<tclick:x,y>` `<sclick:x,y>` `<cclick:x,y>` `<aclick:x,y>` `<mclick:x,y>` | clicks (double, triple, with ⇧ ⌃ ⌥, middle) |
+| `<click:x,y>` `<dclick:x,y>` `<tclick:x,y>` `<sclick:x,y>` `<cclick:x,y>` `<aclick:x,y>` `<cmdclick:x,y>` `<mclick:x,y>` | clicks (double, triple, with ⇧ ⌃ ⌥ ⌘, middle) |
 | `<drag:x1,y1,x2,y2>` `<wheel:up\|down[:n][@x,y]>` `<hover:x,y>` | the rest of the mouse |
 | `<paste:TEXT>` | a paste; `\n` is a line break |
 

@@ -85,7 +85,7 @@ pub struct Mouse {
     pub kind: MouseKind,
     pub x: u16,
     pub y: u16,
-    /// Held modifiers: any of `c` (⌃), `m` (⌥), `s` (⇧).
+    /// Held modifiers: any of `c` (⌃), `m` (⌥), `s` (⇧), `d` (⌘, super).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mods: String,
     /// A press's click count (2: a double click). Left out, it's counted from the clock: a
@@ -147,7 +147,7 @@ pub fn mouse_msg(m: &MouseEvent) -> Option<Mouse> {
         _ => return None,
     };
     let mut mods = String::new();
-    for (k, c) in [(KeyModifiers::CONTROL, 'c'), (KeyModifiers::ALT, 'm'), (KeyModifiers::SHIFT, 's')] {
+    for (k, c) in [(KeyModifiers::CONTROL, 'c'), (KeyModifiers::ALT, 'm'), (KeyModifiers::SHIFT, 's'), (KeyModifiers::SUPER, 'd')] {
         if m.modifiers.contains(k) {
             mods.push(c);
         }
@@ -629,7 +629,7 @@ impl Session {
             return;
         }
         let mut mods = KeyModifiers::NONE;
-        for (c, k) in [('c', KeyModifiers::CONTROL), ('m', KeyModifiers::ALT), ('s', KeyModifiers::SHIFT)] {
+        for (c, k) in [('c', KeyModifiers::CONTROL), ('m', KeyModifiers::ALT), ('s', KeyModifiers::SHIFT), ('d', KeyModifiers::SUPER)] {
             if m.mods.contains(c) {
                 mods |= k;
             }

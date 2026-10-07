@@ -1,6 +1,9 @@
 //! thc-tui: the terminal UI. `thc` with no arguments (in a terminal) or `thc tui`.
 
 mod about;
+#[cfg(test)]
+mod interaction_tests;
+pub mod cmd_click;
 mod app;
 mod editor;
 mod doc_app;
@@ -454,6 +457,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
     // tui-editor.md §10. Written to the cache dir as tui-trace.log; p50/p99 on exit.
     let trace = std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1");
     let mut key_at: Option<Instant> = None;
+    let mut cmd_release = cmd_click::CmdRelease::default();
+    let mut shift_capture = cmd_click::ShiftCapture::detect();
     let mut samples: Vec<f64> = Vec::new();
     let result = (|| -> Result<()> { loop {
         // The terminal went away: save and leave before drawing into it (a draw would fail
@@ -608,6 +613,11 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                     key_at = Some(Instant::now());
                 }
                 let msg = match ev {
+                    Event::Key(k) if k.kind == KeyEventKind::Press && cmd_release.is_marker(&k) => cmd_release.release(),
+                    Event::Mouse(m) => {
+                        cmd_release.saw(&m);
+                        session::mouse_msg(&m).map(|mouse| Msg::Mouse { mouse })
+                    }
                     Event::Key(k) if k.kind == KeyEventKind::Press => {
                         // Tests of the hard deadline: a loop that never comes back (THC_TEST only).
                         if k.code == ratatui::crossterm::event::KeyCode::Char('!') && std::env::var_os("THC_TEST").is_some() && std::env::var_os("THC_TEST_WEDGE").is_some() {
@@ -618,7 +628,6 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                         Some(Msg::Key { key: script::key_token(&k) })
                     }
                     Event::Paste(text) => Some(Msg::Paste { text }),
-                    Event::Mouse(m) => session::mouse_msg(&m).map(|mouse| Msg::Mouse { mouse }),
                     Event::FocusLost => Some(Msg::Focus { gained: false }),
                     Event::FocusGained => Some(Msg::Focus { gained: true }),
                     Event::Resize(w, h) => Some(Msg::Resize { w, h }),
@@ -644,6 +653,14 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if let Some(s) = server.as_mut() {
             s.announce(session, "terminal");
         }
+        // ⇧ with clicks while the pointer is on a link (Ghostty, xterm), the terminal's own ⇧
+        // elsewhere.
+        if let Some(seq) = shift_capture.update(session.app.pointer_on_link && session.app.tui_prefs.mouse) {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(seq);
+            let _ = out.flush();
+        }
         // The runtime's steps that touch the vault are recorded when they do something, so a
         // trace replays them where they happened (session.rs).
         session.runtime(Msg::Idle);
@@ -658,6 +675,12 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             session.runtime(Msg::Poll);
         }
     } })();
+    if let Some(seq) = shift_capture.release() {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(seq);
+        let _ = out.flush();
+    }
     if trace && !samples.is_empty() {
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = |q: f64| samples[((samples.len() as f64 - 1.0) * q) as usize];
