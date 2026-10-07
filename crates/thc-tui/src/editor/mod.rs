@@ -508,6 +508,10 @@ impl Doc {
     /// the text changed.
     pub fn apply_held_text(&mut self, id: &str) -> bool {
         let mut changed = false;
+        // (Looked up first: most lines left have nothing held.)
+        if !self.lines().iter().any(|l| l.id == id && l.remote_text.is_some()) {
+            return false;
+        }
         if let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == id) {
             if let Some(t) = l.remote_text.take() {
                 if !l.edited() {
@@ -563,7 +567,7 @@ impl Doc {
     /// An idle save of note `id` landed: `text` is saved at revision `rev`, and a remote text
     /// held for it is moot.
     pub fn idle_saved(&mut self, id: &str, rev: Option<String>, text: String) {
-        if let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == id) {
+        if let Some(l) = self.lines_state_mut().iter_mut().find(|l| l.id == id) {
             l.base = rev;
             l.saved = Some(text);
             l.remote_text = None;
@@ -572,21 +576,21 @@ impl Doc {
 
     /// The notes in `ids` are being saved since `since` (None: not any more).
     pub fn mark_saving(&mut self, ids: &[String], since: Option<std::time::Instant>) {
-        for l in self.lines_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
+        for l in self.lines_state_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
             l.saving_since = since;
         }
     }
 
     /// The notes in `ids` weren't saved, and why.
     pub fn mark_save_failed(&mut self, ids: &[String], error: &str) {
-        for l in self.lines_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
+        for l in self.lines_state_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
             l.save_error = Some(error.to_string());
         }
     }
 
     /// Who else edited `≠` note `id`. False: it isn't here.
     pub fn name_conflict(&mut self, id: &str, who: &str) -> bool {
-        let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == id) else { return false };
+        let Some(l) = self.lines_state_mut().iter_mut().find(|l| l.id == id) else { return false };
         l.conflict_with = Some(who.to_string());
         true
     }

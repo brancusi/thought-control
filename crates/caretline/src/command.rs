@@ -44,7 +44,7 @@ pub enum Command {
 pub enum Outcome {
     /// Done.
     Done,
-    /// Nothing changed, and why (`paragraphs don't nest`, `nothing to undo`).
+    /// Nothing changed, and why (`nothing to nest under`, `nothing to undo`).
     Nothing(&'static str),
     /// A task was completed (a host may want to commit at once).
     Completed,

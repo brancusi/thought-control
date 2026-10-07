@@ -293,15 +293,30 @@ pub struct Doc {
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
     pub(super) last_saved: HashMap<String, Line>,
-    pub(super) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
+    pub(super) wraps: Wraps,
+    /// The word count at a revision (the footer shows it every frame).
+    words: std::cell::Cell<Option<(u64, usize)>>,
+}
+
+/// Rows by (a line's content hash, width).
+pub(super) type Wraps = HashMap<(u64, usize), Vec<(usize, usize)>, foldhash::fast::FixedState>;
+
+/// A fast, fixed-seed hasher for content keys.
+pub(super) fn content_hasher() -> impl std::hash::Hasher {
+    use std::hash::BuildHasher;
+    foldhash::fast::FixedState::with_seed(0).build_hasher()
 }
 
 impl Doc {
     pub fn new(target: Target, root: Option<String>, blocks: &[Block], today: chrono::NaiveDate) -> Doc {
         let mut lines: Vec<Line> = blocks.iter().map(|b| Line::from_block(b, today)).collect();
+        // The notes that can still be a predecessor, depths increasing (see `plan_save`).
         let mut before: Vec<(usize, String)> = Vec::new();
         for l in lines.iter_mut() {
             l.saved_after = place(l.depth, &before).1;
+            while before.last().is_some_and(|(d, _)| *d >= l.depth) {
+                before.pop();
+            }
             before.push((l.depth, l.id.clone()));
         }
         let view = caretline::View::new(caretline::Rect::default());
@@ -309,12 +324,23 @@ impl Doc {
             super::EngineKind::Old => Engine::Old(caretline::Doc::new(lines)),
             super::EngineKind::Next => Engine::Next(Box::new(super::next::Next::load(lines))),
         };
-        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
+        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default() }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
     pub fn revision(&self) -> u64 {
         self.engine.rev().wrapping_add(self.host_revision)
+    }
+
+    /// The document's words (its own lines), remembered for the revision.
+    pub fn word_count(&self) -> usize {
+        let rev = self.revision();
+        if let Some((_, n)) = self.words.get().filter(|(r, _)| *r == rev) {
+            return n;
+        }
+        let n = self.lines().iter().map(|l| l.text.split_whitespace().count()).sum();
+        self.words.set(Some((rev, n)));
+        n
     }
 
     /// Invalidate content-derived inputs after a local edit or deferred remote text.
@@ -329,6 +355,12 @@ impl Doc {
     /// The lines, for thc's own bookkeeping (save state, meta). Views aren't rebased.
     pub(super) fn lines_mut(&mut self) -> &mut Vec<Line> {
         self.engine.lines_mut()
+    }
+
+    /// The lines, for fields the engine never reads: save state, meta, marks (never text,
+    /// shape or gap).
+    pub(super) fn lines_state_mut(&mut self) -> &mut Vec<Line> {
+        self.engine.lines_state_mut()
     }
 
     /// The caret's line.
@@ -604,6 +636,15 @@ impl Engine {
         }
     }
 
+    /// The lines, for fields the engine never reads (save state, meta, marks): on
+    /// caretline-next nothing goes back into the engine for these.
+    pub(super) fn lines_state_mut(&mut self) -> &mut Vec<Line> {
+        match self {
+            Engine::Old(e) => e.lines_mut(),
+            Engine::Next(n) => n.lines_state_mut(),
+        }
+    }
+
     pub(super) fn deleted(&self) -> &[String] {
         match self {
             Engine::Old(e) => e.deleted(),
@@ -658,14 +699,21 @@ impl Engine {
 /// Where a line lives given the lines before it: its parent (None = the root) and the sibling
 /// it follows (None = first).
 pub fn place(depth: usize, before: &[(usize, String)]) -> (Option<String>, Option<String>) {
+    let (parent, after) = place_by(depth, before.len(), |i| (before[i].0, before[i].1.as_str()));
+    (parent.map(str::to_string), after.map(str::to_string))
+}
+
+/// [`place`] over `n` notes read by index, borrowing their ids.
+fn place_by<'a>(depth: usize, n: usize, at: impl Fn(usize) -> (usize, &'a str)) -> (Option<&'a str>, Option<&'a str>) {
     let mut parent = None;
     let mut after = None;
-    for (d, id) in before.iter().rev() {
-        if *d == depth && after.is_none() && parent.is_none() {
-            after = Some(id.clone());
+    for i in (0..n).rev() {
+        let (d, id) = at(i);
+        if d == depth && after.is_none() && parent.is_none() {
+            after = Some(id);
         }
-        if *d < depth {
-            parent = Some(id.clone());
+        if d < depth {
+            parent = Some(id);
             break;
         }
     }
@@ -706,56 +754,82 @@ impl Doc {
     pub fn plan_save(&mut self, all: bool) -> SavePlan {
         // A note is at most one deeper than the note above it (an empty line isn't a note): an
         // edit that removed or flattened a parent leaves no gap the vault can't hold (fuzz).
-        let mut above: Option<usize> = None;
-        for l in self.engine.lines_mut().iter_mut() {
-            if l.text.trim().is_empty() {
-                continue;
+        // (Each pass reads first and changes only when it must: on caretline-next a change to
+        // the lines is taken into the engine before its next step.)
+        let clamp = |lines: &[Line]| {
+            let mut above: Option<usize> = None;
+            let mut out = Vec::new();
+            for (i, l) in lines.iter().enumerate() {
+                if l.text.trim().is_empty() {
+                    continue;
+                }
+                let max = above.map_or(0, |d| d + 1);
+                if l.depth > max {
+                    out.push((i, max));
+                }
+                above = Some(l.depth.min(max));
             }
-            let max = above.map_or(0, |d| d + 1);
-            if l.depth > max {
-                l.depth = max;
+            out
+        };
+        let deeper = clamp(self.engine.lines());
+        if !deeper.is_empty() {
+            let lines = self.engine.lines_mut();
+            for (i, d) in deeper {
+                lines[i].depth = d;
             }
-            above = Some(l.depth);
         }
         let caret = self.view.caret.line;
         // A saved note emptied to nothing (and left) goes: an empty line isn't a note, and an
         // empty node kept its old place, which other notes were then placed after (fuzz). The
         // line stays as a plain empty line; its children are placed by this save before the
         // delete runs (deletes go last).
+        let emptied_at = |i: usize, l: &Line| !l.is_new && l.text.trim().is_empty() && (all || i != caret) && !l.conflict;
         let mut emptied = Vec::new();
-        for (i, l) in self.engine.lines_mut().iter_mut().enumerate() {
-            if !l.is_new && l.text.trim().is_empty() && (all || i != caret) && !l.conflict {
-                emptied.push(std::mem::replace(&mut l.id, new_id()));
-                l.is_new = true;
-                l.text.clear();
-                l.saved = None;
-                l.base = None;
-                l.saved_parent = None;
-                l.saved_after = None;
-                l.saved_kind = None;
-                l.saved_status = None;
-                l.saved_gap = None;
-                l.remote_text = None;
+        if self.engine.lines().iter().enumerate().any(|(i, l)| emptied_at(i, l)) {
+            for (i, l) in self.engine.lines_mut().iter_mut().enumerate() {
+                if emptied_at(i, l) {
+                    emptied.push(std::mem::replace(&mut l.id, new_id()));
+                    l.is_new = true;
+                    l.text.clear();
+                    l.saved = None;
+                    l.base = None;
+                    l.saved_parent = None;
+                    l.saved_after = None;
+                    l.saved_kind = None;
+                    l.saved_status = None;
+                    l.saved_gap = None;
+                    l.remote_text = None;
+                }
             }
         }
         self.engine.deleted_mut().extend(emptied);
         let mut ops = Vec::new();
         let mut parsed = Vec::new();
         let mut afters = HashMap::new();
-        let mut present: Vec<(usize, String)> = Vec::new();
-        for (i, l) in self.engine.lines().iter().enumerate() {
+        let lines = self.engine.lines();
+        // The notes placed so far that can still be a parent or a predecessor: (depth, index
+        // into `lines`), depths increasing. `place` over every note placed would give the same.
+        let mut present: Vec<(usize, usize)> = Vec::new();
+        let push = |present: &mut Vec<(usize, usize)>, d: usize, i: usize| {
+            while present.last().is_some_and(|&(pd, _)| pd >= d) {
+                present.pop();
+            }
+            present.push((d, i));
+        };
+        for (i, l) in lines.iter().enumerate() {
             let skip = !all && i == caret;
-            let (parent, after) = place(l.depth, &present);
+            let (parent, after) = place_by(l.depth, present.len(), |k| (present[k].0, lines[present[k].1].id.as_str()));
             if l.is_new {
+                let (parent, after) = (parent.map(str::to_string), after.map(str::to_string));
                 // Blank (spaces only) isn't a note: capture refuses it, and a child placed under it
                 // would be moved under a parent that never got made (fuzz).
                 if l.text.trim().is_empty() || skip {
                     continue;
                 }
-                ops.push(BlockOp::Create { id: l.id.clone(), parent: parent.clone(), after: after.clone(), kind: l.kind(), text: l.text.clone() });
+                ops.push(BlockOp::Create { id: l.id.clone(), parent, after: after.clone(), kind: l.kind(), text: l.text.clone() });
                 afters.insert(l.id.clone(), after);
                 parsed.push(l.id.clone());
-                present.push((l.depth, l.id.clone()));
+                push(&mut present, l.depth, i);
                 if let Some(st) = l.status.as_deref().filter(|s| *s != "todo" && l.kind() == Kind::Task) {
                     ops.push(BlockOp::Status { id: l.id.clone(), status: st.into(), rev: None });
                 }
@@ -766,15 +840,16 @@ impl Doc {
             }
             // An empty line is never a parent, saved or not (the same rule as Tab's).
             if !l.text.trim().is_empty() {
-                present.push((l.depth, l.id.clone()));
+                push(&mut present, l.depth, i);
             }
             // The caret's line keeps its text (still being typed), never its place: a parent
             // deleted in this save takes its children with it, so the caret's line must move
             // out first (fuzz: it was deleted with its old parent).
-            let reparented = parent != l.saved_parent && !(parent.is_none() && l.saved_parent == self.root);
-            if reparented || after != l.saved_after {
-                ops.push(BlockOp::Move { id: l.id.clone(), parent: parent.clone(), after: after.clone(), rev: None });
-                afters.insert(l.id.clone(), after.clone());
+            let reparented = parent != l.saved_parent.as_deref() && !(parent.is_none() && l.saved_parent == self.root);
+            if reparented || after != l.saved_after.as_deref() {
+                let after = after.map(str::to_string);
+                ops.push(BlockOp::Move { id: l.id.clone(), parent: parent.map(str::to_string), after: after.clone(), rev: None });
+                afters.insert(l.id.clone(), after);
             }
             // The blank line before it is layout, saved as it changes, the caret's line too.
             if l.gap != l.saved_gap {
@@ -799,8 +874,9 @@ impl Doc {
         for id in std::mem::take(self.engine.deleted_mut()).into_iter() {
             ops.push(BlockOp::Delete { id, rev: None });
         }
+        // What was sent, to tell later edits apart: nothing to send, nothing to remember.
         let sent = Sent {
-            lines: self.engine.lines().iter().map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
+            lines: self.engine.lines().iter().filter(|_| !ops.is_empty()).map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
             created: ops.iter().filter_map(|o| if let BlockOp::Create { id, .. } = o { Some(id.clone()) } else { None }).collect(),
         };
         SavePlan { ops, parsed, afters, sent }
@@ -964,9 +1040,9 @@ impl Doc {
 }
 
 /// The wrap of a line at `w` columns, cached by (text, width).
-pub(super) fn rows(wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, l: &Line, w: usize) -> Vec<(usize, usize)> {
+pub(super) fn rows(wraps: &mut Wraps, l: &Line, w: usize) -> Vec<(usize, usize)> {
     use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
+    let mut h = content_hasher();
     l.text.hash(&mut h);
     let key = (h.finish(), w);
     if let Some(r) = wraps.get(&key) {

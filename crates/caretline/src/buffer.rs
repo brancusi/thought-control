@@ -639,11 +639,22 @@ impl<L: BlockLine> Buffer<L> {
         self.caret = Pos { line: line - 1, byte: at };
     }
 
-    /// Tab / ⇧Tab: nest under the line above / un-nest. Paragraphs don't nest.
+    /// Tab / ⇧Tab: nest under the line above / un-nest, whatever the kinds. Tab on a later line
+    /// of a paragraph makes that line a paragraph of its own, nested under it.
     pub fn nest(&mut self, delta: isize) -> bool {
         let i = self.caret.line;
-        if self.lines[i].kind == Kind::Para {
-            return false;
+        if delta > 0 && self.lines[i].kind == Kind::Para && !Self::is_fence(&self.lines[i]) {
+            let b = self.caret.byte;
+            if let Some(k) = self.lines[i].text[..b].rfind('\n') {
+                self.begin(EditKind::Other);
+                let after = self.lines[i].text[k + 1..].to_string();
+                self.lines[i].text.truncate(k);
+                let depth = self.lines[i].depth + 1;
+                self.lines.insert(i + 1, self.fresh(depth, Kind::Para, &after));
+                self.caret = Pos { line: i + 1, byte: b - k - 1 };
+                self.goal_col = None;
+                return true;
+            }
         }
         // One deeper than the note above at most: an empty line above isn't a note (it's never
         // saved), so it can't hold this one (fuzz: a first item indented under nothing).

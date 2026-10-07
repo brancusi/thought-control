@@ -249,3 +249,18 @@ fn no_after_means_first_among_siblings() {
     save(&mut v, &page, vec![BlockOp::Move { id: a.clone(), parent: None, after: None, rev: None }]);
     assert_eq!(order(&v), ["A", "C", "B"]);
 }
+
+#[test]
+fn a_paragraphs_children_save_under_it_and_export_indented() {
+    let (mut v, page) = setup();
+    let (p, c, t) = (thc_core::id::new_id(), thc_core::id::new_id(), thc_core::id::new_id());
+    // Tab under a paragraph (any note nests under the one above): its children are its nodes.
+    let child = |id: &str, after: Option<&str>, kind: Kind, text: &str| BlockOp::Create { id: id.into(), parent: Some(p.clone()), after: after.map(Into::into), kind, text: text.into() };
+    let r = save(&mut v, &page, vec![create(&p, None, Kind::Para, "Para line"), child(&c, None, Kind::Para, "first subtask\nmore of it"), child(&t, Some(&c), Kind::Task, "a task under it")]);
+    assert!(r.iter().all(|r| r.state == "ok"), "{r:?}");
+    let blocks = outline::render(&v.store, &page).unwrap();
+    let depth = |id: &str| blocks.iter().find(|b| b.id == id).unwrap().depth;
+    assert_eq!((depth(&p), depth(&c), depth(&t)), (0, 1, 1));
+    let md = outline::markdown(&blocks);
+    assert_eq!(md, "Para line\n\n  first subtask\n  more of it\n\n  - [ ] a task under it\n", "{md}");
+}

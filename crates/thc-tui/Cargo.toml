@@ -19,3 +19,4 @@ caretline = { path = "../caretline" }
 caretline-next = { path = "../caretline-next" }
 unicode-width = "0.2"
 unicode-segmentation = "1"
+foldhash = "0.2"

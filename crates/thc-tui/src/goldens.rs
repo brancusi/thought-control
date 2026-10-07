@@ -35,7 +35,7 @@ fn parse(src: &str) -> (Vec<Line>, BlockPos, Option<BlockPos>) {
                 c => text.push(c),
             }
         }
-        let mut l = Line::new(if kind == Kind::Para { 0 } else { depth }, kind, &text);
+        let mut l = Line::new(depth, kind, &text);
         l.status = status.map(str::to_string);
         l.is_new = false;
         l.saved = Some(text.clone());
@@ -60,7 +60,7 @@ fn render(d: &Doc) -> String {
             (Kind::Bullet, _) => "- ",
             _ => "",
         };
-        let mut s = format!("{}{marker}", "  ".repeat(if l.kind() == Kind::Para { 0 } else { l.depth }));
+        let mut s = format!("{}{marker}", "  ".repeat(l.depth));
         let mark = |b: usize| -> String {
             let p = BlockPos { line: i, byte: b };
             let mut m = String::new();
@@ -453,7 +453,15 @@ fn run_g(before: &str, keys: &[&str]) -> Doc {
             "⌃T" => EditCmd::TaskCycle,
             "⌘Z" => EditCmd::Undo,
             "Tab" => EditCmd::Indent,
+            "⇧Tab" => EditCmd::Outdent,
+            "⌥↑" => EditCmd::MoveLine(-1),
+            "⌥↓" => EditCmd::MoveLine(1),
+            "Enter" => EditCmd::Newline,
             "⌫" => EditCmd::Backspace,
+            t if t.starts_with("type ") => {
+                d.insert(&t["type ".len()..]);
+                continue;
+            }
             other => panic!("unknown key {other}"),
         };
         d.apply(c, &w);
@@ -535,8 +543,35 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     done();
 }
 
+/// Tab nests any note under the note above, paragraphs too (like Logseq): one level deeper
+/// than the note above, whatever its kind. Shift-Tab takes it back.
+fn paragraph_children() {
+    // `Para line`, Enter, `first subtask`, Tab: the line under the paragraph is its child.
+    check_g("PC1", "Para line▮", &["Enter", "type first subtask", "Tab"], "Para line ‖   first subtask▮");
+    check_g("PC2", "Para line ‖   first subtask▮", &["⇧Tab"], "Para line ‖ first subtask▮");
+    // Under a paragraph, a bullet, a task; an item under a paragraph.
+    check_g("PC3", "One ‖ ▮Two", &["Tab"], "One ‖   ▮Two");
+    check_g("PC4", "- one ‖ ▮Two", &["Tab"], "- one ‖   ▮Two");
+    check_g("PC5", "[ ] one ‖ ▮Two", &["Tab"], "[ ] one ‖   ▮Two");
+    check_g("PC6", "One ¦ - ▮two", &["Tab"], "One ¦   - ▮two");
+    // One level at a time, and never under nothing.
+    check_g("PC7", "One ‖   ▮Two", &["Tab"], "One ‖   ▮Two");
+    check_g("PC8", "▮One", &["Tab"], "▮One");
+    // A paragraph moves with its children (⌥↑ / ⌥↓).
+    check_g("PC9", "A ‖ B▮ ‖   b1 ‖   - b2", &["⌥↑"], "B▮ ‖   b1 ‖   - b2 ‖ A");
+    check_g("PC10", "B▮ ‖   b1 ‖   - b2 ‖ A", &["⌥↓"], "A ‖ B▮ ‖   b1 ‖   - b2");
+    // Enter, Enter under a child paragraph: the next one is its sibling.
+    check_g("PC11", "Para ‖   child▮", &["Enter", "Enter", "type next"], "Para ‖   child ‖   next▮");
+    done();
+}
+
 /// Every test here, once per engine (the old block engine, then caretline-next).
 mod both_engines {
+    #[test]
+    fn paragraph_children() {
+        crate::editor::on_both_engines(super::paragraph_children);
+    }
+
     #[test]
     fn e1_to_e14_selection_collapse() {
         crate::editor::on_both_engines(super::e1_to_e14_selection_collapse);

@@ -5,10 +5,10 @@ use super::doc::{Doc, Line};
 use caretline::motion::{Stop, note_stops};
 #[cfg(test)]
 use caretline::motion::Layout;
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 /// The stops of `lines` at the current width: every row of every note not hidden by a fold.
-fn stops_of(lines: &[Line], folds: &HashSet<String>, wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, width_of: &dyn Fn(&Line) -> usize) -> Vec<Stop> {
+fn stops_of(lines: &[Line], folds: &HashSet<String>, wraps: &mut super::doc::Wraps, width_of: &dyn Fn(&Line) -> usize) -> Vec<Stop> {
     let mut out = Vec::new();
     for i in 0..lines.len() {
         if crate::doc_ui::folded_hidden(lines, i, folds) {
@@ -47,10 +47,6 @@ impl Doc {
         }
         let Doc { engine: super::doc::Engine::Old(engine), view, wraps, .. } = self else { panic!("the old engine's motion") };
         let mut host = |lines: &[Line], v: &caretline::View<String>| stops_of(lines, &v.folds, wraps, width_of);
-        let out = engine.apply_and_rebase_with(view, [], cmd, &mut host).expect("the main view edits");
-        match (cmd, out) {
-            (C::Indent, O::Nothing(_)) => O::Nothing("paragraphs don't nest · - makes a bullet"),
-            _ => out,
-        }
+        engine.apply_and_rebase_with(view, [], cmd, &mut host).expect("the main view edits")
     }
 }
