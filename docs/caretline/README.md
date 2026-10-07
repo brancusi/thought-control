@@ -86,6 +86,7 @@ document. The binary named
 | Drive it over JSON lines | [protocol.md](protocol.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |
 | Write or debug a test | [testing.md](testing.md) |
+| Know how fast it is, and its limits | [performance.md](performance.md) |
 
 ## License
 
