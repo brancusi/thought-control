@@ -418,3 +418,62 @@ fn the_status_bar_can_be_hidden() {
     let old: State = serde_json::from_value(v).unwrap();
     assert!(old.view.config.status_bar);
 }
+
+#[test]
+fn two_views_of_one_document_over_the_protocol() {
+    let mut s = session();
+    let r = ask(&mut s, json!({"op":"view.open","w":20,"h":4}));
+    let v = r["result"]["view"].as_u64().unwrap();
+    assert_eq!(v, 1);
+    // View 1 goes to the second line; view 0 types at the start.
+    ask(&mut s, json!({"op":"keys","view":v,"keys":"<down><end>"}));
+    ask(&mut s, json!({"op":"msgs","msgs":[{"msg":"insert_text","text":">> "}]}));
+    assert_eq!(s.state().doc.text.to_string(), ">> hello world\nsecond line\n");
+    // View 1 kept its place on its own line: typing there lands at its end.
+    ask(&mut s, json!({"op":"msgs","view":v,"msgs":[{"msg":"insert_text","text":"!"}]}));
+    assert_eq!(s.state().doc.text.to_string(), ">> hello world\nsecond line!\n");
+    let r = ask(&mut s, json!({"op":"render","view":v}));
+    assert_eq!(r["result"]["w"], 20);
+    assert_eq!(r["result"]["cursor"], json!([12, 1]));
+    let r = ask(&mut s, json!({"op":"state.get","view":v}));
+    assert_eq!(r["result"]["state"]["viewport"]["width"], 20);
+    let r = ask(&mut s, json!({"op":"view.list"}));
+    assert_eq!(r["result"]["views"].as_array().unwrap().len(), 2);
+    // Undo through view 1 takes back its own last step.
+    ask(&mut s, json!({"op":"msgs","view":v,"msgs":[{"msg":"undo"}]}));
+    assert_eq!(s.state().doc.text.to_string(), ">> hello world\nsecond line\n");
+    // The trace replays both views.
+    let lines: String = s.trace_jsonl();
+    let (state, views, _) = caretline_next::trace::replay_trace_views(&lines).unwrap();
+    assert_eq!(state, *s.state());
+    assert_eq!(views, s.views().to_vec());
+    // Unknown views are errors; view 0 never closes.
+    assert_eq!(error_kind(&ask(&mut s, json!({"op":"render","view":9}))), "no_view");
+    assert_eq!(error_kind(&ask(&mut s, json!({"op":"view.close","view":0}))), "bad_request");
+    assert_eq!(ask(&mut s, json!({"op":"view.close","view":v}))["result"]["closed"], 1);
+    assert!(s.views().is_empty());
+}
+
+#[test]
+fn an_external_change_then_local_undo_over_the_protocol() {
+    let mut s = session();
+    ask(&mut s, json!({"op":"keys","keys":"<end>!"}));
+    ask(&mut s, json!({"op":"msgs","msgs":[{"msg":"external","changes":[{"change":"replace","from":13,"to":19,"text":"2nd"}]}]}));
+    assert_eq!(s.state().doc.text.to_string(), "hello world!\n2nd line\n");
+    ask(&mut s, json!({"op":"msgs","msgs":[{"msg":"undo"}]}));
+    assert_eq!(s.state().doc.text.to_string(), "hello world\n2nd line\n", "undo kept the change from elsewhere");
+    let (state, _) = replay_trace(&s.trace_jsonl()).unwrap();
+    assert_eq!(state, *s.state());
+}
+
+#[test]
+fn a_checkpoint_carries_the_open_views() {
+    let mut s = session();
+    let v = s.open_view(caretline_next::View::new(Viewport { width: 10, height: 3 }));
+    s.apply_on(v, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
+    s.checkpoint();
+    let seg: String = s.segment_trace().iter().map(|l| l.to_line() + "\n").collect();
+    let (state, views, _) = caretline_next::trace::replay_trace_views(&seg).unwrap();
+    assert_eq!(state, *s.state());
+    assert_eq!(views, s.views().to_vec());
+}

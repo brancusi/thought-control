@@ -132,6 +132,14 @@ pub struct EditRun {
     /// Characters inserted or deleted so far in this run.
     #[serde(default)]
     pub chars: usize,
+    /// The view it is typed in (its index in `update_doc`'s views): an edit through another
+    /// view starts a new undo step.
+    #[serde(default, skip_serializing_if = "is_zero_usize")]
+    pub view: usize,
+}
+
+fn is_zero_usize(n: &usize) -> bool {
+    *n == 0
 }
 
 /// Edits further apart than this start a new undo step.

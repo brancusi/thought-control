@@ -29,6 +29,7 @@ cargo run -p caretline-app -- notes.md                # or run it from the check
 | `caretline serve`, `caretline send`, `--listen` | The state protocol, see [protocol.md](protocol.md) |
 | `caretline bench` | Protocol throughput and latency (build with `--release`) |
 | `caretline --outline FILE` | Edit FILE as an [outline](outline.md): lists, tasks and blocks with their own keys, Markdown in and out (also for `--new-state` and `serve`) |
+| `caretline --layout FILE` | As `--outline`, with the [outline layout](outline.md#the-outline-layout): markers in a hang with plain glyphs, a column per depth (also for `serve`) |
 | `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
 | `… --trace-limit LINES` | Editor and `serve`: bound the in-memory trace `trace.get` serves (default 100,000 lines; see [protocol.md](protocol.md#traces)) |
 

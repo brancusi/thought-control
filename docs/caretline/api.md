@@ -26,16 +26,20 @@ log. There's no terminal crate and no ratatui.
 
 | Item | Where | Use it to |
 |---|---|---|
-| `State`, `Config`, `Viewport`, `Scroll` | `caretline_next` | Hold and configure the editor |
+| `State`, `Config`, `Viewport`, `Scroll` | `caretline_next` | Hold and configure the editor: one document and one view |
+| `Document`, `View`, `ViewConfig`, `Follow`, `ExternalUndo` | `caretline_next` | A document and its views, separately: see [Several views](#several-views-of-one-document) |
+| `update_doc` | `caretline_next` | Apply a message through one of several views |
+| `ExtChange` | `caretline_next` | A change from elsewhere, for `Msg::External`: see [messages.md](messages.md#changes-from-elsewhere) |
 | `Msg`, `Dir`, `By`, `Effect` | `caretline_next` | Say what happened; get work back |
 | `update`, `replay` | `caretline_next` | Apply one message; fold many |
 | `update::selection_text` | `caretline_next::update` | Get the selected text, as a copy would |
 | `view`, `Frame` | `caretline_next` | Render to cells |
-| `view::{Cell, Role, display_width}` | `caretline_next::view` | Read cells; style them by meaning |
+| `view::{render, hit, Cell, Role, RowInfo, Hit, display_width}` | `caretline_next::view` | Render any view; read cells and rows; style them by meaning; hit-test a cell |
+| `OutlineLayout`, `views::hidden_lines` | `caretline_next` | The [outline layout](outline.md#the-outline-layout) and folds |
 | `keymap`, `Key`, `KeyCode`, `Mods` | `caretline_next` | Map keys to messages |
 | `parse_keys`, `script_to_msgs`, `keymap::ScriptItem` | `caretline_next` | Use the `--keys` notation |
-| `trace::{TraceLine, parse_msgs, replay_trace}` | `caretline_next::trace` | Record and replay sessions |
-| `layout::{Layout, RowPos, text_format, ensure_caret_visible}` | `caretline_next::layout` | Lower-level layout queries |
+| `trace::{TraceLine, parse_msgs, replay_trace, replay_trace_views}` | `caretline_next::trace` | Record and replay sessions (with their views) |
+| `layout::{Layout, LineFormat, RowPos, text_format, ensure_caret_visible}` | `caretline_next::layout` | Lower-level layout queries |
 | `helix::*` | `caretline_next::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
 | `Session`, `protocol::*` | `caretline_next` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
 | `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline_next` | Block identity that survives edits: see [Block marks](#block-marks) |
@@ -53,7 +57,7 @@ use caretline_next::{State, Viewport};
 
 let state = State::new("# Notes\n", Some("notes.md".into()), Viewport { width: 80, height: 24 });
 assert_eq!(state.caret(), 0);
-assert!(!state.dirty);
+assert!(!state.doc.dirty);
 ```
 
 From a file. A file that doesn't exist yet is an empty, clean document. The line ending
@@ -78,9 +82,9 @@ Change the config directly. It's plain data:
 use caretline_next::{State, Viewport};
 
 let mut state = State::new("a\tb", None, Viewport { width: 80, height: 24 });
-state.config.tab_width = 2;
-state.config.soft_wrap = false;
-state.config.status_bar = false; // every row shows text; no status bar
+state.doc.config.tab_width = 2;
+state.doc.config.soft_wrap = false;
+state.view.config.status_bar = false; // every row shows text; no status bar
 ```
 
 ## Apply messages
@@ -93,7 +97,7 @@ use caretline_next::{update, By, Dir, Msg, State, Viewport};
 let mut state = State::new("hello world", None, Viewport { width: 40, height: 5 });
 update(&mut state, Msg::Move { dir: Dir::Forward, by: By::Word, extend: false });
 update(&mut state, Msg::InsertText { text: ",".into() });
-assert_eq!(state.text.to_string(), "hello, world");
+assert_eq!(state.doc.text.to_string(), "hello, world");
 ```
 
 `replay` folds a list and drops the effects:
@@ -103,7 +107,7 @@ use caretline_next::{replay, Msg, State, Viewport};
 
 let mut state = State::new("", None, Viewport { width: 40, height: 5 });
 replay(&mut state, [Msg::InsertText { text: "ab".into() }, Msg::DeleteBackward]);
-assert_eq!(state.text.to_string(), "a");
+assert_eq!(state.doc.text.to_string(), "a");
 ```
 
 Keys go through the pure keymap. `script_to_msgs` takes the `--keys` notation
@@ -118,9 +122,9 @@ let ctrl_e = Key { code: KeyCode::Char('e'), mods: Mods { ctrl: true, ..Mods::de
 let msg = keymap(&ctrl_e).expect("Ctrl-E is bound");
 // A script:
 let mut msgs = vec![msg];
-msgs.extend(script_to_msgs(" there<s-a-left>", state.now_ms).unwrap());
+msgs.extend(script_to_msgs(" there<s-a-left>", state.doc.now_ms).unwrap());
 replay(&mut state, msgs);
-assert_eq!(state.text.to_string(), "hello there");
+assert_eq!(state.doc.text.to_string(), "hello there");
 ```
 
 Send `Msg::Tick { now_ms }` with real time before user input if you want typing grouped into
@@ -138,8 +142,8 @@ use caretline_next::{replay, script_to_msgs, State, Viewport};
 let mut state = State::new("one\ntwo three", None, Viewport { width: 40, height: 5 });
 replay(&mut state, script_to_msgs("<down><s-a-right>", 0).unwrap());
 
-let text = state.text.slice(..);
-let range = state.selection.primary();       // anchor and head
+let text = state.doc.text.slice(..);
+let range = state.view.selection.primary();       // anchor and head
 assert_eq!((range.anchor, range.head), (4, 7));
 assert_eq!((range.from(), range.to()), (4, 7)); // ordered ends
 assert_eq!(range.slice(text).to_string(), "two");
@@ -151,14 +155,14 @@ let col = state.caret() - text.line_to_char(line);
 assert_eq!((line, col), (1, 3));
 
 // Every range, for multi-range selections:
-for r in state.selection.iter() {
+for r in state.view.selection.iter() {
     let _ = (r.anchor, r.head);
 }
 ```
 
 ### Set the selection yourself
 
-Replace `state.selection` with a Helix `Selection`, then call `sanitize` to snap it to
+Replace `state.view.selection` with a Helix `Selection`, then call `sanitize` to snap it to
 grapheme boundaries and the text's length:
 
 ```rust
@@ -168,11 +172,11 @@ use caretline_next::{update, Msg, State, Viewport};
 let mut state = State::new("a-b-c", None, Viewport { width: 40, height: 5 });
 // Two carets, after "a" and after "b". The second is primary.
 let ranges: SmallVec<[Range; 1]> = [Range::point(1), Range::point(3)].into_iter().collect();
-state.selection = Selection::new(ranges, 1);
+state.view.selection = Selection::new(ranges, 1);
 state.sanitize();
 update(&mut state, Msg::InsertText { text: "!".into() });
-assert_eq!(state.text.to_string(), "a!-b!-c");
-assert_eq!(state.selection.len(), 2);
+assert_eq!(state.doc.text.to_string(), "a!-b!-c");
+assert_eq!(state.view.selection.len(), 2);
 ```
 
 ## Render
@@ -200,8 +204,13 @@ print!("{}", frame.to_text());                     // or frame.to_ansi()
 | `Selection` | Selected text |
 | `Status` | The status bar |
 | `StatusAccent` | The dirty marker `[+]` in the status bar |
+| `Hang` | An outline block's hang, with the [outline layout](outline.md#the-outline-layout) |
 
-The engine never picks colours. Your renderer maps roles to styles.
+The engine never picks colours. Your renderer maps roles to styles. Each cell also has the
+`char_idx` of the document char it shows (none for blank cells and the status bar), and the
+frame has one `RowInfo` per row: what the row shows (a line's text with its char range, a
+block's blank row, a host's row, past the end, the status bar). `view::hit(doc, view, col,
+row)` says what a cell means for a click.
 
 ## Handle effects
 
@@ -225,6 +234,7 @@ fn dispatch(state: &mut State, msg: Msg) -> bool {
                 }),
                 Effect::ClipboardSet { text } => { let _ = text; /* your clipboard */ }
                 Effect::Quit => return false,
+                _ => {} // notices, outline effects, refused, and kinds added later
             }
         }
     }
@@ -235,6 +245,38 @@ fn dispatch(state: &mut State, msg: Msg) -> bool {
 The pure keymap maps a paste key to `Msg::Paste { text: None }`, which pastes the internal
 register. To paste from the system clipboard, read it in your runtime and send
 `Msg::Paste { text: Some(..) }`. That way the message records exactly what was pasted.
+
+`Effect` is `#[non_exhaustive]`: keep a wildcard arm.
+
+## Several views of one document
+
+A `State` is one `Document` (text, marks, undo, outline) and one `View` (selection, scroll,
+viewport, folds). To show one document in several places (a main editor and a side panel, or a
+person's caret and an agent's), keep one `Document` and several `View`s, and apply messages
+with `update_doc`. An edit through one view maps every other view's selection; undo is the
+document's; a read-only view is refused edits.
+
+```rust
+use caretline_next::view::render;
+use caretline_next::{update_doc, Effect, ExtChange, Msg, State, View, Viewport};
+
+let mut doc = State::new("one\ntwo\n", None, Viewport { width: 40, height: 5 }).doc;
+let mut views = [View::new(Viewport { width: 40, height: 5 }), View::new(Viewport { width: 20, height: 3 }).read_only(true)];
+views[1].selection = caretline_next::helix::Selection::point(4);    // on "two"
+update_doc(&mut doc, &mut views, 0, Msg::InsertText { text: "zero\n".into() });
+assert_eq!(views[1].caret(), 9);                                    // still on "two"
+assert_eq!(update_doc(&mut doc, &mut views, 1, Msg::DeleteBackward), vec![Effect::Refused]);
+
+// A change from elsewhere maps every view and stays out of undo.
+update_doc(&mut doc, &mut views, 0, Msg::External { changes: vec![ExtChange::Replace { from: 0, to: 0, text: "> ".into() }] });
+update_doc(&mut doc, &mut views, 0, Msg::Undo);
+assert_eq!(doc.text.to_string(), "> one\ntwo\n");
+let _panel = render(&doc, &views[1]);
+```
+
+`State::from_parts(doc, view)` and `state.into_parts()` move between the two forms. A view kept
+apart from `update_doc` misses the rebases; `View::fit(&doc)` at least clamps it to the
+document.
 
 ## Serialize and replay
 
@@ -274,7 +316,7 @@ state works:
 use caretline_next::State;
 
 let s = State::from_json(r#"{"text":"hello\n","viewport":{"width":40,"height":10}}"#).unwrap();
-assert!(!s.dirty && s.history.len() == 1); // clean, with a fresh history
+assert!(!s.doc.dirty && s.doc.history.len() == 1); // clean, with a fresh history
 ```
 
 Undo grouping constants live in `caretline_next::state`: `RUN_GAP_MS` (1500), `RUN_MAX_CHARS`
@@ -283,7 +325,7 @@ Undo grouping constants live in `caretline_next::state`: `RUN_GAP_MS` (1500), `R
 
 ## Block marks
 
-`state.marks` holds ids at line starts that follow their lines through every edit, undo and
+`state.doc.marks` holds ids at line starts that follow their lines through every edit, undo and
 redo (see [architecture.md](architecture.md#block-marks)). Add marks directly, outside the
 undo history, when you load a document; use `update::mark_only_edit` for a change of marks
 that should be one undo step.
@@ -292,15 +334,15 @@ that should be one undo step.
 use caretline_next::{update, BlockAttrs, Msg, State, Viewport};
 
 let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
-let list = s.marks.mint(0);                        // MarkId(0) on line 0
-let milk = s.marks.mint(s.text.line_to_char(1));   // MarkId(1) on line 1
-s.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
+let list = s.doc.marks.mint(0);                        // MarkId(0) on line 0
+let milk = s.doc.marks.mint(s.doc.text.line_to_char(1));   // MarkId(1) on line 1
+s.doc.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
 
 update(&mut s, Msg::InsertText { text: "Weekly ".into() });  // at the start of line 0
-assert_eq!(s.marks.pos(list), Some(0));                      // still line 0
+assert_eq!(s.doc.marks.pos(list), Some(0));                      // still line 0
 update(&mut s, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
 update(&mut s, Msg::Undo);                                   // the marks come back exactly
-assert_eq!(s.marks.pos(milk), Some(s.text.line_to_char(1)));
+assert_eq!(s.doc.marks.pos(milk), Some(s.doc.text.line_to_char(1)));
 ```
 
 | `Marks` method | Does |
@@ -349,6 +391,10 @@ face of the [state protocol](protocol.md).
 | `apply_with(msg, exec)` | Applies, performs effects with `exec`, and applies the messages `exec` returns (such as `Saved`) |
 | `keys(script)` | Runs a key script; returns the messages and effects |
 | `set_state(state)` | Replaces the state (sanitized) and starts a new trace segment; rev + 1 |
+| `open_view(view) -> id`, `close_view(id)`, `views()`, `view(id)`, `state_of(id)` | Other views of the document (view 0 is the state's own); opening and closing is a change and is traced |
+| `apply_on(id, msg)`, `apply_with_on`, `keys_on(id, script)` | Apply through view `id`; every other view is rebased |
+| `render_view(id, size)` | The frame of view `id` |
+| `state_lines()` | The lines a segment starts with: the state and a `view_open` for each other view |
 | `frame()` | `view` of the current state |
 | `render(w, h)` | The frame at another size, without changing the session |
 | `handle(line, exec)` | Answers one protocol request line (`protocol::Handled`): the response line, the `Change` it made and any `subscribe` control |
@@ -425,8 +471,8 @@ fn main() {
     }
 
     // 5. Read the result.
-    let primary = state.selection.primary();
-    println!("text:      {:?}", state.text.to_string());
+    let primary = state.view.selection.primary();
+    println!("text:      {:?}", state.doc.text.to_string());
     println!("selection: anchor {} head {}", primary.anchor, primary.head);
     println!("selected:  {:?}", selection_text(&state));
 
@@ -442,7 +488,7 @@ fn main() {
             }
         }
     }
-    println!("dirty:     {}", state.dirty);
+    println!("dirty:     {}", state.doc.dirty);
 
     // 7. Render. `view` is pure: a grid of cells plus the caret's cell.
     let frame = view(&state);
@@ -454,7 +500,7 @@ fn main() {
     let mut back = State::from_json(&json).expect("state parses");
     assert_eq!(back, state);
     update(&mut back, Msg::Undo);
-    println!("after undo: {:?}", back.text.to_string());
+    println!("after undo: {:?}", back.doc.text.to_string());
 
     // 9. A trace (initial state + every message) replays to the same state.
     let jsonl: String = trace.iter().map(|l| l.to_line() + "\n").collect();

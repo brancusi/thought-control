@@ -12,7 +12,8 @@ use std::collections::VecDeque;
 use crate::keymap::script_to_msgs_for;
 use crate::msg::{Effect, Msg};
 use crate::state::State;
-use crate::trace::TraceLine;
+use crate::state::View;
+use crate::trace::{apply_with_views, OnView, TraceLine, ViewOpen};
 use crate::update::update;
 use crate::view::{view, Frame};
 
@@ -32,6 +33,9 @@ pub const DEFAULT_TRACE_LIMIT: usize = 100_000;
 #[derive(Debug, Clone)]
 pub struct Session {
     state: State,
+    /// Other views of the state's document, by id (the state's own view is 0).
+    views: Vec<(u32, View)>,
+    next_view: u32,
     rev: u64,
     trace: Vec<TraceLine>,
     /// The rev each trace line leaves the session at (for a `state` line, the rev it starts).
@@ -48,6 +52,8 @@ impl Session {
         let trace = vec![TraceLine::State(Box::new(state.clone()))];
         Session {
             state,
+            views: Vec::new(),
+            next_view: 1,
             rev: 0,
             trace,
             trace_revs: vec![0],
@@ -112,8 +118,8 @@ impl Session {
     /// Starts a new trace segment with the current state, without changing the state or the
     /// rev. Returns the rev.
     pub fn checkpoint(&mut self) -> u64 {
-        self.push_line(TraceLine::State(Box::new(self.state.clone())));
-        self.segment = self.trace.len() - 1;
+        self.push_state_lines();
+        self.segment = self.trace.len() - 1 - self.views.len();
         self.trim();
         self.rev
     }
@@ -143,6 +149,21 @@ impl Session {
         out
     }
 
+    /// The lines that start a segment: the state, then every other view open.
+    pub fn state_lines(&self) -> Vec<TraceLine> {
+        let mut lines = vec![TraceLine::State(Box::new(self.state.clone()))];
+        for (id, v) in &self.views {
+            lines.push(TraceLine::ViewOpen(ViewOpen { id: *id, view: Box::new(v.clone()) }));
+        }
+        lines
+    }
+
+    fn push_state_lines(&mut self) {
+        for line in self.state_lines() {
+            self.push_line(line);
+        }
+    }
+
     fn push_line(&mut self, line: TraceLine) {
         self.trace.push(line);
         self.trace_revs.push(self.rev);
@@ -158,8 +179,8 @@ impl Session {
             self.drop_front(self.segment);
         }
         if self.trace.len() > self.limit {
-            self.push_line(TraceLine::State(Box::new(self.state.clone())));
-            self.drop_front(self.trace.len() - 1);
+            self.push_state_lines();
+            self.drop_front(self.trace.len() - 1 - self.views.len());
         }
     }
 
@@ -172,11 +193,63 @@ impl Session {
 
     /// Applies one message and returns its effects, unperformed.
     pub fn apply(&mut self, msg: Msg) -> Vec<Effect> {
+        self.apply_on(0, msg)
+    }
+
+    /// Applies one message through view `id` (0 is the state's own view) and returns its
+    /// effects, unperformed. Every other view is rebased through what it changed. A message to
+    /// a view that isn't open does nothing.
+    pub fn apply_on(&mut self, id: u32, msg: Msg) -> Vec<Effect> {
+        if id != 0 && !self.views.iter().any(|(k, _)| *k == id) {
+            return Vec::new();
+        }
         self.rev += 1;
-        self.push_line(TraceLine::Msg(msg.clone()));
-        let effects = update(&mut self.state, msg);
+        let line = if id == 0 { TraceLine::Msg(msg.clone()) } else { TraceLine::On(OnView { view: id, msg: msg.clone() }) };
+        self.push_line(line);
+        let effects = if self.views.is_empty() { update(&mut self.state, msg) } else { apply_with_views(&mut self.state, &mut self.views, id, msg) };
         self.trim();
         effects
+    }
+
+    /// Opens another view of the document (fitted to it) and returns its id. Recorded in the
+    /// trace.
+    pub fn open_view(&mut self, mut view: View) -> u32 {
+        view.fit(&self.state.doc);
+        let id = self.next_view;
+        self.next_view += 1;
+        self.rev += 1;
+        self.push_line(TraceLine::ViewOpen(ViewOpen { id, view: Box::new(view.clone()) }));
+        self.views.push((id, view));
+        self.trim();
+        id
+    }
+
+    /// Closes view `id`. Returns whether it was open.
+    pub fn close_view(&mut self, id: u32) -> bool {
+        let Some(i) = self.views.iter().position(|(k, _)| *k == id) else { return false };
+        self.views.remove(i);
+        self.rev += 1;
+        self.push_line(TraceLine::ViewClose(id));
+        self.trim();
+        true
+    }
+
+    /// The other views open, by id.
+    pub fn views(&self) -> &[(u32, View)] {
+        &self.views
+    }
+
+    /// View `id` (0 is the state's own).
+    pub fn view(&self, id: u32) -> Option<&View> {
+        if id == 0 {
+            return Some(&self.state.view);
+        }
+        self.views.iter().find(|(k, _)| *k == id).map(|(_, v)| v)
+    }
+
+    /// The document seen through view `id`, as a single-view state.
+    pub fn state_of(&self, id: u32) -> Option<State> {
+        self.view(id).map(|v| State::from_parts(self.state.doc.clone(), v.clone()))
     }
 
     /// Applies messages in order and returns all their effects, unperformed.
@@ -196,12 +269,22 @@ impl Session {
         msg: Msg,
         exec: &mut dyn FnMut(&Effect) -> Option<Msg>,
     ) -> (Vec<Effect>, Vec<Msg>) {
+        self.apply_with_on(0, msg, exec)
+    }
+
+    /// [`Session::apply_with`] through view `id`.
+    pub fn apply_with_on(
+        &mut self,
+        id: u32,
+        msg: Msg,
+        exec: &mut dyn FnMut(&Effect) -> Option<Msg>,
+    ) -> (Vec<Effect>, Vec<Msg>) {
         let mut queue = VecDeque::from([msg]);
         let mut effects = Vec::new();
         let mut applied = Vec::new();
         while let Some(msg) = queue.pop_front() {
             applied.push(msg.clone());
-            for effect in self.apply(msg) {
+            for effect in self.apply_on(id, msg) {
                 if let Some(next) = exec(&effect) {
                     queue.push_back(next);
                 }
@@ -214,8 +297,16 @@ impl Session {
     /// Runs a key script through the keymap (the `--keys` syntax). Returns the messages it
     /// became and their effects, unperformed.
     pub fn keys(&mut self, script: &str) -> Result<(Vec<Msg>, Vec<Effect>), String> {
+        self.keys_on(0, script)
+    }
+
+    /// [`Session::keys`] through view `id`.
+    pub fn keys_on(&mut self, id: u32, script: &str) -> Result<(Vec<Msg>, Vec<Effect>), String> {
         let msgs = script_to_msgs_for(script, self.state.doc.now_ms, self.state.doc.outline.is_some())?;
-        let effects = self.apply_all(msgs.iter().cloned());
+        let mut effects = Vec::new();
+        for msg in msgs.iter().cloned() {
+            effects.extend(self.apply_on(id, msg));
+        }
         Ok((msgs, effects))
     }
 
@@ -224,11 +315,26 @@ impl Session {
     pub fn set_state(&mut self, mut state: State) -> u64 {
         state.sanitize();
         self.rev += 1;
-        self.push_line(TraceLine::State(Box::new(state.clone())));
-        self.segment = self.trace.len() - 1;
         self.state = state;
+        for (_, v) in &mut self.views {
+            v.fit(&self.state.doc);
+        }
+        self.push_state_lines();
+        self.segment = self.trace.len() - 1 - self.views.len();
         self.trim();
         self.rev
+    }
+
+    /// Renders view `id` at `width`x`height` (its own size when absent) without changing the
+    /// session.
+    pub fn render_view(&self, id: u32, size: Option<(u16, u16)>) -> Option<Frame> {
+        let mut s = self.state_of(id)?;
+        if let Some((w, h)) = size {
+            if (s.view.viewport.width, s.view.viewport.height) != (w, h) {
+                update(&mut s, Msg::Resize { width: w, height: h });
+            }
+        }
+        Some(view(&s))
     }
 
     /// Renders the current state.

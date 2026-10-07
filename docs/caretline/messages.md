@@ -91,7 +91,7 @@ the last row to the end, as in a macOS text field.
 
 ### Outline documents
 
-These act on [outline documents](outline.md) (`state.outline` set). Elsewhere they only set the
+These act on [outline documents](outline.md) (`state.doc.outline` set). Elsewhere they only set the
 status message `only in outline documents`, except `soft_break` (a line break),
 `select_word_at` and `paste_plain` (a paste). In an outline, Enter, Backspace, Delete, the word
 and line deletes, typing, copy, cut and paste also follow the outline's rules (see
@@ -112,8 +112,49 @@ and line deletes, typing, copy, cut and paste also follow the outline's rules (s
 A block is named by its mark id, a number. A `NewBlock` is `{"depth":0,"kind":"para"|"bullet"|"task","status":" ","text":"…","gap":true,"mark":7}`;
 everything but `kind` and `text` is optional.
 
-`tick`, `resize`, `saved`, `save_failed` (and `show_status`) are **passive**. They don't
-clear the status message, don't end a typing run and don't disarm a pending quit.
+### Views and folds
+
+| Msg | JSON | Does |
+|---|---|---|
+| `ScrollView { rows }` | `{"msg":"scroll_view","rows":5}` | Scrolls the view without moving the caret (`scroll` moves it when it would leave the view). The view stays put until the next caret motion or edit |
+| `Fold { id }` | `{"msg":"fold","id":3}` | Hides a block's children in this view (outline documents). A caret inside them moves to the block's end. A block without children doesn't fold |
+| `Unfold { id }`, `ToggleFold { id }` | `{"msg":"toggle_fold","id":3}` | Shows them again, or toggles |
+
+Folds belong to a view: another view of the same document still shows the children. Hidden
+lines take no rows, so `↓` steps over them and `→` at the block's end goes past them. A fold
+drops when its block goes.
+
+### Changes from elsewhere
+
+`External { changes }` applies changes made outside the editor (another device, a daemon, an
+agent) to the document, in order, outside the undo history: every view is mapped through
+them, and undo takes back only local edits around them. It is passive, and a read-only view
+takes it too.
+
+```json
+{"msg":"external","changes":[
+  {"change":"replace_content","id":3,"text":"Call Ana\nabout the desk"},
+  {"change":"set_shape","id":4,"depth":1,"kind":"task","status":"x"},
+  {"change":"insert_block","after":4,"block":{"kind":"bullet","text":"new","mark":12}},
+  {"change":"remove_block","id":5},
+  {"change":"set_gap","id":6,"gap":true},
+  {"change":"replace","from":0,"to":5,"text":"Hello"}]}
+```
+
+| Change | Does |
+|---|---|
+| `replace_content { id, text }` | A block's content after its marker (`\n` for soft breaks). Only the chars that differ change |
+| `set_shape { id, depth, kind, status }` | Rewrites a block's indentation and list marker. A number, heading or quote marker stays, as content |
+| `set_gap { id, gap }` | A block's blank row (`null`: the default) |
+| `insert_block { after, block }` | A [`NewBlock`](#outline-documents) after a block's own lines, or first without `after`. `block.mark` gives it that id when free |
+| `remove_block { id }` | A block's lines, its continuations included, not its children |
+| `replace { from, to, text }` | Chars `[from, to)` of the current text (any document) |
+
+A change that names a missing block is skipped with a `notice` effect. See
+[architecture.md](architecture.md#changes-from-elsewhere) for the history transform.
+
+`tick`, `resize`, `saved`, `save_failed`, `show_status` and `external` are **passive**. They
+don't clear the status message, don't end a typing run and don't disarm a pending quit.
 
 ## Effects
 
@@ -126,6 +167,10 @@ clear the status message, don't end a typing run and don't disarm a pending quit
 | `Completed { id }` | `{"effect":"completed","id":3}` | Nothing required. A task reached done in an outline (a host may save at once) |
 | `Restored` | `{"effect":"restored"}` | Nothing required. Undo or redo changed an outline (a host re-reads what it keeps per block) |
 | `BlockLeft { from, to }` | `{"effect":"block_left","from":2,"to":3}` | Nothing required. The caret moved to another block of an outline |
+| `Refused` | `{"effect":"refused"}` | Nothing required. An editing message reached a read-only view and changed nothing |
+
+`Effect` is `#[non_exhaustive]`: new kinds may come, so a `match` needs a wildcard arm (a
+runtime can ignore kinds it doesn't know).
 
 ## The keymap
 

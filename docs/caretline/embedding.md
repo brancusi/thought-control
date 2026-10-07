@@ -150,7 +150,7 @@ fn main() -> std::io::Result<()> {
         }
     }
     ratatui::restore();
-    println!("{}", state.text);
+    println!("{}", state.doc.text);
     Ok(())
 }
 ```
@@ -201,7 +201,7 @@ impl Panels {
         let n = self.editors.len() as u32;
         let rects = Layout::horizontal((0..n).map(|_| Constraint::Ratio(1, n))).split(area);
         for (state, r) in self.editors.iter_mut().zip(rects.iter()) {
-            if (state.viewport.width, state.viewport.height) != (r.width, r.height) {
+            if (state.view.viewport.width, state.view.viewport.height) != (r.width, r.height) {
                 update(state, Msg::Resize { width: r.width, height: r.height });
             }
         }

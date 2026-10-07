@@ -14,7 +14,6 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
 use caretline_next::protocol::{event_line, Change, Control, Executor, Subscription};
-use caretline_next::trace::TraceLine;
 use caretline_next::Session;
 
 pub type ClientId = u64;
@@ -109,8 +108,10 @@ impl Hub {
                     }
                 }
                 None => {
-                    buf.push_str(&TraceLine::State(Box::new(self.session.state().clone())).to_line());
-                    buf.push('\n');
+                    for l in self.session.state_lines() {
+                        buf.push_str(&l.to_line());
+                        buf.push('\n');
+                    }
                 }
             }
             if !buf.is_empty() {

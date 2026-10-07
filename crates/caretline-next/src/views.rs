@@ -35,10 +35,18 @@ pub fn update_doc(doc: &mut Document, views: &mut [View], acting: usize, msg: Ms
     }
     let tops = tops(doc, views);
     let edits = doc.edits.0;
+    // A typing run belongs to one view.
+    let run_view = doc.run.map(|r| r.view);
+    if run_view.is_some_and(|v| v != acting) {
+        doc.run = None;
+    }
     let mut state = State { doc: std::mem::take(doc), view: std::mem::take(&mut views[acting]) };
     let effects = step(&mut state, msg);
     *doc = state.doc;
     views[acting] = state.view;
+    if let Some(r) = &mut doc.run {
+        r.view = acting;
+    }
     if doc.edits.0 != edits {
         let journal = std::mem::take(&mut doc.journal.0);
         for (i, v) in views.iter_mut().enumerate() {
