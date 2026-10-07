@@ -31,7 +31,7 @@ const uses = [
     id: 'agents', title: 'Agents editing beside people',
     body: 'Attach to the editor a person is using and drive it over JSON lines. Every result carries a rev; pass if_rev and a write only lands if nothing changed since you read. Events say whether a change came from the terminal or a client.',
     lang: 'console',
-    code: `$ caretline notes.md --listen          # a person edits here
+    code: `$ caretline draft.md --listen          # a person edits here
 $ caretline send keys '<d-down>from another shell'
 $ caretline send '{"op":"msgs","msgs":[{"msg":"undo"}],"if_rev":0}'
 {"error":{"kind":"stale","message":"rev is 12, the request expected 0"}}`,
@@ -62,14 +62,32 @@ for fx in effects { run(fx) }              // files, clipboard, quit
 draw(view(&state));                        // a grid of cells`,
   },
   {
-    id: 'outline', title: 'Outliners and notes',
-    body: 'Outline documents read the text as blocks: paragraphs, bullets, numbered items and tasks. Each block keeps an id through every edit, undo and redo, and cut and paste, so a host can hang its own data on it.',
+    id: 'outline', title: 'Blocks with an identity',
+    body: 'Block documents read the text as blocks: paragraphs, bullets, numbered items, headings. Each block keeps an id through every edit, undo and redo, and cut and paste, and its mark can carry your own data, so your app can hang anything on it.',
     lang: 'text',
     code: `text                          marks         block
 ───────────────────────────   ───────────   ─────────────────────
-- [ ] Pay the deposit         1 @ line 2    1  task ' ', depth 0
+- Pay the deposit             1 @ line 2    1  bullet, depth 0
   - ask Ana about her desk    2 @ line 3    2  bullet, depth 1`,
   },
+  {
+    id: 'extend', title: 'Your meaning, on top',
+    body: 'caretline edits text and never decides what it means. Your app adds that: named commands that run as one undo step and replay, input rules, a JSON payload on each block, and decorations drawn in a block’s hang. All pure, so state, traces and the protocol keep working.',
+    lang: 'rust',
+    code: `let host = Host::new()
+    .command("cycle", cycle)          // Msg::Command { name: "cycle", .. }
+    .input_rule("shorthand", rule)    // takes a typed key first
+    .decorator(|_, b| badge_for(b));  // text + a role name in the hang
+state.doc.set_host(host);`,
+  },
+];
+
+const scope = [
+  ['Text, navigation, carets and selections', 'A notes app or a task manager'],
+  ['Undo and redo, changes from elsewhere', 'A sync engine or a store'],
+  ['Blocks, marks with payloads, folds', 'Statuses, due dates or checkboxes'],
+  ['Views, rendering, hit-testing', 'Colours or glyphs for your concepts'],
+  ['State, messages, replay, the protocol', 'File I/O: it returns effects'],
 ];
 
 // From docs/caretline/performance.md: release builds on an Apple-silicon Mac.
@@ -192,6 +210,24 @@ assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "h
       </div>
     </section>
 
+    <section class="section" id="scope">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">scope</span>
+          <h2>A text-editing engine. Nothing else.</h2>
+          <p>caretline edits text and knows its shape. What your text means belongs in your app, added through host commands, input rules, block payloads and decorations. <a href="/docs/embedding/#extending-the-engine">Extending the engine</a></p>
+        </div>
+        <div class="table-wrap">
+          <table class="cmp">
+            <thead><tr><th scope="col">caretline is</th><th scope="col">caretline isn't</th></tr></thead>
+            <tbody>
+              {scope.map(([is, isnt]) => (<tr><td>{is}</td><td class="dim">{isnt}</td></tr>))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </section>
+
     <section class="section" id="compare">
       <div class="wrap">
         <div class="section__head">
@@ -240,7 +276,7 @@ assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "h
           <Install />
           <nav class="outro__docs" aria-label="Docs">
             <a href="/docs/architecture/">Architecture</a><a href="/docs/api/">Rust API</a><a href="/docs/messages/">Messages</a>
-            <a href="/docs/protocol/">Protocol</a><a href="/docs/embedding/">Embedding</a><a href="/docs/testing/">Testing</a>
+            <a href="/docs/protocol/">Protocol</a><a href="/docs/embedding/">Embedding</a><a href="/docs/keys/">Keys</a><a href="/docs/testing/">Testing</a>
             <a href={DOCS_RS}>docs.rs</a><a href={CRATE}>crates.io</a>
           </nav>
         </div>

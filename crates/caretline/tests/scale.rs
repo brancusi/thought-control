@@ -83,7 +83,7 @@ fn a_16k_character_run_is_linear() {
 }
 
 /// Typing in a 5,000-block outline stays well inside an interactive budget in a release
-/// build (each key re-derives the blocks; see docs/caretline/outline.md). Debug builds type a
+/// build (each key re-derives the blocks; see docs/caretline/structure.md). Debug builds type a
 /// few keys without timing them.
 #[test]
 fn typing_in_a_5000_block_outline() {

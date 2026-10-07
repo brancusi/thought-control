@@ -14,12 +14,12 @@ The same operations are available in process through
 ## Quick start
 
 ```console
-$ printf 'hello world\nsecond line\n' > notes.md
+$ printf 'hello world\nsecond line\n' > draft.md
 $ printf '%s\n' '{"id":1,"op":"hello"}' '{"id":2,"op":"keys","keys":"<a-right><s-a-right>"}' '{"id":3,"op":"render","w":30,"h":4}' \
-    | caretline serve notes.md --size 30x4 --no-clock
+    | caretline serve draft.md --size 30x4 --no-clock
 {"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","text.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
 {"id":2,"result":{"rev":2,"effects":[],"msgs":[{"msg":"move","dir":"forward","by":"word","extend":false},{"msg":"move","dir":"forward","by":"word","extend":true}]}}
-{"id":3,"result":{"rev":2,"w":30,"h":4,"format":"text","cursor":[11,0],"frame":"hello world\nsecond line\n\n notes.md         6 sel  1:12\n"}}
+{"id":3,"result":{"rev":2,"w":30,"h":4,"format":"text","cursor":[11,0],"frame":"hello world\nsecond line\n\n draft.md         6 sel  1:12\n"}}
 ```
 
 ## Requests and responses
@@ -38,7 +38,7 @@ result carries the current `rev`.
 
 | Op | Request fields | Result |
 |---|---|---|
-| `hello` | | `proto` (1), `version`, `rev`, `ops` |
+| `hello` | | `proto` (1), `version`, `rev`, `ops`, `commands` (the host's registered [commands](embedding.md#host-commands)) |
 | `state.get` | optional `history` (default true) | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON). With `history: false`, the state [without its undo history](#the-state-without-its-history) |
 | `history.get` | | `rev` and what `state.get` with `history: false` leaves out: `history`, `saved_revision`, `saving`, `run`, and `mark_log` and `undo_floor` when set |
 | `state.set` | `state` (only `text` needed, see [Minimal state](#minimal-state)), optional `if_rev` | `rev`. Replaces the state (repaired as on load) and starts a new trace segment |
@@ -54,6 +54,8 @@ result carries the current `rev`.
 | `view.open` | optional `open` (a [View](architecture.md#documents-and-views): every field optional; a copy of view 0 when absent), `w`, `h` | `rev`, `view`: the new view's id. See [Views](#views) |
 | `view.close` | `view` | `rev`, `closed` |
 | `view.list` | | `rev`, `views`: `{view, w, h, caret, read_only}` for each, view 0 first |
+| `commands.list` | | `commands`: the [command catalog](keys.md) (`id`, `name`, `description`, `category`, …), and `host_commands`: the host's command names |
+| `keymap.get` | optional `outline` (default: the document's kind) | `outline`, `bindings`: the default keymap, `{keys, command, platform}` each |
 
 `render` and `state.get` take an optional `view` (default 0, the state's own). `msgs`, `keys`
 and `text.set` take one too; without it they go through view 0 in `caretline serve`, and
@@ -174,7 +176,7 @@ last edit joins the same undo step. So that a client's typing groups by real tim
   in process never ticks on its own (`Session::handle_at` takes a clock).
 
 ```console
-$ echo '{"op":"keys","now_ms":1000,"keys":"ab"}' | caretline serve notes.md
+$ echo '{"op":"keys","now_ms":1000,"keys":"ab"}' | caretline serve draft.md
 {"result":{"rev":3,"effects":[],"msgs":[{"msg":"tick","now_ms":1000},{"msg":"insert_text","text":"a"},{"msg":"insert_text","text":"b"}]}}
 ```
 
@@ -188,13 +190,13 @@ live editor draws. `view.open` adds another and returns its id; `msgs`, `keys`, 
 view's selection, so each stays on its text.
 
 ```console
-$ printf 'hello world\nsecond line\n' > notes.md
+$ printf 'hello world\nsecond line\n' > draft.md
 $ printf '%s\n' '{"id":1,"op":"view.open","w":24,"h":4}' '{"id":2,"op":"keys","view":1,"keys":"<down><end>"}' \
-    '{"id":3,"op":"keys","keys":">> "}' '{"id":4,"op":"render","view":1}' | caretline serve notes.md --size 30x4 --no-clock
+    '{"id":3,"op":"keys","keys":">> "}' '{"id":4,"op":"render","view":1}' | caretline serve draft.md --size 30x4 --no-clock
 {"id":1,"result":{"rev":1,"view":1}}
 {"id":2,"result":{"rev":3,"effects":[],"msgs":[…]}}
 {"id":3,"result":{"rev":6,"effects":[],"msgs":[…]}}
-{"id":4,"result":{"rev":6,"w":24,"h":4,"format":"text","cursor":[11,1],"frame":">> hello world\nsecond line\n\n notes.md [+]      2:12\n"}}
+{"id":4,"result":{"rev":6,"w":24,"h":4,"format":"text","cursor":[11,1],"frame":">> hello world\nsecond line\n\n draft.md [+]      2:12\n"}}
 ```
 
 Opening and closing a view is a change (`rev` goes up). Traces record views: a message through
@@ -216,11 +218,12 @@ views, fitted to the new document.
   {"text":"hello there                   "},
   {"text":"second line                   "},
   {"text":"                              "},
-  {"text":" notes.md [+]            1:12 ","spans":[[0,9,"status"],[9,4,"status_accent"],[13,17,"status"]]}]}}
+  {"text":" draft.md [+]            1:12 ","spans":[[0,9,"status"],[9,4,"status_accent"],[13,17,"status"]]}]}}
 ```
 
-Roles are `text`, `selection`, `status`, `status_accent` and `hang` (an outline block's hang,
-with the [outline layout](outline.md#the-outline-layout)).
+Roles are `text`, `selection`, `status`, `status_accent` and `hang` (a block's hang, with the
+[outline layout](structure.md#the-outline-layout)), plus any role name a host's
+[decoration](structure.md#decorations) uses.
 
 A row's `info` is `{"kind":"text","block":3,"line":4,"row":0,"first":true,"last":true,"chars":{"start":40,"end":52},"x":6}`
 (a row of text: its block, line, visual row, whether it is the block's first or last row, the
@@ -278,7 +281,7 @@ are.
 
 ```console
 $ caretline send --latest state.get no-history --raw > s.json      # read
-$ caretline send --latest set-text notes-v2.md                      # push a new version
+$ caretline send --latest set-text draft-v2.md                      # push a new version
 {"result":{"rev":41,"changed":true,"view":3,"msgs":[{"msg":"external","changes":[…]}]}}
 ```
 
@@ -289,7 +292,7 @@ client's job:
 
 ```json
 {"id":5,"op":"msgs","msgs":[{"msg":"save"}]}
-{"id":5,"result":{"rev":4,"effects":[{"effect":"write_file","path":"notes.md","text":"…"}]}}
+{"id":5,"result":{"rev":4,"effects":[{"effect":"write_file","path":"draft.md","text":"…"}]}}
 ```
 
 Write the file, then report back with `{"op":"msgs","msgs":[{"msg":"saved"}]}` (or
@@ -307,7 +310,7 @@ After `subscribe`, the connection receives a line for every change, from any sou
 
 ```json
 {"event":"state","rev":11,"source":"client","msgs":[{"msg":"move","dir":"forward","by":"doc_end","extend":false},{"msg":"insert_text","text":"t"}]}
-{"event":"state","rev":12,"source":"client","msgs":[{"msg":"show_status","text":"agent was here"}],"frame":{"w":30,"h":4,"format":"text","cursor":[10,2],"frame":"hello world\nsecond line\nthird line\n notes.md [+]  agent was 3:11\n"}}
+{"event":"state","rev":12,"source":"client","msgs":[{"msg":"show_status","text":"agent was here"}],"frame":{"w":30,"h":4,"format":"text","cursor":[10,2],"frame":"hello world\nsecond line\nthird line\n draft.md [+]  agent was 3:11\n"}}
 ```
 
 | Field | Meaning |
@@ -396,7 +399,7 @@ large document prefer `render` and events.
 A listening editor writes `$TMPDIR/caretline/<pid>.json` and removes it on exit:
 
 ```json
-{"pid":6103,"socket":"/var/folders/…/T/caretline-6103.sock","file":"notes.md","proto":1,"started_ms":1791353249114}
+{"pid":6103,"socket":"/var/folders/…/T/caretline-6103.sock","file":"draft.md","proto":1,"started_ms":1791353249114}
 ```
 
 `caretline send` uses it to find editors by `--pid`, or by default the most recently started
@@ -438,7 +441,7 @@ A small client for any server.
 In one terminal, open a file and listen:
 
 ```sh
-caretline notes.md --listen
+caretline draft.md --listen
 ```
 
 The status bar says `listening on …/caretline-<pid>.sock`. In another shell:
@@ -453,9 +456,9 @@ hello world
 second line
 from another shell
 
- notes.md [+]                      3:19
+ draft.md [+]                      3:19
 $ caretline send --apply-effects keys '<c-s>'
-{"result":{"rev":26,"effects":[{"effect":"write_file","path":"notes.md","text":"hello world\nsecond line\nfrom another shell"}],"executed":true,"msgs":[{"msg":"tick","now_ms":1791353254310},{"msg":"save"},{"msg":"saved"}]}}
+{"result":{"rev":26,"effects":[{"effect":"write_file","path":"draft.md","text":"hello world\nsecond line\nfrom another shell"}],"executed":true,"msgs":[{"msg":"tick","now_ms":1791353254310},{"msg":"save"},{"msg":"saved"}]}}
 $ caretline send --apply-effects keys '<c-q>'
 {"result":{"rev":28,"effects":[{"effect":"quit"}],"executed":true,"msgs":[{"msg":"tick","now_ms":1791353256002},{"msg":"quit"}]}}
 ```

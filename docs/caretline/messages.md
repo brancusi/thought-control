@@ -60,7 +60,7 @@ deletes exactly the selection.
 | `line_end` | The end of the caret's visual row (`dir` is ignored) |
 | `page` | A screenful of visual rows; the view scrolls by the same amount |
 | `doc_start`, `doc_end` | The start or end of the document (`dir` is ignored) |
-| `block` | In an [outline](outline.md): the next block's content start, or back to this block's (then the previous one's). Elsewhere, as `line` |
+| `block` | In a [block document](structure.md): the next block's content start, or back to this block's (then the previous one's). Elsewhere, as `line` |
 
 **Collapse rules.** A motion without `extend` on a non-empty selection collapses it instead
 of moving from the caret. Backward goes to the selection's start and forward to its end. Up
@@ -91,29 +91,33 @@ the last row to the end, as in a macOS text field.
 | `Frame { now_ms }` | `{"msg":"frame","now_ms":1008}` | A display frame from the runtime's frame clock. Advances the clock as `tick` does; animation state advances from it |
 | `FrameClock { fps }` | `{"msg":"frame_clock","fps":120}` | Asks the runtime for a frame clock: a `frame` message `fps` times a second (`0` turns it off). Stored in the view as `frame_clock` |
 
-### Outline documents
+### Block documents
 
-These act on [outline documents](outline.md) (`state.doc.outline` set). Elsewhere they only set the
-status message `only in outline documents`, except `soft_break` (a line break),
-`select_word_at` and `paste_plain` (a paste). In an outline, Enter, Backspace, Delete, the word
-and line deletes, typing, copy, cut and paste also follow the outline's rules (see
-[outline.md](outline.md#the-rules)).
+These act on documents with [block structure](structure.md) (`state.doc.outline` set).
+Elsewhere they only set the status message `only in outline documents`, except `soft_break`
+(a line break), `select_word_at` and `paste_plain` (a paste). In a block document, Enter,
+Backspace, Delete, the word and line deletes, typing, copy, cut and paste also follow the
+[Markdown rules](markdown.md#the-rules).
 
 | Msg | JSON | Does |
 |---|---|---|
 | `SoftBreak` | `{"msg":"soft_break"}` | A line break inside the block (in a paragraph, as Enter) |
 | `Indent`, `Outdent` | `{"msg":"indent"}` | Nests the caret's block, or every block the selection touches, one level deeper or shallower |
-| `TaskCycle` | `{"msg":"task_cycle"}` | Text → open task → done → text, on the caret's block or the selected blocks. Inside a multi-line paragraph, splits the selected lines out as tasks |
-| `SetStatus { id, ch }` | `{"msg":"set_status","id":3,"ch":"x"}` | Sets a task's box character (a click on the box) |
 | `MoveBlock { dir }` | `{"msg":"move_block","dir":"backward"}` | Swaps the caret's block and its children with the previous or next sibling |
 | `SelectBlock { id }` | `{"msg":"select_block","id":3}` | Selects a block's content |
 | `SelectWordAt { pos }` | `{"msg":"select_word_at","pos":12}` | Selects the word at a char position; a `click` with `extend` right after extends by words |
 | `Edit { changes, join }` | `{"msg":"edit","changes":[[0,5,"Hello"]],"join":false}` | A host's own edit, one undo step: each `[from, to, text]` replaces chars `[from, to)` of the current text (in order, apart). `join`: folded into the last undo step |
-| `InsertBlocks { after, blocks }` | `{"msg":"insert_blocks","after":3,"blocks":[{"kind":"task","status":" ","text":"Call Ana"}]}` | Inserts host blocks after a block, or at the start without `after`. One undo step |
+| `InsertBlocks { after, blocks }` | `{"msg":"insert_blocks","after":3,"blocks":[{"kind":"bullet","text":"Call Ana"}]}` | Inserts host blocks after a block, or at the start without `after`. One undo step |
 | `PastePlain { text }` | `{"msg":"paste_plain","text":"a\nb"}` | Pastes as paragraphs with their line breaks kept |
 
-A block is named by its mark id, a number. A `NewBlock` is `{"depth":0,"kind":"para"|"bullet"|"task","status":" ","text":"…","gap":true,"mark":7}`;
-everything but `kind` and `text` is optional.
+A block is named by its mark id, a number. A `NewBlock` is `{"depth":0,"kind":"para"|"bullet","tag":"a","text":"…","gap":true,"mark":7}`;
+everything but `kind` and `text` is optional (`tag`: a bullet's [tag](markdown.md#tags)).
+
+### Host commands
+
+| Msg | JSON | Does |
+|---|---|---|
+| `Command { name, args }` | `{"msg":"command","name":"shout","args":{"times":2}}` | Runs the host's command `name` (registered with `Host::command`) as one transaction and one undo step. An unknown name changes nothing and says so. See [embedding.md](embedding.md#host-commands) |
 
 ### Views and folds
 
@@ -137,19 +141,21 @@ takes it too.
 ```json
 {"msg":"external","changes":[
   {"change":"replace_content","id":3,"text":"Call Ana\nabout the desk"},
-  {"change":"set_shape","id":4,"depth":1,"kind":"task","status":"x"},
+  {"change":"set_shape","id":4,"depth":1,"kind":"bullet","tag":"b"},
   {"change":"insert_block","after":4,"block":{"kind":"bullet","text":"new","mark":12}},
   {"change":"remove_block","id":5},
   {"change":"set_gap","id":6,"gap":true},
+  {"change":"set_data","id":6,"data":{"row":42}},
   {"change":"replace","from":0,"to":5,"text":"Hello"}]}
 ```
 
 | Change | Does |
 |---|---|
 | `replace_content { id, text }` | A block's content after its marker (`\n` for soft breaks). Only the chars that differ change |
-| `set_shape { id, depth, kind, status }` | Rewrites a block's indentation and list marker. A number, heading or quote marker stays, as content |
+| `set_shape { id, depth, kind, tag }` | Rewrites a block's indentation and list marker. A number, heading or quote marker stays, as content |
 | `set_gap { id, gap }` | A block's blank row (`null`: the default) |
-| `insert_block { after, block }` | A [`NewBlock`](#outline-documents) after a block's own lines, or first without `after`. `block.mark` gives it that id when free |
+| `set_data { id, data }` | A mark's payload (`null`: none). Any document with marks; the text is untouched |
+| `insert_block { after, block }` | A [`NewBlock`](#block-documents) after a block's own lines, or first without `after`. `block.mark` gives it that id when free |
 | `remove_block { id }` | A block's lines, its continuations included, not its children |
 | `replace { from, to, text }` | Chars `[from, to)` of the current text (any document) |
 
@@ -163,12 +169,11 @@ don't clear the status message, don't end a typing run and don't disarm a pendin
 
 | Effect | JSON | The runtime should |
 |---|---|---|
-| `WriteFile { path, text }` | `{"effect":"write_file","path":"notes.md","text":"…"}` | Write the file, then send `saved` or `save_failed` |
+| `WriteFile { path, text }` | `{"effect":"write_file","path":"draft.md","text":"…"}` | Write the file, then send `saved` or `save_failed` |
 | `ClipboardSet { text }` | `{"effect":"clipboard_set","text":"…"}` | Put the text on the system clipboard |
 | `Quit` | `{"effect":"quit"}` | Exit |
 | `Notice { text }` | `{"effect":"notice","text":"nothing to nest under"}` | Show a message: an outline document's status message when the status bar is off |
-| `Completed { id }` | `{"effect":"completed","id":3}` | Nothing required. A task reached done in an outline (a host may save at once) |
-| `Restored` | `{"effect":"restored"}` | Nothing required. Undo or redo changed an outline (a host re-reads what it keeps per block) |
+| `Host { name, data }` | `{"effect":"host","name":"shouted","data":{"line":3}}` | Whatever the host's own command meant by it (its runtime handles it) |
 | `BlockLeft { from, to }` | `{"effect":"block_left","from":2,"to":3}` | Nothing required. The caret moved to another block of an outline |
 | `Refused` | `{"effect":"refused"}` | Nothing required. An editing message reached a read-only view and changed nothing |
 
@@ -177,44 +182,46 @@ runtime can ignore kinds it doesn't know).
 
 ## The keymap
 
-`keymap(&Key) -> Option<Msg>` is pure. It follows macOS text-field keys, with Ctrl twins for
-terminals that don't forward Cmd (`d-` in key scripts). Adding Shift to any motion extends
-the selection.
+`keymap(&Key) -> Option<Msg>` is pure: a lookup in caretline's default keymap, which is data
+(`default_keymap`), binding key chords to the [command catalog](keys.md)'s ids. It follows
+macOS text-field keys, with Ctrl twins for terminals that don't forward ⌘ (`d-` in key scripts).
+Adding Shift to a motion extends the selection. Printable keys without Ctrl, Alt or ⌘ type
+themselves.
 
-| Key | Msg |
-|---|---|
-| `←` `→` | `move` by `grapheme` |
-| `⌥←` `⌥→`, `Ctrl-←` `Ctrl-→`, `Alt-B` `Alt-F` | `move` by `word` |
-| `↑` `↓` | `move` by `visual_line` |
-| `⌘↑` `⌘↓`, `Ctrl-Home` `Ctrl-End`, `⌘Home` `⌘End` | `move` to `doc_start` / `doc_end` |
-| `Home` `End`, `⌘←` `⌘→`, `Ctrl-A` `Ctrl-E` | `move` to `line_start` / `line_end` |
-| `PgUp` `PgDn` | `move` by `page` |
-| `Esc` | `collapse` |
-| `⌘A`, `Alt-A` | `select_all` |
-| `Backspace`, `Ctrl-H` | `delete_backward` |
-| `Delete` | `delete_forward` |
-| `⌥Backspace`, `Ctrl-Backspace`, `Ctrl-W` | `delete_word_backward` |
-| `⌥Delete`, `Ctrl-Delete`, `Alt-D` | `delete_word_forward` |
-| `⌘Backspace`, `Ctrl-U` | `delete_to_line_start` |
-| `⌘Delete` | `delete_to_line_end` |
-| `Ctrl-K` | `kill_line` |
-| `⌘C` `⌘X` `⌘V`, `Ctrl-C` `Ctrl-X` `Ctrl-V` | `copy`, `cut`, `paste` (with no text) |
-| `⌘Z`, `Ctrl-Z` | `undo` |
-| `⇧⌘Z`, `Ctrl-Shift-Z`, `⌘Y`, `Ctrl-Y`, `⌘R`, `Ctrl-R` | `redo` |
-| `⌘S`, `Ctrl-S` | `save` |
-| `⌘Q`, `Ctrl-Q` | `quit` |
-| `Enter` | `insert_newline` |
-| `Tab` | `insert_text` with `"\t"` |
-| Any other character | `insert_text` with that character |
+| Key | Command | Msg |
+|---|---|---|
+| `←` `→` | `move.left`, `move.right` | `move` by `grapheme` |
+| `⌥←` `⌥→`, `Ctrl-←` `Ctrl-→`, `Alt-B` `Alt-F` | `move.word_left`, `move.word_right` | `move` by `word` |
+| `↑` `↓` | `move.up`, `move.down` | `move` by `visual_line` |
+| `⌘↑` `⌘↓`, `Ctrl-Home` `Ctrl-End`, `⌘Home` `⌘End` | `move.doc_start`, `move.doc_end` | `move` to `doc_start` / `doc_end` |
+| `Home` `End`, `⌘←` `⌘→`, `Ctrl-A` `Ctrl-E` | `move.line_start`, `move.line_end` | `move` to `line_start` / `line_end` |
+| `PgUp` `PgDn` | `move.page_up`, `move.page_down` | `move` by `page` |
+| `Esc` | `select.collapse` | `collapse` |
+| `⌘A`, `Alt-A` | `select.all` | `select_all` |
+| `Backspace`, `Ctrl-H` | `edit.backspace` | `delete_backward` |
+| `Delete` | `edit.delete_forward` | `delete_forward` |
+| `⌥Backspace`, `Ctrl-Backspace`, `Ctrl-W` | `edit.delete_word` | `delete_word_backward` |
+| `⌥Delete`, `Ctrl-Delete`, `Alt-D` | `edit.delete_word_forward` | `delete_word_forward` |
+| `⌘Backspace`, `Ctrl-U` | `edit.delete_to_line_start` | `delete_to_line_start` |
+| `⌘Delete` | `edit.delete_to_line_end` | `delete_to_line_end` |
+| `Ctrl-K` | `edit.kill_line` | `kill_line` |
+| `⌘C` `⌘X` `⌘V`, `Ctrl-C` `Ctrl-X` `Ctrl-V` | `clip.copy`, `clip.cut`, `clip.paste` | `copy`, `cut`, `paste` (with no text) |
+| `⌘Z`, `Ctrl-Z` | `history.undo` | `undo` |
+| `⇧⌘Z`, `Ctrl-Shift-Z`, `⌘Y`, `Ctrl-Y`, `⌘R`, `Ctrl-R` | `history.redo` | `redo` |
+| `⌘S`, `Ctrl-S` | `file.save` | `save` |
+| `⌘Q`, `Ctrl-Q` | `file.quit` | `quit` |
+| `Enter` | `edit.newline` | `insert_newline` |
+| `Tab` | `edit.insert_tab` | `insert_text` with `"\t"` |
 
-Unbound: `Shift-Tab`, `Alt-↑`/`Alt-↓`, `Ctrl-↑`/`Ctrl-↓`, and Cmd or Ctrl with any letter
-not listed. Moving by document `line` has no key; send the message.
+Unbound: `Shift-Tab`, `Alt-↑`/`Alt-↓`, `Ctrl-↑`/`Ctrl-↓`, and chords the table doesn't list.
+Moving by document `line` has no key; send the message.
 
-An outline document uses `outline_keymap`, which adds `Tab`/`Shift-Tab` (`indent`/`outdent`),
-`Ctrl-T` (`task_cycle`), `Shift-Enter` and `Ctrl-J` (`soft_break`), `Alt-↑`/`Alt-↓`
-(`move_block`), `Ctrl-↑`/`Ctrl-↓` (`move` by `block`) and `Alt-V` (`paste_plain`).
-`keymap_for(outline, key)` picks the right one; key scripts, `Session::keys` and the
-protocol's `keys` op use the state's.
+A block document uses `outline_keymap`, which adds `Tab`/`Shift-Tab` (`structure.indent` /
+`structure.outdent`), `Shift-Enter` and `Ctrl-J` (`edit.soft_break`), `Alt-↑`/`Alt-↓`
+(`structure.move_up` / `structure.move_down`), `Ctrl-↑`/`Ctrl-↓` (`move.block_up` /
+`move.block_down`) and `Alt-V` (`clip.paste_plain`). `keymap_for(outline, key)` picks the right
+one; key scripts, `Session::keys` and the protocol's `keys` op use the state's. See
+[keys.md](keys.md) for the catalog, `caretline keys`, and building an app's own table.
 
 ## Key scripts
 

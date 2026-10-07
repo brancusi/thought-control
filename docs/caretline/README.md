@@ -12,9 +12,9 @@ or another program, and replay any session exactly. The `caretline` binary
 tool built on top.
 
 ```console
-$ caretline notes.md                                   # edit a file
-$ caretline --new-state notes.md --size 40x6 > s.json  # capture a state
-$ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
+$ caretline draft.md                                   # edit a file
+$ caretline --new-state draft.md --size 40x6 > s.json  # capture a state
+$ caretline --state s.json --keys '<d-down>The end.' --snapshot 40x6
 ```
 
 ## Try it in one line
@@ -29,6 +29,40 @@ A prebuilt binary for macOS or Linux, checked against its sha256 and installed t
 (a scripted agent co-editing beside you over the editor's socket). With Rust instead:
 `cargo install caretline-cli`.
 See the [Quickstart](quickstart.md).
+
+## What caretline is, and isn't
+
+**caretline is a text-editing engine.** It edits text, moves carets and keeps history; it
+reads text as blocks and draws the editing surface. It doesn't know what your text *means*.
+
+| caretline is | caretline isn't |
+|---|---|
+| Text manipulation and navigation: graphemes, words, rows, pages | A notes app, a task manager or an outliner with opinions about what a line means |
+| Carets, several ranges, selections | A store for anything but text, selections and marks |
+| Undo and redo: Helix's tree, typing runs, history transformed over changes from elsewhere | A syntax highlighter or a language client |
+| Generic structure: [marks](structure.md#marks-identity) with payloads, blocks, depth, folds, block operations | Statuses, completion, due dates, priorities or checkboxes |
+| Views: several per document, read-only, follow modes | A persistence layer: it returns `write_file`, it never writes |
+| Changes from elsewhere (`external`) | A sync engine |
+| Rendering the editing surface: cells, roles, rows, hit-testing | Colours, themes or glyphs for your concepts |
+| State, messages, replay and the [JSON protocol](protocol.md) | |
+
+### What belongs in your app
+
+Whatever your text *means*. If a line is a task, a ticket, a citation or a person, your app
+decides that, keeps any data it needs beside the text, and adds behaviour through four
+extension points ([embedding.md](embedding.md#extending-the-engine)):
+
+| Extension point | What it is | Example |
+|---|---|---|
+| **Host commands** | Pure functions from (document, view, args) to an edit, run by `Msg::Command`, recorded in traces | "Cycle this line's tag" on a key your app binds |
+| **Input rules** | Take an editing message before the engine does | Typing `[ ] ` at a line's start makes a list item |
+| **Mark payloads** | Any JSON value on a block's mark, carried through edits, cut and paste, undo | A database row id per block |
+| **Decorations** | Text and a role name drawn in a block's hang or gutter; hit-testing reports which | A badge drawn beside each item |
+
+Every extension is a pure function registered under a name on the document's `Host`, so state,
+traces and the protocol still work: replay registers the same functions. The default keymap
+binds only generic commands ([keys.md](keys.md)); your app binds its own keys to its own
+commands.
 
 ## What it covers
 
@@ -52,7 +86,10 @@ See the [Quickstart](quickstart.md).
 | MCP server for agents | Yes | `caretline-mcp`: an agent edits a live editor alongside a person, with guarded writes, attribution and replay. See [mcp.md](mcp.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
-| Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and several views per document included |
+| Block structure | Yes | Block identity that survives edits, depth, folds, block operations, decorations. See [structure.md](structure.md) |
+| Markdown lists, headings, fences | Yes | Markdown list editing, paste and files over the block structure. See [markdown.md](markdown.md) |
+| Host extensions | Yes | Commands, input rules, mark payloads and decorations a host registers. See [embedding.md](embedding.md#extending-the-engine) |
+| Command catalog | Yes | Every editing command with a stable id, and the default keymap as data. See [keys.md](keys.md) |
 
 ## The layers
 
@@ -83,11 +120,9 @@ caretline is published on crates.io as [`caretline`](https://crates.io/crates/ca
 | [`caretline-cli`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
 | [`caretline-mcp`](../../crates/caretline-mcp) | The `caretline-mcp` binary: an [MCP server](mcp.md) for agents | |
 
-caretline has a block model ([outline documents](outline.md)), folds and multiple views per
-document. thc's TUI opens each page or journal day as one caretline outline document, behind
-its editor API (`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each
-block's mark, changes from the vault arrive as `external` changes, and saving makes block
-operations for the vault.
+thc's TUI is one host: it opens each of its documents as one caretline document of blocks,
+keys its own per-block data by mark, sends changes from its own store as `external` changes, and
+builds its own concepts on top with host commands and decorations ([a case study](embedding.md#case-study-tasks-in-thc)).
 
 ## Where to go next
 
@@ -95,8 +130,10 @@ operations for the vault.
 |---|---|
 | Understand how it works | [architecture.md](architecture.md) |
 | Call it from Rust | [api.md](api.md) |
-| Look up a message, an effect or a key | [messages.md](messages.md) |
-| Edit lists, tasks and blocks | [outline.md](outline.md) |
+| Look up a message, an effect or a key | [messages.md](messages.md), [keys.md](keys.md) |
+| Work with blocks, marks, folds and decorations | [structure.md](structure.md) |
+| Edit Markdown lists and files | [markdown.md](markdown.md) |
+| Add your own commands, data and drawing | [embedding.md](embedding.md#extending-the-engine) |
 | Use the `caretline` command | [cli.md](cli.md) |
 | Drive it over JSON lines | [protocol.md](protocol.md) |
 | Let an agent edit alongside you (MCP) | [mcp.md](mcp.md) |

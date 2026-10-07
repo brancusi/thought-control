@@ -108,7 +108,7 @@ pub enum Msg {
     /// doesn't end an edit run or disarm a pending quit.
     ShowStatus { text: String },
 
-    // Outline documents (see docs/caretline/outline.md). Elsewhere these only set a status
+    // Outline documents (see docs/caretline/structure.md). Elsewhere these only set a status
     // message, except `soft_break` (a line break), `select_word_at` and `paste_plain`.
     /// A line break inside the block (a list item's second line). In a paragraph it is
     /// Enter.

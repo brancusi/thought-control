@@ -6,7 +6,7 @@ is typing in** and edit alongside them, or start a **headless engine** on a file
 it reads a revision number with the text, and every write names that revision.
 
 ```console
-$ caretline notes.md --listen                     # the person, in one terminal
+$ caretline draft.md --listen                     # the person, in one terminal
 $ claude mcp add caretline -- caretline-mcp       # the agent, once
 ```
 
@@ -147,7 +147,7 @@ listening editors write to `$TMPDIR/caretline/`. Also lists this server's open s
 | `socket` | The editor or `caretline serve --socket` on that Unix socket |
 | `file` | A headless engine on that file, in this process (created on save if missing) |
 | `text` | A headless engine on that text, with no file |
-| `outline`, `layout` | Headless: an [outline document](outline.md) (with the outline layout) |
+| `outline`, `layout` | Headless: a [block document](markdown.md) (with the [outline layout](structure.md#the-outline-layout)) |
 | `width`, `height` | Headless: the viewport (80x24) |
 
 Returns `session`, `live`, `file`, `pid`, `socket`, `rev`, `lines` and `dirty`. Attaching
@@ -237,6 +237,13 @@ $ caretline --replay session.jsonl --snapshot 80x24   # the same frame
 Writes the document to its file, the way Ctrl-S would in the editor: the live editor performs
 the `write_file` effect, or the headless engine writes it. The tool description tells the model
 to call it only when the user asked.
+
+### `commands`
+
+Read-only, and needs no session. Returns caretline's editing commands (`id`, `name`,
+`description`, `category`) and the default keymap (`{keys, command, platform}` each; `outline:
+true` for a block document's), so the agent can tell the person which key does what, or send
+the right key script. See [keys.md](keys.md).
 
 ### `close`
 
