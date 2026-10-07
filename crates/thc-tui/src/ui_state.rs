@@ -298,6 +298,56 @@ impl UiState {
             || self.near_miss.is_some()
     }
 
+    // ---- pure presentation helpers (update.rs uses these; App's wrappers delegate) ----------
+
+    /// A toast, stamped with the logical clock.
+    pub fn toast_parts(&mut self, kind: crate::app::ToastKind, parts: Vec<(String, crate::theme::Token)>) {
+        self.toast = Some(Toast { kind, parts, at: self.now_ms });
+    }
+
+    pub fn info(&mut self, text: impl Into<String>) {
+        self.toast_parts(crate::app::ToastKind::Info, vec![(text.into(), crate::theme::Token::Muted)]);
+    }
+
+    /// Focus on or off (⌥Z, F, `thc j`, `:focus`). The first time it opens with the keys
+    /// footer off, say where the keys went.
+    pub fn set_focus_mode(&mut self, on: bool) {
+        self.focus_mode = on;
+        if on && !self.focus_cfg.has(thc_core::tui_config::El::Footer) && !self.focus_hint_shown {
+            self.focus_hint_shown = true;
+            self.info("footer off · :focus to change");
+        }
+    }
+
+    /// The view whose recipe `?` explains: Today (or the agenda), Inbox, Tasks (or its @view).
+    pub fn recipe_name(&self) -> Option<String> {
+        match self.view {
+            View::Today => Some(if self.agenda_mode { "agenda" } else { "today" }.into()),
+            View::Inbox => Some("inbox".into()),
+            View::Tasks => Some(self.tasks_filter.trim().strip_prefix('@').filter(|n| !n.contains(' ')).unwrap_or("tasks").to_string()),
+            _ => None,
+        }
+    }
+
+    /// Arrive in view `v` (the state part; the rows follow from a reload). Arriving never takes
+    /// the cursor: a finder's prompt left open in the view you leave is put away, its query kept.
+    pub fn enter_view(&mut self, v: View) {
+        let entering = self.view != v;
+        if entering {
+            self.view = v;
+            self.cursor = 0;
+            self.scroll = 0;
+            self.selected = None;
+            self.focus = Focus::List;
+            if v != View::Log {
+                self.log_node = None;
+            }
+            if matches!(self.prompt.as_ref().map(|(k, _)| k), Some(PromptKind::PagesFilter | PromptKind::Search)) {
+                self.prompt = None;
+            }
+        }
+    }
+
     /// The state as JSON.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("UiState serializes")
