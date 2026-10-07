@@ -116,3 +116,16 @@ fn a_minimal_state_file_is_a_working_editor() {
     assert_eq!(v["dirty"], false);
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+#[test]
+fn outline_mode_reads_markdown_edits_blocks_and_saves_markdown() {
+    let dir = fixtures();
+    let file = dir.join("trip.md");
+    let frame = run(bin().arg("--outline").arg(&file).args(["--keys", "<down><down><down><c-t>", "--snapshot", "50x18"]));
+    assert!(frame.contains("- [x] Pay the deposit"), "{frame}");
+    let effects = run(bin().arg("--outline").arg(&file).args(["--keys", "<d-down>!<c-s>", "--effects"]));
+    let write = effects.lines().find(|l| l.contains("write_file")).expect("a write_file effect");
+    let v: serde_json::Value = serde_json::from_str(write).unwrap();
+    let want = std::fs::read_to_string(&file).unwrap().replace("2. Leave", "2. Leave!");
+    assert_eq!(v["text"].as_str(), Some(want.as_str()), "the file comes back as Markdown, blank lines and all");
+}

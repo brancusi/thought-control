@@ -14,7 +14,8 @@ use std::io::{self, Read, Write};
 use std::process::ExitCode;
 
 use caretline_next::trace::{parse_msgs, replay_trace};
-use caretline_next::{script_to_msgs, update, view, Msg, State, Viewport};
+use caretline_next::outline::markdown;
+use caretline_next::{script_to_msgs_for, update, view, Msg, OutlineConfig, State, Viewport};
 use clap::Parser;
 
 #[derive(Parser, Debug)]
@@ -22,7 +23,7 @@ use clap::Parser;
     name = "caretline",
     version,
     about = "A terminal text editor with serializable state and exact replay",
-    after_help = "Examples:\n  caretline notes.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)\n\nState protocol (see docs/caretline/protocol.md):\n  caretline notes.md --listen          serve it from the running editor\n  caretline serve [FILE] [--socket P]  a headless engine on stdio or a socket\n  caretline send --latest state.get    a client (render WxH, keys S, msgs F, set-state F)\n  caretline bench                      protocol benchmarks"
+    after_help = "Examples:\n  caretline notes.md\n  caretline --outline todo.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)\n\nState protocol (see docs/caretline/protocol.md):\n  caretline notes.md --listen          serve it from the running editor\n  caretline serve [FILE] [--socket P]  a headless engine on stdio or a socket\n  caretline send --latest state.get    a client (render WxH, keys S, msgs F, set-state F)\n  caretline bench                      protocol benchmarks"
 )]
 struct Args {
     /// The file to edit (created on first save if it doesn't exist).
@@ -86,6 +87,11 @@ struct Args {
     #[arg(long)]
     no_status_bar: bool,
 
+    /// Edit FILE as an outline: blocks, lists and tasks with their own keys (Tab, Ctrl-T,
+    /// Alt-Up/Down…), and Markdown in and out. See docs/caretline/outline.md.
+    #[arg(long)]
+    outline: bool,
+
     /// Interactive: keep at most this many lines in the in-memory trace `trace.get` serves
     /// (older segments are dropped first). The --trace file keeps everything.
     #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
@@ -121,6 +127,9 @@ struct ServeArgs {
     /// Hide the status bar: every row shows text.
     #[arg(long)]
     no_status_bar: bool,
+    /// Serve FILE as an outline document (see docs/caretline/outline.md).
+    #[arg(long)]
+    outline: bool,
     /// Keep at most this many lines in the in-memory trace `trace.get` serves (older
     /// segments are dropped first). The --trace file keeps everything.
     #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
@@ -132,10 +141,13 @@ fn serve(args: ServeArgs) -> Result<(), String> {
     let mut state = match &args.state {
         Some(path) => State::from_json(&read_input(path)?).map_err(|e| format!("{path}: {e}"))?,
         None => match &args.file {
-            Some(path) => State::new(&read_file_or_empty(path)?, Some(path.clone()), Viewport { width, height }),
-            None => State::new("", None, Viewport { width, height }),
+            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), Viewport { width, height }, args.outline),
+            None => new_state("", None, Viewport { width, height }, args.outline),
         },
     };
+    if args.outline && state.outline.is_none() {
+        state.enable_outline(OutlineConfig::default());
+    }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         state.path = Some(path.clone());
     }
@@ -170,6 +182,15 @@ fn serve(args: ServeArgs) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+/// A new state for a file's text: an outline document (read as Markdown) or plain text.
+fn new_state(text: &str, path: Option<String>, viewport: Viewport, outline: bool) -> State {
+    if outline {
+        markdown::load(text, path, viewport, OutlineConfig::default())
+    } else {
+        State::new(text, path, viewport)
+    }
 }
 
 fn parse_size(s: &str) -> Result<(u16, u16), String> {
@@ -227,7 +248,7 @@ fn run() -> Result<(), String> {
             }
             None => Viewport { width: 80, height: 24 },
         };
-        let mut state = State::new(&text, Some(path.clone()), viewport);
+        let mut state = new_state(&text, Some(path.clone()), viewport, args.outline);
         state.config.status_bar = !args.no_status_bar;
         println!("{}", state.to_json());
         return Ok(());
@@ -241,10 +262,13 @@ fn run() -> Result<(), String> {
         let (width, height) = crossterm::terminal::size().unwrap_or((80, 24));
         let viewport = Viewport { width, height };
         match &args.file {
-            Some(path) => State::new(&read_file_or_empty(path)?, Some(path.clone()), viewport),
-            None => State::new("", None, viewport),
+            Some(path) => new_state(&read_file_or_empty(path)?, Some(path.clone()), viewport, args.outline),
+            None => new_state("", None, viewport, args.outline),
         }
     };
+    if args.outline && state.outline.is_none() {
+        state.enable_outline(OutlineConfig::default());
+    }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         // A file given with a state names where the state saves.
         state.path = Some(path.clone());
@@ -294,7 +318,7 @@ fn run() -> Result<(), String> {
     let msgs = if let Some(path) = &args.msgs {
         parse_msgs(&read_input(path)?)?
     } else if let Some(script) = &args.keys {
-        script_to_msgs(script, state.now_ms)?
+        script_to_msgs_for(script, state.now_ms, state.outline.is_some())?
     } else {
         Vec::new()
     };

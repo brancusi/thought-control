@@ -38,7 +38,56 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     if !keeps_run {
         state.run = None;
     }
+    let outline_on = state.outline.is_some();
+    let before = outline_on.then(|| (state.selection.clone(), caret_block(state), msg.clone(), state.status.clone()));
+    if !passive && !matches!(msg, Msg::Click { extend: true, .. }) {
+        state.word_drag = None;
+    }
 
+    let pins = if outline_on { crate::outline::rules::pins_for(state, &msg) } else { None };
+    let edits_before = state.edits.0;
+    let handled = if outline_on { crate::outline::rules::update(state, &msg) } else { None };
+    if let Some(fx) = handled {
+        effects.extend(fx);
+    } else {
+        plain(state, msg, &mut effects);
+    }
+    if let Some(pins) = pins.filter(|_| state.edits.0 != edits_before) {
+        crate::outline::rules::pin(state, pins);
+    }
+
+    if let Some((prev, prev_block, msg, status)) = before {
+        crate::outline::rules::normalize(state, &prev, &msg);
+        let now = caret_block(state);
+        if now != prev_block {
+            effects.push(Effect::BlockLeft { from: prev_block, to: now });
+        }
+        if matches!(msg, Msg::Undo | Msg::Redo) && state.status.is_none() {
+            effects.push(Effect::Restored);
+        }
+        if !state.config.status_bar && state.status != status {
+            if let Some(text) = state.status.clone() {
+                effects.push(Effect::Notice { text });
+            }
+        }
+    }
+
+    state.dirty = state.compute_dirty();
+    if state.run.is_some_and(|r| r.revision != state.history.current_revision()) {
+        state.run = None;
+    }
+    ensure_caret_visible(state);
+    effects
+}
+
+/// The block holding the primary caret, in an outline document.
+fn caret_block(state: &State) -> Option<crate::marks::MarkId> {
+    let o = state.blocks()?;
+    Some(o.block_at(state.text.slice(..), state.caret()).id)
+}
+
+/// A message as the plain-text editor handles it.
+fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
     match msg {
         Msg::InsertText { text } => {
             let text = normalize_line_endings(&text, state.config.line_ending.as_str());
@@ -46,7 +95,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
                 insert(state, &text, Some(RunKind::Typing));
             }
         }
-        Msg::InsertNewline => {
+        Msg::InsertNewline | Msg::SoftBreak => {
             let le = state.config.line_ending.as_str().to_string();
             insert(state, &le, Some(RunKind::Typing));
         }
@@ -108,12 +157,32 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             let layout = Layout::new(state);
             let pos = layout.pos_at_screen(&state.scroll, col, row);
             let primary = state.selection.primary();
-            let range = if extend {
-                Range::new(primary.anchor, pos)
-            } else {
-                Range::point(pos)
+            let range = match (extend, state.word_drag) {
+                // After a double-click, extending goes by whole words.
+                (true, Some((a, b))) => {
+                    let (wa, wb) = word_at(state.text.slice(..), pos);
+                    if pos >= b { Range::new(a, wb.max(b)) } else { Range::new(b, wa.min(a)) }
+                }
+                (true, None) => Range::new(primary.anchor, pos),
+                (false, _) => Range::point(pos),
             };
             state.selection = Selection::single(range.anchor, range.head);
+        }
+        Msg::SelectWordAt { pos } => {
+            let pos = pos.min(state.text.len_chars());
+            let (a, b) = word_at(state.text.slice(..), pos);
+            state.selection = Selection::single(a, b);
+            state.word_drag = Some((a, b));
+        }
+        Msg::PastePlain { text } => plain(state, Msg::Paste { text }, effects),
+        Msg::Indent
+        | Msg::Outdent
+        | Msg::TaskCycle
+        | Msg::SetStatus { .. }
+        | Msg::MoveBlock { .. }
+        | Msg::SelectBlock { .. }
+        | Msg::InsertBlocks { .. } => {
+            state.status = Some("only in outline documents".into());
         }
         Msg::Scroll { rows } => scroll(state, rows),
         Msg::SelectAll => {
@@ -191,10 +260,12 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::Save => match &state.path {
             Some(path) => {
                 state.saving = Some(state.history.current_revision());
-                effects.push(Effect::WriteFile {
-                    path: path.clone(),
-                    text: state.text.to_string(),
-                });
+                let text = if state.outline.is_some() {
+                    crate::outline::markdown::to_file(state)
+                } else {
+                    state.text.to_string()
+                };
+                effects.push(Effect::WriteFile { path: path.clone(), text });
             }
             None => state.status = Some("no file name: start caretline with a path".into()),
         },
@@ -229,13 +300,25 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             state.status = (!line.is_empty()).then_some(line);
         }
     }
+}
 
-    state.dirty = state.compute_dirty();
-    if state.run.is_some_and(|r| r.revision != state.history.current_revision()) {
-        state.run = None;
+/// The word (by Unicode word boundaries) at `pos`: a run of letters, of spaces, or one
+/// punctuation mark.
+fn word_at(text: RopeSlice, pos: usize) -> (usize, usize) {
+    use unicode_segmentation::UnicodeSegmentation;
+    let line = text.char_to_line(pos);
+    let start = text.line_to_char(line);
+    let s: String = text.line(line).chars().collect();
+    let at = pos - start;
+    let mut chars = 0;
+    for w in s.split_word_bounds() {
+        let n = w.chars().count();
+        if at < chars + n && !w.contains(['\n', '\r']) {
+            return (start + chars, start + chars + n);
+        }
+        chars += n;
     }
-    ensure_caret_visible(state);
-    effects
+    (pos, pos)
 }
 
 /// Folds a message list into a state, dropping effects (headless replay).
@@ -284,6 +367,9 @@ pub(crate) fn commit_with(
     let naive = state.marks.clone();
     fix(&mut state.marks, state.text.slice(..));
     after_marks_changed(state);
+    if state.outline.is_some() {
+        crate::outline::rules::settle(state);
+    }
     let before_selection = state.selection.clone();
     if let Some(sel) = txn.selection() {
         state.selection = sel.clone();
@@ -291,6 +377,7 @@ pub(crate) fn commit_with(
     if !text_changed && state.marks == marks_before {
         return removed;
     }
+    state.edits.0 = state.edits.0.wrapping_add(1);
     let tracked = !marks_before.is_empty() || !state.marks.is_empty();
 
     let now = state.now_ms;
@@ -324,7 +411,10 @@ pub(crate) fn commit_with(
         doc: old_text.clone(),
         selection: before_selection,
     };
-    let amended = continues && state.history.amend_current_revision(&txn, &old_text, now);
+    // A change of marks alone folds into the current revision without touching its text
+    // (Helix can't compose an empty change set).
+    let amended = continues
+        && if text_changed { state.history.amend_current_revision(&txn, &old_text, now) } else { rev > 0 };
     if !amended {
         state.history.commit_revision_at_timestamp(&txn, &before, now);
     }
@@ -385,10 +475,12 @@ fn mark_delta(start: &Marks, start_text: &crate::helix::Rope, forward: &Transact
 }
 
 /// Whatever is derived from the marks or the text must be recomputed.
-pub(crate) fn after_marks_changed(_state: &mut State) {}
+pub(crate) fn after_marks_changed(state: &mut State) {
+    state.derived.clear();
+}
 
 /// The marks a cut of `[from, to]` took, as offsets into the cut text.
-fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark> {
+pub(crate) fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark> {
     removed
         .iter()
         .filter(|m| from <= m.pos && m.pos <= to)
@@ -399,7 +491,7 @@ fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark> {
 /// Pastes `text` at every range. With one range, marks carried in the register go back
 /// where they were in the pasted text (when their ids aren't in use), and a mark at the
 /// paste point stays there unless the register brings its own.
-fn paste_text(state: &mut State, text: &str, carried: &[ClipMark]) {
+pub(crate) fn paste_text(state: &mut State, text: &str, carried: &[ClipMark]) {
     let single = state.selection.len() == 1;
     if carried.is_empty() || !single {
         insert(state, text, None);
@@ -457,7 +549,7 @@ fn run_is_full(run: EditRun, txn: &Transaction) -> bool {
 
 /// Builds a transaction from one change per range (in selection order), dropping overlaps,
 /// and puts a caret after each change's inserted text.
-fn change_each(
+pub(crate) fn change_each(
     state: &State,
     mut f: impl FnMut(RopeSlice, Range) -> (usize, usize, Option<Tendril>),
 ) -> Transaction {
@@ -485,12 +577,12 @@ fn change_each(
     Transaction::change(&state.text, changes.into_iter()).with_selection(selection)
 }
 
-fn has_selection(state: &State) -> bool {
+pub(crate) fn has_selection(state: &State) -> bool {
     state.selection.iter().any(|r| !r.is_empty())
 }
 
 /// Types or pastes `text` at every range, replacing selections.
-fn insert(state: &mut State, text: &str, kind: Option<RunKind>) {
+pub(crate) fn insert(state: &mut State, text: &str, kind: Option<RunKind>) {
     let replaced = has_selection(state);
     let tendril = Tendril::from(text);
     let txn = change_each(state, |_, r| (r.from(), r.to(), Some(tendril.clone())));
@@ -498,12 +590,12 @@ fn insert(state: &mut State, text: &str, kind: Option<RunKind>) {
 }
 
 /// Deletes each selection; for an empty range, deletes the span `f` gives.
-fn delete(state: &mut State, kind: Option<RunKind>, f: impl FnMut(RopeSlice, usize, usize) -> (usize, usize)) {
+pub(crate) fn delete(state: &mut State, kind: Option<RunKind>, f: impl FnMut(RopeSlice, usize, usize) -> (usize, usize)) {
     delete_marks(state, kind, f);
 }
 
 /// [`delete`], returning the marks it removed.
-fn delete_marks(
+pub(crate) fn delete_marks(
     state: &mut State,
     kind: Option<RunKind>,
     mut f: impl FnMut(RopeSlice, usize, usize) -> (usize, usize),
@@ -532,6 +624,7 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
     txn.apply(&mut state.text);
     state.wrap.edited(txn.changes());
     state.fit_mark_log();
+    state.derived.clear();
     let delta = &state.mark_log[rev];
     if !state.marks.is_empty() || !delta.is_empty() {
         let fixup = if undo { delta.undo.clone() } else { delta.redo.clone() };
@@ -546,7 +639,7 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
     state.run = None;
 }
 
-fn selected_text(state: &State) -> Option<String> {
+pub(crate) fn selected_text(state: &State) -> Option<String> {
     let text = state.text.slice(..);
     let parts: Vec<String> = state
         .selection
@@ -561,7 +654,7 @@ fn selected_text(state: &State) -> Option<String> {
     }
 }
 
-fn count_label(text: &str) -> String {
+pub(crate) fn count_label(text: &str) -> String {
     use unicode_segmentation::UnicodeSegmentation;
     let n = text.graphemes(true).count();
     if n == 1 {
@@ -572,7 +665,7 @@ fn count_label(text: &str) -> String {
 }
 
 /// Converts CRLF, CR and LF line breaks to `le`.
-fn normalize_line_endings(text: &str, le: &str) -> String {
+pub(crate) fn normalize_line_endings(text: &str, le: &str) -> String {
     if !text.contains('\r') && le == "\n" {
         return text.to_string();
     }
@@ -588,14 +681,14 @@ fn normalize_line_endings(text: &str, le: &str) -> String {
 // Motion
 
 /// The start of the caret's visual row.
-fn row_start(layout: &Layout, pos: usize) -> usize {
+pub(crate) fn row_start(layout: &Layout, pos: usize) -> usize {
     let (at, _) = layout.pos_coords(pos);
     layout.pos_at(at, 0)
 }
 
 /// The end of the caret's visual row: the line end on a row that ends the line, else the
 /// row's last grapheme (where the row wraps).
-fn row_end(layout: &Layout, pos: usize) -> usize {
+pub(crate) fn row_end(layout: &Layout, pos: usize) -> usize {
     let (at, _) = layout.pos_coords(pos);
     layout.pos_at(at, usize::MAX)
 }
@@ -649,7 +742,19 @@ pub(crate) fn word_left(text: RopeSlice, pos: usize) -> usize {
 /// lands on the document start, past the last on the document end (as a text field does).
 fn vertical(layout: &Layout, origin: usize, n: isize, goal: usize) -> usize {
     let (at, _) = layout.pos_coords(origin);
-    let (target, moved) = layout.step_rows(at, n);
+    let (mut target, moved) = layout.step_rows(at, n);
+    // Virtual rows (a block's blank row) are never caret stops: step over them.
+    if moved == n && layout.is_virtual(target) {
+        if n > 0 {
+            target.row = layout.gap(target.line);
+        } else {
+            let (t, m) = layout.step_rows(target, -1);
+            if m == 0 {
+                return 0;
+            }
+            target = t;
+        }
+    }
     if moved != n {
         // Ran out of rows: clamp to the document's edge.
         if moved == 0 || n < 0 {
@@ -661,6 +766,8 @@ fn vertical(layout: &Layout, origin: usize, n: isize, goal: usize) -> usize {
 }
 
 fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
+    // Outside an outline, moving by block is moving by a document line.
+    let by = if by == By::Block && state.outline.is_none() { By::Line } else { by };
     // The direction a selection collapses towards.
     let dir = match by {
         By::LineStart | By::DocStart => Dir::Backward,
@@ -673,7 +780,16 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
     let text = wrapped.text();
     let len = text.len_chars();
 
-    let selection = state.selection.clone().transform(|r| {
+    let focused: Vec<bool> = state
+        .selection
+        .iter()
+        .map(|r| crate::outline::rules::is_focused_atomic(state, r))
+        .collect();
+    let mut index = 0;
+    let st: &State = state;
+    let selection = st.selection.clone().transform(|r| {
+        let is_focused = focused.get(index).copied().unwrap_or(false);
+        index += 1;
         let collapsing = !extend && !r.is_empty();
         let origin = if collapsing {
             match dir {
@@ -717,9 +833,10 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
                     Dir::Backward => -rows,
                     Dir::Forward => rows,
                 };
-                // A collapsing motion starts from the selection's edge, at that edge's x.
+                // A collapsing motion starts from the selection's edge, at that edge's x
+                // (a focused atomic block keeps the goal it was reached with).
                 let goal = match r.old_visual_position {
-                    Some((_, col)) if !collapsing => col as usize,
+                    Some((_, col)) if !collapsing || is_focused => col as usize,
                     _ => layout.pos_coords(origin).1,
                 };
                 let head = vertical(layout, origin, n, goal);
@@ -729,6 +846,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
             By::LineEnd => finish(row_end(&wrapped, origin), None),
             By::DocStart => finish(0, None),
             By::DocEnd => finish(len, None),
+            By::Block => finish(crate::outline::rules::block_step(st, origin, dir), None),
         }
     });
     state.selection = selection;

@@ -188,11 +188,20 @@ pub fn view(state: &State) -> Frame {
 
     if text_rows > 0 {
         let formatter = layout.formatter_at_row(top);
+        // Rows count from the top line's first row, virtual rows (an outline block's blank
+        // row before it) included: the formatter's rows skip them.
+        let mut line = top.line;
+        let mut virtual_rows = layout.gap(top.line);
         for g in formatter {
-            if g.visual_pos.row < top.row {
+            while line < g.line_idx {
+                line += 1;
+                virtual_rows += layout.gap(line);
+            }
+            let row = g.visual_pos.row + virtual_rows;
+            if row < top.row {
                 continue;
             }
-            let y = g.visual_pos.row - top.row;
+            let y = row - top.row;
             if y >= text_rows {
                 break;
             }

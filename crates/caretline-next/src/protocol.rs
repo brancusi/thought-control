@@ -365,7 +365,8 @@ impl Session {
                 let mut msgs: Vec<Msg> = tick.map(|now_ms| Msg::Tick { now_ms }).into_iter().collect();
                 if req.op == "keys" {
                     let script = req.keys.ok_or_else(|| err("bad_request", "keys needs a keys script"))?;
-                    msgs.extend(crate::keymap::script_to_msgs(&script, base).map_err(|e| err("bad_keys", e))?);
+                    let outline = self.state().outline.is_some();
+                    msgs.extend(crate::keymap::script_to_msgs_for(&script, base, outline).map_err(|e| err("bad_keys", e))?);
                 } else {
                     msgs.extend(req.msgs.ok_or_else(|| err("bad_request", "msgs needs a msgs array"))?);
                 }

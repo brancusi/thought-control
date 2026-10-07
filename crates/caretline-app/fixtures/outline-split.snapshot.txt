@@ -1,0 +1,10 @@
+Yesterday
+- [ ] shipped the parser
+- [ ] reviewed two pull requests
+Today
+fix the flaky test
+
+
+
+
+ standup.md [+]  task       25 sel  3:7

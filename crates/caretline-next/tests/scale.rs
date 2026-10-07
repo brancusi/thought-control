@@ -81,3 +81,34 @@ fn a_16k_character_run_is_linear() {
         assert!(ratio < 8.0, "{pattern:?}: 4x the chars took {ratio:.1}x the time");
     }
 }
+
+/// Typing in a 5,000-block outline stays well inside an interactive budget in a release
+/// build (each key re-derives the blocks; see docs/caretline/outline.md). Debug builds type a
+/// few keys without timing them.
+#[test]
+fn typing_in_a_5000_block_outline() {
+    use caretline_next::outline::markdown;
+    use caretline_next::OutlineConfig;
+    let mut md = String::new();
+    for i in 0..5000 {
+        md.push_str(&format!("- [ ] item number {i} with some words\n"));
+    }
+    let mut s = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
+    let keys = if cfg!(debug_assertions) { 20 } else { 400 };
+    for pos in [10, s.text.len_chars() - 3] {
+        s.selection = caretline_next::helix::Selection::point(pos);
+        let t = Instant::now();
+        for k in 0..keys {
+            caretline_next::update(&mut s, Msg::InsertText { text: "x".into() });
+            if k % 50 == 49 {
+                caretline_next::update(&mut s, Msg::InsertNewline);
+            }
+            std::hint::black_box(view(&s));
+        }
+        let per_key = t.elapsed() / keys as u32;
+        eprintln!("outline typing at {pos}: {per_key:?} per key");
+        if !cfg!(debug_assertions) {
+            assert!(per_key < Duration::from_millis(4), "{per_key:?} per key");
+        }
+    }
+}

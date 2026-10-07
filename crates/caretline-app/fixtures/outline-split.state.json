@@ -1,0 +1,236 @@
+{
+  "text": "Yesterday\n- [ ] shipped the parser\n- [ ] reviewed two pull requests\nToday\nfix the flaky test",
+  "selection": {
+    "ranges": [
+      {
+        "anchor": 16,
+        "head": 41,
+        "old_visual_position": null
+      }
+    ],
+    "primary_index": 0
+  },
+  "scroll": {
+    "line": 0,
+    "row": 0,
+    "col": 0
+  },
+  "viewport": {
+    "width": 40,
+    "height": 10
+  },
+  "clipboard": "",
+  "path": "standup.md",
+  "history": {
+    "revisions": [
+      {
+        "parent": 0,
+        "last_child": 1,
+        "transaction": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "inversion": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 0,
+        "last_child": null,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 10
+              },
+              {
+                "Insert": "- [ ] "
+              },
+              {
+                "Retain": 19
+              },
+              {
+                "Insert": "- [ ] "
+              },
+              {
+                "Retain": 51
+              }
+            ],
+            "len": 80,
+            "len_after": 92
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 16,
+                "head": 41,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 10
+              },
+              {
+                "Delete": 6
+              },
+              {
+                "Retain": 19
+              },
+              {
+                "Delete": 6
+              },
+              {
+                "Retain": 51
+              }
+            ],
+            "len": 92,
+            "len_after": 80
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 10,
+                "head": 29,
+                "old_visual_position": [
+                  0,
+                  0
+                ]
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      }
+    ],
+    "current": 1
+  },
+  "saved_revision": 0,
+  "saving": null,
+  "dirty": true,
+  "config": {
+    "tab_width": 4,
+    "soft_wrap": true,
+    "scrolloff": 2,
+    "line_ending": "LF",
+    "status_bar": true
+  },
+  "status": "task",
+  "now_ms": 0,
+  "run": null,
+  "quit_armed": false,
+  "marks": {
+    "marks": [
+      {
+        "pos": 0,
+        "id": 0
+      },
+      {
+        "pos": 10,
+        "id": 1,
+        "attrs": {
+          "gap": false
+        }
+      },
+      {
+        "pos": 35,
+        "id": 2,
+        "attrs": {
+          "gap": false
+        }
+      },
+      {
+        "pos": 68,
+        "id": 3,
+        "attrs": {
+          "gap": false
+        }
+      }
+    ],
+    "next": 4
+  },
+  "mark_log": [
+    {},
+    {
+      "undo": {
+        "drop": [
+          1,
+          2,
+          3
+        ]
+      },
+      "redo": {
+        "set": [
+          {
+            "pos": 10,
+            "id": 1,
+            "attrs": {
+              "gap": false
+            }
+          },
+          {
+            "pos": 35,
+            "id": 2,
+            "attrs": {
+              "gap": false
+            }
+          },
+          {
+            "pos": 68,
+            "id": 3,
+            "attrs": {
+              "gap": false
+            }
+          }
+        ]
+      }
+    }
+  ],
+  "outline": {
+    "indent": 2,
+    "task_markers": [
+      {
+        "ch": " ",
+        "name": "todo"
+      },
+      {
+        "ch": "x",
+        "name": "done"
+      },
+      {
+        "ch": "/",
+        "name": "doing"
+      },
+      {
+        "ch": "w",
+        "name": "waiting"
+      },
+      {
+        "ch": "-",
+        "name": "cancelled"
+      }
+    ],
+    "cycle": [
+      " ",
+      "x"
+    ],
+    "atomic_images": true,
+    "numbered": true
+  }
+}

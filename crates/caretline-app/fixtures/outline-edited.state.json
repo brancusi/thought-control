@@ -1,0 +1,558 @@
+{
+  "text": "# Lisbon trip\nBooked the flat in Lisbon.\nIt faces the river.\n- [ ] Pay the deposit\n  - ask Ana about her desk\n    - [x] Call Ana\n- [x] Renew passport\n- [ ] Book flights\n![boiler label](files/boiler.png)\n1. Pack\n2. Leave",
+  "selection": {
+    "ranges": [
+      {
+        "anchor": 147,
+        "head": 147,
+        "old_visual_position": null
+      }
+    ],
+    "primary_index": 0
+  },
+  "scroll": {
+    "line": 0,
+    "row": 0,
+    "col": 0
+  },
+  "viewport": {
+    "width": 50,
+    "height": 18
+  },
+  "clipboard": "",
+  "path": "trip.md",
+  "history": {
+    "revisions": [
+      {
+        "parent": 0,
+        "last_child": 1,
+        "transaction": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "inversion": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 0,
+        "last_child": 2,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 109
+              },
+              {
+                "Insert": "\n  - "
+              },
+              {
+                "Retain": 91
+              }
+            ],
+            "len": 200,
+            "len_after": 205
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 114,
+                "head": 114,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 109
+              },
+              {
+                "Delete": 5
+              },
+              {
+                "Retain": 91
+              }
+            ],
+            "len": 205,
+            "len_after": 200
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 109,
+                "head": 109,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 1,
+        "last_child": 3,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 114
+              },
+              {
+                "Insert": "Call Ana"
+              },
+              {
+                "Retain": 91
+              }
+            ],
+            "len": 205,
+            "len_after": 213
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 122,
+                "head": 122,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 114
+              },
+              {
+                "Delete": 8
+              },
+              {
+                "Retain": 91
+              }
+            ],
+            "len": 213,
+            "len_after": 205
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 114,
+                "head": 114,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 2,
+        "last_child": 4,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 110
+              },
+              {
+                "Insert": "  "
+              },
+              {
+                "Retain": 103
+              }
+            ],
+            "len": 213,
+            "len_after": 215
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 124,
+                "head": 124,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 110
+              },
+              {
+                "Delete": 2
+              },
+              {
+                "Retain": 103
+              }
+            ],
+            "len": 215,
+            "len_after": 213
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 122,
+                "head": 122,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 3,
+        "last_child": 5,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 114
+              },
+              {
+                "Insert": "- [ ] "
+              },
+              {
+                "Delete": 2
+              },
+              {
+                "Retain": 99
+              }
+            ],
+            "len": 215,
+            "len_after": 219
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 128,
+                "head": 128,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 114
+              },
+              {
+                "Insert": "- "
+              },
+              {
+                "Delete": 6
+              },
+              {
+                "Retain": 99
+              }
+            ],
+            "len": 219,
+            "len_after": 215
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 124,
+                "head": 124,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 4,
+        "last_child": 6,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 117
+              },
+              {
+                "Insert": "x"
+              },
+              {
+                "Delete": 1
+              },
+              {
+                "Retain": 101
+              }
+            ],
+            "len": 219,
+            "len_after": 219
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 128,
+                "head": 128,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 117
+              },
+              {
+                "Insert": " "
+              },
+              {
+                "Delete": 1
+              },
+              {
+                "Retain": 101
+              }
+            ],
+            "len": 219,
+            "len_after": 219
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 128,
+                "head": 128,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 5,
+        "last_child": null,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 129
+              },
+              {
+                "Insert": "- [x] Renew passport\n- [ ] Book flights\n"
+              },
+              {
+                "Delete": 40
+              },
+              {
+                "Retain": 50
+              }
+            ],
+            "len": 219,
+            "len_after": 219
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 147,
+                "head": 147,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 129
+              },
+              {
+                "Insert": "- [ ] Book flights\n- [x] Renew passport\n"
+              },
+              {
+                "Delete": 40
+              },
+              {
+                "Retain": 50
+              }
+            ],
+            "len": 219,
+            "len_after": 219
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 166,
+                "head": 166,
+                "old_visual_position": [
+                  0,
+                  18
+                ]
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 0
+      }
+    ],
+    "current": 6
+  },
+  "saved_revision": 0,
+  "saving": null,
+  "dirty": true,
+  "config": {
+    "tab_width": 4,
+    "soft_wrap": true,
+    "scrolloff": 2,
+    "line_ending": "LF",
+    "status_bar": true
+  },
+  "status": null,
+  "now_ms": 0,
+  "run": null,
+  "quit_armed": false,
+  "marks": {
+    "marks": [
+      {
+        "pos": 0,
+        "id": 0
+      },
+      {
+        "pos": 14,
+        "id": 1
+      },
+      {
+        "pos": 61,
+        "id": 2
+      },
+      {
+        "pos": 83,
+        "id": 3
+      },
+      {
+        "pos": 110,
+        "id": 9
+      },
+      {
+        "pos": 129,
+        "id": 5
+      },
+      {
+        "pos": 150,
+        "id": 4
+      },
+      {
+        "pos": 169,
+        "id": 6
+      },
+      {
+        "pos": 203,
+        "id": 7
+      },
+      {
+        "pos": 211,
+        "id": 8
+      }
+    ],
+    "next": 10
+  },
+  "mark_log": [
+    {},
+    {
+      "redo": {
+        "set": [
+          {
+            "pos": 110,
+            "id": 9
+          }
+        ]
+      }
+    },
+    {},
+    {},
+    {},
+    {},
+    {
+      "undo": {
+        "set": [
+          {
+            "pos": 129,
+            "id": 4
+          },
+          {
+            "pos": 148,
+            "id": 5
+          }
+        ]
+      },
+      "redo": {
+        "set": [
+          {
+            "pos": 129,
+            "id": 5
+          },
+          {
+            "pos": 150,
+            "id": 4
+          }
+        ]
+      }
+    }
+  ],
+  "outline": {
+    "indent": 2,
+    "task_markers": [
+      {
+        "ch": " ",
+        "name": "todo"
+      },
+      {
+        "ch": "x",
+        "name": "done"
+      },
+      {
+        "ch": "/",
+        "name": "doing"
+      },
+      {
+        "ch": "w",
+        "name": "waiting"
+      },
+      {
+        "ch": "-",
+        "name": "cancelled"
+      }
+    ],
+    "cycle": [
+      " ",
+      "x"
+    ],
+    "atomic_images": true,
+    "numbered": true
+  }
+}

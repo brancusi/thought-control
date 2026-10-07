@@ -40,6 +40,8 @@ log. There's no terminal crate and no ratatui.
 | `Session`, `protocol::*` | `caretline_next` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
 | `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline_next` | Block identity that survives edits: see [Block marks](#block-marks) |
 | `marks::{Clipboard, ClipMark, MarkDelta, Fixup, is_line_start}`, `update::mark_only_edit` | `caretline_next::marks`, `::update` | The register with carried marks, the per-revision deltas, a host's undoable mark edit |
+| `OutlineConfig`, `Outline`, `BlockInfo`, `Kind`, `NewBlock`, `outline::{markdown, derive, content, Hang}` | `caretline_next`, `::outline` | Outline documents: blocks, lists and tasks over the same buffer. See [outline.md](outline.md#in-rust) |
+| `outline_keymap`, `keymap_for`, `script_to_msgs_for` | `caretline_next` | The outline's keys |
 
 ## Create a state
 
@@ -310,6 +312,24 @@ assert_eq!(s.marks.pos(milk), Some(s.text.line_to_char(1)));
 | `attrs(id)`, `set_attrs(id, attrs)` | A block's attributes |
 | `iter()`, `len()`, `next_id()` | Walk them in document order |
 
+## Outline documents
+
+`markdown::load` opens Markdown as an [outline document](outline.md); `state.enable_outline`
+turns an existing state into one. `state.blocks()` gives the derived blocks, each with its
+mark id. `save` writes Markdown back.
+
+```rust
+use caretline_next::outline::markdown;
+use caretline_next::{update, By, Dir, Msg, OutlineConfig, Viewport};
+
+let mut s = markdown::load("- [ ] Pay rent\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
+update(&mut s, Msg::Move { dir: Dir::Forward, by: By::LineEnd, extend: false });
+update(&mut s, Msg::InsertNewline);                 // a new open task below
+update(&mut s, Msg::InsertText { text: "Call Ana".into() });
+update(&mut s, Msg::Indent);                        // nested under the first
+assert_eq!(markdown::to_file(&s), "- [ ] Pay rent\n  - [ ] Call Ana\n");
+```
+
 ## Session
 
 A `Session` wraps a `State` with a revision counter and an in-memory trace. It is the library
@@ -398,6 +418,8 @@ fn main() {
                 Effect::ClipboardSet { text } => println!("effect: copy {text:?} to the clipboard"),
                 Effect::WriteFile { path, .. } => println!("effect: write {path}"),
                 Effect::Quit => println!("effect: quit"),
+                // Outline documents also report notices, completed tasks and block changes.
+                other => println!("effect: {other:?}"),
             }
         }
     }

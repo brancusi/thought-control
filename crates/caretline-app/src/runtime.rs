@@ -10,7 +10,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use caretline_next::protocol::Change;
 use caretline_next::view::Role;
-use caretline_next::{keymap, Effect, Frame, Key, KeyCode, Mods, Msg, Session, State};
+use caretline_next::{keymap_for, Effect, Frame, Key, KeyCode, Mods, Msg, Session, State};
 
 use crate::hub::{self, Hub, Input};
 use crossterm::event::{
@@ -167,6 +167,9 @@ fn perform(effect: &Effect, quit: &mut bool) -> Option<Msg> {
             *quit = true;
             None
         }
+        // Notices only come with the status bar off; the rest are for hosts that keep
+        // their own data per block.
+        Effect::Notice { .. } | Effect::Completed { .. } | Effect::Restored | Effect::BlockLeft { .. } => None,
     }
 }
 
@@ -279,10 +282,11 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
 fn terminal_msgs(state: &State, ev: Event) -> Vec<Msg> {
     match ev {
         Event::Key(k) if matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
-            match to_key(&k).and_then(|key| keymap(&key)) {
+            match to_key(&k).and_then(|key| keymap_for(state.outline.is_some(), &key)) {
                 // The keymap is pure, so a paste key carries no text; fill it in here from
                 // the system clipboard so the trace records exactly what was pasted.
                 Some(Msg::Paste { text: None }) => vec![Msg::Paste { text: read_system_clipboard() }],
+                Some(Msg::PastePlain { text: None }) => vec![Msg::PastePlain { text: read_system_clipboard() }],
                 Some(msg) => vec![msg],
                 None => vec![],
             }

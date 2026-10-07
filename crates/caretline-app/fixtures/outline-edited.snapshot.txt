@@ -1,0 +1,18 @@
+# Lisbon trip
+
+Booked the flat in Lisbon.
+It faces the river.
+
+- [ ] Pay the deposit
+  - ask Ana about her desk
+    - [x] Call Ana
+- [x] Renew passport
+- [ ] Book flights
+
+![boiler label](files/boiler.png)
+
+1. Pack
+2. Leave
+
+
+ trip.md [+]                                 7:19

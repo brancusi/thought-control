@@ -38,7 +38,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | State protocol (`serve`, `--listen`, `send`) | Yes | Drive a headless engine or a live editor over JSON lines. See [protocol.md](protocol.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
-| Markdown structure (lists, tasks, folds) | Not yet | The older `caretline` crate has these; see below |
+| Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and multiple views not yet |
 
 ## The layers
 
@@ -68,8 +68,9 @@ This repository has two editor engines. They are not the same thing.
 | [`caretline`](../../crates/caretline) | The older engine: a block editor for Markdown (paragraphs, list items, tasks, folds, several views on one document) | thought-central's TUI (`thc-tui`) |
 
 caretline-next is meant to replace the older engine once the TUI adopts it. That hasn't
-happened yet. Today the TUI still runs on the older `caretline` crate. caretline-next doesn't
-yet have that crate's block model or its multiple views per document. The binary named
+happened yet. Today the TUI still runs on the older `caretline` crate. caretline-next now has
+a block model ([outline documents](outline.md)) but not yet folds or multiple views per
+document. The binary named
 `caretline` comes from `caretline-app`, which uses caretline-next, not from the crate named
 `caretline`.
 
@@ -80,6 +81,7 @@ yet have that crate's block model or its multiple views per document. The binary
 | Understand how it works | [architecture.md](architecture.md) |
 | Call it from Rust | [api.md](api.md) |
 | Look up a message, an effect or a key | [messages.md](messages.md) |
+| Edit lists, tasks and blocks | [outline.md](outline.md) |
 | Use the `caretline` command | [cli.md](cli.md) |
 | Drive it over JSON lines | [protocol.md](protocol.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |

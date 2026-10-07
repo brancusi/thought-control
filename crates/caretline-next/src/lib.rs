@@ -25,6 +25,7 @@ pub mod keymap;
 pub mod layout;
 pub mod marks;
 pub mod msg;
+pub mod outline;
 pub mod protocol;
 pub mod session;
 pub mod state;
@@ -33,7 +34,8 @@ pub mod update;
 pub mod view;
 
 pub use marks::{BlockAttrs, Mark, MarkId, Marks};
-pub use keymap::{keymap, parse_keys, script_to_msgs, Key, KeyCode, Mods};
+pub use outline::{BlockInfo, Kind, NewBlock, Outline, OutlineConfig};
+pub use keymap::{keymap, keymap_for, outline_keymap, parse_keys, script_to_msgs, script_to_msgs_for, Key, KeyCode, Mods};
 pub use msg::{By, Dir, Effect, Msg};
 pub use session::Session;
 pub use state::{Config, Scroll, State, Viewport};

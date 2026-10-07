@@ -46,6 +46,8 @@ fn main() {
                 Effect::ClipboardSet { text } => println!("effect: copy {text:?} to the clipboard"),
                 Effect::WriteFile { path, .. } => println!("effect: write {path}"),
                 Effect::Quit => println!("effect: quit"),
+                // Outline documents also report notices, completed tasks and block changes.
+                other => println!("effect: {other:?}"),
             }
         }
     }

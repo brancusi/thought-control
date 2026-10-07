@@ -43,13 +43,15 @@ assert_eq!(view(&state).cursor, Some((2, 0)));            // the caret is after 
 | `quit_armed` | A first quit with unsaved changes arms it; the second quits |
 | `marks` | Block marks: numeric ids at line starts, mapped through every edit (see [Block marks](#block-marks)). Left out of the JSON when unused |
 | `mark_log` | What each history revision did to the marks, by revision. Left out of the JSON when empty |
+| `outline` | Set for an [outline document](outline.md): its config (indent, task vocabulary, cycle). Left out when unset |
+| `word_drag` | The word a `select_word_at` selected, while a shift-click may extend it by words |
 
 Only `text` matters when a state is parsed: every other field is optional and gets what
 `State::new` would give (see [Rehydration](#rehydration)).
 
-`State` also carries a layout memo that is not part of its value: where the rows of long
-soft-wrapped lines start (see [Long lines](#long-lines)). It is never serialized and never
-affects equality.
+`State` also carries memos that are not part of its value: where the rows of long
+soft-wrapped lines start (see [Long lines](#long-lines)) and an outline document's derived
+blocks. They are never serialized and never affect equality.
 
 ## The update loop
 
@@ -288,12 +290,24 @@ one back where its offset lands on a line start, unless that id is in use. So a 
 in one session move blocks with their ids, and cut then paste in place gives back the same
 marks.
 
+## Outline documents
+
+With `state.outline` set, the same buffer is read as blocks bounded by marks (one text line
+per row, a block's first line carrying its indentation and marker, other lines continuing
+it). `update` hands Enter, Backspace, Delete, Tab, the task cycle, moves, copy and paste to
+the outline's rules first (`outline::rules`), which build ordinary Transactions with explicit
+mark edits. Every commit then marks new block starts, and after every message the selection
+is kept out of markers and atomic blocks. Layout adds a virtual row before each block with a
+blank row. See [outline.md](outline.md).
+
 ## What `update` does after every message
 
 After handling any message, `update` always:
 
-1. recomputes `dirty`,
-2. closes the edit run if history moved past it, and
-3. scrolls so the primary caret is visible, keeping `scrolloff` rows of margin.
+1. in an outline document, keeps the selection out of markers and atomic blocks and reports
+   `block_left` (and `restored`, `notice`),
+2. recomputes `dirty`,
+3. closes the edit run if history moved past it, and
+4. scrolls so the primary caret is visible, keeping `scrolloff` rows of margin.
 
 So no runtime needs to fix up scrolling after a resize or an edit.

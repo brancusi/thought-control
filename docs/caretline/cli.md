@@ -28,6 +28,7 @@ cargo run -p caretline-app -- notes.md                # or run it from the check
 | `… --size WxH` | Resize before applying messages |
 | `caretline serve`, `caretline send`, `--listen` | The state protocol, see [protocol.md](protocol.md) |
 | `caretline bench` | Protocol throughput and latency (build with `--release`) |
+| `caretline --outline FILE` | Edit FILE as an [outline](outline.md): lists, tasks and blocks with their own keys, Markdown in and out (also for `--new-state` and `serve`) |
 | `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
 | `… --trace-limit LINES` | Editor and `serve`: bound the in-memory trace `trace.get` serves (default 100,000 lines; see [protocol.md](protocol.md#traces)) |
 
@@ -231,6 +232,9 @@ same.
 | `after-undo` | An edit undone, with the redo step still in the history |
 | `no-wrap-table` | Wrapping off: a long table row scrolled sideways |
 | `session.trace.jsonl` | A recorded session; `session.snapshot.txt` is its replay at 36x8 |
+| `outline-trip` | `trip.md` opened as an outline: a heading, paragraphs, nested tasks, an image block and a numbered list, with blank rows drawn as virtual rows |
+| `outline-edited` | The same after keys: a new nested task added and done, an item moved up |
+| `outline-split` | A paragraph whose two selected lines the task cycle turned into tasks (`standup.md`) |
 
 ```console
 $ caretline --state crates/caretline-app/fixtures/emoji-line.state.json --keys '<s-right><s-right>' --snapshot 40x6
@@ -269,7 +273,8 @@ caretline: line 1: unknown variant `jump`, expected one of `insert_text`, `inser
 
 ## Limits
 
-- One document of plain text or Markdown. No syntax highlighting, search or multiple buffers yet.
+- One document of plain text or Markdown (`--outline` reads it as blocks). No syntax
+  highlighting, search or multiple buffers yet.
 - The engine edits multiple selections, but no key creates them yet.
 - `End` on a wrapped row stops before the space where the row wraps.
 - Display widths follow Helix's table (`unicode-width` 0.1.12). A terminal with different

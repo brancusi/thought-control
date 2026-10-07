@@ -2,6 +2,9 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::marks::MarkId;
+use crate::outline::NewBlock;
+
 /// Which way a motion goes.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -30,6 +33,9 @@ pub enum By {
     Page,
     DocStart,
     DocEnd,
+    /// The content start of the next block, or of this one (then the one before) going back.
+    /// Outline documents only; elsewhere it moves by a document line.
+    Block,
 }
 
 /// Everything that can happen to the editor. `update` is a pure function of the state
@@ -93,6 +99,71 @@ pub enum Msg {
     /// Show a one-line message in the status bar (until the next input). Passive: it
     /// doesn't end an edit run or disarm a pending quit.
     ShowStatus { text: String },
+
+    // Outline documents (see docs/caretline/outline.md). Elsewhere these only set a status
+    // message, except `soft_break` (a line break), `select_word_at` and `paste_plain`.
+    /// A line break inside the block (a list item's second line). In a paragraph it is
+    /// Enter.
+    SoftBreak,
+    /// Nest the caret's block, or every block the selection touches, one level deeper.
+    Indent,
+    /// Un-nest them one level.
+    Outdent,
+    /// The task cycle on the caret's block or the selected blocks: text → open → done →
+    /// text.
+    TaskCycle,
+    /// Set a task's box (a click on it).
+    SetStatus { id: MarkId, ch: char },
+    /// Swap the caret's block (with its children) with its previous or next sibling.
+    MoveBlock { dir: Dir },
+    /// Select a block's whole content (a triple-click).
+    SelectBlock { id: MarkId },
+    /// Select the word at a char position (a double-click). A `click` with `extend` right
+    /// after it extends by whole words.
+    SelectWordAt { pos: usize },
+    /// Insert blocks a host made (an attachment, recovered text) after a block, or at the
+    /// start when `after` is absent. One undo step.
+    InsertBlocks {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        after: Option<MarkId>,
+        blocks: Vec<NewBlock>,
+    },
+    /// Paste as plain text: in an outline, paragraphs with their line breaks kept, never
+    /// list items.
+    PastePlain {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        text: Option<String>,
+    },
+}
+
+impl Msg {
+    /// Whether the message can change the text (or marks).
+    pub fn edits(&self) -> bool {
+        matches!(
+            self,
+            Msg::InsertText { .. }
+                | Msg::InsertNewline
+                | Msg::DeleteBackward
+                | Msg::DeleteForward
+                | Msg::DeleteWordBackward
+                | Msg::DeleteWordForward
+                | Msg::DeleteToLineStart
+                | Msg::DeleteToLineEnd
+                | Msg::KillLine
+                | Msg::Cut
+                | Msg::Paste { .. }
+                | Msg::PastePlain { .. }
+                | Msg::Undo
+                | Msg::Redo
+                | Msg::SoftBreak
+                | Msg::Indent
+                | Msg::Outdent
+                | Msg::TaskCycle
+                | Msg::SetStatus { .. }
+                | Msg::MoveBlock { .. }
+                | Msg::InsertBlocks { .. }
+        )
+    }
 }
 
 /// Work for the runtime. `update` never performs I/O; it returns these instead.
@@ -104,4 +175,18 @@ pub enum Effect {
     /// Put text on the system clipboard.
     ClipboardSet { text: String },
     Quit,
+    /// A message for the person, from an outline document whose status bar is off.
+    Notice { text: String },
+    /// A task reached done (a host may save at once).
+    Completed { id: MarkId },
+    /// Undo or redo changed an outline document (a host re-reads what it keeps per block).
+    Restored,
+    /// The primary caret moved from one block to another in an outline document (a commit
+    /// point for a host).
+    BlockLeft {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        from: Option<MarkId>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        to: Option<MarkId>,
+    },
 }
