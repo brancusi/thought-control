@@ -322,6 +322,19 @@ First plan removes the gate. Agents never accept work on the human's behalf.
   The `<agent:TEXT>` key token makes a real agent write mid-session (toast, live flash), and
   `<alert>` raises the alert toast for the first pending alert. Snapshots show `● live` when a
   daemon runs for the vault, otherwise the offline bar.
+- **The TUI is state-driven (Elm style), and the state is an API:** see `docs/ui-protocol.md`.
+  Every presentation choice lives in one serializable `UiState` (`crates/thc-tui/src/ui_state.rs`);
+  every input is a `Msg` applied by `Session::apply` (`session.rs`); presentation actions are a
+  pure `update::action` returning effects; the view (`ui.rs`, `doc_ui.rs`, `node_row.rs`) reads
+  only state and derived data (a test fails if it reaches the store, a clock, env or files).
+  New TUI state goes in `UiState`, never as a hidden field, cell or thread-local; time comes
+  from `UiState::now_ms` (ticks), never `Instant::now()`.
+  - Drive a running TUI: `thc ui ls`, `thc ui state`, `thc ui patch '{"view":"tasks"}'`,
+    `thc ui send keys 'gg<cr>'`, `thc ui render 120x32`, `thc ui send subscribe`.
+  - Without a terminal: `thc ui render 120x32 --state s.json` (start from `thc ui state
+    --default`). `THC_TUI_SNAPSHOT` still works and reads the same key scripts.
+  - Record and replay: `thc tui --trace t.jsonl`, then `thc ui replay t.jsonl [--every]`.
+    With `THC_NOW` pinned, renders and replays are byte-identical across runs.
 - **Fixtures:** `scripts/seed-sample.sh [--conflict] <vault>` seeds sample data. `--conflict` also
   runs `scripts/fixture-conflict.sh`, which builds the daemon spec's conflict states: a text
   conflict, a rejected move cycle and an agent reminder. Never point either script at a real vault.
