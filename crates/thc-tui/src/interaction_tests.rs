@@ -224,3 +224,18 @@ fn a_wide_character_that_doesnt_fit_wraps_whole() {
         }
     }
 }
+
+/// 02pjq: Enter shows what the saved page will show: on an empty paragraph it does nothing.
+#[test]
+fn enter_makes_only_what_a_save_keeps() {
+    use crate::editor::{BlockPos, Doc, Target};
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    let blk = |id: &str, kind: &str, text: &str| -> thc_core::outline::Block { serde_json::from_value(serde_json::json!({"id": id, "parent": null, "depth": 0, "kind": kind, "text": text, "text_rev": "r"})).unwrap() };
+    let texts = |d: &Doc| d.blocks().iter().map(|l| l.text.clone()).collect::<Vec<_>>();
+    // An empty paragraph (a journal's fresh line): Enter makes nothing.
+    let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[blk("a", "para", "notes"), blk("b", "para", "")], today);
+    d.fill_ids((0..20).map(|i| format!("id{i:03}")).collect());
+    d.set_caret(BlockPos { line: 1, byte: 0 });
+    d.run_command("edit.newline");
+    assert_eq!(texts(&d), ["notes", ""]);
+}

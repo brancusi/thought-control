@@ -59,7 +59,7 @@ fn enter_makes_a_new_note() {
 
 #[test]
 fn enter_splits_a_line() {
-    q4().named("Enter in the middle of a line splits it").known("02pjq", Known::Restore)
+    q4().named("Enter in the middle of a line splits it").known("0d61e", Known::Restore)
         .click_caret(doc_at("Last line of the plan", 9))
         .keys("<cr>")
         .expect_caret_before(" of the plan")
@@ -202,9 +202,8 @@ fn undo_and_redo_across_typing_enter_and_tab() {
 }
 
 #[test]
-#[ignore = "02pjq"]
 fn type_in_todays_journal() {
-    flow("type in today's journal").keys("T<c-end><cr>").type_text("meeting notes: ").type_text(WORDS).expect_saved_contains("meeting notes: the quick").done();
+    flow("type in today's journal").known("64j4y", Known::Rail).keys("T<c-end><cr>").type_text("meeting notes: ").type_text(WORDS).expect_saved_contains("meeting notes: the quick").done();
 }
 
 #[test]
@@ -253,7 +252,8 @@ fn type_a_link_with_the_popup() {
 /// The typing flows that matter most, at the sizes people use: a laptop split, a full screen.
 fn type_and_wrap(w: u16, h: u16) {
     let mut f = flow_with(&format!("type and wrap at {w}x{h}"), Size::Small, (w, h));
-    f.known("02pjq", Known::Restore)
+    // The last typed space ends a row: the caret's own row isn't saved (5jzx9).
+    f.known("5jzx9", Known::Restore)
         .keys("<c-o>Q4 Plan<cr>")
         .click_caret(doc_at("This paragraph is long", 90))
         .type_text("WIDE 日本 🙂 ")
