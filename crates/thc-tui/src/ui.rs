@@ -346,6 +346,18 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
         let side = Rect { x: area.width - s, width: s, ..full };
         crate::sidebar_ui::draw(render, f, app, side, Some(Rect { x: area.width - s - 1, width: 1, ..full }));
     }
+    match app.sidebar_over {
+        Some((crate::sidebar::Layout::Drawer { .. }, r)) => crate::sidebar_ui::draw_drawer(render, f, app, r, rule.y),
+        Some((crate::sidebar::Layout::Replace, r)) => {
+            // The main view's clicks are under it: none of them.
+            render.click_targets.retain(|t| !(t.y >= r.y && t.y < r.bottom()));
+            render.doc_view = None;
+            render.doc_hits.clear();
+            render.image_places.clear();
+            crate::sidebar_ui::draw_replace(render, f, app, r);
+        }
+        _ => {}
+    }
     if drawer > 0 {
         draw_drawer(render, f, app, drawer_r);
     }
@@ -4305,7 +4317,12 @@ fn update_frame(app: &mut App, area: Rect) {
 }
 
 fn prepare_frame(app: &mut App, area: Rect) {
-    app.sidebar_col = if area.width < 60 || area.height < 24 { None } else { crate::sidebar_ui::column(app, area.width) };
+    let placement = if area.width < 60 || area.height < 24 { None } else { crate::sidebar_ui::placement(app, area.width) };
+    app.sidebar_col = match placement {
+        Some(crate::sidebar::Layout::Column { width }) => Some(width),
+        _ => None,
+    };
+    app.sidebar_over = None;
     // Every breakpoint reads the main area's width (sidebar.md §6.2).
     app.screen_width = app.sidebar_col.map_or(area.width, |s| area.width.saturating_sub(s + 2));
     crate::derived::prepare(app);
@@ -4315,9 +4332,22 @@ fn prepare_frame(app: &mut App, area: Rect) {
     if area.width < 60 || area.height < 24 {
         return;
     }
-    if let Some(s) = app.sidebar_col {
+    {
         let c = normal_areas(app, area)[3];
-        crate::sidebar_ui::prepare(app, Rect { x: area.width - s, width: s, ..c });
+        match placement {
+            Some(crate::sidebar::Layout::Column { width: s }) => crate::sidebar_ui::prepare(app, Rect { x: area.width - s, width: s, ..c }),
+            Some(l @ crate::sidebar::Layout::Drawer { width }) => {
+                let w = width.min(area.width);
+                let r = Rect { x: area.width - w, width: w, ..c };
+                app.sidebar_over = Some((l, r));
+                crate::sidebar_ui::prepare(app, Rect { x: r.x + 1, width: w - 1, ..r });
+            }
+            Some(l @ crate::sidebar::Layout::Replace) => {
+                app.sidebar_over = Some((l, c));
+                crate::sidebar_ui::prepare(app, Rect { y: c.y + 1, height: c.height.saturating_sub(1), ..c });
+            }
+            None => {}
+        }
     }
     let content = if app.focus_mode && app.doc.is_some() {
         focus_areas(app, area)[1]
