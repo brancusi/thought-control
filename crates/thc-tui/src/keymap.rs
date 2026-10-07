@@ -327,7 +327,7 @@ impl When {
             When::CanBack => app.can_back(),
             When::Foldable => app.rows.get(app.cursor).is_some_and(|r| matches!(r, Row::Node { has_children: true, .. })),
             When::PagesIndex => app.view == View::Pages && app.page_open.is_none(),
-            When::DocIsJournal => app.doc.as_ref().is_some_and(|d| matches!(d.target, crate::doc::Target::Journal { .. })),
+            When::DocIsJournal => app.doc.as_ref().is_some_and(|d| matches!(d.target, crate::editor::Target::Journal { .. })),
             When::CompareMove => matches!(&app.overlay, Some(crate::app::Overlay::Compare { detail }) if detail.kind == "move"),
             When::CompareText => matches!(&app.overlay, Some(crate::app::Overlay::Compare { detail }) if detail.kind == "text"),
             When::CompareRehomed => matches!(&app.overlay, Some(crate::app::Overlay::Compare { detail }) if detail.kind == "rehomed"),

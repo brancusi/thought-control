@@ -3,9 +3,10 @@
 //! transaction per save, `base` on every edit so a concurrent change becomes a conflict).
 //!
 //! This file is the pure part: thc's lines (a caretline block plus its save state), the save
-//! diff and wrapping. The editing rules and undo are caretline's (`caretline::buffer`); drawing
-//! and keys live in ui.rs / input.rs and call in here.
+//! diff and wrapping. The editing rules and undo are caretline's (`caretline::buffer`). The rest
+//! of thc-tui reaches it only through the seam in `editor/mod.rs`.
 
+use super::BlockPos;
 use caretline::buffer::{BlockLine, Buffer};
 use std::collections::HashMap;
 use std::time::Instant;
@@ -21,7 +22,7 @@ pub fn new_id() -> String {
 pub struct Line {
     /// The block itself (caretline's): id, depth, kind, status, text (soft breaks are `\n`) and
     /// fold. Its fields read and write through `Line` (Deref).
-    pub block: caretline::Block<String>,
+    pub(super) block: caretline::Block<String>,
     /// The meta, as shown (`due fri · !high`), from the last save or read.
     pub meta: String,
     /// The fields as tokens, for copy (` due:2026-10-09 !high`).
@@ -66,7 +67,7 @@ impl std::ops::DerefMut for Line {
 }
 
 /// thc's block kind as the engine's: the same three kinds.
-pub(crate) fn engine_kind(k: Kind) -> caretline::Kind {
+pub(super) fn engine_kind(k: Kind) -> caretline::Kind {
     match k {
         Kind::Para => caretline::Kind::Para,
         Kind::Bullet => caretline::Kind::Bullet,
@@ -75,7 +76,7 @@ pub(crate) fn engine_kind(k: Kind) -> caretline::Kind {
 }
 
 /// The engine's block kind as thc's.
-pub(crate) fn thc_kind(k: caretline::Kind) -> Kind {
+pub(super) fn thc_kind(k: caretline::Kind) -> Kind {
     match k {
         caretline::Kind::Para => Kind::Para,
         caretline::Kind::Bullet => Kind::Bullet,
@@ -259,8 +260,9 @@ fn short_repeat_rule(r: &str) -> String {
     }
 }
 
-/// A caret position: a line and a byte offset in its text (caretline's).
-pub use caretline::Pos;
+/// The engine's caret position (a line and a byte offset in its text); the seam's is
+/// [`BlockPos`].
+pub(super) use caretline::Pos;
 use crate::text::{width, wrap, wrap_with};
 #[cfg(test)]
 use crate::text::{next_char, prev_char};
@@ -278,16 +280,16 @@ pub struct Doc {
     pub root: Option<String>,
     /// The lines, pending deletes and undo: caretline's doc, whose rules edit it, shared by
     /// every view of the page or day.
-    pub engine: caretline::Doc<Line>,
+    pub(super) engine: caretline::Doc<Line>,
     /// Where you are in it: caret, selection, goal column, folds (the main column's view).
-    pub view: caretline::View<String>,
+    pub(super) view: caretline::View<String>,
     /// The first visual row on screen.
     pub scroll: usize,
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
     last_saved: HashMap<String, Line>,
-    pub(crate) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
+    pub(super) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
 }
 
 impl Doc {
@@ -308,37 +310,37 @@ impl Doc {
     }
 
     /// Invalidate content-derived inputs after a local edit or deferred remote text.
-    pub fn touch_content(&mut self) {
+    pub(super) fn touch_content(&mut self) {
         self.host_revision = self.host_revision.wrapping_add(1);
     }
 
-    pub fn lines(&self) -> &[Line] {
+    pub(super) fn lines(&self) -> &[Line] {
         self.engine.lines()
     }
 
     /// The lines, for thc's own bookkeeping (save state, meta). Views aren't rebased.
-    pub fn lines_mut(&mut self) -> &mut Vec<Line> {
+    pub(super) fn lines_mut(&mut self) -> &mut Vec<Line> {
         self.engine.lines_mut()
     }
 
     /// The caret's line.
-    pub fn line(&self) -> &Line {
+    pub(super) fn line(&self) -> &Line {
         &self.lines()[self.view.caret.line]
     }
 
     /// The selection, ordered (start, end), when there is one.
-    pub fn selection(&self) -> Option<(Pos, Pos)> {
-        self.engine.selection(&self.view)
+    pub fn selection(&self) -> Option<(BlockPos, BlockPos)> {
+        self.engine.selection(&self.view).map(|(a, b)| (a.into(), b.into()))
     }
 
     /// Run caretline's buffer rules at the caret (what `Command` doesn't name). The main view
     /// is never read-only.
-    pub fn edit<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
+    pub(super) fn edit<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
         self.engine.edit_at(&mut self.view, f).map(|(r, _)| r).expect("the main view edits")
     }
 
     /// The buffer at the caret, reading or selecting.
-    pub fn at<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
+    pub(super) fn at<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
         self.engine.at(&mut self.view, f)
     }
 
@@ -354,7 +356,7 @@ impl Doc {
         self.edit(|b| b.delete_selection())
     }
 
-    pub fn paste_lines(&mut self, pasted: Vec<(usize, Kind, Option<String>, String)>) {
+    pub(super) fn paste_lines(&mut self, pasted: Vec<(usize, Kind, Option<String>, String)>) {
         let pasted = pasted.into_iter().map(|(d, k, s, t)| (d, engine_kind(k), s, t)).collect();
         self.edit(|b| b.paste_lines(pasted));
     }
@@ -364,26 +366,29 @@ impl Doc {
         self.edit(|b| b.task_box(line))
     }
 
-    /// One undo step before recovered lines go back in (recover.rs), or an attachment.
-    pub fn begin_recovery(&mut self) {
+    /// One undo step before the host puts lines in (recovered lines, an attachment).
+    pub fn begin_undo_step(&mut self) {
         self.edit(|b| b.begin_recovery());
     }
 
     /// A note patched in from elsewhere: undo leaves it.
-    pub fn mark_arrived(&mut self, id: &str) {
+    pub(super) fn mark_arrived(&mut self, id: &str) {
         let id = id.to_string();
         self.at(|b| b.mark_arrived(&id));
     }
 
-    pub fn select(&mut self, select: bool) {
+    pub(super) fn select(&mut self, select: bool) {
         self.at(|b| b.select(select));
     }
 
-    pub fn select_word(&mut self, p: Pos) {
+    /// A double-click: the word at `p`.
+    pub fn select_word_at(&mut self, p: BlockPos) {
+        let p = p.into();
         self.at(|b| b.select_word(p));
     }
 
-    pub fn select_note(&mut self, line: usize) {
+    /// A triple-click: the whole note at line `line`.
+    pub fn select_block(&mut self, line: usize) {
         self.at(|b| b.select_note(line));
     }
 
@@ -431,11 +436,11 @@ impl Doc {
     /// Undo one step. A line coming back while its delete is still pending is still in the
     /// vault: it takes its save state from the last save, not from the snapshot, which may be
     /// older than that save (fuzz, late saves: it came back "new" and was made twice).
-    pub fn undo(&mut self) -> bool {
+    pub(super) fn undo(&mut self) -> bool {
         self.step(Buffer::undo)
     }
 
-    pub fn redo(&mut self) -> bool {
+    pub(super) fn redo(&mut self) -> bool {
         self.step(Buffer::redo)
     }
 
@@ -733,7 +738,7 @@ impl Doc {
 
 /// Pasted text read into lines (depth, kind, status, text), Markdown unless `plain`, and how
 /// many images were left out: the engine's reading.
-pub fn parse_paste(text: &str, plain: bool) -> (Vec<(usize, Kind, Option<String>, String)>, usize) {
+pub(super) fn parse_paste(text: &str, plain: bool) -> (Vec<(usize, Kind, Option<String>, String)>, usize) {
     let (lines, images) = caretline::markdown::parse_paste(text, plain);
     (lines.into_iter().map(|(d, k, s, t)| (d, thc_kind(k), s, t)).collect(), images)
 }
@@ -766,7 +771,7 @@ impl Doc {
 }
 
 /// The wrap of a line at `w` columns, cached by (text, width).
-pub fn rows(wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, l: &Line, w: usize) -> Vec<(usize, usize)> {
+pub(super) fn rows(wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, l: &Line, w: usize) -> Vec<(usize, usize)> {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     l.text.hash(&mut h);

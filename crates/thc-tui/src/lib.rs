@@ -2,7 +2,7 @@
 
 mod about;
 mod app;
-mod doc;
+mod editor;
 mod doc_app;
 mod doc_keys;
 mod doc_ui;
@@ -24,7 +24,6 @@ mod input;
 mod keymap;
 pub mod keys_edit;
 mod images;
-mod motion;
 mod recover;
 mod text;
 pub mod history;

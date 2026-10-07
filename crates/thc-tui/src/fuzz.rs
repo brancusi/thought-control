@@ -10,7 +10,7 @@
 //! checks after every op).
 
 use crate::app::{App, View};
-use crate::doc::Target;
+use crate::editor::Target;
 use ratatui::Terminal;
 use ratatui::backend::TestBackend;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseButton, MouseEvent, MouseEventKind};
@@ -127,13 +127,13 @@ fn norm(t: &str) -> String {
 /// The buffer's notes (lines with text; a line still empty is not a note), by ID.
 fn buffer_notes(app: &App) -> Vec<(String, Note)> {
     let Some(d) = app.doc.as_ref() else { return vec![] };
-    d.lines().iter().filter(|l| !l.text.trim().is_empty()).map(|l| (l.id.clone(), (l.kind(), l.depth, if l.kind() == Kind::Task { l.status.clone() } else { None }, norm(&l.text)))).collect()
+    d.blocks().iter().filter(|l| !l.text.trim().is_empty()).map(|l| (l.id.clone(), (l.kind(), l.depth, if l.kind() == Kind::Task { l.status.clone() } else { None }, norm(&l.text)))).collect()
 }
 
 /// Notes whose text is meant to differ from the vault for now (§9): a remote edit held while
 /// you're on the line, or a ≠ conflict.
 fn pending(app: &App) -> Vec<String> {
-    app.doc.as_ref().map(|d| d.lines().iter().filter(|l| l.remote_text.is_some() || l.remote_shape || l.conflict).map(|l| l.id.clone()).collect()).unwrap_or_default()
+    app.doc.as_ref().map(|d| d.blocks().iter().filter(|l| l.remote_text.is_some() || l.remote_shape || l.conflict).map(|l| l.id.clone()).collect()).unwrap_or_default()
 }
 
 /// What the vault holds for the open document, by ID, and every ID in order.
@@ -313,8 +313,8 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
             };
             // (A remote text held for a line lands as the caret leaves it: that's the remote
             // edit, not the motion, so a document holding one isn't compared.)
-            let holding = app.doc.as_ref().is_some_and(|d| d.lines().iter().any(|l| l.remote_text.is_some() || l.remote_shape));
-            let texts_before: Option<Vec<String>> = (matches!(op, Op::Move(_) | Op::Select(_)) && !holding).then(|| app.doc.as_ref().map(|d| d.lines().iter().map(|l| l.text.clone()).collect()).unwrap_or_default());
+            let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape));
+            let texts_before: Option<Vec<String>> = (matches!(op, Op::Move(_) | Op::Select(_)) && !holding).then(|| app.doc.as_ref().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default());
             apply(&mut app, *op);
             // The late writer answers now and then: one result at a time, at random.
             if let Some(rng) = rng.as_mut() {
@@ -326,15 +326,14 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
             if let Some(tb) = texts_before {
                 let ctx = crate::doc_ui::DocContext::from_app(&app);
                 if let Some(d) = app.doc.as_mut() {
-                    let ta: Vec<String> = d.lines().iter().map(|l| l.text.clone()).collect();
+                    let ta: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).collect();
                     if ta != tb {
                         return Err(format!("step {step}: a motion changed the text: {tb:?} → {ta:?}"));
                     }
                     let (sw, detail) = (app.screen_width, app.show_detail);
-                    let caret = d.view.caret;
-                    let l = crate::motion::layout(d, &|l: &crate::doc::Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth));
-                    if !l.stops.is_empty() && l.valid(caret) != caret {
-                        return Err(format!("step {step}: the caret {caret:?} isn't on a stop (valid: {:?})", l.valid(caret)));
+                    let caret = d.caret();
+                    if let Some(valid) = d.caret_off_stop(&|l: &crate::editor::Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth)) {
+                        return Err(format!("step {step}: the caret {caret:?} isn't on a stop (valid: {valid:?})"));
                     }
                 }
             }
@@ -524,9 +523,7 @@ fn late_from(ops: &[Op], answer: Option<&[bool]>, plain: &[&str]) -> (Vec<Note>,
     app.set_view(View::Journal);
     if !plain.is_empty() {
         let d = app.doc.as_mut().unwrap();
-        d.view.caret = crate::doc::Pos { line: 0, byte: 0 };
-        d.view.anchor = None;
-        d.view.goal = None;
+        d.click(crate::editor::BlockPos { line: 0, byte: 0 }, false);
     }
     for (i, op) in ops.iter().enumerate() {
         apply(&mut app, *op);
@@ -744,8 +741,8 @@ fn run_sync_with(ops: &[SyncOp], tag: &str, strict_order: bool) -> Result<(), St
             if std::env::var_os("THC_SYNC_TRACE").is_some() {
                 eprintln!("== {step} {op:?}");
                 for (i, app) in apps.iter().enumerate() {
-                    let caret = app.doc.as_ref().map(|d| d.line().id.clone()).unwrap_or_default();
-                    let buf: Vec<String> = app.doc.as_ref().map(|d| d.lines().iter().map(|l| format!("{}{} {:?} {:?} saved_kind={:?} edited={}", if l.id == caret { "^" } else { "" }, &l.id[..4], l.kind(), l.text, l.saved_kind, l.edited())).collect()).unwrap_or_default();
+                    let caret = app.doc.as_ref().map(|d| d.caret_block().id.clone()).unwrap_or_default();
+                    let buf: Vec<String> = app.doc.as_ref().map(|d| d.blocks().iter().map(|l| format!("{}{} {:?} {:?} saved_kind={:?} edited={}", if l.id == caret { "^" } else { "" }, &l.id[..4], l.kind(), l.text, l.saved_kind, l.edited())).collect()).unwrap_or_default();
                     eprintln!("  dev{i} buf {buf:?}\n  dev{i} vault {:?}", saved(app).0);
                 }
             }

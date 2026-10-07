@@ -6,7 +6,7 @@
 //! opens, its lines go back in, as one undo step, and the bar says so.
 
 use crate::app::App;
-use crate::doc::{Doc, Line, Target};
+use crate::editor::{Doc, NewBlock, Target};
 use serde::{Deserialize, Serialize};
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
@@ -56,7 +56,7 @@ fn rec_target(t: &Target) -> RecTarget {
 pub fn unsaved(d: &Doc) -> Option<Recovery> {
     let mut lines = Vec::new();
     let mut prev: Option<&str> = None;
-    for l in d.lines() {
+    for l in d.blocks() {
         if !l.text.trim().is_empty() && l.edited() {
             lines.push(RecLine { id: l.id.clone(), is_new: l.is_new, prev: prev.map(str::to_string), depth: l.depth, kind: l.kind(), status: l.status.clone(), text: l.text.clone() });
         }
@@ -101,27 +101,18 @@ pub fn take(cache: &Path, target: &Target) -> Option<Recovery> {
 /// Put recovered lines back: a note still here takes its recovered text; a new line goes after
 /// the line it followed (or at the end). One undo step. Returns how many lines came back.
 pub fn apply(d: &mut Doc, rec: &Recovery) -> usize {
-    d.begin_recovery();
+    d.begin_undo_step();
     let mut n = 0;
     for r in &rec.lines {
-        if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == r.id) {
-            if l.text != r.text || l.kind() != r.kind || l.depth != r.depth {
-                l.text = r.text.clone();
-                l.kind = crate::doc::engine_kind(r.kind);
-                l.depth = r.depth;
-                l.status = r.status.clone();
+        if d.blocks().iter().any(|l| l.id == r.id) {
+            if d.set_shape(&r.id, r.depth, r.kind, r.status.clone(), &r.text) {
                 n += 1;
             }
             continue;
         }
-        let at = r.prev.as_ref().and_then(|p| d.lines().iter().position(|l| &l.id == p)).map_or(d.lines().len(), |i| i + 1);
-        let mut l = Line::new(r.depth, r.kind, &r.text);
-        l.status = r.status.clone();
+        let at = r.prev.as_ref().and_then(|p| d.blocks().iter().position(|l| &l.id == p)).map_or(d.blocks().len(), |i| i + 1);
         // A line that was saved once and isn't here now: a new note (its id may be gone).
-        if r.is_new {
-            l.id = r.id.clone();
-        }
-        d.lines_mut().insert(at, l);
+        d.insert_block(at, NewBlock { id: r.is_new.then(|| r.id.clone()), depth: r.depth, kind: r.kind, status: r.status.clone(), text: r.text.clone() });
         n += 1;
     }
     n

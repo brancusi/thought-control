@@ -224,5 +224,5 @@ fn the_link_popup_is_a_menu_too() {
     assert_eq!(app.link_sel, Some(i), "hover selects");
     click(&mut app, x, y);
     let d = app.doc.as_ref().unwrap();
-    assert!(d.line().text.contains("[[Lisbon flat]]"), "a click inserts: {:?}", d.line().text);
+    assert!(d.caret_block().text.contains("[[Lisbon flat]]"), "a click inserts: {:?}", d.caret_block().text);
 }

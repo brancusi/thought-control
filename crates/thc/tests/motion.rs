@@ -1,6 +1,6 @@
 //! Caret motion end to end (docs/design/motion.md): real documents, real wrapping, keys replayed
 //! through the TUI, and the drawn caret checked. The rules themselves are table- and
-//! property-tested in thc-tui's motion.rs; these check that render and motion agree (I6).
+//! property-tested in thc-tui's editor/motion.rs; these check that render and motion agree (I6).
 
 mod common;
 

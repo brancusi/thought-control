@@ -1,6 +1,6 @@
 //! Immutable store-derived render inputs. Capture runs in the coordinator; these
 //! values have no database, filesystem, clock or runtime handles.
-use crate::{app::App, doc::Target};
+use crate::{app::App, editor::Target};
 use chrono::{Datelike, NaiveDate};
 use std::{collections::HashSet, path::PathBuf};
 
@@ -109,7 +109,7 @@ mod tests {
             .unwrap();
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
-        app.doc = Some(crate::doc::Doc::new(Target::Page { id: issue.clone(), title: "Ship it".into() }, Some(issue), &[], today));
+        app.doc = Some(crate::editor::Doc::new(Target::Page { id: issue.clone(), title: "Ship it".into() }, Some(issue), &[], today));
         let rev = app.vault.store.max_okey().unwrap().unwrap();
         capture(&mut app, &rev);
         assert_eq!(app.derived.data.document.parent_label.as_deref(), Some("Project"));
