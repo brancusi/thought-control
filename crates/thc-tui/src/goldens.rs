@@ -562,6 +562,9 @@ fn paragraph_children() {
     check_g("PC10", "B▮ ‖   b1 ‖   - b2 ‖ A", &["⌥↓"], "A ‖ B▮ ‖   b1 ‖   - b2");
     // Enter, Enter under a child paragraph: the next one is its sibling.
     check_g("PC11", "Para ‖   child▮", &["Enter", "Enter", "type next"], "Para ‖   child ‖   next▮");
+    check_g("PC13", "Para▮", &["Enter", "type child", "Tab", "Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type t"], "Para ‖   child ‖   [ ] t▮");
+    // A task box typed on it: a task at that depth.
+    check_g("PC12", "Para ‖   child▮", &["Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type next"], "Para ‖   child ‖   [ ] next▮");
     done();
 }
 
