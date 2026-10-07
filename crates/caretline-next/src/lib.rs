@@ -23,6 +23,7 @@
 pub mod helix;
 pub mod keymap;
 pub mod layout;
+pub mod marks;
 pub mod msg;
 pub mod protocol;
 pub mod session;
@@ -31,6 +32,7 @@ pub mod trace;
 pub mod update;
 pub mod view;
 
+pub use marks::{BlockAttrs, Mark, MarkId, Marks};
 pub use keymap::{keymap, parse_keys, script_to_msgs, Key, KeyCode, Mods};
 pub use msg::{By, Dir, Effect, Msg};
 pub use session::Session;
