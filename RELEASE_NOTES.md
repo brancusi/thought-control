@@ -1,3 +1,12 @@
+**0.10.0**
+
+- **A new editor engine under every page and day.** Writing now runs on caretline, the engine thc's editor was moved onto. Typing, moving around, undo, copy and paste work as before; the old engine is gone.
+- **Tab nests any line under the one above, paragraphs too.** Type a paragraph, press Enter, type a line and press Tab: it becomes a child of the paragraph, saved under it and indented in exports. ⇧Tab takes it back.
+- **Faster on big pages.** Typing and paging on a 5,000-line page take about a millisecond a key, down from 4–9 ms.
+- **Fixed: typing could be lost** when one save both moved a line and changed its text while an earlier save was still out.
+- **Copy across lines keeps their dates and priorities**, and text recovered after a crash is one ⌃Z away.
+- **Wrapping follows words**: a line never starts with the space it broke at, and keycap emoji (1️⃣) take the two cells your terminal draws.
+
 **0.9.65**
 
 - **Fixed: pressing ⌃T twice on a plain line now ticks it off.** The first press makes it a task and the second marks it done. Before, a line you'd already saved went back to an open task after the second press.
