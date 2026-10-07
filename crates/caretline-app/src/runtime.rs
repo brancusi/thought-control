@@ -77,11 +77,10 @@ fn read_system_clipboard() -> Option<String> {
         ("xsel", &["--clipboard", "--output"]),
     ];
     for (cmd, args) in candidates {
-        if let Ok(out) = Command::new(cmd).args(*args).stderr(Stdio::null()).output() {
-            if out.status.success() {
+        if let Ok(out) = Command::new(cmd).args(*args).stderr(Stdio::null()).output()
+            && out.status.success() {
                 return String::from_utf8(out.stdout).ok();
             }
-        }
     }
     None
 }
@@ -287,7 +286,7 @@ fn terminal_msgs(state: &State, ev: Event) -> Vec<Msg> {
         Event::Paste(text) => vec![Msg::Paste { text: Some(text) }],
         Event::Resize(width, height) => vec![Msg::Resize { width, height }],
         Event::Mouse(m) => {
-            let text_rows = state.viewport.text_rows() as u16;
+            let text_rows = state.text_rows() as u16;
             let extend = m.modifiers.contains(KeyModifiers::SHIFT);
             match m.kind {
                 MouseEventKind::Down(MouseButton::Left) if m.row < text_rows => {
@@ -330,11 +329,10 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Res
 
     let mut start = vec![Msg::Tick { now_ms: now_ms() }];
     let v = hub.session.state().viewport;
-    if let Some((w, h)) = term {
-        if (w, h) != (v.width, v.height) {
+    if let Some((w, h)) = term
+        && (w, h) != (v.width, v.height) {
             start.push(Msg::Resize { width: w, height: h });
         }
-    }
     if let Some(text) = status {
         start.push(Msg::ShowStatus { text });
     }
@@ -402,11 +400,10 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, frame: &Frame) ->
                     buf.set_stringn(x, y, &cell.symbol, w, style(cell.role));
                 }
             }
-            if let Some((x, y)) = frame.cursor {
-                if x < area.width && y < area.height {
+            if let Some((x, y)) = frame.cursor
+                && x < area.width && y < area.height {
                     f.set_cursor_position((x, y));
                 }
-            }
         })
         .map(|_| ())
         .map_err(|e| format!("draw: {e}"))

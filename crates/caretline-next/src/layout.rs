@@ -236,7 +236,7 @@ impl Layout {
 /// from the edges where possible.
 pub fn ensure_caret_visible(state: &mut State) {
     let layout = Layout::new(state);
-    let h = state.viewport.text_rows();
+    let h = state.text_rows();
     let w = state.viewport.width as usize;
     let (caret, col) = layout.pos_coords(state.caret());
     let mut top = layout.top(&state.scroll);

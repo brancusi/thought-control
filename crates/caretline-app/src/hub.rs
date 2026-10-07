@@ -39,11 +39,13 @@ pub struct Hub {
     clients: HashMap<ClientId, Client>,
     trace: Option<File>,
     traced: usize,
+    /// Tick to the real time before each client's messages.
+    pub clock: bool,
 }
 
 impl Hub {
     pub fn new(session: Session, trace: Option<File>) -> Hub {
-        let mut hub = Hub { session, clients: HashMap::new(), trace, traced: 0 };
+        let mut hub = Hub { session, clients: HashMap::new(), trace, traced: 0, clock: true };
         hub.flush_trace();
         hub
     }
@@ -66,7 +68,8 @@ impl Hub {
         if line.trim().is_empty() {
             return None;
         }
-        let handled = self.session.handle(line, exec);
+        let clock = self.clock.then(crate::runtime::now_ms);
+        let handled = self.session.handle_at(line, exec, clock);
         if let Some(c) = self.clients.get_mut(&client) {
             match handled.control {
                 Some(Control::Subscribe(sub)) => c.sub = Some(sub),
@@ -94,8 +97,8 @@ impl Hub {
     /// Appends trace lines not yet written to the trace file.
     fn flush_trace(&mut self) {
         let lines = &self.session.trace()[self.traced..];
-        if let Some(f) = &mut self.trace {
-            if !lines.is_empty() {
+        if let Some(f) = &mut self.trace
+            && !lines.is_empty() {
                 let mut buf = String::new();
                 for l in lines {
                     buf.push_str(&l.to_line());
@@ -104,7 +107,6 @@ impl Hub {
                 let _ = f.write_all(buf.as_bytes());
                 let _ = f.flush();
             }
-        }
         self.traced = self.session.trace().len();
     }
 }
@@ -192,6 +194,7 @@ impl Listening {
         });
         std::fs::write(&path, info.to_string() + "\n")?;
         self.discovery = Some(path.clone());
+        remove_on_signal(&[&self.path, &path]);
         Ok(path)
     }
 }
@@ -200,13 +203,76 @@ pub fn discovery_dir() -> PathBuf {
     std::env::temp_dir().join("caretline")
 }
 
-pub fn default_socket_path() -> PathBuf {
-    std::env::temp_dir().join(format!("caretline-{}.sock", std::process::id()))
+/// The longest socket path the platform accepts, in bytes (`sun_path` less its NUL).
+const MAX_SOCKET_PATH: usize = if cfg!(target_os = "linux") { 107 } else { 103 };
+
+fn check_socket_path(path: &Path) -> Result<(), String> {
+    let len = path.as_os_str().len();
+    if len > MAX_SOCKET_PATH {
+        return Err(format!(
+            "{}: a Unix socket path can be at most {MAX_SOCKET_PATH} bytes and this one is {len}; \
+             choose a shorter one (for example under /tmp)",
+            path.display()
+        ));
+    }
+    Ok(())
+}
+
+/// `$TMPDIR/caretline-<pid>.sock`, or `/tmp/caretline-<uid>/<pid>.sock` when `$TMPDIR` is too
+/// long for a socket path.
+pub fn default_socket_path() -> Result<PathBuf, String> {
+    let pid = std::process::id();
+    let preferred = std::env::temp_dir().join(format!("caretline-{pid}.sock"));
+    if check_socket_path(&preferred).is_ok() {
+        return Ok(preferred);
+    }
+    let dir = PathBuf::from(format!("/tmp/caretline-{}", unsafe { libc::getuid() }));
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+    }
+    let path = dir.join(format!("{pid}.sock"));
+    check_socket_path(&path)?;
+    Ok(path)
+}
+
+/// Files to remove if the process is killed (SIGTERM, SIGINT, SIGHUP). Each call replaces
+/// the previous list.
+pub fn remove_on_signal(paths: &[&Path]) {
+    use std::ffi::CString;
+    use std::os::unix::ffi::OsStrExt;
+    use std::sync::atomic::AtomicPtr;
+    static PATHS: AtomicPtr<Vec<CString>> = AtomicPtr::new(std::ptr::null_mut());
+
+    extern "C" fn on_signal(sig: libc::c_int) {
+        // Only async-signal-safe calls here: unlink, signal, raise.
+        let list = PATHS.load(Ordering::SeqCst);
+        if !list.is_null() {
+            for p in unsafe { &*list } {
+                unsafe { libc::unlink(p.as_ptr()) };
+            }
+        }
+        unsafe {
+            libc::signal(sig, libc::SIG_DFL);
+            libc::raise(sig);
+        }
+    }
+
+    let list: Vec<CString> = paths
+        .iter()
+        .filter_map(|p| CString::new(p.as_os_str().as_bytes()).ok())
+        .collect();
+    // Leaked on purpose: the handler may read it at any moment until exit.
+    PATHS.store(Box::into_raw(Box::new(list)), Ordering::SeqCst);
+    for sig in [libc::SIGTERM, libc::SIGINT, libc::SIGHUP] {
+        unsafe { libc::signal(sig, on_signal as *const () as libc::sighandler_t) };
+    }
 }
 
 /// Binds `path` and accepts clients on a thread, each one feeding `tx`. A leftover socket
 /// file nobody answers on is replaced; a live one is an error.
 pub fn listen(path: &Path, tx: Sender<Input>) -> Result<Listening, String> {
+    check_socket_path(path)?;
     if path.exists() {
         if UnixStream::connect(path).is_ok() {
             return Err(format!("{}: another server is listening there", path.display()));
@@ -214,6 +280,7 @@ pub fn listen(path: &Path, tx: Sender<Input>) -> Result<Listening, String> {
         let _ = std::fs::remove_file(path);
     }
     let listener = UnixListener::bind(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    remove_on_signal(&[path]);
     thread::spawn(move || {
         for stream in listener.incoming() {
             let Ok(stream) = stream else { continue };

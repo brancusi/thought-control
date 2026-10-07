@@ -174,7 +174,7 @@ pub fn view(state: &State) -> Frame {
     let width = state.viewport.width.max(1);
     let height = state.viewport.height.max(1);
     let mut frame = Frame::new(width, height);
-    let text_rows = state.viewport.text_rows();
+    let text_rows = state.text_rows();
     let layout = Layout::new(state);
     let text = layout.text();
     let top = layout.top(&state.scroll);
@@ -238,7 +238,9 @@ pub fn view(state: &State) -> Frame {
         }
     }
 
-    draw_status(state, &mut frame, height as usize - 1);
+    if state.config.status_bar {
+        draw_status(state, &mut frame, height as usize - 1);
+    }
     frame
 }
 

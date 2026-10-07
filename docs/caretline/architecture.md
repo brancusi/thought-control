@@ -31,12 +31,12 @@ assert_eq!(view(&state).cursor, Some((2, 0)));            // the caret is after 
 | `text` | The document, a `ropey::Rope` (a string in JSON) |
 | `selection` | Helix `Selection`: one or more ranges, each an `anchor` and a `head` (the caret). `old_visual_position` holds the goal column |
 | `scroll` | The top of the view: a document `line`, a visual `row` inside it, and a `col` offset when wrapping is off |
-| `viewport` | `width` × `height` in cells. The last row is the status bar |
+| `viewport` | `width` × `height` in cells. The last row is the status bar, unless `config.status_bar` is off |
 | `clipboard` | The internal register: the last copy or cut |
 | `path` | Where `save` writes, if anywhere |
 | `history` | Helix's undo tree |
 | `saved_revision`, `saving`, `dirty` | Which history revision is on disk, a save in flight, and whether they differ |
-| `config` | `tab_width`, `soft_wrap`, `scrolloff`, `line_ending` |
+| `config` | `tab_width`, `soft_wrap`, `scrolloff`, `line_ending`, `status_bar` |
 | `status` | A one-line message for the status bar, cleared by the next input |
 | `now_ms` | The clock, as the last `tick` reported it |
 | `run` | The open edit run (for undo grouping) |
@@ -116,7 +116,7 @@ There are two kinds of revision.
 | Revision | Where | Counts |
 |---|---|---|
 | History revision | `state.history.current_revision()` | Undo steps. A typing run amends one revision; undo moves back along the tree. `saved_revision` and `dirty` are defined against it |
-| Session rev | `Session::rev()` (landing next) | Every message applied and every state replacement, +1 each. Clients of the [protocol](protocol.md) use it to detect changes they missed |
+| Session rev | `Session::rev()` | Every message applied and every state replacement, +1 each. Clients of the [protocol](protocol.md) use it to detect changes they missed |
 
 **Dirty** is `saved_revision != history.current_revision()`. Undoing back to the saved
 revision makes the document clean again.
@@ -156,7 +156,7 @@ On any state `update` produced, `sanitize` changes nothing. So `to_json` followe
 `from_json` gives back an equal state, with the same frame and the same future behaviour.
 The goal column and an open typing run survive the trip too.
 
-## The runtime merges inputs into one queue (landing next)
+## The runtime merges inputs into one queue
 
 With the [state protocol](protocol.md), a live editor has two sources of input: the
 terminal and protocol clients on a Unix socket. The runtime puts them on **one channel**, so
@@ -174,6 +174,8 @@ flowchart LR
 ```
 
 The editor drains everything already queued, then redraws once, only if the rev changed.
+The runtime also stamps time: before a client's messages it applies a `tick` with the real
+time (outside `update`, as for keys), so the trace still replays exactly.
 
 ## Helix inside State
 

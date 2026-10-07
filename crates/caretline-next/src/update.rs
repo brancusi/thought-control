@@ -463,7 +463,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
         By::LineEnd | By::DocEnd => Dir::Forward,
         _ => dir,
     };
-    let page = state.viewport.text_rows().max(1) as isize;
+    let page = state.text_rows().max(1) as isize;
     let wrapped = Layout::new(state);
     let unwrapped = Layout::unwrapped(state);
     let text = wrapped.text();
@@ -547,7 +547,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
 
 /// Scrolls the view; the caret moves only if it would leave the view, keeping its column.
 fn scroll(state: &mut State, rows: i32) {
-    let h = state.viewport.text_rows();
+    let h = state.text_rows();
     if h == 0 {
         return;
     }

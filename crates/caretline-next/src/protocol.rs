@@ -1,5 +1,5 @@
 //! The state protocol: JSON requests in, JSON responses out, one per line. See
-//! `crates/caretline-app/PROTOCOL.md` for the wire format with examples.
+//! `docs/caretline/protocol.md` for the wire format with examples.
 //!
 //! [`Session::handle`] answers one request line. Transport concerns (subscriptions, who
 //! receives events, performing effects) belong to the caller: the response carries a
@@ -112,6 +112,9 @@ struct Request {
     apply_effects: bool,
     #[serde(default)]
     if_rev: Option<u64>,
+    /// msgs, keys: the time to tick to before applying them.
+    #[serde(default)]
+    now_ms: Option<u64>,
     /// subscribe: a frame with every event.
     #[serde(default)]
     frame: Option<FrameSpec>,
@@ -281,18 +284,31 @@ impl Session {
     /// Answers one request line. `exec`, when given, performs effects for requests that set
     /// `apply_effects`; without it such a request is refused (`unsupported`).
     pub fn handle(&mut self, line: &str, exec: Option<Executor<'_>>) -> Handled {
+        self.handle_at(line, exec, None)
+    }
+
+    /// [`Session::handle`] for a runtime with a clock: before a `msgs` or `keys` request
+    /// without its own `now_ms`, a `tick` to `clock_ms` is applied (when it is later than the
+    /// state's clock), so typing runs and undo steps follow real time. The tick is an
+    /// ordinary message: it is in the response, the events and the trace.
+    pub fn handle_at(&mut self, line: &str, exec: Option<Executor<'_>>, clock_ms: Option<u64>) -> Handled {
         let req: Request = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => return bad_line(line, e),
         };
         let id = req.id.clone();
-        match self.handle_request(req, exec) {
+        match self.handle_request(req, exec, clock_ms) {
             Ok(h) => h,
             Err(e) => Handled { response: error_line(id.as_ref(), &e), change: None, control: None },
         }
     }
 
-    fn handle_request(&mut self, req: Request, exec: Option<Executor<'_>>) -> Result<Handled, ProtoError> {
+    fn handle_request(
+        &mut self,
+        req: Request,
+        exec: Option<Executor<'_>>,
+        clock_ms: Option<u64>,
+    ) -> Result<Handled, ProtoError> {
         let id = req.id.as_ref();
         let reply = |response: String| Handled { response, change: None, control: None };
         let check_rev = |rev: u64| match req.if_rev {
@@ -335,19 +351,22 @@ impl Session {
                 if req.apply_effects && exec.is_none() {
                     return Err(err("unsupported", "this server returns effects; it doesn't perform them"));
                 }
-                let (msgs, from_keys) = if req.op == "keys" {
+                // The clock: the request's own `now_ms`, else the runtime's (only forward).
+                let now = self.state().now_ms;
+                let tick = req.now_ms.filter(|&t| t != now).or(clock_ms.filter(|&t| t > now));
+                let base = tick.unwrap_or(now);
+                let mut msgs: Vec<Msg> = tick.map(|now_ms| Msg::Tick { now_ms }).into_iter().collect();
+                if req.op == "keys" {
                     let script = req.keys.ok_or_else(|| err("bad_request", "keys needs a keys script"))?;
-                    let msgs = crate::keymap::script_to_msgs(&script, self.state().now_ms)
-                        .map_err(|e| err("bad_keys", e))?;
-                    (msgs, true)
+                    msgs.extend(crate::keymap::script_to_msgs(&script, base).map_err(|e| err("bad_keys", e))?);
                 } else {
-                    (req.msgs.ok_or_else(|| err("bad_request", "msgs needs a msgs array"))?, false)
-                };
+                    msgs.extend(req.msgs.ok_or_else(|| err("bad_request", "msgs needs a msgs array"))?);
+                }
                 let mut effects = Vec::new();
                 let mut applied = Vec::new();
                 match (req.apply_effects, exec) {
                     (true, Some(exec)) => {
-                        for msg in msgs.iter().cloned() {
+                        for msg in msgs {
                             let (e, m) = self.apply_with(msg, &mut *exec);
                             effects.extend(e);
                             applied.extend(m);
@@ -355,7 +374,7 @@ impl Session {
                     }
                     _ => {
                         effects = self.apply_all(msgs.iter().cloned());
-                        applied = msgs.clone();
+                        applied = msgs;
                     }
                 }
                 #[derive(Serialize)]
@@ -364,8 +383,7 @@ impl Session {
                     effects: &'a [Effect],
                     #[serde(skip_serializing_if = "std::ops::Not::not")]
                     executed: bool,
-                    #[serde(skip_serializing_if = "Option::is_none")]
-                    msgs: Option<&'a [Msg]>,
+                    msgs: &'a [Msg],
                 }
                 let rev = self.rev();
                 let response = to_line(
@@ -374,7 +392,7 @@ impl Session {
                         rev,
                         effects: &effects,
                         executed: req.apply_effects,
-                        msgs: from_keys.then_some(msgs.as_slice()),
+                        msgs: &applied,
                     },
                 );
                 let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false });

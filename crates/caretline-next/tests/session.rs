@@ -239,6 +239,8 @@ fn apply_with_feeds_effect_results_back() {
     let h = s.handle(r#"{"op":"msgs","apply_effects":true,"msgs":[{"msg":"insert_text","text":"z"},{"msg":"save"}]}"#, Some(&mut exec));
     let r: Value = serde_json::from_str(&h.response).unwrap();
     assert_eq!(r["result"]["executed"], true);
+    // The response lists every message applied, the fed-back result included.
+    assert_eq!(r["result"]["msgs"].as_array().unwrap().last().unwrap()["msg"], "saved");
     assert_eq!(h.change.unwrap().msgs.last(), Some(&Msg::Saved));
     assert!(!s.state().dirty);
     // Without apply_effects the executor is not used.
@@ -256,4 +258,43 @@ fn show_status_is_passive() {
     assert_eq!(s.state().status.as_deref(), Some("hi there"));
     s.apply(Msg::InsertText { text: "a".into() });
     assert_eq!(s.state().status, None);
+}
+
+#[test]
+fn requests_tick_to_their_own_time_or_the_runtimes() {
+    let mut s = session();
+    // A request's now_ms becomes a tick before its messages, and waits count from it.
+    let r = ask(&mut s, json!({"op": "keys", "now_ms": 1000, "keys": "a<wait:500>b"}));
+    let msgs = &r["result"]["msgs"];
+    assert_eq!(msgs[0], json!({"msg": "tick", "now_ms": 1000}));
+    assert_eq!(msgs[2], json!({"msg": "tick", "now_ms": 1500}));
+    assert_eq!(s.state().now_ms, 1500);
+
+    // A runtime clock ticks forward only, and the request's own time wins.
+    let h = s.handle_at(r#"{"op":"msgs","msgs":[{"msg":"insert_text","text":"c"}]}"#, None, Some(9000));
+    assert_eq!(h.change.unwrap().msgs[0], Msg::Tick { now_ms: 9000 });
+    let h = s.handle_at(r#"{"op":"msgs","msgs":[{"msg":"insert_text","text":"d"}]}"#, None, Some(100));
+    assert_eq!(h.change.unwrap().msgs.len(), 1, "no tick backwards");
+    let h = s.handle_at(r#"{"op":"msgs","now_ms":20000,"msgs":[]}"#, None, Some(9500));
+    assert_eq!(h.change.unwrap().msgs, vec![Msg::Tick { now_ms: 20000 }]);
+
+    // Typing far apart in time is separate undo steps; close together, one.
+    let mut s = session();
+    ask(&mut s, json!({"op": "keys", "now_ms": 1, "keys": "ab"}));
+    ask(&mut s, json!({"op": "keys", "now_ms": 5000, "keys": "cd"}));
+    ask(&mut s, json!({"op": "keys", "keys": "<c-z>"}));
+    assert!(s.state().text.to_string().starts_with("abhello"));
+}
+
+#[test]
+fn the_status_bar_can_be_hidden() {
+    let mut st = State::new("one\ntwo\nthree\n", None, Viewport { width: 20, height: 3 });
+    st.config.status_bar = false;
+    let text = view(&st).to_text();
+    assert_eq!(text, "one\ntwo\nthree\n");
+    // A state saved before the setting existed shows it.
+    let mut v = serde_json::to_value(&st).unwrap();
+    v["config"].as_object_mut().unwrap().remove("status_bar");
+    let old: State = serde_json::from_value(v).unwrap();
+    assert!(old.config.status_bar);
 }

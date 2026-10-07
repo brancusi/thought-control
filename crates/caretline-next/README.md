@@ -7,7 +7,7 @@ Vec<Effect>` is pure and deterministic, and `view(&State) -> Frame` is a pure ce
 terminal I/O and no ratatui.
 
 `Session` wraps a state with a revision counter and the trace of everything applied, and
-answers the [state protocol](../caretline-app/PROTOCOL.md) in process (`Session::handle`).
+answers the [state protocol](../../docs/caretline/protocol.md) in process (`Session::handle`).
 
 The terminal front end is [`caretline-app`](../caretline-app/README.md).
 
@@ -22,7 +22,7 @@ The full documentation is in [docs/caretline](../../docs/caretline/README.md):
 | [Rust API](../../docs/caretline/api.md) | The public API by task, with a complete example ([`examples/basic.rs`](examples/basic.rs)) |
 | [Messages](../../docs/caretline/messages.md) | Every message, effect and key binding; the key-script syntax |
 | [CLI](../../docs/caretline/cli.md) | The `caretline` command, end to end |
-| [Protocol](../../docs/caretline/protocol.md) | The JSON-lines state protocol (landing next) |
+| [Protocol](../../docs/caretline/protocol.md) | The JSON-lines state protocol |
 | [Embedding](../../docs/caretline/embedding.md) | Use it in your own app, as a library or a process; licensing |
 | [Testing](../../docs/caretline/testing.md) | Goldens, replay, the fuzzer, fixtures, tests from traces |
 

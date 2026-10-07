@@ -37,7 +37,7 @@ log. There's no terminal crate and no ratatui.
 | `trace::{TraceLine, parse_msgs, replay_trace}` | `caretline_next::trace` | Record and replay sessions |
 | `layout::{Layout, RowPos, text_format, ensure_caret_visible}` | `caretline_next::layout` | Lower-level layout queries |
 | `helix::*` | `caretline_next::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
-| `Session`, `protocol::*` | `caretline_next` | Landing next: see [Session](#session-landing-next) |
+| `Session`, `protocol::*` | `caretline_next` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
 
 ## Create a state
 
@@ -76,6 +76,7 @@ use caretline_next::{State, Viewport};
 let mut state = State::new("a\tb", None, Viewport { width: 80, height: 24 });
 state.config.tab_width = 2;
 state.config.soft_wrap = false;
+state.config.status_bar = false; // every row shows text; no status bar
 ```
 
 ## Apply messages
@@ -262,10 +263,7 @@ assert_eq!((replayed, count), (live, 2));
 [architecture.md](architecture.md#rehydration)). `to_json` is pretty-printed; use
 `serde_json::to_string(&state)` for one line.
 
-## Session (landing next)
-
-> **Status:** `Session` and `protocol` are on the `editor/state-protocol` branch and not on
-> `main` yet. The shape below is what that branch has today and may change before it lands.
+## Session
 
 A `Session` wraps a `State` with a revision counter and an in-memory trace. It is the library
 face of the [state protocol](protocol.md).
@@ -281,7 +279,11 @@ face of the [state protocol](protocol.md).
 | `set_state(state)` | Replaces the state (sanitized), recorded in the trace; rev + 1 |
 | `frame()` | `view` of the current state |
 | `render(w, h)` | The frame at another size, without changing the session |
-| `handle(line, exec)` | Answers one protocol request line (`protocol::Handled`) |
+| `handle(line, exec)` | Answers one protocol request line (`protocol::Handled`): the response line, the `Change` it made and any `subscribe` control |
+| `handle_at(line, exec, clock_ms)` | `handle` for a runtime with a clock: ticks to `clock_ms` before a request's messages (see [Time](protocol.md#time)) |
+
+`protocol::event_line(&session, &change, &subscription, source)` builds the event a
+subscriber receives for a change.
 
 ```rust
 use caretline_next::{Session, State, Viewport};

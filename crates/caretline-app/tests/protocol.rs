@@ -29,6 +29,7 @@ fn scratch(name: &str) -> PathBuf {
 fn serve_stdio(args: &[&str], requests: &[Value]) -> Vec<Value> {
     let mut child = bin()
         .arg("serve")
+        .arg("--no-clock")
         .args(args)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -146,7 +147,7 @@ fn wait_for_socket(path: &Path) {
 
 fn socket_server(name: &str, args: &[&str]) -> Server {
     let socket = scratch(name).join("s.sock");
-    let child = bin().arg("serve").args(args).arg("--socket").arg(&socket).spawn().unwrap();
+    let child = bin().args(["serve", "--no-clock"]).args(args).arg("--socket").arg(&socket).spawn().unwrap();
     wait_for_socket(&socket);
     Server { child, socket }
 }
@@ -267,4 +268,43 @@ fn send_talks_to_a_socket() {
     let (ok, out) = send(&["{\"op\":\"nope\"}"]);
     assert!(!ok);
     assert!(out.contains("unknown_op"));
+}
+
+#[test]
+fn serve_ticks_to_real_time_unless_told_not_to() {
+    let mut child = bin().arg("serve").stdin(Stdio::piped()).stdout(Stdio::piped()).spawn().unwrap();
+    writeln!(child.stdin.as_mut().unwrap(), "{}", json!({"op": "keys", "keys": "a"})).unwrap();
+    drop(child.stdin.take());
+    let out = child.wait_with_output().unwrap();
+    let v: Value = serde_json::from_slice(&out.stdout).unwrap();
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64;
+    let tick = v["result"]["msgs"][0]["now_ms"].as_u64().expect("a tick first");
+    assert!(now - tick < 60_000);
+}
+
+#[test]
+fn serve_help_names_the_subcommand() {
+    let out = bin().args(["serve", "--help"]).output().unwrap();
+    assert!(String::from_utf8_lossy(&out.stdout).contains("Usage: caretline serve"));
+}
+
+#[test]
+fn a_socket_path_too_long_is_a_clear_error() {
+    let long = format!("/tmp/{}/s.sock", "d".repeat(120));
+    let out = bin().args(["serve", "--socket", &long]).output().unwrap();
+    assert!(!out.status.success());
+    assert!(String::from_utf8_lossy(&out.stderr).contains("a Unix socket path can be at most"));
+}
+
+#[test]
+fn a_killed_server_removes_its_socket() {
+    for sig in [libc::SIGTERM, libc::SIGINT] {
+        let socket = scratch(&format!("sig{sig}")).join("s.sock");
+        let mut child = bin().args(["serve", "--socket"]).arg(&socket).spawn().unwrap();
+        wait_for_socket(&socket);
+        unsafe { libc::kill(child.id() as i32, sig) };
+        child.wait().unwrap();
+        assert!(!socket.exists(), "signal {sig} left the socket");
+        let _ = std::fs::remove_dir_all(socket.parent().unwrap());
+    }
 }

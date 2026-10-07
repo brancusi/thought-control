@@ -150,7 +150,7 @@ caretline bench                                  # throughput and latency
 
 Pushed messages' effects (saves, the clipboard, quit) are returned to the client, not
 performed, unless the request asks. The library side is `caretline_next::Session`. See
-[PROTOCOL.md](PROTOCOL.md) for every operation, with examples.
+[docs/caretline/protocol.md](../../docs/caretline/protocol.md) for every operation, with examples.
 
 ## Fixtures
 
