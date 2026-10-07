@@ -225,15 +225,19 @@ impl Session {
         if let Some(f) = &self.frontier {
             line["log"] = json!(f);
         }
-        // What the frames show from the process and terminal rather than the state: replay
+        // What the frames show from the process and terminal rather than the state (the theme
+        // TERM and COLORTERM chose, the glyphs, the pinned-clock warning, inline images): replay
         // draws them as this session did, not as the replaying process would.
         let d = &self.app.derived;
-        line["env"] = json!({"pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
+        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
         line
     }
 
     /// A `state` line's `env`, taken up by a replay (see `state_line`).
     pub fn set_env(&mut self, env: &Value) {
+        if let Some(t) = env.get("theme").and_then(|t| serde_json::from_value::<crate::theme::Theme>(t.clone()).ok()) {
+            self.app.theme = t;
+        }
         let d = &mut self.app.derived;
         d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
         if let Some(b) = env.get("inline_images").and_then(Value::as_bool) {

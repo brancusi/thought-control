@@ -324,8 +324,10 @@ fn frame_and_trace(root: &Path, tmp: &Path, w: u16, h: u16, trace: serde_json::V
     (r[0]["result"]["frame"].as_str().unwrap().to_string(), lines, rev)
 }
 
+/// `thc ui replay` from a process whose terminal is nothing like the TUI's (no TERM, no
+/// COLORTERM: CI's): the frames still come out as the TUI drew them.
 fn replay(root: &Path, trace: &Path, size: &str) -> String {
-    ok(thc(root).args(["ui", "replay"]).arg(trace).args(["--size", size]))
+    ok(thc(root).args(["ui", "replay"]).arg(trace).args(["--size", size]).env_remove("TERM").env_remove("COLORTERM").env("LANG", "C"))
 }
 
 /// A real session's trace replays to its screen. A TUI on a pty is typed into through the
