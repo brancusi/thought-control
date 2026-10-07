@@ -128,24 +128,6 @@ pub fn mouse_msg(m: &MouseEvent) -> Option<Mouse> {
     Some(Mouse { kind, x: m.column, y: m.row, mods, clicks: None })
 }
 
-/// Where a change came from (subscribe events say).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Source {
-    Terminal,
-    Client,
-    Runtime,
-}
-
-impl Source {
-    pub fn name(self) -> &'static str {
-        match self {
-            Source::Terminal => "terminal",
-            Source::Client => "client",
-            Source::Runtime => "runtime",
-        }
-    }
-}
-
 /// The lines a session keeps by default (`--trace-limit`).
 pub const TRACE_LIMIT: usize = 100_000;
 
@@ -164,11 +146,14 @@ pub struct Session {
     pub trace_limit: usize,
     /// Every trace line also goes here (`thc tui --trace FILE`), never trimmed.
     trace_file: Option<std::io::BufWriter<std::fs::File>>,
+    /// Messages applied since subscribers last heard (kept only while someone may listen).
+    unannounced: Vec<Value>,
+    pub announcing: bool,
 }
 
 impl Session {
     pub fn new(app: App, size: (u16, u16)) -> Session {
-        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None };
+        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None, unannounced: Vec::new(), announcing: false };
         s.sync_document();
         s.checkpoint();
         s
@@ -240,6 +225,11 @@ impl Session {
         // Each line knows the rev it produced: messages carry it as `_rev` in the kept trace.
         let lines: Vec<Value> = self.trace.iter().filter(|l| l.get("rev").and_then(Value::as_u64).is_some_and(|r| r > since) || l.get("_rev").and_then(Value::as_u64).is_some_and(|r| r > since)).cloned().collect();
         Ok((since, lines))
+    }
+
+    /// The messages applied since the last call (for subscribers).
+    pub fn take_unannounced(&mut self) -> Vec<Value> {
+        std::mem::take(&mut self.unannounced)
     }
 
     /// The effects the app is asking for now (its runtime flags), as values.
@@ -368,6 +358,9 @@ impl Session {
         self.follow();
         self.sync_document();
         self.rev += 1;
+        if self.announcing {
+            self.unannounced.push(line.clone());
+        }
         let mut line = line;
         line["_rev"] = json!(self.rev);
         self.push_trace(line);

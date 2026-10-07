@@ -15,7 +15,7 @@ the `export` line to run first.
 Prefer to build it yourself? With a Rust toolchain:
 
 ```sh
-cargo install --git https://github.com/brancusi/thought-control caretline-app
+cargo install caretline-cli
 ```
 
 ## Three demos

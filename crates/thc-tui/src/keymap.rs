@@ -1407,34 +1407,14 @@ pub fn key_for(app: &App, action: &str) -> Option<String> {
 
 /// Every action the table names, with what it does. `false`: not an action here.
 pub fn run(app: &mut App, action: &str) -> bool {
-    use crate::app::{Focus, Overlay, PromptKind, VIEWS};
+    // Presentation-only actions: a pure update on the state, IO as effects (update.rs).
+    if crate::runtime_effects::action(app, action) {
+        return true;
+    }
+    use crate::app::{Overlay, PromptKind, VIEWS};
     use crate::input::LineInput;
-    let page = (app.render.list_height / 2).max(1) as isize;
-    let go = |app: &mut App, v: View| app.set_view(v);
     match action {
-        "go.today" => go(app, View::Today),
-        "go.inbox" => go(app, View::Inbox),
-        "go.tasks" => go(app, View::Tasks),
         "go.pages" => app.show_pages(),
-        "go.journal" => {
-            // The journal is a destination, not a detour: Esc from it goes to Today.
-            app.doc_origin = None;
-            go(app, View::Journal)
-        }
-        "go.log" => go(app, View::Log),
-        // Arriving never takes the cursor (navigation.md §6); `/` is a find, so it does.
-        "go.search" => {
-            if app.view != View::Search {
-                app.set_view(View::Search);
-            }
-        }
-        "search.find" => {
-            if app.view != View::Search {
-                app.set_view(View::Search);
-            }
-            app.prompt = Some((PromptKind::Search, LineInput::with(&app.search_terms)));
-        }
-        "pages.filter" => app.prompt = Some((PromptKind::PagesFilter, LineInput::with(&app.pages_filter))),
         "view.next" | "view.prev" => {
             let i = VIEWS.iter().position(|v| *v == app.view).unwrap_or(0);
             let n = VIEWS.len();
@@ -1443,18 +1423,7 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 v => app.set_view(v),
             }
         }
-        // `?` on a view: how it's built first (view-explain.md §3); `?` there shows the keys.
-        "help.context" => match app.recipe_name().filter(|_| app.doc.is_none()) {
-            Some(name) => app.overlay = Some(Overlay::Recipe { name }),
-            None => app.overlay = Some(Overlay::Help { all: false, scroll: 0 }),
-        },
-        "view.explain" => match app.recipe_name() {
-            Some(name) => app.overlay = Some(Overlay::Recipe { name }),
-            None => app.info("no view here to explain · Today, Inbox, Tasks".to_string()),
-        },
-        "help.all" => app.overlay = Some(Overlay::Help { all: true, scroll: 0 }),
         "leader" => start_prefix(app, vec![Key { code: KeyCode::Char(' '), mods: KeyModifiers::NONE }]),
-        "focus.toggle" => app.set_focus_mode(!app.focus_mode),
         "find.tag" => {
             app.set_view(View::Pages);
             app.page_open = None;
@@ -1469,9 +1438,6 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 app.toggle_review_lane();
             }
         }
-        "view.save" => {
-            app.overlay = Some(Overlay::Palette { input: LineInput::with("view add "), sel: 0 });
-        }
         "views.edit" => {
             app.set_view(View::Pages);
             app.page_open = None;
@@ -1485,16 +1451,12 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 None => app.info(format!("no view on {slot} · space v s saves this filter as one")),
             }
         }
-        // Palette-only actions (no key by default).
-        "page.new" => app.prompt = Some((PromptKind::NewPage, LineInput::default())),
         "keys.remap" => crate::runtime_effects::dispatch(app, crate::update::Msg::RemapKeys),
         "daemon.start" => app.start_daemon(),
         "update" => app.start_update(),
         "changes" | "about" => crate::about::open(app),
         "focus.overlay" => app.focus_command(""),
-        "mouse.toggle" => app.mouse_request = Some(!app.tui_prefs.mouse),
         "palette.open" => app.open_palette(),
-        "finder.open" => app.overlay = Some(Overlay::Finder { input: LineInput::default(), sel: 0 }),
         "vault.picker" => app.open_vault_picker(),
         "view.scope" => {
             if app.view == View::Today && !app.others.is_empty() {
@@ -1506,16 +1468,6 @@ pub fn run(app: &mut App, action: &str) -> bool {
         }
         "nav.back" => app.history_go(-1),
         "nav.forward" => app.history_go(1),
-        "nav.history" => app.overlay = Some(crate::app::Overlay::History { sel: 0 }),
-        "tasks.filter" => {
-            if app.view != View::Tasks {
-                app.set_view(View::Tasks);
-            }
-            app.prompt = Some((PromptKind::Filter, LineInput::with(&app.tasks_filter)));
-            app.input_untouched = true;
-        }
-        "pane.detail_toggle" => app.show_detail = !app.show_detail,
-        "pane.next" => app.focus = if app.focus == Focus::List { Focus::Detail } else { Focus::List },
         "context.toggle" => app.toggle_context(),
         "go.journal_today" => {
             if app.doc.is_some() {
@@ -1523,25 +1475,8 @@ pub fn run(app: &mut App, action: &str) -> bool {
             }
             app.journal_today();
         }
-        "go.date" => app.prompt = Some((PromptKind::GoDate, LineInput::default())),
         "undo" | "log.undo_tx" => app.undo(),
         "back" => app.back(),
-        "quit" => {
-            app.save_doc(true);
-            app.quit = true;
-        }
-        // ⌃L: redraw, and lists re-sort (navigation.md §8: your own changes move to their place).
-        "redraw" => {
-            let _ = app.reload();
-        }
-        "cursor.down" => app.move_cursor(1),
-        "cursor.up" => app.move_cursor(-1),
-        "cursor.top" => app.jump(true),
-        "cursor.bottom" => app.jump(false),
-        "cursor.half_down" => app.move_cursor(page),
-        "cursor.half_up" => app.move_cursor(-page),
-        "cursor.page_down" => app.move_cursor(page * 2),
-        "cursor.page_up" => app.move_cursor(-page * 2),
         "open" => app.open_selected(),
         "fold.close" => app.toggle_fold(Some(false)),
         "fold.open" => app.toggle_fold(Some(true)),
@@ -1595,11 +1530,6 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 }
             }
         }
-        "node.move" => {
-            if let Some(id) = app.selected_id() {
-                app.overlay = Some(Overlay::Move { node: id, input: LineInput::default(), sel: 0 });
-            }
-        }
         "node.delete" => app.delete_selected(),
         "node.skip" => app.skip_selected(),
         "node.snooze" => {
@@ -1609,11 +1539,6 @@ pub fn run(app: &mut App, action: &str) -> bool {
         }
         "node.ack" => app.ack_selected(),
         "node.compare" => app.open_compare(),
-        "node.edit_external" => {
-            if let Some(id) = app.selected_id() {
-                app.editor_request = Some(id);
-            }
-        }
         "doc.edit_external" => {
             let root = match app.view {
                 View::Journal => {
@@ -1628,47 +1553,11 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 None => app.info("nothing to edit yet: Enter opens it to write"),
             }
         }
-        "node.history" => {
-            app.log_node = app.selected_id();
-            app.view = View::Log;
-            app.selected = None;
-            app.cursor = 0;
-            let _ = app.reload();
-        }
         "node.copy_id" => app.copy_id(false),
         "node.copy_full_id" => app.copy_id(true),
         "capture.here" | "capture.inbox" => {
             let targets = app.capture_targets(action == "capture.inbox");
             app.overlay = Some(Overlay::Capture { input: LineInput::default(), targets, which: 0 });
-        }
-        "today.by_vault" => {
-            // Sections per vault instead of merged (vaults.md §3.5).
-            app.today_by_vault = !app.today_by_vault;
-            let _ = app.reload();
-            app.info(if app.today_by_vault { "by vault · space t v merges them" } else { "merged · space t v for a section per vault" });
-        }
-        "today.agenda_toggle" => {
-            app.agenda_mode = !app.agenda_mode;
-            app.selected = None;
-            let _ = app.reload();
-        }
-        "today.show_done" => {
-            app.show_all_done = !app.show_all_done;
-            let _ = app.reload();
-        }
-        "day.prev" | "day.next" | "week.prev" | "week.next" => {
-            let delta = match action {
-                "day.prev" => -1,
-                "day.next" => 1,
-                "week.prev" => -7,
-                _ => 7,
-            };
-            if app.view == View::Today {
-                app.journal_date = app.today;
-            }
-            app.journal_date += chrono::Duration::days(delta);
-            app.selected = None;
-            app.set_view(View::Journal);
         }
         "ids.toggle" => app.toggle_page_ids(),
         "tasks.sort_cycle" => app.cycle_sort(),

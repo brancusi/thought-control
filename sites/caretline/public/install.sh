@@ -13,7 +13,7 @@
 #   CARETLINE_NO_MODIFY_PATH=1 don't add the directory to your shell's startup file
 #
 # Or build it with Rust instead:
-#   cargo install --git https://github.com/brancusi/thought-control caretline-app
+#   cargo install caretline-cli
 
 set -eu
 
@@ -47,12 +47,12 @@ target() {
 	case "$os" in
 		Darwin) os_part="apple-darwin" ;;
 		Linux) os_part="unknown-linux-musl" ;;
-		*) err "no prebuilt caretline for $os; try: cargo install --git https://github.com/$REPO caretline-app" ;;
+		*) err "no prebuilt caretline for $os; try: cargo install caretline-cli" ;;
 	esac
 	case "$arch" in
 		arm64 | aarch64) arch_part="aarch64" ;;
 		x86_64 | amd64) arch_part="x86_64" ;;
-		*) err "no prebuilt caretline for $arch; try: cargo install --git https://github.com/$REPO caretline-app" ;;
+		*) err "no prebuilt caretline for $arch; try: cargo install caretline-cli" ;;
 	esac
 	# An x86_64 shell under Rosetta on Apple silicon still gets the native build.
 	if [ "$os" = Darwin ] && [ "$arch_part" = x86_64 ] && [ "$(sysctl -n sysctl.proc_translated 2>/dev/null || echo 0)" = 1 ]; then
@@ -147,7 +147,7 @@ main() {
 	say "  caretline demo            a guided tour, learned by doing"
 	say "  caretline demo scenes     ASCII animations running inside the editor"
 	say "  caretline demo agent      a scripted agent co-editing beside you"
-	say "  caretline notes.md        edit a file (--outline for lists and tasks)"
+	say "  caretline notes.md        edit a file (--outline for lists and folds)"
 	say ""
 	say "Docs: https://caretline.app/docs/"
 }

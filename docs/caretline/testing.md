@@ -22,7 +22,7 @@ Run them:
 
 ```sh
 cargo test -p caretline
-cargo test -p caretline-app
+cargo test -p caretline-cli
 ```
 
 ## Caret notation

@@ -1,15 +1,15 @@
 # The `caretline` command
 
 `caretline` is the interactive editor and a headless tool for states, snapshots and replay.
-It comes from the `caretline-app` crate. Every output on this page is from a real run.
+It comes from the `caretline-cli` crate. Every output on this page is from a real run.
 
 ## Install
 
 ```sh
 curl -fsSL https://caretline.app/install.sh | sh && caretline demo   # a prebuilt binary, then the tour
-cargo install --git https://github.com/brancusi/thought-control caretline-app   # or build it
+cargo install caretline-cli   # or build it
 cargo install --locked --path crates/caretline-app   # from a checkout
-cargo run -p caretline-app -- notes.md                # or run it from the checkout
+cargo run -p caretline-cli -- notes.md                # or run it from the checkout
 ```
 
 See the [Quickstart](quickstart.md) for what the installer does and what the demos show.
