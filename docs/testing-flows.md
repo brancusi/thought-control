@@ -103,7 +103,8 @@ At `done()`:
 
 - **Replay:** the flow's trace (`Session::trace`) replays (`session::replay`, on scratch copies
   pinned to each segment's frontier) to the same frame at every step. Only ids a replayed write
-  minted fresh (a node's short id, a tx id) may differ.
+  minted fresh (a node's short id, a tx id) and the minute a write stamped from the wall clock
+  (`done 01:15`) may differ.
 - **Restore:** after a save, the state restored on a fresh session on a copy of the vault
   draws the same frame.
 

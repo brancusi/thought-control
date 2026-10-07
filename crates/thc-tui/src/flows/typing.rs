@@ -337,3 +337,60 @@ fn backspace_at_the_end_of_a_scrolled_page() {
     }
     f.done();
 }
+
+#[test]
+fn a_link_hint_on_another_line_holds_still_while_typing() {
+    // Edit a link into a near miss ([[Gardena]]): its hint shows on that line. Typing on a line
+    // below must not make it flicker away under your eyes.
+    q4().named("a near-miss link hint while typing elsewhere")
+        .known("64j4y", Known::Rail)
+        .alt_click(doc_at("Ship the [[Garden]] redesign", 16))
+        .type_text("a")
+        .moves("<down><down><down><down>")
+        .type_text("xyz")
+        .done();
+}
+
+#[test]
+#[ignore = "4z7zh"]
+fn a_click_near_the_top_or_bottom_never_scrolls() {
+    // On a long page, scrolled into the middle: a click on the first or last text row places
+    // the caret there and the text stays where it is under the mouse.
+    let mut f = flow_with("a click near the view's edges", Size::Long, (120, 30));
+    f.keys("<c-o>Long Page<cr>").keys("<pgdn><pgdn>");
+    let r = f.shot.doc_view.unwrap();
+    let rows: Vec<u16> = f.s.app.render.doc_hits.iter().map(|h| h.y).collect();
+    let (top, bottom) = (*rows.iter().min().unwrap(), *rows.iter().filter(|y| **y < r.y + r.height).max().unwrap());
+    f.alt_click(At::Cell(r.x + 12, top)).alt_click(At::Cell(r.x + 12, bottom)).done();
+}
+
+#[test]
+#[ignore = "rm2ez"]
+fn a_wide_character_at_the_end_of_a_row_wraps() {
+    // Fill a row to its last free column, then type a wide character: it goes to the next row,
+    // never into the scrollbar's column.
+    for (w, h) in [(80, 24), (120, 36)] {
+        let mut f = flow_with(&format!("a wide character at a row's end at {w}x{h}"), Size::Long, (w, h));
+        f.keys("<c-o>Long Page<cr><c-end><cr>").type_text("x");
+        let bar = f.shot.bar_x.expect("a scrollbar on a long page");
+        let mut n = 0;
+        for wide in ["🙂", "日", "🙂"] {
+            // Narrow characters up to one column before the scrollbar's, then the wide one.
+            while f.shot.cursor.is_some_and(|(x, _)| x + 1 < bar) && n < 400 {
+                f.type_text("a");
+                n += 1;
+            }
+            f.type_text(wide);
+            let (cx, _) = f.shot.cursor.unwrap();
+            assert!(cx < bar, "the cursor went into the scrollbar's column after {wide:?}: {cx} ≥ {bar}");
+            for y in 0..f.shot.buf.area.height {
+                let sym = f.shot.buf[(bar.saturating_sub(1), y)].symbol();
+                if unicode_width::UnicodeWidthStr::width(sym) > 1 {
+                    f.dump();
+                    panic!("{}: a wide character at column {} covers the scrollbar's column {bar} on row {y}", f.name, bar - 1);
+                }
+            }
+        }
+        f.done();
+    }
+}

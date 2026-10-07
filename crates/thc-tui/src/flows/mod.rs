@@ -56,6 +56,9 @@ pub enum Motion {
     /// The caret moves (an arrow, a click): the chrome stays, and the view scrolls only to keep
     /// the caret on screen.
     Caret,
+    /// A click that places the caret: the chrome stays and the view doesn't scroll at all (the
+    /// text under the mouse never moves).
+    Click,
     /// Another writer's change lands (`thc add`, another device): the caret, the scroll and
     /// the rows above the caret's note stay; the header's badges and the footer may say so.
     Agent,
@@ -98,6 +101,8 @@ pub struct Shot {
     pub overlay: bool,
     /// The screen row where the caret's note starts (its first row, or the view's top).
     pub caret_top: Option<u16>,
+    /// The document's scrollbar column, when it shows (its thumb follows the length).
+    pub bar_x: Option<u16>,
 }
 
 impl Shot {
@@ -364,7 +369,7 @@ impl Flow {
     /// A click that only places the caret: the chrome stays and nothing scrolls.
     pub fn click_caret(&mut self, at: At) -> &mut Self {
         let (x, y) = self.locate(&at);
-        self.mouse_script(&format!("click {at:?}"), Motion::Caret, format!("<click:{x},{y}>"))
+        self.mouse_script(&format!("click {at:?}"), Motion::Click, format!("<click:{x},{y}>"))
     }
 
     pub fn shift_click(&mut self, at: At) -> &mut Self {
@@ -385,7 +390,7 @@ impl Flow {
 
     pub fn alt_click(&mut self, at: At) -> &mut Self {
         let (x, y) = self.locate(&at);
-        self.mouse_script(&format!("⌥click {at:?}"), Motion::Caret, format!("<aclick:{x},{y}>"))
+        self.mouse_script(&format!("⌥click {at:?}"), Motion::Click, format!("<aclick:{x},{y}>"))
     }
 
     pub fn double_click(&mut self, at: At) -> &mut Self {
@@ -687,7 +692,9 @@ impl Flow {
             Err(e) => self.fail(desc, before, &format!("the state's JSON doesn't parse back: {e}")),
         }
         // The caret: on screen while writing, on the document's caret.
-        if shot.writing {
+        // (The wheel scrolls the view freely, the caret may be off screen: a key brings it back.)
+        let free = self.s.app.doc.as_ref().is_some_and(|d| d.scroll_free());
+        if shot.writing && (shot.cursor.is_some() || !free) {
             let Some((cx, cy)) = shot.cursor else { self.fail(desc, before, "writing, but no cursor shows") };
             let r = shot.doc_view.unwrap();
             if !(cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height) {
@@ -730,8 +737,13 @@ impl Flow {
                 self.fail(desc, before, &format!("row {y} (chrome) changed:\n  before {:?}\n  after  {:?}", p.trim_end(), q.trim_end()));
             }
         }
+        // Keys may scroll to keep the caret SCROLLOFF rows from the edges; a click never scrolls.
+        let margin = if motion == Motion::Click { 0 } else { 2 };
         let bottom = b.y + b.height - 1;
-        let at_edge = |s: &Shot| s.cursor.is_some_and(|(_, y)| y == b.y || y == bottom);
+        let at_edge = |s: &Shot| s.cursor.is_some_and(|(_, y)| y <= b.y + margin || y + margin >= bottom);
+        if motion == Motion::Click && before.scroll != shot.scroll {
+            self.fail(desc, before, &format!("a click scrolled the view {:?} → {:?}: the text moved under the mouse", before.scroll, shot.scroll));
+        }
         if before.scroll != shot.scroll && !at_edge(&shot) && !at_edge(before) {
             self.fail(desc, before, &format!("the view scrolled {:?} → {:?} with the caret mid-screen", before.scroll, shot.scroll));
         }
@@ -739,8 +751,10 @@ impl Flow {
             // Rows above the caret's note (a note's own rows reflow: a word may move up a row).
             let top = [before.caret_top, shot.caret_top].iter().flatten().copied().min();
             if let Some(cy) = top {
+                // The scrollbar's column is left out: its thumb follows the length.
+                let x1 = shot.bar_x.or(before.bar_x).unwrap_or(b.x + b.width).min(b.x + b.width);
                 for y in b.y..cy {
-                    let (p, q) = (before.row(y, b.x, b.x + b.width), shot.row(y, b.x, b.x + b.width));
+                    let (p, q) = (before.row(y, b.x, x1), shot.row(y, b.x, x1));
                     if p != q {
                         self.fail(desc, before, &format!("row {y}, above the caret's note (from row {cy}), changed while typing:\n  before {:?}\n  after  {:?}", p.trim_end(), q.trim_end()));
                     }
@@ -1042,13 +1056,15 @@ fn draw(term: &mut Terminal<Emu>, s: &mut Session) -> Shot {
     let panels = app.render.panel_views.iter().map(|(_, r)| *r).collect();
     let overlay = app.ui.overlay.is_some() || app.prompt.is_some() || app.ui.link_open;
     let caret = app.doc.as_ref().map(|d| (d.caret().line, d.caret().byte));
-    let writing = app.doc.is_some() && doc_view.is_some() && app.ui.focus == Focus::List && !overlay && !app.ui.doc_parked && cursor.is_some_and(|(x, y)| doc_view.is_some_and(|r| r.contains((x, y).into())));
+    // The main document has the keyboard (whether or not a cursor shows: that's checked).
+    let writing = app.doc.is_some() && doc_view.is_some() && app.ui.focus == Focus::List && !overlay && !app.ui.doc_parked;
     let caret_top = caret.and_then(|(line, _)| {
         let rows: Vec<&crate::doc_ui::HitRow> = app.render.doc_hits.iter().filter(|h| h.line == line).collect();
         rows.iter().find(|h| h.first).map(|h| h.y).or_else(|| rows.first().map(|_| doc_view.map_or(0, |r| r.y)))
     });
+    let bar_x = app.render.click_targets.iter().find(|t| matches!(t.what, crate::ui::Click::Scroll(_))).map(|t| t.x0);
     let text = crate::session::frame_text(&buf).lines().map(str::to_string).collect();
-    Shot { caret_top, buf, text, cursor, doc_view, side_x, panels, scroll: app.doc.as_ref().map(|d| d.scroll()), caret, writing, overlay }
+    Shot { caret_top, bar_x, buf, text, cursor, doc_view, side_x, panels, scroll: app.doc.as_ref().map(|d| d.scroll()), caret, writing, overlay }
 }
 
 /// A key script's tokens, as written.
@@ -1116,14 +1132,17 @@ fn counts_masked(row: &str) -> String {
     out.replace("# words", "# word")
 }
 
-/// Two frames the same but for ids a write made fresh (a node's short id, a tx's): a replay
-/// makes its own writes again, with new ids. Only a token that is id-shaped on both sides is
-/// forgiven.
+/// Two frames the same but for ids a write made fresh (a node's short id, a tx's) and the wall
+/// clock's minute a write stamped: a replay makes its own writes again, with new ids, later.
+/// Only a token that is id- or clock-shaped on both sides is forgiven.
 fn same_but_ids(a: &str, b: &str) -> bool {
     if a == b {
         return true;
     }
-    let id = |t: &str| (t.len() == 5 && t.chars().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase())) || (t.len() == 6 && t.chars().all(|c| c.is_ascii_digit() || c.is_ascii_uppercase()));
+    // A write's time (`done 01:15`, a history row) is the wall clock's, not the trace's: a
+    // replay a minute later stamps another one.
+    let clock = |t: &str| t.len() == 5 && t.as_bytes()[2] == b':' && t.chars().filter(|c| c.is_ascii_digit()).count() == 4;
+    let id = |t: &str| (t.len() == 5 && t.chars().all(|c| c.is_ascii_digit() || c.is_ascii_lowercase())) || (t.len() == 6 && t.chars().all(|c| c.is_ascii_digit() || c.is_ascii_uppercase())) || clock(t);
     let (la, lb): (Vec<&str>, Vec<&str>) = (a.lines().collect(), b.lines().collect());
     la.len() == lb.len()
         && la.iter().zip(&lb).all(|(x, y)| {
