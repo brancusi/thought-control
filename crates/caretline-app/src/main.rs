@@ -288,6 +288,9 @@ fn run() -> Result<(), String> {
         state.doc.path = Some(path.clone());
     }
 
+    if args.no_status_bar {
+        state.view.config.status_bar = false;
+    }
     let headless = args.snapshot.is_some()
         || args.dump_state.is_some()
         || args.msgs.is_some()
@@ -299,9 +302,6 @@ fn run() -> Result<(), String> {
             Some("") => Some(hub::default_socket_path()?),
             Some(p) => Some(std::path::PathBuf::from(p)),
         };
-        if args.no_status_bar {
-            state.view.config.status_bar = false;
-        }
         return runtime::run_interactive(
             state,
             runtime::Interactive {

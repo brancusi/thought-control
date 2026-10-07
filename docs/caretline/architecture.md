@@ -26,32 +26,128 @@ assert_eq!(view(&state).cursor, Some((2, 0)));            // the caret is after 
 
 ### What `State` holds
 
-| Field | Meaning |
-|---|---|
-| `text` | The document, a `ropey::Rope` (a string in JSON) |
-| `selection` | Helix `Selection`: one or more ranges, each an `anchor` and a `head` (the caret). `old_visual_position` holds the goal column |
-| `scroll` | The top of the view: a document `line`, a visual `row` inside it, and a `col` offset when wrapping is off |
-| `viewport` | `width` × `height` in cells. The last row is the status bar, unless `config.status_bar` is off |
-| `clipboard` | The internal register: the last copy or cut, with the marks a cut took. A plain string in JSON when it carries no marks |
-| `path` | Where `save` writes, if anywhere |
-| `history` | Helix's undo tree |
-| `saved_revision`, `saving`, `dirty` | Which history revision is on disk, a save in flight, and whether they differ |
-| `config` | `tab_width`, `soft_wrap`, `scrolloff`, `line_ending`, `status_bar` |
-| `status` | A one-line message for the status bar, cleared by the next input |
-| `now_ms` | The clock, as the last `tick` reported it |
-| `run` | The open edit run (for undo grouping) |
-| `quit_armed` | A first quit with unsaved changes arms it; the second quits |
-| `marks` | Block marks: numeric ids at line starts, mapped through every edit (see [Block marks](#block-marks)). Left out of the JSON when unused |
-| `mark_log` | What each history revision did to the marks, by revision. Left out of the JSON when empty |
-| `outline` | Set for an [outline document](outline.md): its config (indent, task vocabulary, cycle). Left out when unset |
-| `word_drag` | The word a `select_word_at` selected, while a shift-click may extend it by words |
+`State` is one **document** seen through one **view**: `state.doc` (a `Document`) and
+`state.view` (a `View`). Several views can share one document (see
+[Documents and views](#documents-and-views)); `State` is the single-view case that the
+protocol, traces and the `caretline` binary use. Its JSON is one flat object with both
+halves' fields side by side, the shape every earlier state has.
+
+| Field | In | Meaning |
+|---|---|---|
+| `text` | doc | The document, a `ropey::Rope` (a string in JSON) |
+| `selection` | view | Helix `Selection`: one or more ranges, each an `anchor` and a `head` (the caret). `old_visual_position` holds the goal column |
+| `scroll` | view | The top of the view: a document `line`, a visual `row` inside it, and a `col` offset when wrapping is off |
+| `viewport` | view | `width` × `height` in cells. The last row is the status bar, unless `config.status_bar` is off |
+| `clipboard` | doc | The internal register: the last copy or cut, with the marks a cut took. A plain string in JSON when it carries no marks |
+| `path` | doc | Where `save` writes, if anywhere |
+| `history` | doc | Helix's undo tree |
+| `saved_revision`, `saving`, `dirty` | doc | Which history revision is on disk, a save in flight, and whether they differ |
+| `config` | both | In JSON one object: `tab_width`, `soft_wrap`, `line_ending` and `external_undo` are the document's (`doc.config`); `scrolloff`, `status_bar` and `follow` the view's (`view.config`) |
+| `status` | view | A one-line message for the status bar, cleared by the next input |
+| `now_ms` | doc | The clock, as the last `tick` reported it |
+| `run` | doc | The open edit run (for undo grouping), with the view it is typed in |
+| `quit_armed` | view | A first quit with unsaved changes arms it; the second quits |
+| `marks` | doc | Block marks: numeric ids at line starts, mapped through every edit (see [Block marks](#block-marks)). Left out of the JSON when unused |
+| `mark_log` | doc | What each history revision did to the marks, by revision. Left out of the JSON when empty |
+| `outline` | doc | Set for an [outline document](outline.md): its config (indent, task vocabulary, cycle). Left out when unset |
+| `doc_rev` | doc (`rev`) | Goes up by one for every change of the text or the marks, from any view or from elsewhere. Left out while 0 |
+| `undo_floor` | doc | The history was trimmed at a change from elsewhere (the barrier fallback). Left out while false |
+| `word_drag` | view | The word a `select_word_at` selected, while a shift-click may extend it by words |
+| `folds` | view | Folded blocks, by mark id. Left out while empty |
+| `read_only` | view | Editing messages are refused. Left out while false |
+| `focused` | view | Only a focused view draws its caret. Left out while true |
+| `free` | view | Scrolled freely (`scroll_view`): the view doesn't follow the caret until it moves. Left out while false |
+| `layout` | view | The [outline layout](outline.md#the-outline-layout). Left out when unset |
 
 Only `text` matters when a state is parsed: every other field is optional and gets what
 `State::new` would give (see [Rehydration](#rehydration)).
 
-`State` also carries memos that are not part of its value: where the rows of long
-soft-wrapped lines start (see [Long lines](#long-lines)) and an outline document's derived
-blocks. They are never serialized and never affect equality.
+The document and the view also carry memos that are not part of their value: where the rows
+of long soft-wrapped lines start (the view's, see [Long lines](#long-lines)) and an outline
+document's derived blocks (the document's). They are never serialized and never affect
+equality.
+
+## Documents and views
+
+A `Document` holds what every window on a text shares: the text, marks, undo history,
+outline, clipboard register, clock and save state. A `View` holds what one window has: its
+selection and goal column, scroll, viewport, folds, status line, follow policy, layout and
+whether it may edit.
+
+```rust
+use caretline_next::{update_doc, Msg, State, View, Viewport};
+
+let mut doc = State::new("hello world", None, Viewport { width: 40, height: 5 }).doc;
+let mut views = [View::new(Viewport { width: 40, height: 5 }), View::new(Viewport { width: 20, height: 3 })];
+views[1].selection = caretline_next::helix::Selection::point(6); // before "world"
+update_doc(&mut doc, &mut views, 0, Msg::InsertText { text: "say ".into() });
+assert_eq!(doc.text.to_string(), "say hello world");
+assert_eq!(views[1].caret(), 10); // still before "world"
+```
+
+`update_doc(doc, views, acting, msg)` applies a message through `views[acting]`:
+
+- **Edits from one view rebase the others.** The text changes it made are mapped through every
+  other view's selection, its scroll stays on the text it showed, its folds drop with their
+  blocks, and its selection is kept out of block markers and folded blocks. A motion moves no
+  other view.
+- **Undo is the document's.** It takes back the last step whichever view made it, and puts the
+  acting view's selection where that step happened. A typing run belongs to one view: typing
+  through another starts a new step.
+- **Read-only views** are refused every editing message (`Msg::edits()`): `update_doc` returns
+  `Effect::Refused` and changes nothing. Motion, selection, copy and folds still work.
+- **Changes from elsewhere** (`Msg::External`) act on the document, not through a view: every
+  view is mapped through them, read-only ones included. See
+  [Changes from elsewhere](#changes-from-elsewhere).
+
+`update(&mut state, msg)` is `update_doc(&mut state.doc, [&mut state.view], 0, msg)`, and
+`view(&state)` is `render(&state.doc, &state.view)`. `Session` keeps other views beside its
+state, and the [protocol](protocol.md#views) addresses them by id.
+
+A view follows the caret by its `config.follow`: `margin` (the least scroll that keeps
+`scrolloff` rows of margin) or `{"typewriter": {"percent": 45}}` (the caret's row stays at that
+share of the height). `scroll_view` scrolls without moving the caret and leaves the view
+`free` until the next caret motion or edit.
+
+## Changes from elsewhere
+
+`Msg::External { changes }` applies changes made outside the editor: another device, a
+daemon, an agent. Block changes name blocks by mark (`replace_content`, `set_shape`, `set_gap`,
+`insert_block`, `remove_block`); `replace` names a char range and works on any document. See
+[messages.md](messages.md#changes-from-elsewhere).
+
+Each change becomes a transaction applied **outside the undo history**. A new content changes
+only the chars that differ, so carets in the unchanged part stay put. Then:
+
+- every view's selection is mapped through it, and marks follow the plain mapping rules plus
+  each change's own (an inserted block takes the host's id; a removed block's mark goes);
+- the **history is transformed** over it, so undo takes back only local edits and never the
+  change from elsewhere;
+- the save point, the open edit run and the mark log stay on the revisions they belong to, so
+  an undo back to the save point is clean again and typing continues its undo step.
+
+The message is passive: it doesn't end a typing run or clear the status.
+
+### The history transform
+
+Helix's `ChangeSet::map` (upstream `unimplemented!()`) is the standard operational transform
+over retain, insert and delete: `a.map_ordered(b, before)` turns `a` into a change that applies
+after `b`, such that `b ∘ a' == a ∘ b'`. Deletions win, and insertions from both sides are
+kept. `History::rebase_over(remote, doc)` walks from the current revision back to the root:
+
+- each inversion `I_k` becomes `I_k.map(R_k)`, where `R_k` is the remote change as it applies
+  to revision `k`'s document;
+- the remote change moves one revision back: `R_{k-1} = R_k.map(I_k, before)`;
+- each transaction becomes the inverse of its new inversion, and the stored selections are
+  mapped the same way.
+
+Revisions off the path from the root to the current one are dropped: redo past a change from
+elsewhere is gone. When an undo step and the change touch the same chars, the change wins:
+undo can't bring back what elsewhere deleted. The cost is linear in the history (about 5 ms
+for 5,000 revisions in a release build).
+
+`config.external_undo: "barrier"` is a fallback: a change from elsewhere trims the history
+instead, and undo stops there with `undo stops at a change from elsewhere`.
 
 ## The update loop
 
@@ -86,7 +182,7 @@ from a terminal event, it sends a `Tick` with the wall clock.
 `update` reads no clock, uses no randomness and does no I/O. Three things follow.
 
 - **Time is an input.** The runtime reports the time in `Msg::Tick { now_ms }`. `update`
-  stores it in `state.now_ms`, and undo grouping compares those timestamps. Helix's
+  stores it in `state.doc.now_ms`, and undo grouping compares those timestamps. Helix's
   `History` normally reads `Instant::now()`; the vendored copy takes caller-supplied
   milliseconds instead.
 - **I/O is an output.** `save` doesn't write a file; it returns
@@ -124,9 +220,9 @@ for (now, text) in [(0, "one"), (500, " two"), (3000, " three")] {
     update(&mut s, Msg::InsertText { text: text.into() });
 }
 update(&mut s, Msg::Undo);
-assert_eq!(s.text.to_string(), "one two"); // " three" came 2.5 s later: its own step
+assert_eq!(s.doc.text.to_string(), "one two"); // " three" came 2.5 s later: its own step
 update(&mut s, Msg::Undo);
-assert_eq!(s.text.to_string(), "");        // "one" and " two" were one run
+assert_eq!(s.doc.text.to_string(), "");        // "one" and " two" were one run
 ```
 
 ## Revisions and determinism
@@ -135,7 +231,7 @@ There are two kinds of revision.
 
 | Revision | Where | Counts |
 |---|---|---|
-| History revision | `state.history.current_revision()` | Undo steps. A typing run amends one revision; undo moves back along the tree. `saved_revision` and `dirty` are defined against it |
+| History revision | `state.doc.history.current_revision()` | Undo steps. A typing run amends one revision; undo moves back along the tree. `saved_revision` and `dirty` are defined against it |
 | Session rev | `Session::rev()` | Every message applied and every state replacement, +1 each. Clients of the [protocol](protocol.md) use it to detect changes they missed |
 
 **Dirty** is `saved_revision != history.current_revision()`. Undoing back to the saved
@@ -226,11 +322,11 @@ map into caretline.
 
 | Helix | In caretline | How it's used |
 |---|---|---|
-| `Rope` (ropey) | `State.text` | The document. Serialized as a plain string |
-| `Selection`, `Range` | `State.selection` | Anchor and head per range, a primary index, and `old_visual_position` for the goal column. Derives serde |
-| `Transaction`, `ChangeSet` | Built inside `update` | Each edit builds one change per range, applies it to the rope, and sets the new selection |
+| `Rope` (ropey) | `Document.text` | The document. Serialized as a plain string |
+| `Selection`, `Range` | `View.selection` | Anchor and head per range, a primary index, and `old_visual_position` for the goal column. Derives serde |
+| `Transaction`, `ChangeSet` | Built inside `update` | Each edit builds one change per range, applies it to the rope, and sets the new selection. `ChangeSet::map` (a caretline implementation) transforms one change over another |
 | `Selection::map` | Undo and redo | When a history transaction has no selection, the current one is mapped through its changes |
-| `History` | `State.history` | The revision tree. `commit_revision_at_timestamp` takes caller time; `amend_current_revision` (a caretline addition) folds a typing run into one revision |
+| `History` | `Document.history` | The revision tree. `commit_revision_at_timestamp` takes caller time; `amend_current_revision` (a caretline addition) folds a typing run into one revision; `rebase_over` (a caretline addition) transforms it over a change from elsewhere |
 | `graphemes` | Motion and deletes | `next_grapheme_boundary` and `prev_grapheme_boundary` keep every position on a boundary |
 | `DocumentFormatter`, `TextFormat` | `layout.rs` and `view.rs` | Soft wrap, tab stops and visual positions. Wrapping needs more than 10 columns. `resume_at_row` (a caretline addition) starts it inside a long line |
 | `LineEnding` | `Config.line_ending` | Detected from the text on load. Enter inserts it and pasted text is normalized to it |
@@ -292,22 +388,26 @@ marks.
 
 ## Outline documents
 
-With `state.outline` set, the same buffer is read as blocks bounded by marks (one text line
+With `state.doc.outline` set, the same buffer is read as blocks bounded by marks (one text line
 per row, a block's first line carrying its indentation and marker, other lines continuing
 it). `update` hands Enter, Backspace, Delete, Tab, the task cycle, moves, copy and paste to
 the outline's rules first (`outline::rules`), which build ordinary Transactions with explicit
 mark edits. Every commit then marks new block starts, and after every message the selection
 is kept out of markers and atomic blocks. Layout adds a virtual row before each block with a
-blank row. See [outline.md](outline.md).
+blank row, and with a view's [outline layout](outline.md#the-outline-layout) lays each line out
+at its own column and width. See [outline.md](outline.md).
 
 ## What `update` does after every message
 
 After handling any message, `update` always:
 
-1. in an outline document, keeps the selection out of markers and atomic blocks and reports
-   `block_left` (and `restored`, `notice`),
+1. in an outline document, moves selection ends out of folded blocks, keeps them out of
+   markers and atomic blocks, and reports `block_left` (and `restored`, `notice`),
 2. recomputes `dirty`,
 3. closes the edit run if history moved past it, and
-4. scrolls so the primary caret is visible, keeping `scrolloff` rows of margin.
+4. scrolls so the primary caret is visible, by the view's follow policy (unless the view was
+   scrolled freely and the caret hasn't moved since).
+
+`update_doc` then rebases every other view through the text changes.
 
 So no runtime needs to fix up scrolling after a resize or an edit.

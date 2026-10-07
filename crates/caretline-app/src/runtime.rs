@@ -326,7 +326,7 @@ fn dispatch_local(hub: &mut Hub, msgs: Vec<Msg>, quit: &mut bool, source: &str) 
         let (_, m) = hub.session.apply_with(msg, &mut |e| perform(e, quit));
         applied.extend(m);
     }
-    let change = Change { rev: hub.session.rev(), msgs: applied, state_set: false };
+    let change = Change { rev: hub.session.rev(), msgs: applied, state_set: false, view: None };
     hub.changed(&change, source);
 }
 

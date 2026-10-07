@@ -7,7 +7,7 @@ every block a stable identity, so a host can keep its own data per block (a data
 due date) while the text is edited, undone and redone.
 
 The outline layer lives in [`src/outline`](../../crates/caretline-next/src/outline) and is
-on when `state.outline` is set. Without it the document is plain text and nothing here
+on when `state.doc.outline` is set. Without it the document is plain text and nothing here
 applies.
 
 ```console
@@ -126,10 +126,14 @@ Each rule is one Transaction and one undo step. The mark column says what happen
 | `select_word_at { pos }` | | Selects the word at `pos` (a double-click); a `click` with `extend` then extends by words | |
 | `insert_blocks { after, blocks }` | | Host blocks after a block (or at the start), as one step | Each block's `mark` if free, else a new id |
 | `paste` | Markdown with line breaks | Read into blocks: the first joins the text before the caret (taking its shape when there is none), the rest follow, and the text after the caret ends the last. Images are left out and counted | New ids |
+| | Whole blocks from the register, on an empty item | The blocks take the item's place, with their own kinds and statuses, re-indented to its depth | The cut ids come back |
+| | Whole blocks from the register, at a block's end | They follow the block's subtree as siblings, at its depth | The cut ids come back |
+| | Whole blocks from the register, inside a block's text | As pasted Markdown | New ids |
 | | The register (or the same text from the system clipboard) | Pasted as it was cut | The cut ids come back |
 | `paste_plain` (`Alt-V`) | | Paragraphs with their line breaks kept; nothing becomes a list | New ids |
 | `copy` / `cut` | Inside one block | Plain text | A cut keeps the removed ids in the register |
 | | Across blocks | Markdown: the first block's text from the selection's start (its marker only from its content start), then each block with its marker and indentation, a blank line around paragraphs | |
+| | Whole blocks (from a block's content start to another block's end, or to the start of the block after them, as Shift-↓ selects) | The register takes their lines with markers and indentation; a cut takes the lines out, leaving no empty item | A cut keeps the ids in the register |
 
 ### Effects
 
@@ -179,7 +183,8 @@ assert_eq!(blocks.blocks[1].depth, 0);
 | `State::enable_outline(config)` | Makes a state an outline document (marks every block, outside the undo history) |
 | `State::blocks() -> Option<Arc<Outline>>` | The derived blocks; `Outline::block_at`, `get`, `index_of`, `subtree_end` look them up |
 | `State::outline_changed()` | Call after changing `text` or `marks` directly, not through `update` |
-| `outline::content(state, id)` | A block's content: its lines after the marker, joined with `\n` |
+| `Document::blocks()` | The same, on a document shared by several views |
+| `outline::content(doc, id)` | A block's content: its lines after the marker, joined with `\n` |
 | `OutlineConfig` | `indent`, `task_markers` (the vocabulary), `cycle`, `atomic_images`, `numbered` |
 | `NewBlock` | A block to insert: `depth`, `kind`, `status`, `text`, `gap`, `mark` |
 | `outline_keymap`, `keymap_for(outline, key)`, `script_to_msgs_for` | The outline's keys |
@@ -210,12 +215,101 @@ $ caretline --state crates/caretline-app/fixtures/outline-split.state.json --sna
 $ caretline --outline crates/caretline-app/fixtures/trip.md --keys '<d-down>!<c-s>' --effects
 ```
 
-The view draws each block's text as it is, markers included, with blank rows as virtual
-rows. Hiding markers in a hang, per-depth columns and folds are layout work that comes next.
+Without a layout the view draws each block's text as it is, markers included, with blank rows
+as virtual rows. `--layout` adds the outline layout (below), with plain hang glyphs:
+
+```console
+$ caretline --layout crates/caretline-app/fixtures/trip.md --snapshot 50x16 --no-status-bar
+  #   Lisbon trip
+
+      Booked the flat in Lisbon.
+      It faces the river.
+
+  [ ] Pay the deposit
+      •   ask Ana about her desk
+  [ ] Book flights
+  [x] Renew passport
+
+      ![boiler label](files/boiler.png)
+
+  1.  Pack
+  2.  Leave
+```
+
+## The outline layout
+
+A view's `layout` (an `OutlineLayout`) lays an outline document out line by line, with the
+column geometry as data:
+
+| Field | Default | Meaning |
+|---|---|---|
+| `marks` | 2 | Columns before everything, for marks a host draws (a conflict sign, a flash) |
+| `indent` | 4 | Columns per depth |
+| `hang` | 4 | Columns of the hang: the bullet, number, task box or heading sign |
+| `column` | 72 | The wrap width of depth-0 content |
+| `min_column` | 20 | The narrowest a nested block's content wraps at |
+| `extra_rows` | `{}` | Rows a host draws after a block, by mark id (its fields on their own row, an inline image) |
+| `hang_glyphs` | false | Draw a plain glyph in each hang (`•`, `1.`, `[ ]`, `#`, `│`), for a host that draws none |
+
+For each line:
+
+- **A block's first line skips its prefix** (indentation and marker): the marker moves out of
+  the text into the hang. Its content starts at `x = marks + depth·indent + hang` and wraps at
+  `max(min_column, column − depth·indent)`, never past the view's right edge. In a view too
+  narrow for that, deep blocks stop indenting where their content would get fewer than
+  `min_column` columns.
+- **Continuation lines** use the same column and width.
+- **A fence doesn't wrap.** A long line in it scrolls sideways on its own while the caret is on
+  it; the other lines stay put.
+- **A gapped block** has a blank row before it; **`extra_rows`** add rows after it. Neither is
+  ever a caret stop: `↑`/`↓` step over them keeping the goal column, and a click on them lands at
+  the block's text.
+- **A folded block's children** take no rows (see [Folds](#folds)).
+
+The goal column of `↑`/`↓` is a screen column, so moving between depths goes straight down.
+Motion, paging, scrolling, clicks and drawing use the same rows, through one `Layout`.
+
+The engine draws only text: the marks column and the indentation are blank, and the hang's
+cells have the role `Hang` (blank unless `hang_glyphs`). A host draws its own hang, marks and
+fields from the frame's row info:
+
+| Item | Does |
+|---|---|
+| `Frame::rows` | One `RowInfo` per frame row: `Text { block, line, row, first, last, chars, x }`, `Gap { before }`, `Extra { block, index }`, `Past`, `Status` |
+| `Cell::char_idx` | The document char a cell shows, for styling spans (links, tags) |
+| `view::hit(doc, view, col, row)` | What a cell is: `Text { pos }` (where a click lands), `Hang { block }`, `Marks { block }`, `Gap { block }`, `Extra { block, index }` or `Past` |
+| `view::render(doc, view)` | The frame of any view of a document |
+
+```rust
+use caretline_next::outline::markdown;
+use caretline_next::view::{hit, Hit, RowInfo};
+use caretline_next::{view, OutlineConfig, OutlineLayout, Viewport};
+
+let mut s = markdown::load("- [ ] Pay rent\n- Buy milk\n", None, Viewport { width: 40, height: 4 }, OutlineConfig::default());
+s.view.layout = Some(OutlineLayout::default());
+let f = view(&s);
+assert!(matches!(f.rows[0], RowInfo::Text { first: true, x: 6, .. }));
+assert_eq!(hit(&s.doc, &s.view, 3, 0), Hit::Hang { block: s.doc.marks.as_slice()[0].id });
+```
+
+## Folds
+
+`fold`, `unfold` and `toggle_fold` (by block id) hide or show a block's children in **one
+view**: folds are the view's (`view.folds`), so another view of the same document still shows
+them. They work with or without a layout. Only a block with children folds.
+
+- Hidden lines take no rows. `↓` from the folded block goes to the next visible one, and `→`
+  at its end goes past the children.
+- A caret inside the children when they fold, or one that an edit through another view leaves
+  there, moves to the folded block's end.
+- A fold drops when its block goes. Folds are part of the view's JSON (`"folds":[3]`).
 
 ## Cost
 
 Each edit re-derives the blocks once (linear in lines; a few hundred microseconds for 5,000
-blocks in a release build) and maps the marks after the first change. The scale tests type in
-a 5,000-block outline and check that a key, rendered, stays under 4 ms in a release build.
-Deriving only the lines an edit touched is the next step when that matters.
+blocks in a release build) and maps the marks after the first change. The layout lays out only
+the rows it needs, so the outline layout costs no more than plain drawing, and a second view
+of the document is only rebased (its selection mapped), never laid out. The scale tests type in
+a 5,000-block outline, with and without the layout and with a second view open, and check that
+a key, rendered, stays under 4 ms in a release build (it is about 1 ms). Deriving only the lines
+an edit touched is the next step when that matters.

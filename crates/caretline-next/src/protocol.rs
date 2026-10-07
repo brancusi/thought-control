@@ -11,7 +11,7 @@ use serde_json::Value;
 
 use crate::msg::{Effect, Msg};
 use crate::session::Session;
-use crate::state::State;
+use crate::state::{State, View};
 use crate::trace::TraceLine;
 use crate::view::{Frame, Role};
 
@@ -30,6 +30,9 @@ pub const OPS: &[&str] = &[
     "unsubscribe",
     "trace.get",
     "trace.checkpoint",
+    "view.open",
+    "view.close",
+    "view.list",
 ];
 
 /// A frame format.
@@ -71,6 +74,9 @@ pub struct Change {
     pub msgs: Vec<Msg>,
     /// The state was replaced (`state.set`).
     pub state_set: bool,
+    /// The view the messages went through, when not the state's own (0), or the view opened
+    /// or closed.
+    pub view: Option<u32>,
 }
 
 /// A transport-level request the caller carries out.
@@ -128,6 +134,13 @@ struct Request {
     /// trace.get: every line kept, not just the current segment.
     #[serde(default)]
     all: bool,
+    /// msgs, keys, render, state.get, view.close: the view (0, the default, is the state's
+    /// own; others come from view.open).
+    #[serde(default)]
+    view: Option<u32>,
+    /// view.open: the new view (every field optional; a copy of view 0's when absent).
+    #[serde(default)]
+    open: Option<View>,
 }
 
 #[derive(Serialize)]
@@ -179,6 +192,8 @@ struct CellRow {
     text: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
     spans: Vec<(u16, u16, &'static str)>,
+    /// What the row shows (text of a line, a block's blank row, …).
+    info: crate::view::RowInfo,
 }
 
 /// The name a role has on the wire.
@@ -245,18 +260,27 @@ fn cell_rows(frame: &Frame) -> Vec<CellRow> {
                     _ => spans.push((x, 1, name)),
                 }
             }
-            CellRow { text, spans }
+            CellRow { text, spans, info: frame.rows.get(y as usize).cloned().unwrap_or(crate::view::RowInfo::Past) }
         })
         .collect()
 }
 
 fn render(session: &Session, spec: FrameSpec) -> Result<RenderedFrame, ProtoError> {
-    let v = session.state().view.viewport;
+    render_view(session, 0, spec)
+}
+
+fn render_view(session: &Session, id: u32, spec: FrameSpec) -> Result<RenderedFrame, ProtoError> {
+    let v = session.view(id).ok_or_else(|| no_view(id))?.viewport;
     let (w, h) = (spec.w.unwrap_or(v.width), spec.h.unwrap_or(v.height));
     if w == 0 || h == 0 {
         return Err(err("bad_request", "w and h must be at least 1"));
     }
-    Ok(RenderedFrame::new(&session.render(w, h), spec.format))
+    let frame = if id == 0 { session.render(w, h) } else { session.render_view(id, Some((w, h))).ok_or_else(|| no_view(id))? };
+    Ok(RenderedFrame::new(&frame, spec.format))
+}
+
+fn no_view(id: u32) -> ProtoError {
+    err("no_view", format!("no view {id}; view.list lists them"))
 }
 
 #[derive(Serialize)]
@@ -267,6 +291,8 @@ struct Event<'a> {
     source: Option<&'a str>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     state_set: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    view: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     msgs: Option<&'a [Msg]>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -282,6 +308,7 @@ pub fn event_line(session: &Session, change: &Change, sub: &Subscription, source
         rev: change.rev,
         source,
         state_set: change.state_set,
+        view: change.view,
         msgs: sub.msgs.then_some(change.msgs.as_slice()),
         frame,
     })
@@ -342,7 +369,13 @@ impl Session {
                     rev: u64,
                     state: &'a State,
                 }
-                Ok(reply(to_line(id, R { rev: self.rev(), state: self.state() })))
+                match req.view.unwrap_or(0) {
+                    0 => Ok(reply(to_line(id, R { rev: self.rev(), state: self.state() }))),
+                    v => {
+                        let state = self.state_of(v).ok_or_else(|| no_view(v))?;
+                        Ok(reply(to_line(id, R { rev: self.rev(), state: &state })))
+                    }
+                }
             }
             "state.set" => {
                 check_rev(self.rev())?;
@@ -350,12 +383,16 @@ impl Session {
                 let rev = self.set_state(state);
                 Ok(Handled {
                     response: to_line(id, serde_json::json!({ "rev": rev })),
-                    change: Some(Change { rev, msgs: Vec::new(), state_set: true }),
+                    change: Some(Change { rev, msgs: Vec::new(), state_set: true, view: None }),
                     control: None,
                 })
             }
             "msgs" | "keys" => {
                 check_rev(self.rev())?;
+                let on = req.view.unwrap_or(0);
+                if self.view(on).is_none() {
+                    return Err(no_view(on));
+                }
                 if req.apply_effects && exec.is_none() {
                     return Err(err("unsupported", "this server returns effects; it doesn't perform them"));
                 }
@@ -376,13 +413,15 @@ impl Session {
                 match (req.apply_effects, exec) {
                     (true, Some(exec)) => {
                         for msg in msgs {
-                            let (e, m) = self.apply_with(msg, &mut *exec);
+                            let (e, m) = self.apply_with_on(on, msg, &mut *exec);
                             effects.extend(e);
                             applied.extend(m);
                         }
                     }
                     _ => {
-                        effects = self.apply_all(msgs.iter().cloned());
+                        for msg in msgs.iter().cloned() {
+                            effects.extend(self.apply_on(on, msg));
+                        }
                         applied = msgs;
                     }
                 }
@@ -404,7 +443,7 @@ impl Session {
                         msgs: &applied,
                     },
                 );
-                let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false });
+                let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false, view: req.view.filter(|&v| v != 0) });
                 Ok(Handled { response, change, control: None })
             }
             "render" => {
@@ -415,7 +454,7 @@ impl Session {
                     #[serde(flatten)]
                     frame: RenderedFrame,
                 }
-                let frame = render(self, spec)?;
+                let frame = render_view(self, req.view.unwrap_or(0), spec)?;
                 Ok(reply(to_line(id, R { rev: self.rev(), frame })))
             }
             "subscribe" => {
@@ -461,6 +500,40 @@ impl Session {
                 };
                 Ok(reply(to_line(id, R { rev: self.rev(), from_rev, trace })))
             }
+            "view.open" => {
+                check_rev(self.rev())?;
+                let mut view = req.open.unwrap_or_else(|| self.state().view.clone());
+                if let (Some(w), Some(h)) = (req.w, req.h) {
+                    view.viewport = crate::state::Viewport { width: w.max(1), height: h.max(1) };
+                }
+                let v = self.open_view(view);
+                let rev = self.rev();
+                Ok(Handled {
+                    response: to_line(id, serde_json::json!({ "rev": rev, "view": v })),
+                    change: Some(Change { rev, msgs: Vec::new(), state_set: false, view: Some(v) }),
+                    control: None,
+                })
+            }
+            "view.close" => {
+                let v = req.view.ok_or_else(|| err("bad_request", "view.close needs a view"))?;
+                if v == 0 {
+                    return Err(err("bad_request", "view 0 is the state's own and stays open"));
+                }
+                if !self.close_view(v) {
+                    return Err(no_view(v));
+                }
+                let rev = self.rev();
+                Ok(Handled {
+                    response: to_line(id, serde_json::json!({ "rev": rev, "closed": v })),
+                    change: Some(Change { rev, msgs: Vec::new(), state_set: false, view: Some(v) }),
+                    control: None,
+                })
+            }
+            "view.list" => {
+                let mut list = vec![view_summary(0, &self.state().view)];
+                list.extend(self.views().iter().map(|(k, v)| view_summary(*k, v)));
+                Ok(reply(to_line(id, serde_json::json!({ "rev": self.rev(), "views": list }))))
+            }
             "trace.checkpoint" => {
                 let rev = self.checkpoint();
                 Ok(reply(to_line(id, serde_json::json!({ "rev": rev }))))
@@ -471,6 +544,16 @@ impl Session {
             )),
         }
     }
+}
+
+fn view_summary(id: u32, v: &View) -> Value {
+    serde_json::json!({
+        "view": id,
+        "w": v.viewport.width,
+        "h": v.viewport.height,
+        "caret": v.caret(),
+        "read_only": v.read_only,
+    })
 }
 
 /// A line that isn't a valid request: report it with the id when the JSON at least parses.
