@@ -12,17 +12,28 @@ use crate::helix::transaction::Operation;
 use crate::marks::{ClipMark, Clipboard, Mark, MarkDelta, Marks};
 use crate::state::{EditRun, RunKind, Scroll, State, RUN_GAP_MS, RUN_MAX_CHARS, RUN_WORD_BREAK_CHARS};
 
-/// Applies one message. Returns the effects for the runtime to perform.
+/// Applies one message to a single-view state (one document, one view). Returns the effects
+/// for the runtime to perform. For several views of one document, see
+/// [`crate::update_doc`].
 pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
+    if msg.is_external() {
+        return crate::views::update_doc(&mut state.doc, std::slice::from_mut(&mut state.view), 0, msg);
+    }
+    if state.view.read_only && msg.edits() {
+        return vec![Effect::Refused];
+    }
+    state.doc.journal.0.clear();
+    let effects = step(state, msg);
+    state.doc.journal.0.clear();
+    effects
+}
+
+/// One message through one view: everything `update` does, without the read-only check.
+/// The text changes it made are left in the document's journal for the caller to rebase
+/// other views with.
+pub(crate) fn step(state: &mut State, msg: Msg) -> Vec<Effect> {
     let mut effects = Vec::new();
-    let passive = matches!(
-        msg,
-        Msg::Tick { .. }
-            | Msg::Resize { .. }
-            | Msg::Saved
-            | Msg::SaveFailed { .. }
-            | Msg::ShowStatus { .. }
-    );
+    let passive = msg.is_passive();
     if !passive {
         state.view.status = None;
         if !matches!(msg, Msg::Quit) {
@@ -43,6 +54,8 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     if !passive && !matches!(msg, Msg::Click { extend: true, .. }) {
         state.view.word_drag = None;
     }
+    let selection_before = state.view.selection.clone();
+    let scrolls_freely = matches!(msg, Msg::ScrollView { .. });
 
     let pins = if outline_on { crate::outline::rules::pins_for(state, &msg) } else { None };
     let edits_before = state.doc.edits.0;
@@ -57,6 +70,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     }
 
     if let Some((prev, prev_block, msg, status)) = before {
+        crate::views::unhide(state, &msg);
         crate::outline::rules::normalize(state, &prev, &msg);
         let now = caret_block(state);
         if now != prev_block {
@@ -72,11 +86,23 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
     }
 
+    let edited = state.doc.edits.0 != edits_before;
+    if edited {
+        state.doc.rev += 1;
+    }
     state.doc.dirty = state.compute_dirty();
     if state.doc.run.is_some_and(|r| r.revision != state.doc.history.current_revision()) {
         state.doc.run = None;
     }
-    ensure_caret_visible(state);
+    // A view scrolled freely stays put until the caret moves or the text changes.
+    if state.view.free && !scrolls_freely && (edited || state.view.selection != selection_before) {
+        state.view.free = false;
+    }
+    if state.view.free {
+        crate::layout::clamp_scroll(state);
+    } else {
+        ensure_caret_visible(state);
+    }
     effects
 }
 
@@ -185,6 +211,13 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
             state.view.status = Some("only in outline documents".into());
         }
         Msg::Scroll { rows } => scroll(state, rows),
+        Msg::ScrollView { rows } => {
+            scroll_view(state, rows);
+            state.view.free = true;
+        }
+        Msg::Fold { id } => crate::views::fold(state, id, Some(true)),
+        Msg::Unfold { id } => crate::views::fold(state, id, Some(false)),
+        Msg::ToggleFold { id } => crate::views::fold(state, id, None),
         Msg::SelectAll => {
             state.view.selection = Selection::single(0, state.doc.text.len_chars());
         }
@@ -363,6 +396,7 @@ pub(crate) fn commit_with(
     if text_changed {
         txn.apply(&mut state.doc.text);
         state.view.wrap.edited(txn.changes());
+        state.doc.journal.0.push(txn.changes().clone());
     }
     let removed = state.doc.marks.map(old_text.slice(..), state.doc.text.slice(..), txn.changes());
     let naive = state.doc.marks.clone();
@@ -624,6 +658,8 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
     let old = state.doc.text.clone();
     txn.apply(&mut state.doc.text);
     state.view.wrap.edited(txn.changes());
+    state.doc.journal.0.push(txn.changes().clone());
+    state.doc.edits.0 = state.doc.edits.0.wrapping_add(1);
     state.fit_mark_log();
     state.doc.derived.clear();
     let delta = &state.doc.mark_log[rev];
@@ -877,14 +913,7 @@ fn scroll(state: &mut State, rows: i32) {
         return;
     }
     let layout = Layout::new(state);
-    let top = layout.top(&state.view.scroll);
-    let (mut new_top, _) = layout.step_rows(top, rows as isize);
-    // Never scroll past the point where the last row sits at the bottom.
-    let end = layout.pos_coords(layout.text().len_chars()).0;
-    let max_top = layout.step_rows(end, -(h as isize - 1)).0;
-    if rows > 0 && new_top > max_top {
-        new_top = max_top.max(top);
-    }
+    let new_top = scrolled_top(&layout, state, rows);
     state.view.scroll = Scroll {
         line: new_top.line,
         row: new_top.row,
@@ -913,6 +942,31 @@ fn scroll(state: &mut State, rows: i32) {
         range.old_visual_position = Some((0, goal as u32));
         state.view.selection = Selection::single(pos, pos).transform(|_| range);
     }
+}
+
+/// The top `rows` rows from the view's top, never past the point where the document's last
+/// row sits at the bottom.
+fn scrolled_top(layout: &Layout, state: &State, rows: i32) -> crate::layout::RowPos {
+    let h = state.text_rows().max(1);
+    let top = layout.top(&state.view.scroll);
+    let (mut new_top, _) = layout.step_rows(top, rows as isize);
+    let end = layout.pos_coords(layout.text().len_chars()).0;
+    let max_top = layout.step_rows(end, -(h as isize - 1)).0;
+    if rows > 0 && new_top > max_top {
+        new_top = max_top.max(top);
+    }
+    new_top
+}
+
+/// Scrolls the view without moving the caret (the wheel in a host that lets the caret leave
+/// the view).
+fn scroll_view(state: &mut State, rows: i32) {
+    if state.text_rows() == 0 {
+        return;
+    }
+    let layout = Layout::new(state);
+    let top = scrolled_top(&layout, state, rows);
+    state.view.scroll = Scroll { line: top.line, row: top.row, col: state.view.scroll.col };
 }
 
 /// The text a copy would put on the clipboard, if anything is selected.

@@ -15,7 +15,7 @@ use crate::helix::text_annotations::TextAnnotations;
 use crate::helix::transaction::{ChangeSet, Operation};
 use crate::helix::{Rope, RopeSlice};
 use crate::outline::Outline;
-use crate::state::{Config, Scroll, State};
+use crate::state::{Config, Follow, Scroll, State};
 
 /// The outline layout a host gives a view: column geometry as data. With it, an outline
 /// document's markers move out of the text into a hang, nested blocks get their own
@@ -597,6 +597,15 @@ impl Layout {
     }
 }
 
+/// Keeps a freely scrolled view's top inside the document, without following the caret.
+pub fn clamp_scroll(state: &mut State) {
+    let layout = Layout::new(state);
+    let top = layout.top(&state.view.scroll);
+    let col = if layout.wraps() { 0 } else { state.view.scroll.col };
+    state.view.scroll = Scroll { line: top.line, row: top.row, col };
+    layout.store(state);
+}
+
 /// Moves the view the least needed for the primary caret to sit in it, `scrolloff` rows
 /// from the edges where possible.
 pub fn ensure_caret_visible(state: &mut State) {
@@ -605,7 +614,11 @@ pub fn ensure_caret_visible(state: &mut State) {
     let w = state.view.viewport.width as usize;
     let (caret, col) = layout.pos_coords(state.caret());
     let mut top = layout.top(&state.view.scroll);
-    if h > 0 {
+    if let (Follow::Typewriter { percent }, true) = (state.view.config.follow, h > 0) {
+        // The caret's row sits at `percent` of the height (the top clamps at the start).
+        let row = ((h - 1) * percent.min(100) as usize + 50) / 100;
+        top = layout.step_rows(caret, -(row as isize)).0;
+    } else if h > 0 {
         let so = (state.view.config.scrolloff as usize).min((h - 1) / 2);
         let dist = layout.rows_between(top, caret, h + so);
         if dist < so as isize {

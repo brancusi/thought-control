@@ -290,7 +290,6 @@ impl View {
     /// Clamps the view to `doc`: selections inside the text and on grapheme boundaries, the
     /// scroll on a line, folds on live marks. A no-op on any view `update_doc` left.
     pub fn fit(&mut self, doc: &Document) {
-        self.wrap.clear();
         let text = doc.text.slice(..);
         let len = text.len_chars();
         let fix = |pos: usize| ensure_grapheme_boundary_prev(text, pos.min(len));
@@ -709,6 +708,7 @@ impl State {
     /// (apart from forgetting the layout memo, which changes nothing visible).
     pub fn sanitize(&mut self) {
         self.doc.sanitize();
+        self.view.wrap.clear();
         self.view.fit(&self.doc);
         self.outline_changed();
     }

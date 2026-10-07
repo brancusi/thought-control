@@ -14,7 +14,7 @@ use crate::marks::{BlockAttrs, ClipMark, Clipboard, Mark, MarkId, Marks};
 use crate::msg::{By, Dir, Effect, Msg};
 use crate::outline::markdown;
 use crate::outline::{BlockInfo, Hang, Kind, NewBlock, Outline};
-use crate::state::State;
+use crate::state::{Document, State};
 use crate::update::{self, Step};
 
 /// Applies `msg` with the outline's rules, when one applies. `None` leaves it to the plain
@@ -893,8 +893,15 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
 /// Keeps every selection end out of block prefixes and atomic blocks, after any message.
 /// `prev` is the selection before the message.
 pub(crate) fn normalize(state: &mut State, prev: &Selection, msg: &Msg) {
-    let Some(o) = state.blocks() else { return };
-    let rope = state.doc.text.clone();
+    if let Some(selection) = normalized(&state.doc, &state.view.selection, prev, msg) {
+        state.view.selection = selection;
+    }
+}
+
+/// [`normalize`] for any selection of `doc`: the fixed selection, when it changes.
+pub(crate) fn normalized(doc: &Document, selection: &Selection, prev: &Selection, msg: &Msg) -> Option<Selection> {
+    let o = doc.blocks()?;
+    let rope = doc.text.clone();
     let text = rope.slice(..);
     let moving = matches!(msg, Msg::Move { .. });
     let back = matches!(msg, Msg::Move { dir: Dir::Backward, by: By::Grapheme | By::Word, .. });
@@ -965,12 +972,10 @@ pub(crate) fn normalize(state: &mut State, prev: &Selection, msg: &Msg) {
         }
         Range { anchor, head, old_visual_position: r.old_visual_position }
     };
-    let ranges: crate::helix::SmallVec<[Range; 1]> = state.view.selection.iter().map(fix).collect();
-    let primary = state.view.selection.primary_index();
-    let selection = Selection::new(ranges, primary);
-    if selection != state.view.selection {
-        state.view.selection = selection;
-    }
+    let ranges: crate::helix::SmallVec<[Range; 1]> = selection.iter().map(fix).collect();
+    let primary = selection.primary_index();
+    let fixed = Selection::new(ranges, primary);
+    (fixed != *selection).then_some(fixed)
 }
 
 /// Whether `r` is a focused atomic block (a vertical motion from it keeps its goal column).
