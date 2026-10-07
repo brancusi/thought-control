@@ -190,6 +190,26 @@ impl Marks {
         }
     }
 
+    /// Many marks at once (a host loading a document): the same as [`Marks::insert`] of each
+    /// in order, in about linear time when none is refused.
+    pub fn insert_all(&mut self, marks: Vec<Mark>) -> Result<(), InsertError> {
+        let mut all = self.marks.clone();
+        all.extend(marks.iter().copied());
+        let mut ids = std::collections::HashSet::with_capacity(all.len());
+        let unique_ids = all.iter().all(|m| ids.insert(m.id));
+        all.sort_by_key(|m| m.pos);
+        if unique_ids && all.windows(2).all(|w| w[0].pos != w[1].pos) {
+            self.next = self.next.max(all.iter().map(|m| m.id.0 + 1).max().unwrap_or(0));
+            self.marks = all;
+            return Ok(());
+        }
+        // Something is refused: one at a time, to the refusal.
+        for m in marks {
+            self.insert(m)?;
+        }
+        Ok(())
+    }
+
     /// Removes a mark; returns it as it was.
     pub fn remove(&mut self, id: MarkId) -> Option<Mark> {
         let i = self.marks.iter().position(|m| m.id == id)?;
@@ -518,6 +538,20 @@ mod tests {
             m.iter().map(|m| (m.pos, m.id.0)).collect(),
             removed.iter().map(|m| m.id.0).collect(),
         )
+    }
+
+    #[test]
+    fn inserting_all_at_once_is_inserting_each() {
+        let m = |pos: usize, id: u64| Mark { pos, id: MarkId(id), attrs: BlockAttrs::default() };
+        for batch in [vec![m(10, 3), m(0, 1), m(5, 2)], vec![m(0, 1), m(5, 1)], vec![m(0, 1), m(0, 2)], vec![m(7, 9)]] {
+            let (mut a, mut b) = (Marks::new(), Marks::new());
+            a.insert(m(3, 7)).unwrap();
+            b.insert(m(3, 7)).unwrap();
+            let ra = a.insert_all(batch.clone());
+            let rb = batch.iter().try_for_each(|x| b.insert(*x));
+            assert_eq!((ra, &a), (rb, &b), "{batch:?}");
+            assert_eq!(a.next_id(), b.next_id());
+        }
     }
 
     #[test]
