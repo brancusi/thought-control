@@ -13,4 +13,8 @@
 /.cache
 /out/
 .wrangler/
+/target*/
 /target-*
+# build output anywhere (a crate or site built in place)
+**/target/
+node_modules/
