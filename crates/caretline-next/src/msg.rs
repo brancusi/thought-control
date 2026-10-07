@@ -97,6 +97,13 @@ pub enum Msg {
     Resize { width: u16, height: u16 },
     /// The current time. Typing runs (one undo step) are measured with it.
     Tick { now_ms: u64 },
+    /// A display frame at `now_ms`, sent by a runtime's frame clock while the view asks for
+    /// one ([`crate::View::frame_clock`]). It advances the clock as `tick` does; animation
+    /// state advances from it, so a dropped frame never stalls an animation. Passive.
+    Frame { now_ms: u64 },
+    /// Ask the runtime for a frame clock of `fps` frames per second (0 turns it off). The
+    /// request is view state, so a replay asks for the same frames. Passive.
+    FrameClock { fps: u16 },
     /// Show a one-line message in the status bar (until the next input). Passive: it
     /// doesn't end an edit run or disarm a pending quit.
     ShowStatus { text: String },
@@ -161,6 +168,8 @@ impl Msg {
         matches!(
             self,
             Msg::Tick { .. }
+                | Msg::Frame { .. }
+                | Msg::FrameClock { .. }
                 | Msg::Resize { .. }
                 | Msg::Saved
                 | Msg::SaveFailed { .. }

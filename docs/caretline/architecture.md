@@ -315,7 +315,11 @@ flowchart LR
     hub --> tr["trace file"]
 ```
 
-The editor drains everything already queued, then redraws once, only if the rev changed.
+The editor drains everything already queued, then redraws once, only if the rev changed, and
+at most once per refresh (`--max-fps`, default 120): a change that comes in a refresh slot that
+has already painted waits for the next one. While the view asks for a frame clock
+(`Msg::FrameClock`), the runtime also sends a `Msg::Frame { now_ms }` on that schedule. See
+[performance.md](performance.md#how-the-live-editor-paints).
 The runtime also stamps time: before a client's messages it applies a `tick` with the real
 time (outside `update`, as for keys), so the trace still replays exactly.
 

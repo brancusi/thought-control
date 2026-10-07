@@ -2,9 +2,10 @@
 //! clock, the terminal, files or the clipboard lives here, never in the engine.
 
 use std::fs::{self, OpenOptions};
-use std::io::{self, Write};
+use std::io::{self, BufWriter, Write};
 use std::path::{Path, PathBuf};
-use std::sync::mpsc::{self, Receiver};
+use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
+use std::time::{Duration, Instant};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -19,10 +20,10 @@ use crossterm::event::{
     PopKeyboardEnhancementFlags, PushKeyboardEnhancementFlags,
 };
 use crossterm::cursor::SetCursorStyle;
-use crossterm::execute;
+use crossterm::{execute, queue};
 use crossterm::terminal::{
-    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, EnterAlternateScreen,
-    LeaveAlternateScreen,
+    disable_raw_mode, enable_raw_mode, supports_keyboard_enhancement, BeginSynchronizedUpdate,
+    EndSynchronizedUpdate, EnterAlternateScreen, LeaveAlternateScreen,
 };
 use ratatui::backend::CrosstermBackend;
 use ratatui::style::{Color, Modifier, Style};
@@ -210,6 +211,21 @@ pub struct Interactive<'a> {
     pub file: Option<&'a str>,
     /// The in-memory trace limit (see `Session::set_trace_limit`).
     pub trace_limit: usize,
+    /// Repaint at most this many times a second (0: no cap).
+    pub max_fps: u32,
+    /// The frame clock to start with, in frames per second (0: off).
+    pub frame_clock: u16,
+    /// Print repaint statistics on exit.
+    pub stats: bool,
+}
+
+/// What the event loop counts, for `--stats`.
+#[derive(Default)]
+struct Stats {
+    paints: u64,
+    paint_time: Duration,
+    frames: u64,
+    inputs: u64,
 }
 
 pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String> {
@@ -270,8 +286,22 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
     drop(tx);
 
     let status = listening.as_ref().map(|l| format!("listening on {}", l.path.display()));
-    let result = event_loop(&mut hub, rx, status);
+    let started = Instant::now();
+    let mut stats = Stats::default();
+    let pacing = Pacing { max_fps: opts.max_fps, frame_clock: opts.frame_clock };
+    let result = event_loop(&mut hub, rx, status, pacing, &mut stats);
     restore_terminal(kitty, mouse);
+    if opts.stats {
+        let secs = started.elapsed().as_secs_f64();
+        let mean = stats.paint_time.as_secs_f64() * 1e3 / stats.paints.max(1) as f64;
+        eprintln!(
+            "caretline: {} repaints in {secs:.1} s ({:.1}/s, {mean:.2} ms each), {} inputs, {} clock frames",
+            stats.paints,
+            stats.paints as f64 / secs,
+            stats.inputs,
+            stats.frames
+        );
+    }
     if let Some(l) = &listening {
         eprintln!("caretline: served the state protocol on {}", l.path.display());
     }
@@ -330,8 +360,18 @@ fn dispatch_local(hub: &mut Hub, msgs: Vec<Msg>, quit: &mut bool, source: &str) 
     hub.changed(&change, source);
 }
 
-fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Result<(), String> {
-    let backend = CrosstermBackend::new(io::stdout());
+/// How the event loop paces itself.
+#[derive(Clone, Copy)]
+struct Pacing {
+    max_fps: u32,
+    frame_clock: u16,
+}
+
+type Term = Terminal<CrosstermBackend<BufWriter<io::Stdout>>>;
+
+fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>, pacing: Pacing, stats: &mut Stats) -> Result<(), String> {
+    // One buffered write per repaint, wrapped in a synchronized update (below).
+    let backend = CrosstermBackend::new(BufWriter::with_capacity(1 << 16, io::stdout()));
     let mut terminal = Terminal::new(backend).map_err(|e| format!("terminal: {e}"))?;
     let mut quit = false;
     let mut term = terminal.size().map(|s| (s.width, s.height)).ok();
@@ -344,6 +384,9 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Res
         }
     if let Some(text) = status {
         start.push(Msg::ShowStatus { text });
+    }
+    if pacing.frame_clock > 0 {
+        start.push(Msg::FrameClock { fps: pacing.frame_clock });
     }
     dispatch_local(hub, start, &mut quit, "runtime");
 
@@ -375,27 +418,85 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Res
         }
     };
 
+    // Repaints are coalesced to one per refresh: time is cut into slots of `gap` on a fixed
+    // grid (like a display's refresh), and a change paints at most once a slot, at once if
+    // this slot hasn't painted yet, else at the next slot's start. Input is applied as it
+    // arrives, so a fast client never waits for the terminal. A fixed grid, rather than a gap
+    // after each paint, keeps frames that arrive at the display rate with a little jitter
+    // from colliding.
+    let gap = if pacing.max_fps > 0 { Duration::from_secs_f64(1.0 / pacing.max_fps as f64) } else { Duration::ZERO };
+    let epoch = Instant::now();
+    let slot = |t: Instant| if gap.is_zero() { 0 } else { (t - epoch).as_nanos() / gap.as_nanos() };
     let mut drawn: Option<u64> = None;
+    let mut painted_slot: Option<u128> = None;
+    // The frame clock's next deadline, on an absolute schedule so it doesn't drift.
+    let mut next_frame: Option<Instant> = None;
     while !quit {
-        if drawn != Some(hub.session.rev()) {
-            draw(&mut terminal, &hub.session.frame())?;
-            drawn = Some(hub.session.rev());
+        let now = Instant::now();
+        match hub.session.state().view.frame_rate() {
+            Some(fps) => {
+                let period = Duration::from_secs_f64(1.0 / fps as f64);
+                let due = *next_frame.get_or_insert(now);
+                if now >= due {
+                    stats.frames += 1;
+                    dispatch_local(hub, vec![Msg::Frame { now_ms: now_ms() }], &mut quit, "runtime");
+                    // Behind by more than a frame (a stall): skip ahead instead of bursting.
+                    let next = due + period;
+                    next_frame = Some(if next <= now { now + period } else { next });
+                }
+            }
+            None => next_frame = None,
         }
-        let Ok(input) = rx.recv() else { break };
-        process(hub, input, &mut quit);
-        // Apply everything already queued before drawing again.
-        while !quit {
-            match rx.try_recv() {
-                Ok(input) => process(hub, input, &mut quit),
+        let dirty = drawn != Some(hub.session.rev());
+        let free = gap.is_zero() || painted_slot != Some(slot(now));
+        if dirty && free {
+            let t = Instant::now();
+            draw(&mut terminal, &hub.session.frame())?;
+            stats.paints += 1;
+            stats.paint_time += t.elapsed();
+            drawn = Some(hub.session.rev());
+            painted_slot = Some(slot(t));
+        }
+        let paint_at = painted_slot.map(|k| epoch + gap * (k + 1) as u32);
+        // Sleep until input, the next repaint a pending change is waiting for, or the next
+        // clock frame, whichever is first.
+        let dirty = drawn != Some(hub.session.rev());
+        let wake = [dirty.then_some(paint_at).flatten(), next_frame].into_iter().flatten().min();
+        let input = match wake {
+            Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
+                Ok(input) => Some(input),
+                Err(RecvTimeoutError::Timeout) => None,
+                Err(RecvTimeoutError::Disconnected) => break,
+            },
+            None => match rx.recv() {
+                Ok(input) => Some(input),
                 Err(_) => break,
+            },
+        };
+        if let Some(input) = input {
+            stats.inputs += 1;
+            process(hub, input, &mut quit);
+            // Apply everything already queued before drawing again.
+            while !quit {
+                match rx.try_recv() {
+                    Ok(input) => {
+                        stats.inputs += 1;
+                        process(hub, input, &mut quit)
+                    }
+                    Err(_) => break,
+                }
             }
         }
     }
     Ok(())
 }
 
-fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, frame: &Frame) -> Result<(), String> {
-    terminal
+/// Draws a frame. ratatui diffs it against the last one and writes only the cells that
+/// changed; the writes go out as one buffered flush inside a synchronized update (DEC mode
+/// 2026), so a terminal that supports it shows the whole frame at once, never half of one.
+fn draw(terminal: &mut Term, frame: &Frame) -> Result<(), String> {
+    let _ = queue!(terminal.backend_mut(), BeginSynchronizedUpdate);
+    let drawn = terminal
         .draw(|f| {
             let area = f.area();
             let buf = f.buffer_mut();
@@ -415,5 +516,7 @@ fn draw(terminal: &mut Terminal<CrosstermBackend<io::Stdout>>, frame: &Frame) ->
                 }
         })
         .map(|_| ())
-        .map_err(|e| format!("draw: {e}"))
+        .map_err(|e| format!("draw: {e}"));
+    let _ = execute!(terminal.backend_mut(), EndSynchronizedUpdate);
+    drawn
 }

@@ -563,3 +563,61 @@ fn subscribers_can_have_the_state_without_history() {
     assert!(ev["state"].get("history").is_none());
     assert!(ev.get("msgs").is_none());
 }
+
+#[test]
+fn frame_shows_a_text_with_highlights_and_no_history() {
+    let mut s = edited_session();
+    s.apply(Msg::FrameClock { fps: 60 });
+    let before = s.state().clone();
+    let r = ask(&mut s, json!({"id": 1, "op": "frame", "text": "ab\ncd\n", "highlights": [[0, 1], [3, 5]], "status": "scene 1"}));
+    let rev = r["result"]["rev"].as_u64().unwrap();
+    assert_eq!(rev, s.rev());
+    let st = s.state();
+    assert_eq!(st.doc.text.to_string(), "ab\ncd\n");
+    assert_eq!(st.doc.history.len(), 1, "no history");
+    assert!(!st.doc.dirty);
+    assert_eq!(st.doc.path, before.doc.path, "the path stays");
+    assert_eq!(st.view.viewport, before.view.viewport, "the size stays");
+    assert_eq!(st.view.frame_clock, 60, "the frame clock stays");
+    assert_eq!(st.view.status.as_deref(), Some("scene 1"));
+    let spans: Vec<(usize, usize)> = st.view.selection.iter().map(|r| (r.from(), r.to())).collect();
+    assert_eq!(spans, vec![(0, 1), (3, 5)]);
+    // The highlights draw in the selection's colour.
+    let r = ask(&mut s, json!({"op": "render", "format": "cells"}));
+    assert_eq!(r["result"]["rows"][1]["spans"], json!([[0, 2, "selection"]]));
+    // A frame without status keeps the last one; a caret goes first.
+    ask(&mut s, json!({"op": "frame", "text": "xyz", "caret": 2}));
+    assert_eq!(s.state().view.status.as_deref(), Some("scene 1"));
+    assert_eq!(s.state().caret(), 2);
+    assert_eq!(s.state().view.selection.len(), 1);
+    // It is recorded as a new segment, which replays.
+    let seg = ask(&mut s, json!({"op": "trace.get"}));
+    let lines = trace_lines(&seg);
+    assert_eq!(&replay_trace(&lines.join("\n")).unwrap().0, s.state());
+    // It needs a text.
+    let r = ask(&mut s, json!({"op": "frame"}));
+    assert_eq!(error_kind(&r), "bad_request");
+}
+
+#[test]
+fn the_frame_clock_is_view_state_and_frames_are_passive() {
+    let mut s = Session::new(State::new("", None, Viewport { width: 20, height: 4 }));
+    assert_eq!(s.state().view.frame_rate(), None);
+    s.apply(Msg::FrameClock { fps: 120 });
+    assert_eq!(s.state().view.frame_rate(), Some(120));
+    let json = serde_json::to_value(s.state()).unwrap();
+    assert_eq!(json["frame_clock"], 120);
+    let back: State = serde_json::from_value(json).unwrap();
+    assert_eq!(back.view.frame_rate(), Some(120));
+    // Frames advance the clock and never break a typing run.
+    s.apply(Msg::Tick { now_ms: 1000 });
+    s.apply(Msg::InsertText { text: "a".into() });
+    s.apply(Msg::Frame { now_ms: 1008 });
+    assert_eq!(s.state().doc.now_ms, 1008);
+    s.apply(Msg::InsertText { text: "b".into() });
+    s.apply(Msg::Undo);
+    assert_eq!(s.state().doc.text.to_string(), "", "one undo step");
+    s.apply(Msg::FrameClock { fps: 0 });
+    assert_eq!(s.state().view.frame_rate(), None);
+    assert!(serde_json::to_value(s.state()).unwrap().get("frame_clock").is_none());
+}

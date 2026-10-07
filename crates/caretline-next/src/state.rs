@@ -138,6 +138,10 @@ pub struct EditRun {
     pub view: usize,
 }
 
+fn is_zero_u16(n: &u16) -> bool {
+    *n == 0
+}
+
 fn is_zero_usize(n: &usize) -> bool {
     *n == 0
 }
@@ -248,6 +252,11 @@ pub struct View {
     /// as it is.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub layout: Option<OutlineLayout>,
+    /// The frame clock this view asks of its runtime, in frames per second: 0 (the default)
+    /// for none. Set with [`crate::Msg::FrameClock`]; a runtime sends [`crate::Msg::Frame`]
+    /// at this rate while it is set. See [`View::frame_rate`].
+    #[serde(skip_serializing_if = "is_zero_u16")]
+    pub frame_clock: u16,
     /// Where long lines' rows start: a layout memo, not part of the view's value.
     #[serde(skip)]
     pub(crate) wrap: WrapCache,
@@ -275,8 +284,16 @@ impl View {
             focused: true,
             free: false,
             layout: None,
+            frame_clock: 0,
             wrap: WrapCache::default(),
         }
+    }
+
+    /// The frames per second this view needs from a runtime's frame clock, if any: what
+    /// [`crate::Msg::FrameClock`] asked for. A runtime sends [`crate::Msg::Frame`] at this
+    /// rate while it is `Some`, and none otherwise, so plain editing costs no frames.
+    pub fn frame_rate(&self) -> Option<u16> {
+        (self.frame_clock > 0).then_some(self.frame_clock)
     }
 
     /// The same view, read-only.
@@ -488,6 +505,8 @@ pub struct StateInput {
     pub free: bool,
     #[serde(default)]
     pub layout: Option<OutlineLayout>,
+    #[serde(default)]
+    pub frame_clock: u16,
 }
 
 /// The deserialized form of the `config` inside a [`StateInput`]: the document's and the
@@ -577,6 +596,7 @@ impl From<StateInput> for State {
             focused: input.focused,
             free: input.free,
             layout: input.layout,
+            frame_clock: input.frame_clock,
             wrap: WrapCache::default(),
         };
         let mut state = State { doc, view };
@@ -642,6 +662,8 @@ struct StateOut<'a> {
     free: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     layout: &'a Option<OutlineLayout>,
+    #[serde(skip_serializing_if = "is_zero_u16")]
+    frame_clock: u16,
 }
 
 #[derive(Serialize)]
@@ -748,6 +770,7 @@ impl State {
             focused: v.focused,
             free: v.free,
             layout: &v.layout,
+            frame_clock: v.frame_clock,
         }
     }
 }

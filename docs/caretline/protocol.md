@@ -42,6 +42,7 @@ result carries the current `rev`.
 | `state.get` | optional `history` (default true) | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON). With `history: false`, the state [without its undo history](#the-state-without-its-history) |
 | `history.get` | | `rev` and what `state.get` with `history: false` leaves out: `history`, `saved_revision`, `saving`, `run`, and `mark_log` and `undo_floor` when set |
 | `state.set` | `state` (only `text` needed, see [Minimal state](#minimal-state)), optional `if_rev` | `rev`. Replaces the state (repaired as on load) and starts a new trace segment |
+| `frame` | `text`, optional `highlights` (`[[start, end], …]` char ranges), `caret`, `status`, `if_rev` | `rev`. Shows `text` as the whole document with no undo history: see [Frames](#frames) |
 | `msgs` | `msgs` (array of [messages](messages.md)), optional `if_rev`, `apply_effects`, `now_ms` | `rev`, `effects`, `msgs` (every message applied: a leading `tick`, the request's messages, and fed-back results such as `saved`), and `executed: true` when effects were performed |
 | `keys` | `keys` (a [key script](messages.md#key-scripts)), optional `if_rev`, `apply_effects`, `now_ms` | Like `msgs`; `msgs` shows what the script became |
 | `render` | optional `w`, `h` (default: the state's viewport), `format` | `rev`, `w`, `h`, `format`, `cursor` (`[x, y]` or null), and `frame` or `rows` |
@@ -96,6 +97,29 @@ from there. `history.get` returns the fields left out with their real values; se
 the history-less state and you have exactly what `state.get` returns. `caretline send` has
 `state.get no-history` and `history.get`. In Rust, `State::without_history()` and
 `State::history_part()` serialize the two halves.
+
+### Frames
+
+`frame` pushes one frame of an animation, a demo or a mirror: a whole text, some ranges to
+highlight and no history.
+
+```json
+{"op":"frame","text":"  @@  \n @@@@ \n  @@  ","highlights":[[2,4],[8,12]],"status":"donut · 120 fps"}
+```
+
+- The text replaces the document, with a fresh, clean undo history and the document's path
+  and config kept.
+- The view keeps its size, scroll, config and frame clock, so a live editor never resizes for
+  a frame. `status` replaces the status bar's message; without it the last one stays.
+- `highlights` are char ranges drawn in the selection's colour (they are the selection: the
+  primary caret sits at the end of the first). `caret` puts the primary caret there instead.
+- Like `state.set`, it goes up one rev, starts a trace segment (so the trace replays), and
+  subscribers get an event with `state_set: true`.
+
+It is much cheaper than `state.set` with the same text: no state to parse, and nothing to
+repair. A live editor answers a 10 KB frame in 30–100 µs. See
+[performance.md](performance.md#animation) and the demo client,
+`crates/caretline-app/examples/scenes.rs`.
 
 ### Traces
 
@@ -300,6 +324,9 @@ Within protocol version 1, results only gain fields. Ignore fields you don't kno
 - `--listen` with no path uses `$TMPDIR/caretline-<pid>.sock`, or
   `/tmp/caretline-<uid>/<pid>.sock` when `$TMPDIR` is too long for a socket path. Put FILE
   before `--listen`, or FILE is read as the socket path.
+- The socket transports are Unix sockets, so `--listen` and `serve --socket` don't run on
+  Windows yet (`serve` on stdin and stdout does). A named-pipe transport is planned, not
+  started.
 - A socket path must fit the OS limit (103 bytes on macOS, 107 on Linux). A longer one is
   refused with an error that says so. A stale socket file that nobody answers on is replaced.
 - The socket (and an editor's discovery file) is removed on exit, and also when the process
@@ -348,6 +375,7 @@ A small client for any server.
 |---|---|
 | `hello`, `history.get`, `unsubscribe`, `trace.checkpoint` | That op |
 | `state.get [no-history]` | `state.get`, without the undo history with `no-history` |
+| `'{"op":"frame",…}'` | Use a raw request for `frame` |
 | `trace.get [all \| since REV]` | `trace.get`: the current segment, everything kept, or the lines after `REV` |
 | `render [WxH] [text\|ansi\|cells]` | `render` |
 | `keys SCRIPT` | `keys` |

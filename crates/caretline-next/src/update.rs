@@ -330,8 +330,11 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
             state.view.viewport.width = width.max(1);
             state.view.viewport.height = height.max(1);
         }
-        Msg::Tick { now_ms } => {
+        Msg::Tick { now_ms } | Msg::Frame { now_ms } => {
             state.doc.now_ms = now_ms;
+        }
+        Msg::FrameClock { fps } => {
+            state.view.frame_clock = fps;
         }
         Msg::ShowStatus { text } => {
             // One line: a newline would break the status bar.
