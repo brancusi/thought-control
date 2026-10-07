@@ -351,7 +351,9 @@ First plan removes the gate. Agents never accept work on the human's behalf.
     timezone-dependent belongs in `TxBuilder` (the writer), never in `Store::apply`.
   - New op types need a format version bump.
 - **Keys:** one table (`crates/thc-tui/src/keymap.rs`, keymap.md) drives dispatch, the footer, help,
-  the palette and `thc keys`. After changing it, run `scripts/keys-guide.sh` (a test fails while
+  the palette and `thc keys`. The write context's editing keys and their words come from caretline's
+  command catalog and default keymap (`crates/thc-tui/src/editing_keys.rs`); thc's own differences are
+  explicit rows that win. After changing it, run `scripts/keys-guide.sh` (a test fails while
   docs/guide/keys.md is stale). Users remap with `thc keys --edit` (crates/thc-tui/src/keys_edit.rs:
   a generated, commented `[keys.*]` block in config.toml, checked after the editor closes).
 - **Docs:** `docs/SPEC.md` (spec), `docs/FORMAT.md` (the on-disk contract), `PHILOSOPHY.md`

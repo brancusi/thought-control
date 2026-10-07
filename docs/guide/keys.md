@@ -297,7 +297,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌃N` `⌥]` | day | `doc.day_next` |  |
 | `Esc` | done | `doc.done` |  |
 | `⌘Z` `⌃Z` | undo | `doc.undo` |  |
-| `⇧⌘Z` `⌃Y` `⌃R` | redo | `doc.redo` |  |
+| `⇧⌘Z` `⌘Y` `⌘R` `⌃Y` `⌃R` `⌃⇧Z` | redo | `doc.redo` |  |
 | `F1` `⌥?` | keys | `help.context` |  |
 | `⌃Q` | quit | `quit` |  |
 | `⌘C` `⌃C` | copy | `clip.copy` |  |
@@ -322,26 +322,26 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌥6` | Search | `go.search` |  |
 | `⌥7` | Log | `go.log` |  |
 | `⌥:` | commands | `palette.open` |  |
-| `⌫` | delete back | `edit.backspace` |  |
-| `⌥⌫` `⌃⌫` `⌃W` | delete word · to end | `edit.delete_word` |  |
-| `Del` `⌃D` | delete forward | `edit.delete_forward` |  |
-| `⌃K` | delete word · to end | `edit.kill_to_end` |  |
-| `⌘⌫` `⌃U` | delete to start | `edit.kill_to_start` |  |
-| `←` `⇧←` | move (⇧ selects) | `move.left` |  |
-| `→` `⇧→` | move (⇧ selects) | `move.right` |  |
-| `⌥←` `⌥⇧←` `⌥B` | by word (⇧ selects) | `move.word_left` |  |
-| `⌥→` `⌥⇧→` `⌥F` | by word (⇧ selects) | `move.word_right` |  |
-| `↑` `⇧↑` | move (⇧ selects) | `move.up` |  |
-| `↓` `⇧↓` | move (⇧ selects) | `move.down` |  |
-| `⌃↑` `⌃⇧↑` | by note (⇧ selects) | `move.para_up` |  |
-| `⌃↓` `⌃⇧↓` | by note (⇧ selects) | `move.para_down` |  |
-| `PgUp` `⇧PgUp` | by page (⇧ selects) | `move.page_up` |  |
-| `PgDn` `⇧PgDn` | by page (⇧ selects) | `move.page_down` |  |
-| `⌘←` `⇧⌘←` `Home` `⇧Home` `⌃A` | line start · end (⇧ selects) | `move.home` |  |
-| `⌘→` `⇧⌘→` `End` `⇧End` `⌃E` | line start · end (⇧ selects) | `move.end` |  |
-| `⌘↑` `⇧⌘↑` `⌃Home` `⌃⇧Home` | to the start or end (⇧ selects) | `move.doc_start` |  |
-| `⌘↓` `⇧⌘↓` `⌃End` `⌃⇧End` | to the start or end (⇧ selects) | `move.doc_end` |  |
+| `⌃D` `Del` `⇧Del` | delete | `edit.delete_forward` |  |
 | `⌘V` `⌃V` | paste (screenshots too) | `clip.paste_system` |  |
+| `←` `⇧←` | left (⇧ selects) | `move.left` |  |
+| `→` `⇧→` | right (⇧ selects) | `move.right` |  |
+| `↑` `⇧↑` | up (⇧ selects) | `move.up` |  |
+| `↓` `⇧↓` | down (⇧ selects) | `move.down` |  |
+| `⌥←` `⌃←` `⌥B` `⌥⇧←` `⌃⇧←` `⌥⇧B` | word left (⇧ selects) | `move.word_left` |  |
+| `⌥→` `⌃→` `⌥F` `⌥⇧→` `⌃⇧→` `⌥⇧F` | word right (⇧ selects) | `move.word_right` |  |
+| `⌘←` `⇧⌘←` `Home` `⌃A` `⇧Home` `⌃⇧A` | line start (⇧ selects) | `move.home` |  |
+| `⌘→` `⇧⌘→` `End` `⌃E` `⇧End` `⌃⇧E` | line end (⇧ selects) | `move.end` |  |
+| `⌘↑` `⌘Home` `⇧⌘↑` `⇧⌘Home` `⌃Home` `⌃⇧Home` | document start (⇧ selects) | `move.doc_start` |  |
+| `⌘↓` `⌘End` `⇧⌘↓` `⇧⌘End` `⌃End` `⌃⇧End` | document end (⇧ selects) | `move.doc_end` |  |
+| `PgUp` `⇧PgUp` | page up (⇧ selects) | `move.page_up` |  |
+| `PgDn` `⇧PgDn` | page down (⇧ selects) | `move.page_down` |  |
+| `⌃↑` `⌃⇧↑` | block up (⇧ selects) | `move.para_up` |  |
+| `⌃↓` `⌃⇧↓` | block down (⇧ selects) | `move.para_down` |  |
+| `⌫` `⇧⌫` `⌃H` | backspace | `edit.backspace` |  |
+| `⌥⌫` `⌃⌫` `⌃W` | delete word | `edit.delete_word` |  |
+| `⌘⌫` `⌃U` | delete to line start | `edit.kill_to_start` |  |
+| `⌃K` | kill line | `edit.kill_to_end` |  |
 
 ### `link`
 

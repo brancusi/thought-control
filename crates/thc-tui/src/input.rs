@@ -1055,6 +1055,11 @@ fn run_palette(app: &mut App, id: &str) {
         app.set_context(if name == "none" { None } else { Some(name) });
         return;
     }
+    // An editing command (caretline's catalog): on the document, as its key would.
+    if let Some(action) = id.strip_prefix("edit:") {
+        crate::doc_keys::run_write(app, action);
+        return;
+    }
     // An entry runs its action (keymap.md §4), never replays a key: from Write it acts on the
     // caret's line (saved and selected) and leaves the caret where it was.
     if app.doc.is_some() {
