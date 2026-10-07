@@ -480,3 +480,28 @@ fn a_change_from_elsewhere_at_a_caret_goes_after_it() {
     update_doc(&mut doc, &mut views, 0, Msg::Undo);
     assert_eq!(doc.text.to_string(), "Hey there, \n- Agent note: safely.\nnext\n");
 }
+
+/// A change from elsewhere inside one block's lines is that block's: removing the break
+/// between its two empty lines (`"\n\n"` → `"\n"`) leaves it its mark, though that break,
+/// read alone, is a whole line.
+#[test]
+fn a_change_inside_a_block_keeps_its_mark() {
+    let mut s = State::new("\n\n", None, Viewport { width: 40, height: 10 });
+    s.doc.marks.insert(caretline::Mark { pos: 0, id: MarkId(1), attrs: Default::default() }).unwrap();
+    s.doc.marks.insert(caretline::Mark { pos: 1, id: MarkId(0), attrs: Default::default() }).unwrap();
+    s.doc.outline = Some(OutlineConfig::default());
+    s.outline_changed();
+    let ids = |s: &State| s.blocks().unwrap().blocks.iter().map(|b| (b.id.0, b.start, b.end)).collect::<Vec<_>>();
+    assert_eq!(ids(&s), [(1, 0, 0), (0, 1, 2)]);
+    s.view.selection = Selection::point(2);
+    external(&mut s, ExtChange::Replace { from: 1, to: 2, text: String::new() });
+    assert_eq!(ids(&s), [(1, 0, 0), (0, 1, 1)]);
+    // The same through the block's own change.
+    let mut s = State::new("\n\n", None, Viewport { width: 40, height: 10 });
+    s.doc.marks.insert(caretline::Mark { pos: 0, id: MarkId(1), attrs: Default::default() }).unwrap();
+    s.doc.marks.insert(caretline::Mark { pos: 1, id: MarkId(0), attrs: Default::default() }).unwrap();
+    s.doc.outline = Some(OutlineConfig::default());
+    s.outline_changed();
+    external(&mut s, ExtChange::ReplaceContent { id: MarkId(0), text: String::new() });
+    assert_eq!(ids(&s), [(1, 0, 0), (0, 1, 1)]);
+}
