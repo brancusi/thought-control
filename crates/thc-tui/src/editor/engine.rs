@@ -1,13 +1,13 @@
 //! The engine: caretline.
 //!
 //! A page or a day is one caretline outline document: one text line per row, each block
-//! bounded by a mark (docs/caretline/structure.md). The engine owns the text, the shape of
+//! bounded by a mark (caretline's docs/structure.md). The engine owns the text, the shape of
 //! every block, the selection, folds, undo and the rules that edit them. thc keeps one thing
 //! beside it: a [`Line`] per block, tied to the block by `Line::mark`, holding what the
 //! engine can't know: the vault node id, the save state (base revision, what was saved, where)
 //! and the meta. A line's shape and text are a read-only copy of its block's, re-read after
 //! every engine step (`sync`), so the save diff and drawing read plain strings
-//! (docs/caretline/embedding.md, "What thc keeps beside the engine").
+//! (caretline's docs/embedding.md, "What thc keeps beside the engine").
 //!
 //! The host (saving, refreshes from the vault, recovery) changes the lines; those changes go
 //! into the engine as one `Msg::External` before anything reads the engine again (`flush`):

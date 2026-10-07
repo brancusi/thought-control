@@ -450,10 +450,12 @@ The rendered `base` is stored, so if someone else changed the same nodes in the 
 - A page or a journal day opens as one plain-text document you type into (docs/guide/writing.md):
   each line is a node, `Tab`/`S-Tab` nest and un-nest it (fractional order means no renumbering),
   and a save turns the document's changes into one transaction of node ops.
-- The editing engine is caretline (`crates/caretline`): the text, selection, motion, undo and the
+- The editing engine is caretline ([brancusi/caretline](https://github.com/brancusi/caretline),
+  the `caretline` crate): the text, selection, motion, undo and the
   editing keys (its command catalog) are its own. thc adds tasks on its extension points (a tag
   per status, ⌃T as a host command, the box as a decoration) and keeps each line's node id and
-  save state beside the engine (docs/caretline/embedding.md, the thc case study).
+  save state beside the engine ([caretline's embedding docs](https://caretline.app/docs/embedding/),
+  the thc case study).
 - `e` opens `$EDITOR` on the subtree (§6.2).
 
 **Live updates:** subscribes to the daemon, so changes from agents or other devices appear immediately. Without the daemon, it runs its own log watcher in-process.
@@ -514,10 +516,8 @@ crates/
   thc-daemon/     watcher, socket server, subscriptions, alert scheduler, exporter, drop ingest
   thc-tui/        ratatui app; its document editor runs on caretline
   thc/            single binary: clap dispatch
-  caretline/      the text-editing engine (no thc crate, ever)
-  caretline-app/  caretline's own terminal editor (`caretline-cli`)
-  caretline-mcp/  an MCP server for live caretline sessions
-docs/  SPEC.md · FORMAT.md (event log contract, versioned) · caretline/ · guide/
+docs/  SPEC.md · FORMAT.md (event log contract, versioned) · guide/
+(caretline, the editor engine, is its own repo: https://github.com/brancusi/caretline)
 ```
 
 **Crates:**

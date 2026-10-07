@@ -1,8 +1,0 @@
-
-Shift and the arrows grow one from
-the caret's end,
-and a plain arrow collapses it to
-the edge.
-
-arrows grow one from the caret's
- select.md [+]                 5:33

@@ -38,12 +38,6 @@ jobs:
       - name: cargo test (includes the schema contract)
         run: cargo test --workspace
 
-      - name: caretline depends on no thc crate (engine-extraction.md)
-        run: |
-          if cargo tree -p caretline --prefix none -e normal | grep -E '^thc'; then
-            echo "caretline must not depend on any thc crate" >&2; exit 1
-          fi
-
       - name: No thc process outlives the tests
         # Daemons and TUIs started by tests exit with their test process (THC_TEST_PARENT); a
         # leftover means a test child escaped. Give the watchdogs a second to notice.
