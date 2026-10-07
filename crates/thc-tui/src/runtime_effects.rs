@@ -86,11 +86,18 @@ pub(crate) fn toggle_page_ids(app: &mut App) {
     dispatch(app, Msg::TogglePageIds { at: app.ui.now_ms });
 }
 
+thread_local! {
+    /// What a snapshot or test session copied (`set_clipboard` never reaches the real one there).
+    pub(crate) static SNAPSHOT_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// OSC 52 always (it reaches the local clipboard over SSH where the terminal allows); on a local
 /// session also the platform tool, which works where OSC 52 is off (Terminal.app, tmux).
 fn set_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     if crate::SNAPSHOT.with(|s| s.get()) {
+        // Never the real clipboard; a test reads what would have gone there.
+        SNAPSHOT_CLIPBOARD.with(|c| *c.borrow_mut() = Some(text.to_string()));
         return Ok(());
     }
     let osc = format!("\x1b]52;c;{}\x07", crate::doc_keys::base64(text.as_bytes()));

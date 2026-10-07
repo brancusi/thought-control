@@ -40,6 +40,8 @@ pub mod history;
 #[cfg(test)]
 mod fuzz;
 #[cfg(test)]
+mod flows;
+#[cfg(test)]
 mod sidebar_tests;
 #[cfg(test)]
 mod session_tests;

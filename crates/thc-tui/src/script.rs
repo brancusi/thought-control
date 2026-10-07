@@ -166,6 +166,7 @@ fn fixture(inner: &str) -> Option<Fixture> {
 }
 
 /// The mouse tokens (mouse.md §9): `click dclick tclick sclick cclick aclick mclick :x,y`,
+/// a click with modifiers `<s-click:x,y>` `<d-click:x,y>` (⌘) `<c-s-click:x,y>`,
 /// `drag:x1,y1,x2,y2`, `wheel:up|down[:n][@x,y]`, `hover:x,y`. A press and its release each
 /// become a message; a drag a press, a move per cell and a release.
 fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
@@ -176,6 +177,12 @@ fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
     };
     let m = |kind, x, y, mods: &str| Msg::Mouse { mouse: Mouse { kind, x, y, mods: mods.to_string(), clicks: None } };
     let click = |kind, x, y, mods: &str, n: u8| Msg::Mouse { mouse: Mouse { kind, x, y, mods: mods.to_string(), clicks: Some(n) } };
+    // `<s-click:x,y>`, `<d-click:x,y>`, `<c-s-click:x,y>`: one click with modifiers held, in
+    // the key tokens' order (⌃ ⌥ ⇧ ⌘); `d` is ⌘, which WezTerm and Ghostty can pass through.
+    if let Some(mods) = click_mods(name) {
+        let (x, y) = xy(arg)?;
+        return Ok(Some(vec![click(MouseKind::Down, x, y, &mods, 1), click(MouseKind::Up, x, y, &mods, 1)]));
+    }
     Ok(Some(match name {
         "click" | "dclick" | "tclick" | "sclick" | "cclick" | "aclick" | "mclick" => {
             let (x, y) = xy(arg)?;
@@ -231,6 +238,19 @@ fn mouse(inner: &str) -> Result<Option<Vec<Msg>>, String> {
     }))
 }
 
+/// The modifiers of a `<mods-click:…>` token's name (`s-click` → `s`), None for another name.
+fn click_mods(name: &str) -> Option<String> {
+    let mut rest = name;
+    let mut mods = String::new();
+    for (p, c) in [("c-", 'c'), ("m-", 'm'), ("s-", 's'), ("d-", 'd')] {
+        if let Some(r) = rest.strip_prefix(p) {
+            mods.push(c);
+            rest = r;
+        }
+    }
+    (rest == "click" && !mods.is_empty()).then_some(mods)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -277,5 +297,11 @@ mod tests {
         assert!(parse("<agent:hi>", false).is_err());
         assert!(parse("<agent:hi>", true).is_ok());
         assert_eq!(parse_grouped("<nop>", false).unwrap(), vec![Vec::<Msg>::new()]);
+        // A click with modifiers: ⌘ is `d`, as in key tokens.
+        let cmd = parse("<d-click:3,4><c-s-click:1,2>", false).unwrap();
+        let json: Vec<String> = cmd.iter().map(|m| serde_json::to_string(m).unwrap()).collect();
+        assert_eq!(json.len(), 4, "{json:?}");
+        assert!(json[0].contains("\"mods\":\"d\"") && json[2].contains("\"mods\":\"cs\""), "{json:?}");
+        assert!(parse("<dclick:1,1>", false).unwrap().len() == 4, "dclick is still a double click");
     }
 }
