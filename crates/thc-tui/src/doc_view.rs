@@ -105,7 +105,8 @@ fn line_of(d: &crate::editor::Doc, id: &str) -> Result<usize, String> {
     }
 }
 
-/// The agent's view, opened when it has none (`at`: `start`, `end`, or `{"id", "byte"}`).
+/// The agent's view, opened when it has none (`at`: `start`, `end`, `{"id", "byte"}` or
+/// `{"id", "end": true}`).
 fn ensure(app: &mut App, actor: &str, at: Option<&Value>) -> ViewId {
     let n = app.agent_views.len() as ViewId;
     let vid = *app.agent_views.entry(actor.to_string()).or_insert(BASE + n);
@@ -125,11 +126,12 @@ fn ensure(app: &mut App, actor: &str, at: Option<&Value>) -> ViewId {
                 Some(v @ Value::Object(_)) => {
                     let id = v.get("id").and_then(Value::as_str).unwrap_or("");
                     let line = line_of(d, id).unwrap_or(0);
-                    let byte = v
-                        .get("byte")
-                        .and_then(Value::as_u64)
-                        .map_or(0, |b| b as usize)
-                        .min(d.blocks()[line].text.len());
+                    let text = &d.blocks()[line].text;
+                    let byte = match v.get("end").and_then(Value::as_bool) {
+                        Some(true) => text.len(),
+                        _ => v.get("byte").and_then(Value::as_u64).map_or(0, |b| b as usize).min(text.len()),
+                    };
+                    let byte = (0..=byte).rev().find(|b| text.is_char_boundary(*b)).unwrap_or(0);
                     BlockPos { line, byte }
                 }
                 _ => BlockPos { line: 0, byte: 0 },

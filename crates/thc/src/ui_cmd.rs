@@ -140,7 +140,7 @@ enum UiCmd {
         target: Target,
     },
     /// Write in the open document through your own view (the person's caret stays put):
-    /// `open [--at start|end|<id>]`, `write TEXT` (a new paragraph at your caret), `set ID TEXT`
+    /// `open [--at start|end|<id>|<id>:end]`, `write TEXT` (a new paragraph at your caret), `set ID TEXT`
     /// (a note's text), `msgs JSON` (caretline messages), `close`.
     Doc {
         words: Vec<String>,
@@ -459,6 +459,8 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             let at = at.map(|a| {
                 if a == "start" || a == "end" {
                     json!(a)
+                } else if let Some(id) = a.strip_suffix(":end") {
+                    json!({"id": id, "end": true})
                 } else {
                     json!({"id": a})
                 }
@@ -468,7 +470,7 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
                 ["close"] => json!({"op": "doc.view.close"}),
                 ["write", text @ ..] => {
                     let text = text.join(" ");
-                    let mut msgs = vec![json!({"msg": "move", "dir": "forward", "by": "doc_end"})];
+                    let mut msgs = vec![];
                     msgs.push(json!({"msg": "insert_newline"}));
                     msgs.push(json!({"msg": "insert_text", "text": text}));
                     json!({"op": "doc.msgs", "msgs": msgs})

@@ -10,8 +10,9 @@
 //!    the frame's click targets, recorded while drawing; the rest are put while drawing.
 //!    Text, block and caret anchors resolve through the engine's frame of the main document
 //!    and of each sidebar document panel (`editors`, the one place that scopes them).
-//! 2. **Grid.** The whole screen: every drawn cell is text, wide or blank; the bar's row is
-//!    protected; the caret (while writing) is the caret.
+//! 2. **Grid.** The whole screen: every drawn cell is text, wide or blank; layers (and a
+//!    spotlight's dimming) cover everything above the bar; the caret (while writing) is kept
+//!    clear of agents' boxes.
 //! 3. **Plan**, with thc's renderers measuring `hint` and `thc.tour` boxes.
 //! 4. **Draw**: dim every cell a spotlight leaves out, tint the rings, draw arrows from the
 //!    route with box-drawing (ASCII with `THC_GLYPHS=ascii`), edge chips for anchors off
@@ -216,6 +217,19 @@ pub fn rect(r: ratatui::layout::Rect) -> cl::Rect {
 /// what was put while drawing (`render.anchors`: the detail pane, the calendar, panels).
 fn collect(render: &RenderOutput, buf: &Buffer, app: &App) -> cl::AnchorMap {
     let mut m = render.anchors.clone();
+    // The row keys layers name (only those are looked for off screen).
+    let wanted: std::collections::HashSet<&str> = app
+        .ui
+        .layers
+        .stack
+        .layers
+        .iter()
+        .flat_map(|l| l.anchor.iter())
+        .filter_map(|a| match a {
+            cl::Anchor::Host { kind, key } if kind == "row" => Some(key.as_str()),
+            _ => None,
+        })
+        .collect();
     let last = buf.area.height.saturating_sub(1);
     for t in &render.click_targets {
         let full = cl::Rect::new(t.x0, t.y, t.x1.saturating_sub(t.x0), 1);
@@ -278,8 +292,41 @@ fn collect(render: &RenderOutput, buf: &Buffer, app: &App) -> cl::AnchorMap {
             let r = cl::Rect::new(x0, h.y, (h.text_x + w.max(1)).saturating_sub(x0), 1);
             put(&mut m, "row", &l.id, r);
         }
+        // Lines scrolled out of sight that a layer names: which way they lie (an edge chip
+        // points there).
+        let shown: Vec<usize> = render.doc_hits.iter().map(|h| h.line).collect();
+        if let (Some(&lo), Some(&hi)) = (shown.iter().min(), shown.iter().max()) {
+            let x = render.doc_hits.first().map(|h| h.text_x);
+            for (i, l) in d.blocks().iter().enumerate().filter(|(_, l)| wanted.contains(l.id.as_str())) {
+                if i < lo {
+                    off(&mut m, &l.id, cl::Off::Above { x });
+                } else if i > hi {
+                    off(&mut m, &l.id, cl::Off::Below { x });
+                }
+            }
+        }
+    }
+    // List rows scrolled out of sight, the same way.
+    let drawn: Vec<usize> = render.click_targets.iter().filter_map(|t| if let Click::Row(i) = t.what { Some(i) } else { None }).collect();
+    if let (Some(&lo), Some(&hi)) = (drawn.iter().min(), drawn.iter().max()) {
+        for (i, r) in app.rows.iter().enumerate() {
+            let Some(k) = r.key().filter(|k| wanted.contains(k.as_str())) else { continue };
+            if i < lo {
+                off(&mut m, &k, cl::Off::Above { x: None });
+            } else if i > hi {
+                off(&mut m, &k, cl::Off::Below { x: None });
+            }
+        }
     }
     m
+}
+
+/// A row key off screen, unless it's drawn somewhere else (a panel).
+fn off(m: &mut cl::AnchorMap, key: &str, o: cl::Off) {
+    let k = cl::AnchorKey::host("row", key);
+    if m.get(&k).is_none() {
+        m.put_off(k, o);
+    }
 }
 
 /// The editors on screen that resolve text, block and caret anchors, in the order they're
@@ -315,13 +362,13 @@ fn editors<'a>(app: &'a App, render: &RenderOutput) -> Vec<(String, cl::FrameRes
     out
 }
 
-/// The grid placement sees: the whole screen, its drawn cells, the bar protected.
+/// The grid placement sees: the whole screen and its drawn cells; layers go above the bar.
 fn grid(buf: &Buffer, caret: Option<(u16, u16)>) -> cl::Grid {
     let (w, h) = (buf.area.width, buf.area.height);
     let mut g = cl::Grid::new(w, h)
-        .with_area(cl::Rect::new(0, 0, w, h))
-        .with_caret(caret)
-        .with_protect(vec![cl::Rect::new(0, h.saturating_sub(1), w, 1)]);
+        // Layers go anywhere but the bar, whose row stays readable (and undimmed).
+        .with_area(cl::Rect::new(0, 0, w, h.saturating_sub(1)))
+        .with_caret(caret);
     for y in 0..h {
         let mut x = 0;
         while x < w {

@@ -134,6 +134,14 @@ pub fn parse_grouped(script: &str, fixtures: bool) -> Result<Vec<Vec<Msg>>, Stri
         rest = &rest[end + 1..];
         if let Some(text) = inner.strip_prefix("paste:") {
             out.push(vec![Msg::Paste { text: text.replace("\\n", "\n") }]);
+        } else if let Some(json) = inner.strip_prefix("layer:") {
+            // A test fixture: a layer op as an agent sends it (`<layer:{"op":"hint.show",…}>`).
+            if !fixtures {
+                return Err(format!("{token} is a test fixture, not input"));
+            }
+            let req: serde_json::Value = serde_json::from_str(json).map_err(|e| format!("{token}: {e}"))?;
+            let actor = req.get("actor").and_then(serde_json::Value::as_str).map(str::to_string);
+            out.push(vec![Msg::Layer { req, actor }]);
         } else if let Some(m) = mouse(inner)? {
             out.push(m);
         } else if let Some(f) = fixture(inner) {

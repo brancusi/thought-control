@@ -47,6 +47,8 @@ mod sidebar_tests;
 #[cfg(test)]
 mod session_tests;
 #[cfg(test)]
+mod layers_tests;
+#[cfg(test)]
 mod goldens;
 #[cfg(test)]
 mod overlays;

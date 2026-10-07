@@ -466,7 +466,8 @@ fn show_step(st: &mut LayerState, now: u64, limits: &cl::Limits) -> Result<Done,
 /// document is revealed by the spotlight's edge chip; the person's caret never moves.
 fn reveal(ui: &mut UiState, anchor: &[cl::Anchor]) {
     if let Some(cl::Anchor::Host { kind, key }) = anchor.first() {
-        if kind == "row" && ui.document.is_none() && ui.page_open.is_none() {
+        let in_doc = ui.view == crate::app::View::Journal || (ui.view == crate::app::View::Pages && ui.page_open.is_some());
+        if kind == "row" && !in_doc {
             ui.selected = Some(key.clone());
         }
     }
