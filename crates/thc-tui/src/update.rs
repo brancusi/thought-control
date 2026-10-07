@@ -34,6 +34,223 @@ pub(crate) enum Effect {
     WritePageIds { visible: bool },
     WriteClipboard { text: String, notice: String },
     EditKeys,
+    /// Rebuild the rows (and open, switch or close the document) from the store.
+    Reload,
+    /// Save the open document's typing.
+    SaveDoc,
+    Quit,
+    SetMouse { on: bool },
+    /// `$EDITOR` on a note.
+    SpawnEditor { target: String },
+}
+
+/// What a navigation action needs to know besides the state: derived rows and facts the
+/// runtime holds. Never the store.
+pub(crate) struct Facts<'a> {
+    pub rows: &'a [crate::app::Row],
+    pub doc_open: bool,
+    pub mouse: bool,
+    /// Rows a half page moves.
+    pub half_page: isize,
+}
+
+impl Facts<'_> {
+    fn selected_id(&self, ui: &crate::ui_state::UiState) -> Option<String> {
+        self.rows.get(ui.cursor).and_then(|r| r.node()).map(|n| n.id.clone())
+    }
+}
+
+/// A keymap action that only changes presentation, as a pure update: the state changes here,
+/// and what needs the store or the terminal comes back as effects. None: not one of these
+/// (keymap.rs runs it the older way, on App).
+pub(crate) fn action(ui: &mut crate::ui_state::UiState, facts: &Facts<'_>, action: &str) -> Option<Vec<Effect>> {
+    use crate::app::{Focus, Overlay, PromptKind, VIEWS, View};
+    use crate::input::LineInput;
+    let reload = || Some(vec![Effect::Reload]);
+    let go = |ui: &mut crate::ui_state::UiState, v: View| {
+        ui.enter_view(v);
+        Some(vec![Effect::Reload])
+    };
+    match action {
+        "go.today" => go(ui, View::Today),
+        "go.inbox" => go(ui, View::Inbox),
+        "go.tasks" => go(ui, View::Tasks),
+        "go.log" => go(ui, View::Log),
+        "go.journal" => {
+            // The journal is a destination, not a detour: Esc from it goes to Today.
+            ui.doc_origin = None;
+            go(ui, View::Journal)
+        }
+        // Arriving never takes the cursor; `/` is a find, so it does.
+        "go.search" => {
+            if ui.view != View::Search {
+                return go(ui, View::Search);
+            }
+            Some(vec![])
+        }
+        "search.find" => {
+            let effects = if ui.view != View::Search { go(ui, View::Search) } else { Some(vec![]) };
+            ui.prompt = Some((PromptKind::Search, LineInput::with(&ui.search_terms)));
+            effects
+        }
+        "tasks.filter" => {
+            let effects = if ui.view != View::Tasks { go(ui, View::Tasks) } else { Some(vec![]) };
+            ui.prompt = Some((PromptKind::Filter, LineInput::with(&ui.tasks_filter)));
+            ui.input_untouched = true;
+            effects
+        }
+        "view.next" | "view.prev" => {
+            let i = VIEWS.iter().position(|v| *v == ui.view).unwrap_or(0);
+            let n = VIEWS.len();
+            match VIEWS[if action == "view.next" { (i + 1) % n } else { (i + n - 1) % n }] {
+                // Pages rests on the page last opened: that needs its rows (App::show_pages).
+                View::Pages => None,
+                v => go(ui, v),
+            }
+        }
+        "pages.filter" => {
+            ui.prompt = Some((PromptKind::PagesFilter, LineInput::with(&ui.pages_filter)));
+            Some(vec![])
+        }
+        // `?` on a view: how it's built first; `?` there shows the keys.
+        "help.context" => {
+            ui.overlay = Some(match ui.recipe_name().filter(|_| !facts.doc_open) {
+                Some(name) => Overlay::Recipe { name },
+                None => Overlay::Help { all: false, scroll: 0 },
+            });
+            Some(vec![])
+        }
+        "view.explain" => {
+            match ui.recipe_name() {
+                Some(name) => ui.overlay = Some(Overlay::Recipe { name }),
+                None => ui.info("no view here to explain · Today, Inbox, Tasks"),
+            }
+            Some(vec![])
+        }
+        "help.all" => {
+            ui.overlay = Some(Overlay::Help { all: true, scroll: 0 });
+            Some(vec![])
+        }
+        "focus.toggle" => {
+            let on = !ui.focus_mode;
+            ui.set_focus_mode(on);
+            Some(vec![])
+        }
+        "view.save" => {
+            ui.overlay = Some(Overlay::Palette { input: LineInput::with("view add "), sel: 0 });
+            Some(vec![])
+        }
+        "page.new" => {
+            ui.prompt = Some((PromptKind::NewPage, LineInput::default()));
+            Some(vec![])
+        }
+        "finder.open" => {
+            ui.overlay = Some(Overlay::Finder { input: LineInput::default(), sel: 0 });
+            Some(vec![])
+        }
+        "nav.history" => {
+            ui.overlay = Some(Overlay::History { sel: 0 });
+            Some(vec![])
+        }
+        "go.date" => {
+            ui.prompt = Some((PromptKind::GoDate, LineInput::default()));
+            Some(vec![])
+        }
+        "pane.detail_toggle" => {
+            ui.show_detail = !ui.show_detail;
+            Some(vec![])
+        }
+        "pane.next" => {
+            ui.focus = if ui.focus == Focus::List { Focus::Detail } else { Focus::List };
+            Some(vec![])
+        }
+        "mouse.toggle" => Some(vec![Effect::SetMouse { on: !facts.mouse }]),
+        "quit" => Some(vec![Effect::SaveDoc, Effect::Quit]),
+        // ⌃L: redraw, and lists re-sort (your own changes move to their place).
+        "redraw" => reload(),
+        "cursor.down" => cursor(ui, facts, 1),
+        "cursor.up" => cursor(ui, facts, -1),
+        "cursor.half_down" => cursor(ui, facts, facts.half_page),
+        "cursor.half_up" => cursor(ui, facts, -facts.half_page),
+        "cursor.page_down" => cursor(ui, facts, facts.half_page * 2),
+        "cursor.page_up" => cursor(ui, facts, -facts.half_page * 2),
+        "cursor.top" | "cursor.bottom" => {
+            let rows = facts.rows;
+            let i = if action == "cursor.top" { rows.iter().position(|r| r.selectable()) } else { rows.iter().rposition(|r| r.selectable()) };
+            if let Some(i) = i {
+                ui.cursor = i;
+                ui.selected = rows[i].key();
+            }
+            Some(vec![])
+        }
+        "node.move" => {
+            if let Some(id) = facts.selected_id(ui) {
+                ui.overlay = Some(Overlay::Move { node: id, input: LineInput::default(), sel: 0 });
+            }
+            Some(vec![])
+        }
+        "node.edit_external" => Some(facts.selected_id(ui).map(|target| vec![Effect::SpawnEditor { target }]).unwrap_or_default()),
+        "node.history" => {
+            ui.log_node = facts.selected_id(ui);
+            ui.view = View::Log;
+            ui.selected = None;
+            ui.cursor = 0;
+            reload()
+        }
+        "today.by_vault" => {
+            // Sections per vault instead of merged.
+            ui.today_by_vault = !ui.today_by_vault;
+            ui.info(if ui.today_by_vault { "by vault · space t v merges them" } else { "merged · space t v for a section per vault" });
+            reload()
+        }
+        "today.agenda_toggle" => {
+            ui.agenda_mode = !ui.agenda_mode;
+            ui.selected = None;
+            reload()
+        }
+        "today.show_done" => {
+            ui.show_all_done = !ui.show_all_done;
+            reload()
+        }
+        "day.prev" | "day.next" | "week.prev" | "week.next" => {
+            let delta = match action {
+                "day.prev" => -1,
+                "day.next" => 1,
+                "week.prev" => -7,
+                _ => 7,
+            };
+            if ui.view == View::Today {
+                ui.journal_date = ui.today;
+            }
+            ui.journal_date += chrono::Duration::days(delta);
+            ui.selected = None;
+            go(ui, View::Journal)
+        }
+        _ => None,
+    }
+}
+
+/// Move the list cursor by `delta` selectable rows.
+fn cursor(ui: &mut crate::ui_state::UiState, facts: &Facts<'_>, delta: isize) -> Option<Vec<Effect>> {
+    let rows = facts.rows;
+    if rows.is_empty() {
+        return Some(vec![]);
+    }
+    let mut i = ui.cursor as isize;
+    let step = delta.signum();
+    for _ in 0..delta.abs() {
+        let mut j = i + step;
+        while j >= 0 && (j as usize) < rows.len() && !rows[j as usize].selectable() {
+            j += step;
+        }
+        if j < 0 || j as usize >= rows.len() {
+            break;
+        }
+        i = j;
+    }
+    ui.cursor = i as usize;
+    ui.selected = rows.get(ui.cursor).and_then(|r| r.key());
+    Some(vec![])
 }
 
 pub(crate) struct DocumentFields<'a> {
@@ -256,5 +473,48 @@ mod tests {
             Msg::ClipboardResult { result: Err("clipboard refused".into()), notice: "unused".into(), at },
         );
         assert_eq!(toast.unwrap().kind, ToastKind::Error);
+    }
+}
+
+#[cfg(test)]
+mod action_tests {
+    use super::*;
+    use crate::app::{Row, View};
+    use crate::ui_state::UiState;
+
+    fn rows() -> Vec<Row> {
+        vec![Row::Section { title: "Today".into(), count: None, token: Token::Muted, note: None }, Row::Tag { id: "t1".into(), name: "a".into(), count: 1 }, Row::Blank, Row::Tag { id: "t2".into(), name: "b".into(), count: 2 }]
+    }
+
+    #[test]
+    fn navigation_changes_only_the_state_and_asks_for_a_reload() {
+        let rows = rows();
+        let facts = Facts { rows: &rows, doc_open: false, mouse: true, half_page: 5 };
+        let mut ui = UiState::default();
+        ui.prompt = Some((crate::app::PromptKind::Search, crate::input::LineInput::default()));
+        ui.view = View::Search;
+        assert_eq!(action(&mut ui, &facts, "go.tasks"), Some(vec![Effect::Reload]));
+        assert_eq!((ui.view, ui.prompt.is_none()), (View::Tasks, true), "a finder's prompt is put away on leaving");
+        assert_eq!(action(&mut ui, &facts, "cursor.down"), Some(vec![]));
+        assert_eq!((ui.cursor, ui.selected.as_deref()), (1, Some("tag:a")));
+        action(&mut ui, &facts, "cursor.down");
+        assert_eq!((ui.cursor, ui.selected.as_deref()), (3, Some("tag:b")), "skips what can't be selected");
+        action(&mut ui, &facts, "cursor.top");
+        assert_eq!(ui.cursor, 1);
+        assert_eq!(action(&mut ui, &facts, "quit"), Some(vec![Effect::SaveDoc, Effect::Quit]));
+        assert_eq!(action(&mut ui, &facts, "mouse.toggle"), Some(vec![Effect::SetMouse { on: false }]));
+        assert_eq!(action(&mut ui, &facts, "help.context"), Some(vec![]));
+        assert!(matches!(ui.overlay, Some(crate::app::Overlay::Recipe { .. })));
+        ui.now_ms = 77;
+        ui.view = View::Today;
+        action(&mut ui, &facts, "today.by_vault");
+        assert_eq!(ui.toast.as_ref().map(|t| t.at), Some(77), "toasts carry the logical clock");
+        assert_eq!(action(&mut ui, &facts, "node.done"), None, "writes still run on App");
+        // The same state and action give the same result: nothing else is read.
+        let (mut a, mut b) = (ui.clone(), ui.clone());
+        for act in ["day.next", "week.prev", "view.next", "pane.next", "focus.toggle", "tasks.filter"] {
+            assert_eq!(action(&mut a, &facts, act), action(&mut b, &facts, act));
+        }
+        assert_eq!(a, b);
     }
 }

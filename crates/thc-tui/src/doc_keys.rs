@@ -224,7 +224,10 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
             d.set_caret(BlockPos { line: d.caret().line, byte: d.caret_block().text.len() });
             d.newline();
         }
-        "focus.toggle" => app.set_focus_mode(!app.focus_mode),
+        "focus.toggle" => {
+            let on = !app.focus_mode;
+            app.set_focus_mode(on);
+        }
         "clip.paste_system" => app.paste_system(),
         // Editing and motion: the editor's commands, applied to the document.
         other if command_for(other, shift, page as isize).is_some() => {

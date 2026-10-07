@@ -804,18 +804,7 @@ impl App {
     // ---- toasts --------------------------------------------------------------------------------
 
     pub fn toast_parts(&mut self, kind: ToastKind, parts: Vec<(String, Token)>) {
-        let at = self.ui.now_ms;
-        self.ui.toast = Some(Toast { kind, parts, at });
-    }
-
-    /// Focus on or off (⌥Z, F, `thc j`, `:focus`). The first time it opens with the keys
-    /// footer off, say where the keys went (tui-editor.md §8.5).
-    pub fn set_focus_mode(&mut self, on: bool) {
-        self.focus_mode = on;
-        if on && !self.focus_cfg.has(thc_core::tui_config::El::Footer) && !self.focus_hint_shown {
-            self.focus_hint_shown = true;
-            self.info("footer off · :focus to change");
-        }
+        self.ui.toast_parts(kind, parts);
     }
 
     /// `:focus [writer | +month -footer | save | off]` (tui-editor.md §8.4). Bare, it opens the
@@ -984,14 +973,6 @@ impl App {
 
     /// The view on screen that has a recipe (view-explain.md §3): today, agenda, inbox, tasks,
     /// or the saved view Tasks is showing.
-    pub fn recipe_name(&self) -> Option<String> {
-        match self.view {
-            View::Today => Some(if self.agenda_mode { "agenda" } else { "today" }.into()),
-            View::Inbox => Some("inbox".into()),
-            View::Tasks => Some(self.tasks_filter.trim().strip_prefix('@').filter(|n| !n.contains(' ')).unwrap_or("tasks").to_string()),
-            _ => None,
-        }
-    }
 
     /// A view's recipe: its definition, each section's count now and plain reading, and its
     /// scope's vaults.
@@ -2348,24 +2329,8 @@ impl App {
     }
 
     pub fn set_view(&mut self, v: View) {
-        let entering = self.view != v;
-        if entering {
-            self.view = v;
-            self.cursor = 0;
-            self.scroll = 0;
-            self.selected = None;
-            self.focus = Focus::List;
-            if v != View::Log {
-                self.log_node = None;
-            }
-        }
+        self.ui.enter_view(v);
         let _ = self.reload();
-        // Arriving never takes the cursor (navigation.md §6): Search and the Pages finder show
-        // their kept query with no caret, and a letter starts the find (input.rs). A finder's
-        // prompt left open in the view you leave is put away, its query kept.
-        if entering && matches!(self.prompt.as_ref().map(|(k, _)| k), Some(PromptKind::PagesFilter | PromptKind::Search)) {
-            self.prompt = None;
-        }
     }
 
     /// Tasks: `s` cycles the sort term of the active query.
@@ -2566,14 +2531,6 @@ impl App {
         let Some(j) = (0..=i).rev().find(|&j| self.rows[j].selectable()).or_else(|| (i..n).find(|&j| self.rows[j].selectable())) else { return };
         self.cursor = j;
         self.selected = self.rows[j].key();
-    }
-
-    pub fn jump(&mut self, top: bool) {
-        let idx = if top { self.rows.iter().position(|r| r.selectable()) } else { self.rows.iter().rposition(|r| r.selectable()) };
-        if let Some(i) = idx {
-            self.cursor = i;
-            self.selected = self.rows[i].key();
-        }
     }
 
     /// Key of the next selectable row (used to advance after triage actions).

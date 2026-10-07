@@ -13,6 +13,55 @@ pub(crate) fn document_identity(app: &App) -> Option<DocumentIdentity> {
         caret: doc.caret(),
     })
 }
+/// Perform one effect: the IO update asked for. Results come back as messages.
+fn perform(app: &mut App, effect: Effect) {
+    match effect {
+        Effect::EditKeys => {
+            app.save_doc(true);
+            app.drain_saves(true);
+            app.overlay = None;
+            app.editor_request = Some("@keys".into());
+        }
+        Effect::WritePageIds { visible } => {
+            let result =
+                std::fs::write(app.vault.paths.cache.join("tui.toml"), format!("page_ids = {visible}\n")).map_err(|e| e.to_string());
+            dispatch(app, Msg::PageIdsPersisted { result });
+        }
+        Effect::Reload => {
+            let _ = app.reload();
+        }
+        Effect::SaveDoc => app.save_doc(true),
+        Effect::Quit => app.quit = true,
+        Effect::SetMouse { on } => app.mouse_request = Some(on),
+        Effect::SpawnEditor { target } => app.editor_request = Some(target),
+        Effect::WriteClipboard { text, notice } => {
+            let result = set_clipboard(&text);
+            dispatch(app, Msg::ClipboardResult { result, notice, at: app.ui.now_ms });
+        }
+    }
+}
+
+/// A keymap action through the pure update (update::action), its effects run here. False:
+/// the action isn't one it handles.
+pub(crate) fn action(app: &mut App, action: &str) -> bool {
+    let facts = update::Facts {
+        rows: &app.rows,
+        doc_open: app.doc.is_some(),
+        mouse: app.tui_prefs.mouse,
+        half_page: (app.render.list_height / 2).max(1) as isize,
+    };
+    let Some(effects) = update::action(&mut app.ui, &facts, action) else { return false };
+    run(app, effects);
+    true
+}
+
+/// Perform effects in order.
+pub(crate) fn run(app: &mut App, effects: Vec<Effect>) {
+    for effect in effects {
+        perform(app, effect);
+    }
+}
+
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     let identity = document_identity(app);
     let document = identity.zip(app.doc.as_mut()).map(|(identity, doc)| DocumentFields { identity, scroll: &mut doc.scroll });
@@ -20,25 +69,7 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
         Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, document, toast: &mut app.ui.toast },
         msg,
     );
-    for effect in effects {
-        match effect {
-            Effect::EditKeys => {
-                app.save_doc(true);
-                app.drain_saves(true);
-                app.overlay = None;
-                app.editor_request = Some("@keys".into());
-            }
-            Effect::WritePageIds { visible } => {
-                let result =
-                    std::fs::write(app.vault.paths.cache.join("tui.toml"), format!("page_ids = {visible}\n")).map_err(|e| e.to_string());
-                dispatch(app, Msg::PageIdsPersisted { result });
-            }
-            Effect::WriteClipboard { text, notice } => {
-                let result = set_clipboard(&text);
-                dispatch(app, Msg::ClipboardResult { result, notice, at: app.ui.now_ms });
-            }
-        }
-    }
+    run(app, effects);
 }
 
 /// The wall clock, as the runtime reads it: epoch milliseconds and the local offset from UTC in
