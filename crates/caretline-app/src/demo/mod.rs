@@ -47,7 +47,7 @@ pub struct DemoArgs {
     format: String,
 
     /// With --snapshot: apply this key script first, as the person would type it (the
-    /// demo's own keys included), e.g. 'hi<down><c-t>'.
+    /// demo's own keys included), e.g. 'hi<down><c-o>'.
     #[arg(long, value_name = "SCRIPT", requires = "snapshot")]
     keys: Option<String>,
 

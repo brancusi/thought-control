@@ -41,14 +41,9 @@ pub fn width(s: &str) -> usize {
 }
 
 /// Wrap text at `w` columns by words; returns byte ranges of the visual rows. A soft break
-/// starts a new row. Long words break, between characters (never inside a cluster).
+/// starts a new row. Long words break, between characters (never inside a cluster). For the
+/// chrome (overlays); a document's rows are the engine's (`Doc::rows_of`), which wrap the same.
 pub fn wrap(text: &str, w: usize) -> Vec<(usize, usize)> {
-    wrap_with(text, w, 0)
-}
-
-/// [`wrap`], with `first_extra` more columns on the very first row: a heading's `## ` or a
-/// numbered item's `12. ` is drawn in the hang, so the text beside it gets that room back.
-pub fn wrap_with(text: &str, w: usize, first_extra: usize) -> Vec<(usize, usize)> {
     let w = w.max(8);
     let mut rows = Vec::new();
     let mut start = 0;
@@ -66,10 +61,9 @@ pub fn wrap_with(text: &str, w: usize, first_extra: usize) -> Vec<(usize, usize)
         while i < body_end {
             let g = text[i..body_end].graphemes(true).next().unwrap();
             let cw = gwidth(g);
-            let limit = if row_start == 0 { w + first_extra } else { w };
             // A space past the edge ends the row there (a word that fills the row exactly
             // stays on it).
-            if col + cw > limit && g == " " {
+            if col + cw > w && g == " " {
                 rows.push((row_start, i + 1));
                 row_start = i + 1;
                 col = 0;
@@ -77,7 +71,7 @@ pub fn wrap_with(text: &str, w: usize, first_extra: usize) -> Vec<(usize, usize)
                 i += 1;
                 continue;
             }
-            if col + cw > limit {
+            if col + cw > w {
                 let cut = match last_space {
                     Some(sp) if sp > row_start => sp + 1,
                     _ => i,
@@ -97,8 +91,7 @@ pub fn wrap_with(text: &str, w: usize, first_extra: usize) -> Vec<(usize, usize)
         rows.push((row_start, body_end));
         start = seg_end;
     }
-    // A soft break at the end starts an empty row: the caret goes there (⇧Enter / ⌃J at the
-    // end of a line used to leave it on the line above).
+    // A soft break at the end starts an empty row.
     if rows.is_empty() || text.ends_with('\n') {
         rows.push((text.len(), text.len()));
     }

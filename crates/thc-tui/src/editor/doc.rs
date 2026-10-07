@@ -200,14 +200,6 @@ fn short_repeat_rule(r: &str) -> String {
     }
 }
 
-/// A caret position the host keeps (a line and a byte offset in its text); the seam's is
-/// [`BlockPos`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Default, Hash)]
-pub(super) struct Pos {
-    pub line: usize,
-    pub byte: usize,
-}
-
 /// What the document is.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(tag = "kind", rename_all = "lowercase")]
@@ -288,7 +280,7 @@ impl Doc {
         self.engine.now_ms = now_ms;
     }
 
-    /// The engine's text (tests: the mirror against it).
+    /// The engine's text (tests: the lines against it).
     #[cfg(test)]
     pub fn engine_text(&self) -> String {
         self.engine.text()
@@ -334,7 +326,7 @@ impl Doc {
     pub fn selection(&self) -> Option<(BlockPos, BlockPos)> {
         let (a, c) = self.engine.selection();
         let a = a?;
-        Some(if a < c { (a.into(), c.into()) } else { (c.into(), a.into()) })
+        Some(if a < c { (a, c) } else { (c, a) })
     }
 
     /// A message for caretline, the vault's save state at hand (for lines an undo brings back).
@@ -380,7 +372,7 @@ impl Doc {
 
     /// A double-click: the word at `p`.
     pub fn select_word_at(&mut self, p: BlockPos) {
-        let pos = self.char_of(p.into());
+        let pos = self.char_of(p);
         self.run(caretline::Msg::SelectWordAt { pos });
     }
 
@@ -432,7 +424,7 @@ impl Doc {
         }
         let i = self.lines().len() - 1;
         let byte = self.lines()[i].text.len();
-        self.engine.select(None, Pos { line: i, byte });
+        self.engine.select(None, BlockPos { line: i, byte });
     }
 }
 

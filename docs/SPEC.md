@@ -33,7 +33,8 @@
 **Non-goals (v1)**
 
 - Rich media, styling, whiteboards, or graph visualization.
-- A built-in multi-line editor. Long text is edited in `$EDITOR`.
+- Rich text (WYSIWYG). Pages and days are plain text with Markdown markers, written in the TUI's
+  document editor (§6.3) or in `$EDITOR`.
 - Multi-user collaboration or a hosted backend.
 - Calendar sync (CalDAV/ICS). The model is designed so it can be added later (§3.6).
 - Windows.
@@ -446,8 +447,13 @@ The rendered `base` is stored, so if someone else changed the same nodes in the 
 7. History/Log
 
 **Editing:**
-- Inline single-line editing of a node's text.
-- `o`/`O` creates a sibling node, `Tab`/`S-Tab` indents and outdents (fractional order means no renumbering).
+- A page or a journal day opens as one plain-text document you type into (docs/guide/writing.md):
+  each line is a node, `Tab`/`S-Tab` nest and un-nest it (fractional order means no renumbering),
+  and a save turns the document's changes into one transaction of node ops.
+- The editing engine is caretline (`crates/caretline`): the text, selection, motion, undo and the
+  editing keys (its command catalog) are its own. thc adds tasks on its extension points (a tag
+  per status, ⌃T as a host command, the box as a decoration) and keeps each line's node id and
+  save state beside the engine (docs/caretline/embedding.md, the thc case study).
 - `e` opens `$EDITOR` on the subtree (§6.2).
 
 **Live updates:** subscribes to the daemon, so changes from agents or other devices appear immediately. Without the daemon, it runs its own log watcher in-process.
@@ -503,14 +509,15 @@ The rendered `base` is stored, so if someone else changed the same nodes in the 
 
 ```
 crates/
-  thc-core/    model, ops, validation, HLC, merge/replay, NL date+recurrence parsing, query compiler
-  thc-store/   SQLite schema, migrations (= rebuild), snapshots, cursors, FTS
-  thc-proto/   RPC and event types (serde + schemars) → JSON Schema → Swift Codable
-  thc-daemon/  watcher, socket server, subscriptions, alert scheduler, exporter, drop ingest
-  thc-tui/     ratatui app
-  thc/         single binary: clap dispatch
-apps/macos/ThoughtBar/
-docs/  SPEC.md · FORMAT.md (event log contract, versioned) · research/
+  thc-core/       model, ops, validation, HLC, merge/replay, store (SQLite, FTS), NL date+recurrence
+                  parsing, query compiler, outline (document ↔ block ops)
+  thc-daemon/     watcher, socket server, subscriptions, alert scheduler, exporter, drop ingest
+  thc-tui/        ratatui app; its document editor runs on caretline
+  thc/            single binary: clap dispatch
+  caretline/      the text-editing engine (no thc crate, ever)
+  caretline-app/  caretline's own terminal editor (`caretline-cli`)
+  caretline-mcp/  an MCP server for live caretline sessions
+docs/  SPEC.md · FORMAT.md (event log contract, versioned) · caretline/ · guide/
 ```
 
 **Crates:**
@@ -619,6 +626,10 @@ first frame on a cross-vault Today: 70 ms at 10 vaults of 10k nodes with ~70 ove
 ---
 
 ### 8.1 The editor (tui-editor.md §10)
+
+The keystroke rows below were measured before the editor moved onto caretline (0.10.0); on
+caretline typing and paging on the 5,000-line page take about 1 ms a key (RELEASE_NOTES 0.10.0).
+Re-measure with `scripts/bench-editor.sh` in the next performance pass.
 
 Measured 2026-10-05 with `scripts/bench-editor.sh` (release build, Apple-silicon dev machine, 120×40): a scratch vault
 with a 5,000-line page (nested items, a task every ninth line) and a 300-line journal day.

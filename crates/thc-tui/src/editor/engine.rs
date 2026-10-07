@@ -7,7 +7,7 @@
 //! engine can't know: the vault node id, the save state (base revision, what was saved, where)
 //! and the meta. A line's shape and text are a read-only copy of its block's, re-read after
 //! every engine step (`sync`), so the save diff and drawing read plain strings
-//! (docs/caretline/embedding.md, "thc's mirror").
+//! (docs/caretline/embedding.md, "What thc keeps beside the engine").
 //!
 //! The host (saving, refreshes from the vault, recovery) changes the lines; those changes go
 //! into the engine as one `Msg::External` before anything reads the engine again (`flush`):
@@ -18,7 +18,8 @@
 //! Node ids for new blocks come from an [`IdPool`]. Saving stays thc's: `Doc::plan_save`
 //! reads the lines and makes `BlockOp`s.
 
-use super::doc::{Doc, Line, Pos, copy_saved_state, new_id};
+use super::doc::{Doc, Line, copy_saved_state, new_id};
+use super::BlockPos;
 use super::tasks;
 use super::Outcome;
 use caretline as cn;
@@ -287,7 +288,7 @@ impl Engine {
     }
 
     /// The selection, as (anchor, caret); the anchor is None when nothing is selected.
-    pub(super) fn selection(&self) -> (Option<Pos>, Pos) {
+    pub(super) fn selection(&self) -> (Option<BlockPos>, BlockPos) {
         debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
         let r = self.st.view.selection.primary();
         let head = self.pos_of(r.head);
@@ -296,7 +297,7 @@ impl Engine {
 
     /// Select from `anchor` (None: nothing selected) to the caret at `head`; up and down forget
     /// their column.
-    pub(super) fn select(&mut self, anchor: Option<Pos>, head: Pos) {
+    pub(super) fn select(&mut self, anchor: Option<BlockPos>, head: BlockPos) {
         self.flush();
         let h = self.char_of(head);
         let a = anchor.map_or(h, |a| self.char_of(a));
@@ -320,7 +321,7 @@ impl Engine {
 
     /// A host position (line, byte in its text) as a char in the engine's text: never inside a
     /// marker.
-    pub(super) fn char_of(&self, p: Pos) -> usize {
+    pub(super) fn char_of(&self, p: BlockPos) -> usize {
         let o = self.st.doc.blocks().expect("an outline document");
         let b = &o.blocks[p.line.min(o.blocks.len() - 1)];
         let rope = &self.st.doc.text;
@@ -331,14 +332,14 @@ impl Engine {
     }
 
     /// An engine char as a host position.
-    fn pos_of(&self, c: usize) -> Pos {
+    fn pos_of(&self, c: usize) -> BlockPos {
         let o = self.st.doc.blocks().expect("an outline document");
         let rope = &self.st.doc.text;
         let i = o.index_at(rope.slice(..), c);
         let b = &o.blocks[i];
         let cs = b.start + list_len(b);
         let c = c.clamp(cs, b.end.max(cs));
-        Pos { line: i, byte: rope.char_to_byte(c) - rope.char_to_byte(cs) }
+        BlockPos { line: i, byte: rope.char_to_byte(c) - rope.char_to_byte(cs) }
     }
 
     /// The lines from the engine's blocks: each block's line found by its mark (its save
@@ -696,7 +697,7 @@ impl Doc {
     }
 
     /// Where `p` (a host position) is in the engine's text, the host's changes taken in.
-    pub(super) fn char_of(&mut self, p: Pos) -> usize {
+    pub(super) fn char_of(&mut self, p: BlockPos) -> usize {
         self.engine.flush();
         self.engine.char_of(p)
     }
@@ -724,7 +725,7 @@ mod tests {
         d.blocks().iter().map(|l| l.text.clone()).collect()
     }
 
-    /// The engine's text and the mirror agree, line for line.
+    /// The engine's text and the lines agree, line for line.
     fn same(d: &mut Doc) {
         d.engine.flush();
         let want: Vec<String> = d.engine.lines.iter().map(block_text).collect();

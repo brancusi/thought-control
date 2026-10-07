@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 [dependencies]
 # The engine, for headless sessions in process. Live editors are reached over their socket.
-caretline = { path = "../caretline" }
+caretline = { path = "../caretline", version = "0.3" }
 # The official MCP SDK (Apache-2.0).
 rmcp = { version = "3.5", default-features = false, features = ["server", "transport-io"] }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "io-std", "sync", "time"] }

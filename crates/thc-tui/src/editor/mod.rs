@@ -63,18 +63,6 @@ pub struct BlockPos {
     pub byte: usize,
 }
 
-impl From<doc::Pos> for BlockPos {
-    fn from(p: doc::Pos) -> Self {
-        BlockPos { line: p.line, byte: p.byte }
-    }
-}
-
-impl From<BlockPos> for doc::Pos {
-    fn from(p: BlockPos) -> Self {
-        doc::Pos { line: p.line, byte: p.byte }
-    }
-}
-
 /// A caret held by node id and byte: it survives edits above it, reopening and other devices'
 /// changes (caret memory, history).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -120,12 +108,12 @@ impl Doc {
 
     /// Where the caret is.
     pub fn caret(&self) -> BlockPos {
-        self.engine.selection().1.into()
+        self.engine.selection().1
     }
 
     /// The selection's other end, when something is selected.
     pub fn anchor(&self) -> Option<BlockPos> {
-        self.engine.selection().0.map(Into::into)
+        self.engine.selection().0
     }
 
     /// The caret by its note's id.
@@ -162,12 +150,12 @@ impl Doc {
     pub fn set_caret(&mut self, p: BlockPos) {
         self.engine.flush();
         let anchor = self.engine.selection().0;
-        self.engine.select(anchor, p.into());
+        self.engine.select(anchor, p);
     }
 
     /// Select from `anchor` (None: nothing selected) to the caret at `caret`.
     pub fn select_range(&mut self, anchor: Option<BlockPos>, caret: BlockPos) {
-        self.engine.select(anchor.map(Into::into), caret.into());
+        self.engine.select(anchor, caret);
     }
 
     pub fn clear_selection(&mut self) {
@@ -181,12 +169,12 @@ impl Doc {
     pub fn click(&mut self, p: BlockPos, extend: bool) {
         self.engine.flush();
         let (anchor, caret) = self.engine.selection();
-        self.engine.select(extend.then(|| anchor.unwrap_or(caret)), p.into());
+        self.engine.select(extend.then(|| anchor.unwrap_or(caret)), p);
     }
 
     /// A drag from `from` to `to`: selects between them.
     pub fn drag(&mut self, from: BlockPos, to: BlockPos) {
-        self.engine.select(Some(from.into()), to.into());
+        self.engine.select(Some(from), to);
     }
 
     /// Put the caret back at a held place. False: its note isn't here.
@@ -249,7 +237,7 @@ impl Doc {
     pub fn replace_before_caret(&mut self, start: usize, text: &str) {
         self.engine.flush();
         let caret = self.engine.selection().1;
-        self.engine.select(Some(doc::Pos { line: caret.line, byte: start }), caret);
+        self.engine.select(Some(BlockPos { line: caret.line, byte: start }), caret);
         self.insert(text);
     }
 }
@@ -324,7 +312,7 @@ impl Doc {
             }
             (ids, at)
         });
-        self.engine.select(None, doc::Pos { line: at, byte: 0 });
+        self.engine.select(None, BlockPos { line: at, byte: 0 });
         ids
     }
 

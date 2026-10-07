@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.3.0 (unreleased)
+## 0.3.0 (2026-10-07)
 
 caretline is a text-editing engine only. What a line *means* (a task, a status) belongs in the
 host, which now adds it through extension points; the engine names no host concept.
