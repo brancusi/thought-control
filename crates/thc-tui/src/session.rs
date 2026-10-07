@@ -48,6 +48,10 @@ pub enum Msg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         actor: Option<String>,
     },
+    /// What changed in the state outside any message (the daemon's push, a poll that found
+    /// another device's change, an idle save, an update check), as a merge patch. The runtime
+    /// records it so a trace and subscribers see every change; replay applies it.
+    External { patch: Value },
     /// Test fixtures: another actor writes to the vault (`THC_TUI_KEYS` only).
     Fixture { fixture: Fixture },
 }
@@ -149,11 +153,13 @@ pub struct Session {
     /// Messages applied since subscribers last heard (kept only while someone may listen).
     unannounced: Vec<Value>,
     pub announcing: bool,
+    /// The state as the last message left it: a difference is an external change.
+    last_seen: UiState,
 }
 
 impl Session {
     pub fn new(app: App, size: (u16, u16)) -> Session {
-        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None, unannounced: Vec::new(), announcing: false };
+        let mut s = Session { app, rev: 0, size, trace: Vec::new(), trace_from: 0, segment: 0, dropped: 0, trace_limit: TRACE_LIMIT, trace_file: None, unannounced: Vec::new(), announcing: false, last_seen: UiState::default() };
         s.sync_document();
         s.checkpoint();
         s
@@ -180,6 +186,7 @@ impl Session {
     /// Start a new trace segment with the current state. Neither the state nor the rev change.
     pub fn checkpoint(&mut self) {
         self.sync_document();
+        self.last_seen = self.app.ui.clone();
         let line = json!({"state": self.app.ui.to_json(), "size": [self.size.0, self.size.1], "rev": self.rev});
         self.segment = self.trace.len();
         self.push_trace(line);
@@ -287,6 +294,45 @@ impl Session {
         Ok(())
     }
 
+    /// Record what changed outside messages since the last one, as an `external` message (no-op
+    /// when nothing did). The runtime calls this between frames and before input.
+    pub fn sync_external(&mut self) {
+        self.sync_document();
+        if self.app.ui == self.last_seen {
+            return;
+        }
+        let patch = crate::ui_state::merge_diff(&self.last_seen.to_json(), &self.app.ui.to_json());
+        if let Err(e) = self.apply(Msg::External { patch }) {
+            // A difference that doesn't round-trip: keep going, start a segment from here.
+            self.app.error(format!("ui trace: {e}"));
+            self.checkpoint();
+        }
+    }
+
+    /// An external change replayed: the state takes the patch as it came (no history step, no
+    /// toast). Live, the state already has it and nothing happens.
+    fn external(&mut self, patch: &Value) -> Result<(), String> {
+        let new = self.last_seen.patched(patch)?;
+        if new == self.app.ui {
+            return Ok(());
+        }
+        const SHAPING: &[&str] = &["view", "page_open", "journal_date", "tasks_filter", "search_terms", "pages_filter", "log_actor", "log_node", "review_lane", "agenda_mode", "show_all_done", "context_on", "scope_override", "today_by_vault", "collapsed", "today"];
+        let changed = self.app.ui.changed_fields(&new);
+        let doc = new.document.clone();
+        self.app.ui = new;
+        rehydrate(&mut self.app);
+        if changed.iter().any(|f| SHAPING.contains(&f.as_str())) {
+            let _ = self.app.reload();
+        }
+        if let (true, Some(ds), Some(d)) = (changed.iter().any(|f| f == "document"), doc, self.app.doc.as_mut()) {
+            if !ds.caret_id.is_empty() {
+                d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+            }
+            d.scroll = ds.scroll;
+        }
+        Ok(())
+    }
+
     /// The runtime's tick: when the wall clock (or `THC_NOW`) has moved, a `Tick` message.
     pub fn tick_wall(&mut self) {
         let (now_ms, utc_offset_min) = crate::runtime_effects::wall_clock();
@@ -354,9 +400,11 @@ impl Session {
                 self.set_state(new, actor.as_deref());
             }
             Msg::Fixture { fixture } => self.fixture(fixture),
+            Msg::External { patch } => self.external(&patch)?,
         }
         self.follow();
         self.sync_document();
+        self.last_seen = self.app.ui.clone();
         self.rev += 1;
         if self.announcing {
             self.unannounced.push(line.clone());

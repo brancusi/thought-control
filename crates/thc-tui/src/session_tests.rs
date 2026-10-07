@@ -34,9 +34,12 @@ fn seeded(tag: &str) -> (crate::fuzz::Scratch, Vault) {
     (s, vault)
 }
 
+/// A scratch copy that knows the vault it came from, as `thc ui replay` opens one.
 fn copy(vault: &Vault) -> Vault {
     let paths = thc_core::vault::scratch_copy(&vault.paths).unwrap();
-    Vault::open(Paths { vault: paths.vault, cache: paths.cache }, vault.actor.clone(), "tui").unwrap()
+    let mut v = Vault::open(Paths { vault: paths.vault, cache: paths.cache }, vault.actor.clone(), "tui").unwrap();
+    v.origin = Some(vault.origin.clone().unwrap_or_else(|| vault.paths.clone()));
+    v
 }
 
 fn session(vault: Vault, size: (u16, u16)) -> Session {
@@ -234,4 +237,30 @@ fn typing_in_a_document_replays_the_same_on_two_copies() {
         .collect();
     assert_eq!(runs[0], runs[1]);
     assert!(runs[0].last().unwrap().contains("hello world again"), "{}", runs[0].last().unwrap());
+}
+
+#[test]
+fn changes_outside_messages_are_recorded_and_replay() {
+    let (_s, vault) = seeded("external");
+    let base = copy(&vault);
+    let mut live = session(vault, (100, 30));
+    live.apply(Msg::Key { key: "3".into() }).unwrap();
+    // Something the runtime did between frames: an alert toast and a flash, as the daemon's
+    // push would leave them.
+    live.app.info("an alert from elsewhere");
+    live.app.ui.flashes.insert("x1".into(), (live.app.ui.now_ms, true));
+    let rev = live.rev;
+    live.sync_external();
+    assert_eq!(live.rev, rev + 1);
+    live.sync_external();
+    assert_eq!(live.rev, rev + 1, "nothing new, no message");
+    let (_, lines) = live.trace(None, true).unwrap();
+    assert!(lines.last().unwrap()["msg"] == "external", "{:?}", lines.last());
+    let expected = frame(&mut live);
+    let trace: String = lines.iter().map(|l| format!("{l}\n")).collect();
+    let mut s = session(copy(&base), (100, 30));
+    let frames = crate::session::replay(&mut s, &trace, None, "text", false).unwrap();
+    assert_eq!(frames.last().unwrap(), &expected);
+    assert!(expected.contains("an alert from elsewhere"));
+    assert_eq!(s.state(), live.state());
 }

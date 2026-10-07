@@ -160,6 +160,7 @@ impl Server {
                         continue;
                     }
                     // The person's own changes since the last event go out first, in order.
+                    session.sync_external();
                     self.announce(session, "terminal");
                     let handled = ui_proto::handle(session, &line, &host);
                     session.take_unannounced();

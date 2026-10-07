@@ -455,6 +455,35 @@ pub fn merge_patch(target: &mut serde_json::Value, patch: &serde_json::Value) {
     }
 }
 
+/// The RFC 7396 merge patch that turns `a` into `b` (`merge_patch(a, merge_diff(a, b)) == b`
+/// for the null-free values a state serializes to, with null meaning "absent").
+pub fn merge_diff(a: &serde_json::Value, b: &serde_json::Value) -> serde_json::Value {
+    use serde_json::{Map, Value};
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let mut out = Map::new();
+            for (k, vb) in y {
+                match x.get(k) {
+                    Some(va) if va == vb => {}
+                    Some(va) if va.is_object() && vb.is_object() => {
+                        out.insert(k.clone(), merge_diff(va, vb));
+                    }
+                    _ => {
+                        out.insert(k.clone(), vb.clone());
+                    }
+                }
+            }
+            for k in x.keys() {
+                if !y.contains_key(k) {
+                    out.insert(k.clone(), Value::Null);
+                }
+            }
+            Value::Object(out)
+        }
+        _ => b.clone(),
+    }
+}
+
 /// serde's message, with a nearest known field for an unknown one.
 fn explain(msg: &str, json: &serde_json::Value) -> String {
     let Some(rest) = msg.strip_prefix("unknown field `") else { return msg.to_string() };
@@ -570,6 +599,25 @@ mod tests {
         base.view = View::Log;
         let s = UiState::from_json_over(&base, &serde_json::json!({"view": "tasks"}), true).unwrap();
         assert_eq!((s.now_ms, s.vault_name.as_str(), s.view), (42, "acme", View::Tasks));
+    }
+
+    #[test]
+    fn a_merge_diff_patches_one_state_into_another() {
+        let a = UiState::default();
+        let mut b = UiState::default();
+        b.view = View::Pages;
+        b.flashes.insert("n".into(), (3, false));
+        b.overlay = Some(Overlay::Palette { input: LineInput { buf: "x".into(), cur: 1 }, sel: 2 });
+        b.toast = Some(Toast { kind: crate::app::ToastKind::Agent, parts: vec![("hi".into(), crate::theme::Token::Agent)], at: 4 });
+        let d = merge_diff(&a.to_json(), &b.to_json());
+        assert_eq!(a.patched(&d).unwrap(), b);
+        // And back: removals are nulls.
+        let back = merge_diff(&b.to_json(), &a.to_json());
+        assert_eq!(b.patched(&back).unwrap(), a);
+        // One overlay to another drops the old one's fields.
+        let mut c = b.clone();
+        c.overlay = Some(Overlay::Help { all: true, scroll: 3 });
+        assert_eq!(b.patched(&merge_diff(&b.to_json(), &c.to_json())).unwrap(), c);
     }
 
     #[test]
