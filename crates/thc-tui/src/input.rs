@@ -3,7 +3,7 @@
 use crate::app::{App, Overlay, PromptKind, Row, View, fuzzy};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct LineInput {
     pub buf: String,
     /// Cursor position in chars.
@@ -237,7 +237,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
         }
         return;
     }
-    if let (K::ScrollUp | K::ScrollDown, Some(Overlay::Help { scroll, .. })) = (m.kind, app.overlay.as_mut()) {
+    if let (K::ScrollUp | K::ScrollDown, Some(Overlay::Help { scroll, .. })) = (m.kind, app.ui.overlay.as_mut()) {
         let d: i32 = if m.kind == K::ScrollDown { 3 } else { -3 };
         *scroll = (*scroll as i32 + d).clamp(0, app.render.help_max_scroll as i32) as u16;
         return;

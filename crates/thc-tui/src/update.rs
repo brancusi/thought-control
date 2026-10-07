@@ -6,7 +6,6 @@ use crate::{
     editor::{BlockPos, Target},
     theme::Token,
 };
-use std::time::Instant;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) struct DocumentIdentity {
@@ -23,12 +22,12 @@ pub(crate) enum Viewport {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Msg {
     ViewportPrepared(Viewport),
-    TogglePageIds { at: Instant },
+    TogglePageIds { at: u64 },
     PageIdsPersisted { result: Result<(), String> },
     Copy { text: String, notice: String },
-    ClipboardResult { result: Result<(), String>, notice: String, at: Instant },
+    ClipboardResult { result: Result<(), String>, notice: String, at: u64 },
     RemapKeys,
-    KeysEdited { result: Result<String, String>, at: Instant },
+    KeysEdited { result: Result<String, String>, at: u64 },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
@@ -208,7 +207,7 @@ mod tests {
         let mut page_ids = false;
         let mut scroll = 0;
         let mut toast = None;
-        let at = Instant::now();
+        let at = 1_000;
         let effects = update(
             Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, document: None, toast: &mut toast },
             Msg::TogglePageIds { at },
@@ -230,7 +229,7 @@ mod tests {
         let mut toast = None;
         assert_eq!(apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::RemapKeys), vec![Effect::EditKeys]);
         assert!(toast.is_none());
-        let at = Instant::now();
+        let at = 1_000;
         apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::KeysEdited { result: Ok("keys ok · 1 remapped".into()), at });
         let success = toast.take().unwrap();
         assert_eq!((success.kind, success.parts, success.at), (ToastKind::Info, vec![("keys ok · 1 remapped".into(), Token::Muted)], at));
@@ -246,7 +245,7 @@ mod tests {
         let effects = apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::Copy { text: "bé🙂".into(), notice: "copied 3 chars".into() });
         assert_eq!(effects, vec![Effect::WriteClipboard { text: "bé🙂".into(), notice: "copied 3 chars".into() }]);
         assert!(toast.is_none());
-        let at = Instant::now(); // supplied replay input; update itself never samples time
+        let at = 1_000; // supplied replay input; update itself never samples time
         apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::ClipboardResult { result: Ok(()), notice: "copied 3 chars".into(), at });
         let success = toast.take().unwrap();
         assert_eq!((success.kind, success.parts, success.at), (ToastKind::Info, vec![("copied 3 chars".into(), Token::Muted)], at));

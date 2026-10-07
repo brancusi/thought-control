@@ -134,7 +134,7 @@ pub fn on_start(app: &mut App) {
 // ---- the page --------------------------------------------------------------------------------
 
 /// About as it was opened: what's new, and the facts about this thc, gathered then.
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct About {
     pub scroll: u16,
     /// The releases since the version last looked at (indices into `releases()`), newest first.
@@ -143,6 +143,8 @@ pub struct About {
     /// The version you'd last looked at, when there's something new since.
     pub since: Option<String>,
     pub version: String,
+    /// Gathered when About opens (and again after a state set): derived, never state.
+    #[serde(skip)]
     pub facts: Vec<(&'static str, String, Option<&'static str>)>,
     /// `/`: the search, and whether it's being typed.
     pub search: String,
@@ -180,7 +182,7 @@ pub fn open(app: &mut App) {
 
 /// This thc (§2.2): the same facts `thc vault`, `thc daemon status` and the capability probe
 /// give, paths with `~`. (label, value, the key that acts on it)
-fn facts(app: &App, version: &str) -> Vec<(&'static str, String, Option<&'static str>)> {
+pub(crate) fn facts(app: &App, version: &str) -> Vec<(&'static str, String, Option<&'static str>)> {
     let tilde = |p: &std::path::Path| thc_core::vault::tilde(p);
     let update = thc_core::release::mode();
     let vault_path = app.vault.origin.as_ref().map_or(&app.vault.paths.vault, |o| &o.vault);

@@ -162,7 +162,7 @@ thread_local! {
 /// Hand back every result the late writer holds; again while a save waited for them.
 pub(crate) fn settle(app: &mut App) {
     for _ in 0..20 {
-        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
         let had = !dones.is_empty();
         WRITER.with(|w| {
             if let Some(w) = w.borrow().as_ref() {
@@ -187,7 +187,7 @@ fn flush(app: &mut App) {
 
 /// The late writer hands back the one result it holds, if any.
 fn settle_one(app: &mut App) {
-    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
     WRITER.with(|w| {
         if let Some(w) = w.borrow().as_ref() {
             for d in dones {

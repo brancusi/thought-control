@@ -17,7 +17,7 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     let identity = document_identity(app);
     let document = identity.zip(app.doc.as_mut()).map(|(identity, doc)| DocumentFields { identity, scroll: &mut doc.scroll });
     let effects = update::update(
-        Fields { page_ids: Some(&mut app.page_ids), cursor: app.cursor, scroll: &mut app.scroll, document, toast: &mut app.toast },
+        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, document, toast: &mut app.ui.toast },
         msg,
     );
     for effect in effects {
@@ -35,14 +35,32 @@ pub(crate) fn dispatch(app: &mut App, msg: Msg) {
             }
             Effect::WriteClipboard { text, notice } => {
                 let result = set_clipboard(&text);
-                dispatch(app, Msg::ClipboardResult { result, notice, at: std::time::Instant::now() });
+                dispatch(app, Msg::ClipboardResult { result, notice, at: app.ui.now_ms });
             }
         }
     }
 }
 
+/// The wall clock, as the runtime reads it: epoch milliseconds and the local offset from UTC in
+/// minutes. `THC_NOW` pins it (fixtures, replay), so a pinned run is the same every time.
+pub(crate) fn wall_clock() -> (u64, i32) {
+    use chrono::{Local, TimeZone};
+    let local = thc_core::dates::now_local();
+    let offset = Local.offset_from_local_datetime(&local).earliest().map_or(0, |o| o.local_minus_utc() / 60);
+    let utc = local - chrono::Duration::minutes(offset as i64);
+    (utc.and_utc().timestamp_millis().max(0) as u64, offset)
+}
+
+/// Advance the UI's logical clock to the wall clock (the runtime's tick, before input).
+pub(crate) fn tick(app: &mut App) {
+    let (now_ms, offset) = wall_clock();
+    if now_ms != app.ui.now_ms || offset != app.ui.utc_offset_min {
+        app.ui.tick(now_ms, offset);
+    }
+}
+
 pub(crate) fn toggle_page_ids(app: &mut App) {
-    dispatch(app, Msg::TogglePageIds { at: std::time::Instant::now() });
+    dispatch(app, Msg::TogglePageIds { at: app.ui.now_ms });
 }
 
 /// OSC 52 always (it reaches the local clipboard over SSH where the terminal allows); on a local
