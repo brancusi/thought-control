@@ -87,11 +87,13 @@ enum UiCmd {
         #[command(flatten)]
         target: Target,
     },
-    /// Replay a UI trace (`thc tui --trace FILE`, `trace.get`) on a scratch copy of the vault:
-    /// the last frame, or every line's with --every. Pin THC_NOW for identical output.
+    /// Replay a UI trace (`thc tui --trace FILE`, `trace.get`) on a scratch copy of the vault as
+    /// it was when the trace began: the last frame, or every line's with --every. Pin THC_NOW for
+    /// identical output.
     Replay {
         file: String,
-        /// The size, WxH (default: the trace's own).
+        /// The frames' size, WxH (default: the trace's own). Layout follows the trace's size, so
+        /// this is the frame `thc ui render WxH` drew of the live TUI.
         #[arg(long)]
         size: Option<String>,
         #[arg(long, default_value = "text")]
@@ -150,11 +152,16 @@ impl Drop for Scratch {
 }
 
 fn scratch_vault(cli: &Cli, paths: &Paths) -> Result<(Scratch, Vault)> {
+    scratch_vault_at(cli, paths, None)
+}
+
+/// A scratch copy as of a frontier (a trace's start): see `vault::scratch_copy_at`.
+fn scratch_vault_at(cli: &Cli, paths: &Paths, at: Option<&vault::Frontier>) -> Result<(Scratch, Vault)> {
     if !paths.vault.join(vault::VAULT_MARKER).exists() {
         return Err(usage(format!("{} is not a vault (missing {}); run `thc init`", paths.vault.display(), vault::VAULT_MARKER)));
     }
     thc_core::settings::init(Some(&paths.vault));
-    let copy = vault::scratch_copy(paths)?;
+    let copy = vault::scratch_copy_at(paths, at)?;
     let root = copy.vault.parent().map(|p| p.to_path_buf());
     let mut v = Vault::open(copy, crate::parse_actor(cli.actor.as_deref()), "tui")?;
     v.origin = Some(paths.clone());
@@ -192,8 +199,15 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
         UiCmd::Replay { file, size, format, every } => {
             let trace = read_arg(&file)?;
             let size = size.as_deref().map(parse_size).transpose()?;
-            let (_scratch, v) = scratch_vault(cli, paths)?;
-            let frames = thc_tui::ui_replay(v, &trace, size, &format, every).map_err(|e| invalid(format!("{e:#}")))?;
+            // One scratch copy per segment, as of where it starts; all removed when done.
+            let mut scratches = Vec::new();
+            let open = |at: Option<&vault::Frontier>| {
+                let (s, v) = scratch_vault_at(cli, paths, at)?;
+                scratches.push(s);
+                Ok(v)
+            };
+            let frames = thc_tui::ui_replay(open, &trace, size, &format, every).map_err(|e| invalid(format!("{e:#}")))?;
+            drop(scratches);
             print!("{}", frames.join("\u{c}\n"));
             Ok(())
         }

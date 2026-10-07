@@ -135,6 +135,13 @@ order they happened.
 | `set_state` | `state`, `actor` | `state.set` |
 | `patch` | `patch`, `actor` | `patch` |
 | `external` | `patch` | A change that came from outside any message, as a merge patch: the daemon's push (an agent's write flashing, an alert toast), a poll that found another device's change, an idle save, an update check. The runtime records it so a trace and subscribers see every change; replay applies it |
+| `frame` | | A frame was drawn, and what waits for one ran: the save of the line just left |
+| `idle` | | The open document passed its idle point: the typing so far became one undo step and was saved |
+| `poll` | | The runtime looked for changes from elsewhere (another process, another device, the daemon's push) and found some: what's shown reloaded |
+
+`frame`, `idle` and `poll` are the runtime's own steps that read or write the vault. The TUI
+records one only when it did something, so a replay does the same thing at the same point.
+What such a step changed in the state follows as the next `external` patch.
 
 ```json
 {"msg":"key","key":"<c-o>"}
@@ -215,7 +222,7 @@ carries `rev`.
 | `subscribe` | `frame` (`{w, h, format}`), `with_msgs` (default true), `with_state` | `rev`, `subscribed: true`, then events |
 | `unsubscribe` | | `rev`, `subscribed: false` |
 | `trace.get` | `since_rev` or `all` | `rev`, `from_rev`, `trace` |
-| `trace.checkpoint` | | `rev`. Starts a new trace segment from the current state |
+| `trace.checkpoint` | | `rev`. Saves the open document, then starts a new trace segment from the current state |
 
 `render` never changes the state: a size other than the TUI's is drawn and then put back.
 
@@ -263,18 +270,32 @@ Within protocol version 1, results only gain fields. Ignore the ones you don't k
 
 ## Traces
 
+
 A trace is JSON lines: a `state` line, then messages.
 
 ```json
-{"state":{"ui_state_version":1,"view":"today",…},"size":[100,30],"rev":0}
+{"state":{"ui_state_version":1,"view":"today",…},"size":[100,30],"rev":0,"log":{"mbp-7f3a/2026-10.jsonl":48213},"env":{"pinned_warning":null,"inline_images":false}}
 {"msg":"key","key":"3","_rev":1}
 {"msg":"patch","patch":{"tasks_filter":"#work"},"actor":"claude","_rev":2}
+{"msg":"poll","_rev":3,"_log":[{"v":1,"eid":"01K6…","dev":"mbp-7f3a","via":"cli","op":"node.create",…}]}
 ```
 
-`_rev` is the rev after the message. A `state` line restores that state exactly, with no
-history step and no toast. A running TUI keeps its trace in **segments**: each starts with a
-`state` line, at the start and at every `trace.checkpoint`, and replays on its own. It keeps
-at most 100,000 lines and drops older segments first.
+- **`_rev`** is the rev after the message.
+- **A `state` line** restores that state exactly, with no history step and no toast.
+- **`log` pins the vault** the trace starts on. It records how far the vault's log had been
+  read, per file (`log/<device>/<month>.jsonl` → bytes). The log is append-only, so cutting
+  every file there gives back the vault exactly as it was then (FORMAT.md).
+- **`env`** is what the frames showed from the process and terminal rather than the state
+  (the pinned-clock warning, inline images). A replay draws it as the session did.
+- **`_log` on a message** holds the log lines other writers added before it ran: an agent's
+  `thc add`, another device's sync. They're copied exactly as written. The TUI's own writes
+  are left out, because replaying its messages makes them again. Those are this device's
+  lines with `via: tui`; the daemon stamps a TUI's saves that way too.
+
+A running TUI keeps its trace in **segments**. Each starts with a `state` line, at the start
+and at every `trace.checkpoint`, and replays on its own. A checkpoint saves the open document
+first, so the vault it pins holds every line on screen. The TUI keeps at most 100,000 lines
+and drops older segments first.
 
 ```sh
 thc tui --trace session.jsonl          # record a whole session
@@ -284,12 +305,32 @@ thc ui replay t.jsonl --every          # a frame per line, separated by form fee
 thc ui replay t.jsonl --size 120x40 --format ansi
 ```
 
-**Replay is deterministic.** With `THC_NOW` pinned, the same trace on the same vault gives the
-same bytes every run. Replay runs on a scratch copy of the vault, so the keys in a trace can
-write without touching the real one. A trace records the UI, not the data. What changed in the
-*state* because of something from elsewhere (a toast, a flash, a moved caret) is in the trace
-as `external` messages and replays. The other device's notes themselves are not, so replaying
-on a vault in a different state can draw different rows.
+**Replay rebuilds the vault the trace started on.** It works on a scratch copy, so the keys in
+a trace can write without touching the real one. Each segment gets its own copy of the vault
+as of its `log` pin, with the store rebuilt from what's left. So a trace replays the same on
+the vault as it is now, after the session's own saves.
+
+**Every write lands once.** A message's writes happen again when it replays. A line's `_log`
+goes into the copy just before that line, and the runtime's `frame`, `idle` and `poll` steps
+run where they ran live. Changes to the *state* that came from outside any message (a toast, a
+flash, a moved caret) replay as `external` patches. The result is a pure function of the
+trace and the events. Replaying needs the vault the trace was recorded on: if a log file is
+shorter than its pin says, replay stops with exit 6.
+
+**Size.** Layout follows the trace's own size, as `state` lines and `resize` messages set it,
+because that's what the TUI's layout followed. `--size WxH` only sets the size of the frames
+drawn. The result is what `thc ui render WxH` showed of the live TUI.
+
+**Replay is deterministic.** With `THC_NOW` pinned, the same trace gives the same bytes every
+run, and its last frame is the live TUI's frame at the same rev.
+
+A trace from an older thc has no `log`. It replays on the vault as it is now, so writes its
+keys made then happen a second time.
+
+**What a `state` line doesn't hold:** blank lines in an open document that aren't notes yet,
+and the ids new notes will get. A replay mints its own ids for the notes its messages make.
+Nothing in a trace refers to those ids before they're saved, and a later segment starts from a
+vault that has them.
 
 ## Headless render
 
@@ -339,7 +380,7 @@ keyboard.
 | `thc ui send …` | `keys SCRIPT`, `msgs FILE\|-\|JSON`, `render [WxH] [FORMAT]`, `state.get [no-history]`, `subscribe [WxH [FORMAT]] [state]`, `trace.get [all\|since REV]`, `trace.checkpoint`, `hello`, or a raw JSON request. With no words, JSON requests from stdin, one per line. `--raw` prints the payload; `--apply-effects` lets the TUI perform effects |
 | `thc ui render [WxH] [--format F]` | A running TUI's frame |
 | `thc ui render [WxH] --state FILE` | A state's frame, headless |
-| `thc ui replay FILE [--size WxH] [--format F] [--every]` | Replay a trace headlessly |
+| `thc ui replay FILE [--size WxH] [--format F] [--every]` | Replay a trace headlessly, on the vault as it was when the trace began. `--size`: the frames' size (layout still follows the trace's) |
 | `thc tui --trace FILE` | Run the TUI, recording its trace |
 
 All take `--session PID` where a running TUI is meant.
@@ -395,12 +436,13 @@ still run the older way, inside `Session::apply`, with the vault in reach:
   through the writer thread on `App`. Its clock is `UiState::now_ms`, so typing runs and idle
   saves replay, but new lines' ids are minted by the runtime as they're needed and aren't in
   the trace.
-- **Background work in the terminal loop:** the daemon's pushes and the log poll
-  (`drain_live`, `poll_external`), the update check, the registry check, idle saves
-  (`doc_tick`) and the in-place update's progress (`drain_update`) still run as runtime code
-  on `App`. What they change in the state is caught between frames and recorded as an
-  `external` message, so traces and subscribers see it, but they aren't messages with an
-  update of their own yet.
+- **Background work in the terminal loop:** the daemon's pushes (`drain_live`), the update
+  check, the registry check and the in-place update's progress (`drain_update`) still run as
+  runtime code on `App`. What they change in the state is caught between frames and recorded
+  as an `external` message, so traces and subscribers see it. The steps that touch the vault
+  (the save after a frame, the idle save, the poll) run through `Session::runtime` and are
+  recorded as `frame`, `idle` and `poll` when they do something. Their look still arrives as
+  an `external` patch, not from an update of their own.
 - **Frame preparation:** `derived::prepare` and `ui::prepare_frame` read the store, settings
   and attachment metadata every frame. This is the explicit derivation stage, run by the
   runtime before the view; it isn't the view, but it isn't memoized on revisions everywhere

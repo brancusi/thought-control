@@ -496,7 +496,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if let Some(t) = key_at.take() {
             samples.push(t.elapsed().as_secs_f64() * 1000.0);
         }
-        app.after_frame();
+        session.runtime(Msg::Frame);
+        let app = &mut session.app;
         // The terminal went away (SIGHUP: its window closed) or we were asked to stop (SIGTERM):
         // leave as ⌃Q does, every line saved, instead of dying mid-line.
         if HANGUP.load(std::sync::atomic::Ordering::SeqCst) || terminal_gone() {
@@ -535,7 +536,11 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 mouse_off();
             }
             ratatui::restore();
+            let mark = app.vault.frontier().ok();
             let r = run_editor(app, &id);
+            // What $EDITOR wrote, for the trace (no message makes it again).
+            session.outside_writes(mark);
+            let app = &mut session.app;
             if app.kitty {
                 push_keys();
             }
@@ -633,17 +638,18 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if let Some(s) = server.as_mut() {
             s.announce(session, "terminal");
         }
+        // The runtime's steps that touch the vault are recorded when they do something, so a
+        // trace replays them where they happened (session.rs).
+        session.runtime(Msg::Idle);
         let app = &mut session.app;
-        app.doc_tick();
         app.drain_live();
         app.check_installed(false);
         app.check_registry();
-        // With the daemon live, changes arrive as events; polling is the offline fallback.
-        if last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 }) {
+        // With the daemon live, changes arrive as events (it asks for a poll); polling on a
+        // timer is the offline fallback.
+        if std::mem::take(&mut app.poll_wanted) || last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 }) {
             last_poll = Instant::now();
-            if let Err(e) = app.poll_external() {
-                app.error(format!("sync: {e:#}"));
-            }
+            session.runtime(Msg::Poll);
         }
     } })();
     if trace && !samples.is_empty() {
@@ -899,11 +905,16 @@ fn render_out(s: &mut session::Session, format: &str) -> Result<String> {
 }
 
 /// `thc ui replay FILE`: a recorded UI trace (`thc tui --trace`, `trace.get`) replayed on
-/// `vault`: the last frame, or every line's frame with `every`. With `THC_NOW` pinned the
-/// output is the same on every run.
-pub fn ui_replay(vault: Vault, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>> {
-    let mut s = headless(vault, size.unwrap_or((100, 30)))?;
-    session::replay(&mut s, trace, size, format, every).map_err(|e| anyhow::anyhow!("{e}"))
+/// scratch copies of the vault that `open` makes: as of a `state` line's frontier (`log`), or as
+/// the vault is now for a trace without one. The last frame, or every line's frame with
+/// `every`, at `size` (default: the trace's own). With `THC_NOW` pinned the output is the same
+/// on every run.
+pub fn ui_replay(mut open: impl FnMut(Option<&thc_core::vault::Frontier>) -> Result<Vault>, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>> {
+    let mut open_session = |at: Option<&thc_core::vault::Frontier>| -> std::result::Result<session::Session, String> {
+        let vault = open(at).map_err(|e| format!("{e:#}"))?;
+        headless(vault, size.unwrap_or((100, 30))).map_err(|e| format!("{e:#}"))
+    };
+    session::replay(&mut open_session, trace, size, format, every).map_err(|e| anyhow::anyhow!("{e}"))
 }
 
 /// `thc ui ls`: the running TUIs that answer the protocol, newest first (their discovery files).
@@ -1007,7 +1018,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
         }
         term.draw(|f| ui::draw_app(f, app))?;
         let ms_key = t0.elapsed().as_secs_f64() * 1000.0;
-        app.after_frame();
+        session.runtime(Msg::Frame);
         if let Some(k) = key {
             key_ms.push(ms_key);
             if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
