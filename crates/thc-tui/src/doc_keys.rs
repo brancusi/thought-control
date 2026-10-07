@@ -353,7 +353,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             app.click_link = None;
             let d = app.doc.as_mut().unwrap();
             // The task box is a button: open ⇄ done.
-            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.lines()[line].kind == Kind::Task {
+            if hang && button == MouseButton::Left && clicks == 1 && !shift && d.lines()[line].kind() == Kind::Task {
                 d.view.anchor = None;
                 d.view.caret = Pos { line, byte: 0 };
                 if d.task_box(line) == "done" {

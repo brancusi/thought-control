@@ -26,6 +26,7 @@ pub mod keys_edit;
 mod images;
 mod motion;
 mod recover;
+mod text;
 pub mod history;
 #[cfg(test)]
 mod fuzz;

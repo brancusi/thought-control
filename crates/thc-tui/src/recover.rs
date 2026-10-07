@@ -58,7 +58,7 @@ pub fn unsaved(d: &Doc) -> Option<Recovery> {
     let mut prev: Option<&str> = None;
     for l in d.lines() {
         if !l.text.trim().is_empty() && l.edited() {
-            lines.push(RecLine { id: l.id.clone(), is_new: l.is_new, prev: prev.map(str::to_string), depth: l.depth, kind: l.kind, status: l.status.clone(), text: l.text.clone() });
+            lines.push(RecLine { id: l.id.clone(), is_new: l.is_new, prev: prev.map(str::to_string), depth: l.depth, kind: l.kind(), status: l.status.clone(), text: l.text.clone() });
         }
         prev = Some(&l.id);
     }
@@ -105,9 +105,9 @@ pub fn apply(d: &mut Doc, rec: &Recovery) -> usize {
     let mut n = 0;
     for r in &rec.lines {
         if let Some(l) = d.lines_mut().iter_mut().find(|l| l.id == r.id) {
-            if l.text != r.text || l.kind != r.kind || l.depth != r.depth {
+            if l.text != r.text || l.kind() != r.kind || l.depth != r.depth {
                 l.text = r.text.clone();
-                l.kind = r.kind;
+                l.kind = crate::doc::engine_kind(r.kind);
                 l.depth = r.depth;
                 l.status = r.status.clone();
                 n += 1;

@@ -167,7 +167,7 @@ caretline follows a macOS text field.
 and `BlockLine::fresh`; a host whose update loop must be a pure function of its messages passes
 each message's time and mints ids from it.
 
-**Also provided:** `Anchor` (`doc.anchor(pos)` and `doc.resolve(&anchor)`: a block ID plus a grapheme-aligned byte) for saving a caret across sessions, and the `caretline-ratatui` adapter (`render`, `caret_cell`, `hit`).
+**Also provided:** `Anchor` (`doc.anchor(pos)` and `doc.resolve(&anchor)`: a block ID plus a grapheme-aligned byte) for saving a caret across sessions.
 
 Planned, and not in this version:
 - spans (a highlighter for the host's own tokens);

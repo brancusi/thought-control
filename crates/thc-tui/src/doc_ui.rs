@@ -4,7 +4,8 @@
 
 use crate::app::App;
 use crate::ui::RenderOutput;
-use crate::doc::{Line, Target, width};
+use crate::doc::{Line, Target};
+use crate::text::width;
 use crate::theme::Token;
 use ratatui::Frame;
 use ratatui::layout::Rect;
@@ -101,7 +102,7 @@ fn left_edge(ctx: DocContext, w: usize) -> usize {
 /// numbered item's `12. `, a heading's `## `, a quote's `> `. Its length in bytes.
 pub fn marker_len(l: &Line) -> usize {
     let t = l.text.as_str();
-    if l.kind == Kind::Para {
+    if l.kind() == Kind::Para {
         for m in ["### ", "## ", "# ", "> "] {
             if t.starts_with(m) {
                 return m.len();
@@ -109,7 +110,7 @@ pub fn marker_len(l: &Line) -> usize {
         }
         return 0;
     }
-    if l.kind == Kind::Bullet {
+    if l.kind() == Kind::Bullet {
         let digits = t.bytes().take_while(u8::is_ascii_digit).count();
         if digits > 0 && digits <= 3 && (t[digits..].starts_with(". ") || t[digits..].starts_with(") ")) {
             return digits + 2;
@@ -119,7 +120,7 @@ pub fn marker_len(l: &Line) -> usize {
 }
 
 pub fn is_code(l: &Line) -> bool {
-    l.kind == Kind::Para && l.text.starts_with("```")
+    l.kind() == Kind::Para && l.text.starts_with("```")
 }
 
 /// How far a code block is scrolled sideways for a caret at `caret_col` in a `tw`-wide column.
@@ -138,7 +139,7 @@ fn form(app: &App, l: &Line) -> Form {
     let th = app.theme;
     let dim = th.s(Token::Muted).add_modifier(Modifier::DIM);
     let mut f = Form { hang: String::new(), hang_style: th.s(Token::Muted), text_style: th.s(Token::Text) };
-    match l.kind {
+    match l.kind() {
         Kind::Task => {
             let (cell, tok) = match l.status.as_deref() {
                 Some("done") => ("[x]", Token::Done),
@@ -540,7 +541,7 @@ fn source_revision(app: &App) -> u64 {
             l.id.hash(&mut h);
             l.text.hash(&mut h);
             l.depth.hash(&mut h);
-            l.kind.hash(&mut h);
+            l.kind().hash(&mut h);
             l.status.hash(&mut h);
             l.gap.hash(&mut h);
             d.view.folds.contains(&l.id).hash(&mut h);
@@ -715,13 +716,13 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             };
             let (mut a, mut col) = (r.start, 0);
             while a < r.end && col < off {
-                let g = crate::doc::next_char(&l.text[..r.end], a);
+                let g = crate::text::next_char(&l.text[..r.end], a);
                 col += width(&l.text[a..g]);
                 a = g;
             }
             let (mut b, mut cw) = (a, 0);
             while b < r.end {
-                let g = crate::doc::next_char(&l.text[..r.end], b);
+                let g = crate::text::next_char(&l.text[..r.end], b);
                 let w1 = width(&l.text[b..g]);
                 if cw + w1 > tw_here.saturating_sub(1) {
                     break;
@@ -737,7 +738,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         {
             let y = body.y + lines.len() as u16;
             let text_x = body.x + (left + MARKS + indent + HANG) as u16;
-            if r.first && l.kind == Kind::Task {
+            if r.first && l.kind() == Kind::Task {
                 crate::ui::target(render, body.x + (left + MARKS + indent) as u16, body.x + (left + MARKS + indent) as u16 + 3, y, crate::ui::Click::Box);
             }
             let vis = &l.text[r.start..r.end];
@@ -773,7 +774,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             }
             _ => (0, 0),
         };
-        let code = l.kind == Kind::Para && l.text.starts_with("```");
+        let code = l.kind() == Kind::Para && l.text.starts_with("```");
         let mut base = if code { fm.text_style.patch(th.fill(Token::Raised)) } else { fm.text_style.patch(row_fill) };
         // Focus dimming (the `dim` element): every line but the caret's in dim.
         if fv.is_some_and(|f| f.has(El::Dim)) && r.line != d.view.caret.line {
@@ -840,7 +841,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                 let rest = if missing { " · missing".to_string() } else { format!("{dims} · ⌃O open") };
                 spans.push(Span::styled(rest, th.s(Token::Muted)));
             }
-        } else if l.kind == Kind::Para && (l.text == "---" || l.text == "***") && !(app.doc_write && r.line == d.view.caret.line) {
+        } else if l.kind() == Kind::Para && (l.text == "---" || l.text == "***") && !(app.doc_write && r.line == d.view.caret.line) {
             // A rule: a line across the text column (the text is still `---`).
             let tw = text_width(ctx, app.screen_width, app.show_detail, l.depth);
             spans.push(Span::styled("─".repeat(tw), th.s(Token::Line)));
@@ -1085,7 +1086,7 @@ pub(crate) fn hit_rows(app: &App, hits: &[HitRow], x: u16, y: u16) -> Option<(us
     let mut col = r.text_x;
     let mut b = r.start;
     while b < r.end {
-        let next = crate::doc::next_char(&text[..r.end], b);
+        let next = crate::text::next_char(&text[..r.end], b);
         let w = width(&text[b..next]).max(1) as u16;
         if x < col + w {
             // The right half of a wide character puts the caret after it.
@@ -1105,7 +1106,7 @@ fn row_last(text: &str, end: usize) -> usize {
     if end >= text.len() || text.as_bytes().get(end) == Some(&b'\n') {
         return end.min(text.len());
     }
-    crate::doc::prev_char(text, end)
+    crate::text::prev_char(text, end)
 }
 
 /// The `[[` popup: 40 columns, up to 8 rows, under the caret (above when there's no room).

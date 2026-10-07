@@ -93,16 +93,13 @@ fn main() {
 That's the whole loop: blocks in, commands applied, rows out. Your app owns the keys, the
 colours, the files and the saves.
 
-To see it in a terminal, a whole editor in one file (keys, mouse, a Markdown file saved with
-⌃S) is `caretline-ratatui`'s example: `cargo run -p caretline-ratatui --example editor -- notes.md`.
-
 ## What it is not
 
 | Not | Because |
 |---|---|
 | A rich-text or WYSIWYG editor | The text you see is the text you have. Styling is your app's, through the rows it draws |
 | A sync engine or a CRDT | Your app owns storage and merging. caretline reports what changed (`Doc::rev`, `take_deleted`) and accepts edits from outside (`Doc::external_edit`, then `Doc::rebase` for every view) |
-| A terminal UI | It lays out in cells and never draws. A ratatui adapter (`caretline-ratatui`) is separate |
+| A terminal UI | It lays out in cells and never draws. Your app draws the rows |
 | Opinionated about dates, links or files | Those are your app's. It keeps its own state beside each block through `BlockLine` |
 
 ## What's inside

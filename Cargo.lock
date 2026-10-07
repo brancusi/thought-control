@@ -222,15 +222,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "caretline-ratatui"
-version = "0.1.0"
-dependencies = [
- "caretline",
- "ratatui",
- "unicode-segmentation",
-]
-
-[[package]]
 name = "castaway"
 version = "0.2.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2188,7 +2179,6 @@ name = "thc-core"
 version = "0.9.65"
 dependencies = [
  "anyhow",
- "caretline",
  "chrono",
  "image",
  "libc",

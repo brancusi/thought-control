@@ -55,13 +55,13 @@ fn render(d: &Doc) -> String {
     let sel = d.selection();
     let mut out = Vec::new();
     for (i, l) in d.lines().iter().enumerate() {
-        let marker = match (l.kind, l.status.as_deref()) {
+        let marker = match (l.kind(), l.status.as_deref()) {
             (Kind::Task, Some("done")) => "- [x] ",
             (Kind::Task, _) => "- [ ] ",
             (Kind::Bullet, _) => "- ",
             _ => "",
         };
-        let mut s = format!("{}{marker}", "  ".repeat(if l.kind == Kind::Para { 0 } else { l.depth }));
+        let mut s = format!("{}{marker}", "  ".repeat(if l.kind() == Kind::Para { 0 } else { l.depth }));
         let mark = |b: usize| -> String {
             let p = Pos { line: i, byte: b };
             let mut m = String::new();
@@ -312,7 +312,7 @@ fn random_doc(r: &mut Rng) -> Doc {
 
 /// What the document is: each note's (depth, kind, status, text), the caret and the selection.
 fn state(d: &Doc) -> (Vec<(usize, Kind, Option<String>, String)>, Pos, Option<(Pos, Pos)>) {
-    (d.lines().iter().map(|l| (l.depth, l.kind, l.status.clone(), l.text.clone())).collect(), d.view.caret, d.selection())
+    (d.lines().iter().map(|l| (l.depth, l.kind(), l.status.clone(), l.text.clone())).collect(), d.view.caret, d.selection())
 }
 
 fn texts(d: &Doc) -> Vec<String> {
@@ -453,7 +453,7 @@ fn run_g(before: &str, keys: &[&str]) -> Doc {
     let mut d = run(&joined, &[], &mut clip);
     // The blank lines as written: explicit only where the kinds wouldn't give them.
     for (i, (_, gap)) in segs.iter().enumerate().skip(1) {
-        if d.default_gap(i) != *gap || (d.lines()[i].kind == Kind::Para && d.lines()[i - 1].kind == Kind::Para) {
+        if d.default_gap(i) != *gap || (d.lines()[i].kind() == Kind::Para && d.lines()[i - 1].kind() == Kind::Para) {
             d.lines_mut()[i].gap = (d.default_gap(i) != *gap).then_some(*gap);
         }
     }

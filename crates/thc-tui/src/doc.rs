@@ -65,10 +65,28 @@ impl std::ops::DerefMut for Line {
     }
 }
 
+/// thc's block kind as the engine's: the same three kinds.
+pub(crate) fn engine_kind(k: Kind) -> caretline::Kind {
+    match k {
+        Kind::Para => caretline::Kind::Para,
+        Kind::Bullet => caretline::Kind::Bullet,
+        Kind::Task => caretline::Kind::Task,
+    }
+}
+
+/// The engine's block kind as thc's.
+pub(crate) fn thc_kind(k: caretline::Kind) -> Kind {
+    match k {
+        caretline::Kind::Para => Kind::Para,
+        caretline::Kind::Bullet => Kind::Bullet,
+        caretline::Kind::Task => Kind::Task,
+    }
+}
+
 impl Line {
     pub fn new(depth: usize, kind: Kind, text: &str) -> Line {
         Line {
-            block: caretline::Block::new(new_id(), depth, kind, text),
+            block: caretline::Block::new(new_id(), depth, engine_kind(kind), text),
             meta: String::new(),
             fields: String::new(),
             base: None,
@@ -112,6 +130,11 @@ impl Line {
         self.fields = thc_core::outline::fields(b.scheduled.as_deref(), b.due.as_deref(), b.priority.as_deref(), b.repeat.as_deref());
     }
 
+    /// The line's kind (paragraph, list item or task).
+    pub fn kind(&self) -> Kind {
+        thc_kind(self.block.kind)
+    }
+
     pub fn edited(&self) -> bool {
         self.is_new || self.saved.as_deref() != Some(self.text.as_str())
     }
@@ -120,8 +143,8 @@ impl Line {
 impl BlockLine for Line {
     type Id = String;
 
-    fn fresh(depth: usize, kind: Kind, text: &str) -> Line {
-        Line::new(depth, kind, text)
+    fn fresh(depth: usize, kind: caretline::Kind, text: &str) -> Line {
+        Line::new(depth, thc_kind(kind), text)
     }
 
     fn is_new(&self) -> bool {
@@ -238,8 +261,9 @@ fn short_repeat_rule(r: &str) -> String {
 
 /// A caret position: a line and a byte offset in its text (caretline's).
 pub use caretline::Pos;
-// Text measured as drawn, and wrapping: caretline's.
-pub use caretline::{next_char, prev_char, width, wrap, wrap_with};
+use crate::text::{width, wrap, wrap_with};
+#[cfg(test)]
+use crate::text::{next_char, prev_char};
 
 /// What the document is.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -331,6 +355,7 @@ impl Doc {
     }
 
     pub fn paste_lines(&mut self, pasted: Vec<(usize, Kind, Option<String>, String)>) {
+        let pasted = pasted.into_iter().map(|(d, k, s, t)| (d, engine_kind(k), s, t)).collect();
         self.edit(|b| b.paste_lines(pasted));
     }
 
@@ -540,11 +565,11 @@ impl Doc {
                 if l.text.trim().is_empty() || skip {
                     continue;
                 }
-                ops.push(BlockOp::Create { id: l.id.clone(), parent: parent.clone(), after: after.clone(), kind: l.kind, text: l.text.clone() });
+                ops.push(BlockOp::Create { id: l.id.clone(), parent: parent.clone(), after: after.clone(), kind: l.kind(), text: l.text.clone() });
                 afters.insert(l.id.clone(), after);
                 parsed.push(l.id.clone());
                 present.push((l.depth, l.id.clone()));
-                if let Some(st) = l.status.as_deref().filter(|s| *s != "todo" && l.kind == Kind::Task) {
+                if let Some(st) = l.status.as_deref().filter(|s| *s != "todo" && l.kind() == Kind::Task) {
                     ops.push(BlockOp::Status { id: l.id.clone(), status: st.into(), rev: None });
                 }
                 if l.gap.is_some() {
@@ -575,12 +600,12 @@ impl Doc {
                 ops.push(BlockOp::Edit { id: l.id.clone(), text: l.text.clone(), base: l.base.clone(), rev: None, raw: false });
                 parsed.push(l.id.clone());
             }
-            if Some(l.kind) != l.saved_kind {
-                ops.push(BlockOp::Kind { id: l.id.clone(), kind: l.kind, rev: None });
+            if Some(l.kind()) != l.saved_kind {
+                ops.push(BlockOp::Kind { id: l.id.clone(), kind: l.kind(), rev: None });
             }
             // Kind(Task) initializes todo. A second ⌃T can already have completed the
             // live line before its kind was saved: carry that status in the same plan.
-            if l.kind == Kind::Task && l.status.is_some() && l.status != l.saved_status && (Some(l.kind) == l.saved_kind || l.status.as_deref() != Some("todo")) {
+            if l.kind() == Kind::Task && l.status.is_some() && l.status != l.saved_status && (Some(l.kind()) == l.saved_kind || l.status.as_deref() != Some("todo")) {
                 ops.push(BlockOp::Status { id: l.id.clone(), status: l.status.clone().unwrap(), rev: None });
             }
         }
@@ -706,8 +731,12 @@ impl Doc {
 
 // ---- paste and copy --------------------------------------------------------------------------------
 
-/// A pasted line, and Markdown read into lines: caretline's.
-pub use caretline::markdown::parse_paste;
+/// Pasted text read into lines (depth, kind, status, text), Markdown unless `plain`, and how
+/// many images were left out: the engine's reading.
+pub fn parse_paste(text: &str, plain: bool) -> (Vec<(usize, Kind, Option<String>, String)>, usize) {
+    let (lines, images) = caretline::markdown::parse_paste(text, plain);
+    (lines.into_iter().map(|(d, k, s, t)| (d, thc_kind(k), s, t)).collect(), images)
+}
 
 impl Doc {
     /// What ⌘C copies (editing.md §5): inside one note its plain text; across notes Markdown,
@@ -746,7 +775,7 @@ pub fn rows(wraps: &mut HashMap<(u64, usize), Vec<(usize, usize)>>, l: &Line, w:
         return r.clone();
     }
     // A code block never wraps: one row per line (it scrolls sideways instead, §3.2).
-    let r = if l.kind == Kind::Para && l.text.starts_with("```") {
+    let r = if l.kind() == Kind::Para && l.text.starts_with("```") {
         wrap(&l.text, usize::MAX / 2)
     } else {
         wrap_with(&l.text, w, width(&l.text[..crate::doc_ui::marker_len(l)]))
@@ -769,7 +798,7 @@ mod tests {
     }
 
     fn texts(d: &Doc) -> Vec<String> {
-        d.lines().iter().map(|l| format!("{}{:?} {}", " ".repeat(l.depth), l.kind, l.text)).collect()
+        d.lines().iter().map(|l| format!("{}{:?} {}", " ".repeat(l.depth), l.kind(), l.text)).collect()
     }
 
     #[test]
@@ -794,7 +823,7 @@ mod tests {
     fn list_forms_and_nesting() {
         let mut d = doc(&[(0, Kind::Para, "")]);
         d.insert("- ");
-        assert_eq!(d.lines()[0].kind, Kind::Bullet);
+        assert_eq!(d.lines()[0].kind(), Kind::Bullet);
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
@@ -948,18 +977,18 @@ mod tests {
         assert_eq!(d.edit(|b| b.task_cycle()), "task");
         assert_eq!(d.edit(|b| b.task_cycle()), "done");
         assert_eq!(d.edit(|b| b.task_cycle()), "text");
-        assert_eq!((d.lines()[0].kind, d.lines()[0].status.as_deref()), (Kind::Para, None));
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Para, None));
         d.edit(|b| b.task_cycle());
         d.view.caret = Pos { line: 0, byte: 0 };
         d.edit(|b| b.backspace());
-        assert_eq!((d.lines()[0].kind, d.lines()[0].status.as_deref()), (Kind::Bullet, None));
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None));
         d.edit(|b| b.backspace());
-        assert_eq!((d.lines()[0].kind, d.lines()[0].text.as_str()), (Kind::Para, "call"));
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Para, "call"));
         let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
         d.view.anchor = Some(Pos { line: 0, byte: 0 });
         d.view.caret = Pos { line: 2, byte: 1 };
         d.edit(|b| b.task_cycle());
-        assert!(d.lines().iter().all(|l| l.kind == Kind::Task), "{:?}", texts(&d));
+        assert!(d.lines().iter().all(|l| l.kind() == Kind::Task), "{:?}", texts(&d));
     }
 
     /// Enter is a line break in a paragraph; a blank line splits it (writing.md A2–A4); ⌫ at a
@@ -997,15 +1026,15 @@ mod tests {
         }
         assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "a marker on a later line starts an item");
         d.newline();
-        assert_eq!(d.lines()[2].kind, Kind::Bullet, "A6: the next item");
+        assert_eq!(d.lines()[2].kind(), Kind::Bullet, "A6: the next item");
         d.newline();
-        assert_eq!((d.lines()[2].kind, d.lines()[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
+        assert_eq!((d.lines()[2].kind(), d.lines()[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
         let mut d = doc(&[(0, Kind::Para, "")]);
         for c in ["[", " ", "]", " ", "call"] {
             d.insert(c);
         }
         d.newline();
-        assert_eq!((d.lines()[1].kind, d.lines()[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
+        assert_eq!((d.lines()[1].kind(), d.lines()[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
         let mut d = doc(&[(0, Kind::Para, "")]);
         for c in ["#", " ", "Title"] {
             d.insert(c);

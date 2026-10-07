@@ -127,7 +127,7 @@ fn norm(t: &str) -> String {
 /// The buffer's notes (lines with text; a line still empty is not a note), by ID.
 fn buffer_notes(app: &App) -> Vec<(String, Note)> {
     let Some(d) = app.doc.as_ref() else { return vec![] };
-    d.lines().iter().filter(|l| !l.text.trim().is_empty()).map(|l| (l.id.clone(), (l.kind, l.depth, if l.kind == Kind::Task { l.status.clone() } else { None }, norm(&l.text)))).collect()
+    d.lines().iter().filter(|l| !l.text.trim().is_empty()).map(|l| (l.id.clone(), (l.kind(), l.depth, if l.kind() == Kind::Task { l.status.clone() } else { None }, norm(&l.text)))).collect()
 }
 
 /// Notes whose text is meant to differ from the vault for now (§9): a remote edit held while
@@ -745,7 +745,7 @@ fn run_sync_with(ops: &[SyncOp], tag: &str, strict_order: bool) -> Result<(), St
                 eprintln!("== {step} {op:?}");
                 for (i, app) in apps.iter().enumerate() {
                     let caret = app.doc.as_ref().map(|d| d.line().id.clone()).unwrap_or_default();
-                    let buf: Vec<String> = app.doc.as_ref().map(|d| d.lines().iter().map(|l| format!("{}{} {:?} {:?} saved_kind={:?} edited={}", if l.id == caret { "^" } else { "" }, &l.id[..4], l.kind, l.text, l.saved_kind, l.edited())).collect()).unwrap_or_default();
+                    let buf: Vec<String> = app.doc.as_ref().map(|d| d.lines().iter().map(|l| format!("{}{} {:?} {:?} saved_kind={:?} edited={}", if l.id == caret { "^" } else { "" }, &l.id[..4], l.kind(), l.text, l.saved_kind, l.edited())).collect()).unwrap_or_default();
                     eprintln!("  dev{i} buf {buf:?}\n  dev{i} vault {:?}", saved(app).0);
                 }
             }

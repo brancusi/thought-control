@@ -23,8 +23,17 @@ use chrono::NaiveDate;
 use serde::{Deserialize, Serialize};
 
 /// A block's kind: a paragraph note (`style = "para"`, no status), a plain note shown as a
-/// bullet, or a task (has a status). The editor engine's (caretline).
-pub use caretline::Kind;
+/// bullet, or a task (has a status). Lowercase on the wire (`blocks.apply`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Kind {
+    /// A paragraph.
+    Para,
+    /// A list item.
+    Bullet,
+    /// A task: a list item with a status.
+    Task,
+}
 
 /// One block: a node as the editor shows it. `text` is the clean text (fields live in the
 /// gutter, editor.md §4), `rev` guards the next save.
