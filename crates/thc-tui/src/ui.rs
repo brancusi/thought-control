@@ -182,7 +182,6 @@ pub struct RenderOutput {
     /// for its hit-testing.
     pub doc_view: Option<(u16, u16, u16, u16)>,
     pub image_places: Vec<crate::images::Place>,
-    pub doc_view_rows: usize,
     pub list_height: usize,
     pub doc_scrollbar: Option<(u16, u16, usize, u16, u16)>,
     pub list_scrollbar: Option<(u16, u16, usize, u16, u16)>,
