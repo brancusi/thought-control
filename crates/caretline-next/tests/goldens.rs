@@ -519,6 +519,15 @@ fn emoji_and_cjk_render_with_the_caret_on_the_right_cell() {
     assert_eq!(cursor(&s), Some((6, 0)));
 }
 
+#[test]
+fn a_keycap_emoji_takes_two_cells() {
+    // `1️⃣` starts with an ASCII digit but is an emoji (2 cells), as terminals draw it.
+    let mut s = state_wh("▮", 20, 3);
+    send(&mut s, [Msg::InsertText { text: "a1\u{fe0f}\u{20e3}b".into() }]);
+    assert_eq!(cursor(&s), Some((4, 0)));
+    golden("a▮1\u{fe0f}\u{20e3}b", "<right>", "a1\u{fe0f}\u{20e3}▮b");
+}
+
 // ---------------------------------------------------------------------------------------
 // Soft wrap: visual rows, the goal column, Home and End
 

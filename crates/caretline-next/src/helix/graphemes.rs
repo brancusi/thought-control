@@ -100,7 +100,9 @@ impl Display for Grapheme<'_> {
 
 #[must_use]
 pub fn grapheme_width(g: &str) -> usize {
-    if g.as_bytes()[0] <= 127 {
+    // caretline: only an all-ASCII cluster takes the fast path. A keycap (`1️⃣`: a digit, the
+    // emoji variation selector and U+20E3) starts with ASCII but is an emoji, 2 cells.
+    if g.as_bytes()[0] <= 127 && g.is_ascii() {
         // Fast-path ascii.
         // Point 1: theoretically, ascii control characters should have zero
         // width, but in our case we actually want them to have width: if they
