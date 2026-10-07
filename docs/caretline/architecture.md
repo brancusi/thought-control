@@ -289,6 +289,11 @@ minimal state a client can push:
  "viewport": {"width": 40, "height": 10}, "config": {"soft_wrap": false}}
 ```
 
+`State::without_history()` serializes a state without its undo history, writing
+`saved_revision` as `0` (clean) or `null` (dirty) so that it rehydrates to the same document
+and view with a fresh history; `State::history_part()` is what it leaves out (see
+[protocol.md](protocol.md#the-state-without-its-history)).
+
 On any state `update` produced, `sanitize` changes nothing. So `to_json` followed by
 `from_json` gives back an equal state, with the same frame and the same future behaviour.
 The goal column and an open typing run survive the trip too.

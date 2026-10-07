@@ -72,10 +72,24 @@ impl Conn {
 }
 
 fn server(lines: usize, tag: &str) -> (Conn, std::path::PathBuf) {
+    server_for(session(lines), tag)
+}
+
+/// A session after `edits` separate undo steps (one typed char each, 2 s apart).
+fn edited(lines: usize, edits: usize) -> Session {
+    let mut s = session(lines);
+    for i in 0..edits {
+        s.apply(Msg::Tick { now_ms: 2000 * (i as u64 + 1) });
+        s.apply(Msg::InsertText { text: "x".into() });
+    }
+    s
+}
+
+fn server_for(session: Session, tag: &str) -> (Conn, std::path::PathBuf) {
     let path = std::env::temp_dir().join(format!("caretline-bench-{}-{tag}.sock", std::process::id()));
     let (tx, rx) = std::sync::mpsc::channel();
     let listening = hub::listen(&path, tx).expect("bind");
-    let hub = hub::Hub::new(session(lines), None);
+    let hub = hub::Hub::new(session, None);
     std::thread::spawn(move || {
         let _keep = listening;
         hub::serve(hub, rx, true);
@@ -190,6 +204,26 @@ pub fn main(argv: &[String]) -> Result<(), String> {
         row("render 100x40 cells", time(2000, || c.ask(r#"{"id":1,"op":"render","format":"cells"}"#)));
         row("state.get", time(100, || c.ask(r#"{"id":1,"op":"state.get"}"#)));
         println!("  (state.get response: {:.1} KB)", c.line.len() as f64 / 1024.0);
+        drop(c);
+        let _ = std::fs::remove_file(path);
+    }
+
+    const STATE_READS: [(&str, &str); 3] = [
+        ("state.get", r#"{"id":1,"op":"state.get"}"#),
+        ("state.get, history: false", r#"{"id":1,"op":"state.get","history":false}"#),
+        ("history.get", r#"{"id":1,"op":"history.get"}"#),
+    ];
+    for lines in [1_000usize, 100_000] {
+        let mut s = edited(lines, 3000);
+        println!("State reads after 3,000 separate edits, {lines}-line document");
+        for (label, req) in STATE_READS {
+            let size = s.handle(req, None).response.len();
+            row(&format!("{label}, in process ({:.1} KB)", size as f64 / 1024.0), time(50, || drop(s.handle(req, None))));
+        }
+        let (mut c, path) = server_for(s, &format!("e{lines}"));
+        for (label, req) in STATE_READS {
+            row(&format!("{label}, socket round trip"), time(50, || c.ask(req)));
+        }
         drop(c);
         let _ = std::fs::remove_file(path);
     }

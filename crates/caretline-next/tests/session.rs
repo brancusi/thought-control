@@ -191,7 +191,7 @@ fn subscribe_returns_a_control_and_events_describe_changes() {
     assert_eq!(ev["msgs"][0]["text"], "Q");
     assert_eq!(ev["frame"]["rows"][0]["text"].as_str().unwrap().trim_end(), "Qhello world");
 
-    let bare = Subscription { msgs: false, frame: None };
+    let bare = Subscription { msgs: false, frame: None, state: false };
     let ev: Value = serde_json::from_str(&event_line(&s, &change, &bare, None)).unwrap();
     assert!(ev.get("msgs").is_none() && ev.get("frame").is_none());
 
@@ -476,4 +476,90 @@ fn a_checkpoint_carries_the_open_views() {
     let (state, views, _) = caretline_next::trace::replay_trace_views(&seg).unwrap();
     assert_eq!(state, *s.state());
     assert_eq!(views, s.views().to_vec());
+}
+
+/// A session with three separate undo steps (each edit 10 s after the last), unsaved.
+fn edited_session() -> Session {
+    let mut s = session();
+    for (i, t) in ["a", "b", "c"].iter().enumerate() {
+        s.apply(Msg::Tick { now_ms: 10_000 * (i as u64 + 1) });
+        s.apply(Msg::InsertText { text: t.to_string() });
+    }
+    s
+}
+
+#[test]
+fn state_get_without_history_leaves_out_the_undo_history() {
+    let mut s = edited_session();
+    let full = ask(&mut s, json!({"op": "state.get"}));
+    let light = ask(&mut s, json!({"op": "state.get", "history": false}));
+    let st = &light["result"]["state"];
+    for field in ["history", "saving", "run", "mark_log", "undo_floor"] {
+        assert!(st.get(field).is_none(), "{field} left out: {st}");
+    }
+    assert!(full["result"]["state"].get("history").is_some());
+    assert_eq!(st["text"], full["result"]["state"]["text"]);
+    assert_eq!(st["selection"], full["result"]["state"]["selection"]);
+    assert_eq!(st["dirty"], true);
+    assert_eq!(st["saved_revision"], Value::Null, "a dirty document is never saved in a fresh history");
+    assert!(light.to_string().len() < full.to_string().len());
+}
+
+#[test]
+fn a_state_without_history_rehydrates_to_a_working_editor() {
+    let mut s = edited_session();
+    let light = ask(&mut s, json!({"op": "state.get", "history": false}))["result"]["state"].clone();
+    let mut t = Session::new(State::default());
+    let r = ask(&mut t, json!({"op": "state.set", "state": light}));
+    assert!(r.get("result").is_some(), "{r}");
+    let st = t.state();
+    assert_eq!(st.doc.text, s.state().doc.text);
+    assert_eq!(st.view.selection, s.state().view.selection);
+    assert!(st.doc.dirty, "dirty is kept");
+    assert_eq!(st.doc.history.len(), 1, "a fresh history");
+    assert_eq!(view(st), view(s.state()), "the same frame");
+    // It edits, and undo takes back only what happened after the push.
+    let before = st.doc.text.to_string();
+    t.apply(Msg::Tick { now_ms: 100_000 });
+    t.apply(Msg::InsertText { text: "z".into() });
+    assert_ne!(t.state().doc.text.to_string(), before);
+    t.apply(Msg::Undo);
+    assert_eq!(t.state().doc.text.to_string(), before);
+    t.apply(Msg::Undo);
+    assert_eq!(t.state().doc.text.to_string(), before, "nothing older to undo");
+
+    // A clean document stays clean.
+    let mut c = session();
+    let light = ask(&mut c, json!({"op": "state.get", "history": false}))["result"]["state"].clone();
+    assert_eq!(light["saved_revision"], 0);
+    let back: State = State::from_json(&light.to_string()).unwrap();
+    assert!(!back.doc.dirty);
+}
+
+#[test]
+fn history_get_returns_what_state_get_leaves_out() {
+    let mut s = edited_session();
+    let mut light = ask(&mut s, json!({"op": "state.get", "history": false}))["result"]["state"].clone();
+    let h = ask(&mut s, json!({"id": 4, "op": "history.get"}));
+    assert_eq!(h["id"], 4);
+    let part = h["result"].as_object().unwrap();
+    assert_eq!(part["rev"], s.rev());
+    for (k, v) in part.iter().filter(|(k, _)| *k != "rev") {
+        light[k] = v.clone();
+    }
+    let merged: State = State::from_json(&light.to_string()).unwrap();
+    assert_eq!(&merged, s.state(), "the two parts make the whole state");
+}
+
+#[test]
+fn subscribers_can_have_the_state_without_history() {
+    let mut s = session();
+    let h = s.handle(r#"{"op":"subscribe","with_state":true,"with_msgs":false}"#, None);
+    let Some(Control::Subscribe(sub)) = h.control else { panic!("no subscribe control") };
+    assert!(sub.state);
+    let h = s.handle(r#"{"op":"keys","keys":"hi"}"#, None);
+    let ev: Value = serde_json::from_str(&event_line(&s, &h.change.unwrap(), &sub, Some("client"))).unwrap();
+    assert_eq!(ev["state"]["text"], "hihello world\nsecond line\n");
+    assert!(ev["state"].get("history").is_none());
+    assert!(ev.get("msgs").is_none());
 }

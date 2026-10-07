@@ -15,7 +15,7 @@ use crate::hub::discovery_dir;
 #[command(
     name = "caretline send",
     about = "Send state-protocol requests to a running caretline and print the responses",
-    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get | unsubscribe | trace.checkpoint\n  trace.get [all | since REV]\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-state FILE|-\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH]          (streams events until interrupted)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
+    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get [no-history] | history.get | unsubscribe | trace.checkpoint\n  trace.get [all | since REV]\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-state FILE|-\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH] [state]  (streams events until interrupted; state: each with the state)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
 )]
 struct SendArgs {
     /// The server's socket.
@@ -97,7 +97,12 @@ fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
         s if s.trim_start().starts_with('{') => {
             serde_json::from_str(s).map_err(|e| format!("request: {e}"))?
         }
-        "hello" | "state.get" | "unsubscribe" | "trace.checkpoint" => json!({ "op": op }),
+        "hello" | "history.get" | "unsubscribe" | "trace.checkpoint" => json!({ "op": op }),
+        "state.get" => match words.get(1).map(String::as_str) {
+            None => json!({ "op": op }),
+            Some("no-history") => json!({ "op": op, "history": false }),
+            Some(other) => return Err(format!("state.get takes no-history, not {other:?}")),
+        },
         "trace.get" => match words.get(1).map(String::as_str) {
             None => json!({ "op": op }),
             Some("all") => json!({ "op": op, "all": true }),
@@ -133,9 +138,14 @@ fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
         "status" => json!({ "op": "msgs", "msgs": [{ "msg": "show_status", "text": words[1..].join(" ") }] }),
         "subscribe" => {
             let mut r = json!({ "op": "subscribe" });
-            if let Some(s) = words.get(1) {
+            let mut rest: Vec<&str> = words[1..].iter().map(String::as_str).collect();
+            if let Some(i) = rest.iter().position(|w| *w == "state") {
+                rest.remove(i);
+                r["with_state"] = true.into();
+            }
+            if let Some(s) = rest.first() {
                 let (w, h) = size(s)?;
-                r["frame"] = json!({ "w": w, "h": h, "format": words.get(2).map(String::as_str).unwrap_or("text") });
+                r["frame"] = json!({ "w": w, "h": h, "format": rest.get(1).copied().unwrap_or("text") });
             }
             r
         }

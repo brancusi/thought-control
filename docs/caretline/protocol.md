@@ -17,7 +17,7 @@ The same operations are available in process through
 $ printf 'hello world\nsecond line\n' > notes.md
 $ printf '%s\n' '{"id":1,"op":"hello"}' '{"id":2,"op":"keys","keys":"<a-right><s-a-right>"}' '{"id":3,"op":"render","w":30,"h":4}' \
     | caretline serve notes.md --size 30x4 --no-clock
-{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
+{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
 {"id":2,"result":{"rev":2,"effects":[],"msgs":[{"msg":"move","dir":"forward","by":"word","extend":false},{"msg":"move","dir":"forward","by":"word","extend":true}]}}
 {"id":3,"result":{"rev":2,"w":30,"h":4,"format":"text","cursor":[11,0],"frame":"hello world\nsecond line\n\n notes.md         6 sel  1:12\n"}}
 ```
@@ -39,12 +39,13 @@ result carries the current `rev`.
 | Op | Request fields | Result |
 |---|---|---|
 | `hello` | | `proto` (1), `version`, `rev`, `ops` |
-| `state.get` | | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON) |
+| `state.get` | optional `history` (default true) | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON). With `history: false`, the state [without its undo history](#the-state-without-its-history) |
+| `history.get` | | `rev` and what `state.get` with `history: false` leaves out: `history`, `saved_revision`, `saving`, `run`, and `mark_log` and `undo_floor` when set |
 | `state.set` | `state` (only `text` needed, see [Minimal state](#minimal-state)), optional `if_rev` | `rev`. Replaces the state (repaired as on load) and starts a new trace segment |
 | `msgs` | `msgs` (array of [messages](messages.md)), optional `if_rev`, `apply_effects`, `now_ms` | `rev`, `effects`, `msgs` (every message applied: a leading `tick`, the request's messages, and fed-back results such as `saved`), and `executed: true` when effects were performed |
 | `keys` | `keys` (a [key script](messages.md#key-scripts)), optional `if_rev`, `apply_effects`, `now_ms` | Like `msgs`; `msgs` shows what the script became |
 | `render` | optional `w`, `h` (default: the state's viewport), `format` | `rev`, `w`, `h`, `format`, `cursor` (`[x, y]` or null), and `frame` or `rows` |
-| `subscribe` | optional `frame` (`{w, h, format}`), `with_msgs` (default true) | `rev`, `subscribed: true`. Then events, below |
+| `subscribe` | optional `frame` (`{w, h, format}`), `with_msgs` (default true), `with_state` (default false) | `rev`, `subscribed: true`. Then events, below |
 | `unsubscribe` | | `rev`, `subscribed: false` |
 | `trace.get` | optional `since_rev` or `all` | `rev`, `from_rev`, `trace`: by default the current segment, as [trace lines](architecture.md#traces-make-sessions-reproducible). See [Traces](#traces) |
 | `trace.checkpoint` | | `rev`. Starts a new trace segment with the current state. Changes neither the state nor the rev |
@@ -73,6 +74,28 @@ $ caretline send '{"op":"state.set","state":{"text":"hello\nworld\n","selection"
 
 A live editor resizes a pushed state to its terminal. See
 [architecture.md](architecture.md#rehydration) for every default.
+
+### The state without its history
+
+The undo history is most of a state's JSON once there has been some editing: after 3,000
+separate edits it is 1.4 MB, against 71 KB for a 1,000-line document's text and view. Most
+clients want the text, the selection and the view, so ask for those alone:
+
+```console
+$ caretline send '{"op":"state.get","history":false}'
+{"result":{"rev":9,"state":{"text":"hello world\n","selection":{…},…,"saved_revision":null,"dirty":true,…}}}
+$ caretline send history.get
+{"result":{"rev":9,"history":{…},"saved_revision":0,"saving":null,"run":null}}
+```
+
+`history: false` leaves out `history`, `saving`, `run`, `mark_log` and `undo_floor`, and
+writes `saved_revision` for a fresh history: `0` when the document is clean, `null` when it is
+dirty. So the state rehydrates (with `state.set`, `--state` or `State::from_json`) to the same
+text, selection, view and dirty flag, with a fresh history: the editor works, and undo starts
+from there. `history.get` returns the fields left out with their real values; set them over
+the history-less state and you have exactly what `state.get` returns. `caretline send` has
+`state.get no-history` and `history.get`. In Rust, `State::without_history()` and
+`State::history_part()` serialize the two halves.
 
 ### Traces
 
@@ -237,6 +260,7 @@ After `subscribe`, the connection receives a line for every change, from any sou
 | `view` | The view the messages went through, or the view opened or closed. Omitted for view 0 |
 | `msgs` | The messages applied, effect results included. Omitted with `with_msgs: false` |
 | `frame` | A rendered frame, when you subscribed with `frame` |
+| `state` | The state [without its history](#the-state-without-its-history), when you subscribed with `with_state: true` |
 
 A subscriber also gets events for its own requests, after the response.
 
@@ -294,12 +318,16 @@ socket. Build with `--release` for meaningful numbers. On an Apple-silicon Mac:
 | `keys "<down>"` (the same as the `msgs` it becomes) | | ~21–25 µs |
 | `render` 100x40 (`text` or `cells`) | ~85–90 µs | ~100 µs |
 | `state.get`, 1,000 lines, fresh history | ~23 µs | ~80 µs |
+| `state.get`, 1,000 lines, after 3,000 edits (1.4 MB) | ~0.9 ms | ~1.9 ms |
+| `state.get` `history: false`, 1,000 lines, after 3,000 edits (71 KB) | ~27 µs | ~85 µs |
+| `history.get`, after 3,000 edits (1.4 MB) | ~0.8 ms | ~1.8 ms |
 | `state.get`, 100,000 lines (6.6 MB) | ~2.5 ms | ~7 ms |
 
 Update and render cost follows the visible rows, not the document length, and stays flat
 along a long line: a typing run of one `insert_text` request per character costs about
 10 µs per character at 1,000 and at 64,000 characters, on one line or as prose. `state.get` grows
-with the text and the undo history, so for a large document prefer `render` and events.
+with the text and the undo history: leave the history out unless you need it, and for a
+large document prefer `render` and events.
 
 ### Discovery
 
@@ -318,14 +346,15 @@ A small client for any server.
 
 | Request words | Sends |
 |---|---|
-| `hello`, `state.get`, `unsubscribe`, `trace.checkpoint` | That op |
+| `hello`, `history.get`, `unsubscribe`, `trace.checkpoint` | That op |
+| `state.get [no-history]` | `state.get`, without the undo history with `no-history` |
 | `trace.get [all \| since REV]` | `trace.get`: the current segment, everything kept, or the lines after `REV` |
 | `render [WxH] [text\|ansi\|cells]` | `render` |
 | `keys SCRIPT` | `keys` |
 | `msgs FILE\|-\|JSON` | `msgs` from a file, stdin or inline JSON |
 | `set-state FILE\|-` | `state.set` |
 | `status TEXT` | A `show_status` message: text in the editor's status bar |
-| `subscribe [WxH [format]]` | `subscribe`, then prints events until interrupted |
+| `subscribe [WxH [format]] [state]` | `subscribe`, then prints events until interrupted; `state` adds the state, without its history, to each |
 | `'{"op":…}'` | A raw JSON request |
 | (nothing) | Reads JSON requests from stdin, one per line |
 
@@ -351,7 +380,7 @@ The status bar says `listening on …/caretline-<pid>.sock`. In another shell:
 
 ```console
 $ caretline send hello
-{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
+{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
 $ caretline send keys '<d-down>from another shell'
 {"result":{"rev":23,"effects":[],"msgs":[{"msg":"tick","now_ms":1791353251020},{"msg":"move","dir":"forward","by":"doc_end","extend":false},{"msg":"insert_text","text":"f"}, …]}}
 $ caretline send render 40x5 --raw

@@ -607,14 +607,18 @@ struct StateOut<'a> {
     viewport: &'a Viewport,
     clipboard: &'a Clipboard,
     path: &'a Option<String>,
-    history: &'a History,
+    /// Left out (with `saving` and `run`) in a state without its history.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    history: Option<&'a History>,
     saved_revision: Option<usize>,
-    saving: Option<usize>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    saving: Option<Option<usize>>,
     dirty: bool,
     config: ConfigOut<'a>,
     status: &'a Option<String>,
     now_ms: u64,
-    run: &'a Option<EditRun>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    run: Option<&'a Option<EditRun>>,
     quit_armed: bool,
     #[serde(skip_serializing_if = "Marks::is_unused")]
     marks: &'a Marks,
@@ -655,7 +659,59 @@ struct ConfigOut<'a> {
 
 impl Serialize for State {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.state_out(true).serialize(s)
+    }
+}
+
+/// A [`State`] serialized without its undo history ([`State::without_history`]).
+pub struct WithoutHistory<'a>(&'a State);
+
+impl Serialize for WithoutHistory<'_> {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        self.0.state_out(false).serialize(s)
+    }
+}
+
+/// The undo history of a [`State`] and the fields that refer to its revisions: what
+/// [`State::without_history`] leaves out. Its fields set over a state without its history
+/// give the whole state back.
+#[derive(Serialize)]
+pub struct HistoryPart<'a> {
+    pub history: &'a History,
+    pub saved_revision: Option<usize>,
+    pub saving: Option<usize>,
+    pub run: &'a Option<EditRun>,
+    #[serde(skip_serializing_if = "mark_log_is_empty")]
+    pub mark_log: &'a [MarkDelta],
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub undo_floor: bool,
+}
+
+impl State {
+    /// The state as JSON without the undo history: `history`, `saving`, `run`, `mark_log` and
+    /// `undo_floor` are left out, and `saved_revision` is 0 when the document is clean and
+    /// null when it is dirty. Parsed back, it is the same document and view with a fresh
+    /// history that keeps `dirty`. [`State::history_part`] has what it leaves out.
+    pub fn without_history(&self) -> WithoutHistory<'_> {
+        WithoutHistory(self)
+    }
+
+    /// What [`State::without_history`] leaves out.
+    pub fn history_part(&self) -> HistoryPart<'_> {
+        let d = &self.doc;
+        HistoryPart {
+            history: &d.history,
+            saved_revision: d.saved_revision,
+            saving: d.saving,
+            run: &d.run,
+            mark_log: &d.mark_log,
+            undo_floor: d.undo_floor,
+        }
+    }
+
+    fn state_out(&self, history: bool) -> StateOut<'_> {
         let (d, v) = (&self.doc, &self.view);
+        let empty: &'static [MarkDelta] = &[];
         StateOut {
             text: &d.text,
             selection: &v.selection,
@@ -663,9 +719,10 @@ impl Serialize for State {
             viewport: &v.viewport,
             clipboard: &d.clipboard,
             path: &d.path,
-            history: &d.history,
-            saved_revision: d.saved_revision,
-            saving: d.saving,
+            history: history.then_some(&d.history),
+            // A fresh history's only revision is 0: saved there when clean, never when dirty.
+            saved_revision: if history { d.saved_revision } else { (!d.dirty).then_some(0) },
+            saving: history.then_some(d.saving),
             dirty: d.dirty,
             config: ConfigOut {
                 tab_width: d.config.tab_width,
@@ -678,21 +735,20 @@ impl Serialize for State {
             },
             status: &v.status,
             now_ms: d.now_ms,
-            run: &d.run,
+            run: history.then_some(&d.run),
             quit_armed: v.quit_armed,
             marks: &d.marks,
-            mark_log: &d.mark_log,
+            mark_log: if history { &d.mark_log } else { empty },
             outline: &d.outline,
             word_drag: &v.word_drag,
             doc_rev: d.rev,
-            undo_floor: d.undo_floor,
+            undo_floor: history && d.undo_floor,
             folds: &v.folds,
             read_only: v.read_only,
             focused: v.focused,
             free: v.free,
             layout: &v.layout,
         }
-        .serialize(s)
     }
 }
 
