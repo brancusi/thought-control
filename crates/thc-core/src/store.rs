@@ -315,6 +315,13 @@ impl Store {
             .unwrap_or(0) as u64)
     }
 
+    /// Every log file's cursor: how far into it the store has read (`Vault::frontier`).
+    pub fn cursors(&self) -> Result<std::collections::BTreeMap<String, u64>> {
+        let mut st = self.conn.prepare_cached("SELECT file, offset FROM cursors WHERE offset > 0")?;
+        let rows = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)? as u64)))?;
+        Ok(rows.collect::<Result<_, _>>()?)
+    }
+
     pub fn set_cursor(&self, file: &str, offset: u64) -> Result<()> {
         self.conn.execute(
             "INSERT INTO cursors(file,offset) VALUES(?1,?2) ON CONFLICT(file) DO UPDATE SET offset=excluded.offset",

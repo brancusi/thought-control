@@ -111,6 +111,11 @@ impl Drop for Pty {
 
 impl Pty {
     fn spawn(root: &Path, tmp: &Path) -> Pty {
+        Pty::spawn_with(root, tmp, &[])
+    }
+
+    /// `thc tui ARGS…` on a 100×30 pseudo-terminal.
+    fn spawn_with(root: &Path, tmp: &Path, args: &[&std::ffi::OsStr]) -> Pty {
         use std::io::{Read, Write};
         use std::os::fd::{AsRawFd, FromRawFd, OwnedFd};
         use std::os::unix::process::CommandExt;
@@ -120,7 +125,7 @@ impl Pty {
         let slave = unsafe { OwnedFd::from_raw_fd(s) };
         let mut c = thc(root);
         // Unpinned: the bar's pinned-clock warning would cover the toast.
-        c.arg("tui").env("TERM", "xterm-256color").env("TMPDIR", tmp).env_remove("THC_NOW").env_remove("THC_FIXTURE_IDS");
+        c.arg("tui").args(args).env("TERM", "xterm-256color").env("TMPDIR", tmp).env_remove("THC_NOW").env_remove("THC_FIXTURE_IDS");
         let sfd = slave.as_raw_fd();
         c.stdin(slave.try_clone().unwrap()).stdout(slave.try_clone().unwrap()).stderr(slave);
         unsafe {
@@ -280,5 +285,103 @@ fn a_running_tui_answers_and_a_pushed_state_changes_its_screen() {
     let s: serde_json::Value = serde_json::from_str(&ok(ui(&r.0, &tmp).args(["state", "--raw", "--session", &pid]))).unwrap();
     assert_eq!(s["view"], "today", "the second TUI has its own state");
     drop(second);
+    drop(tui);
+}
+
+impl Pty {
+    /// The terminal changes size (the TUI gets SIGWINCH and a resize message).
+    fn resize(&self, w: u16, h: u16) {
+        use std::os::fd::AsRawFd;
+        let ws = libc::winsize { ws_row: h, ws_col: w, ws_xpixel: 0, ws_ypixel: 0 };
+        assert_eq!(unsafe { libc::ioctl(self._master.as_raw_fd(), libc::TIOCSWINSZ as _, &ws) }, 0);
+    }
+}
+
+/// JSON requests to the running TUI in one connection (`thc ui send` with stdin): the responses.
+fn requests(root: &Path, tmp: &Path, reqs: &[serde_json::Value]) -> Vec<serde_json::Value> {
+    use std::io::Write;
+    let mut c = ui(root, tmp);
+    c.arg("send").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped());
+    let mut child = c.spawn().unwrap();
+    let input: String = reqs.iter().map(|r| format!("{r}\n")).collect();
+    child.stdin.take().unwrap().write_all(input.as_bytes()).unwrap();
+    let o = child.wait_with_output().unwrap();
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stdout));
+    String::from_utf8_lossy(&o.stdout).lines().map(|l| serde_json::from_str(l).unwrap()).collect()
+}
+
+/// The lines of a trace up to `rev`: the trace as it stood when the TUI was at that rev.
+fn upto(lines: impl Iterator<Item = serde_json::Value>, rev: u64) -> String {
+    lines.filter(|v| v.get("_rev").or(v.get("rev")).and_then(serde_json::Value::as_u64).is_some_and(|n| n <= rev)).map(|l| format!("{l}\n")).collect()
+}
+
+/// The live TUI's frame at `w`×`h`, and its trace (`trace`, a request) up to that frame's rev
+/// (the clock keeps ticking in between). Also that rev.
+fn frame_and_trace(root: &Path, tmp: &Path, w: u16, h: u16, trace: serde_json::Value) -> (String, String, u64) {
+    let r = requests(root, tmp, &[serde_json::json!({"op": "render", "w": w, "h": h}), trace]);
+    let rev = r[0]["result"]["rev"].as_u64().unwrap();
+    let lines = upto(r[1]["result"]["trace"].as_array().unwrap().iter().cloned(), rev);
+    (r[0]["result"]["frame"].as_str().unwrap().to_string(), lines, rev)
+}
+
+fn replay(root: &Path, trace: &Path, size: &str) -> String {
+    ok(thc(root).args(["ui", "replay"]).arg(trace).args(["--size", size]))
+}
+
+/// A real session's trace replays to its screen. A TUI on a pty is typed into through the
+/// protocol (a journal line, Tab, ⌥← and ⇧⌥→, ⌃Z, ⌥↑ ⌥↓), saves when it idles, takes in an
+/// agent's `thc add`, has its view switched by `thc ui patch` and its terminal resized. Its
+/// trace, from `trace.get`, from `thc tui --trace` and after `trace.checkpoint`, replays (with
+/// THC_NOW pinned) to exactly the frame the TUI draws, at a size given with `--size`: every
+/// write lands once, on the vault as it was when the trace began.
+#[test]
+fn a_live_sessions_trace_replays_to_its_screen() {
+    let r = vault("live-replay");
+    let tmp = r.0.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let file = r.0.join("session.jsonl");
+    let tui = Pty::spawn_with(&r.0, &tmp, &["--trace".as_ref(), file.as_os_str()]);
+    wait_for("the TUI to advertise itself", || sessions(&r.0, &tmp) == 1);
+    let trace_has = |what: &str| ok(ui(&r.0, &tmp).args(["send", "trace.get", "all", "--raw"])).contains(what);
+    for keys in ["5", "coffee notes", "<cr><tab>nested line", "<cr>Word motion<m-left><s-m-right>", "<c-z>", "<m-up><m-down>"] {
+        ok(ui(&r.0, &tmp).args(["send", "keys", keys]));
+    }
+    wait_for("the idle save", || trace_has("{\"msg\":\"idle\""));
+    ok(thc(&r.0).args(["add", "from the agent"]).env("THC_ACTOR", "claude").env_remove("THC_NOW").env_remove("THC_FIXTURE_IDS"));
+    wait_for("the poll to take the agent's line in", || trace_has("\"_log\""));
+    ok(ui(&r.0, &tmp).args(["patch", r#"{"view":"tasks"}"#]).env("THC_ACTOR", "claude"));
+    ok(ui(&r.0, &tmp).args(["patch", r#"{"view":"journal"}"#]).env("THC_ACTOR", "claude"));
+    tui.resize(150, 40);
+    wait_for("the resize", || trace_has("{\"msg\":\"resize\",\"w\":150,\"h\":40"));
+
+    let (live, trace, rev) = frame_and_trace(&r.0, &tmp, 77, 24, serde_json::json!({"op": "trace.get", "all": true}));
+    assert!(live.contains("coffee notes") && live.contains("nested line") && live.contains("from the agent"), "{live}");
+    let t = r.0.join("t.jsonl");
+    std::fs::write(&t, &trace).unwrap();
+    let replayed = replay(&r.0, &t, "77x24");
+    assert_eq!(replayed, live, "the replay draws the live screen");
+    assert_eq!(replayed.matches("coffee notes").count(), 1, "{replayed}");
+    assert_eq!(replay(&r.0, &t, "77x24"), replayed, "the same every run");
+    // Without --size: the trace's own size, the terminal's after the resize.
+    assert_eq!(ok(thc(&r.0).args(["ui", "replay"]).arg(&t)).lines().count(), 40);
+
+    // `thc tui --trace FILE`: the same session, every line, up to the same rev.
+    let recorded = std::fs::read_to_string(&file).unwrap();
+    let f = r.0.join("f.jsonl");
+    std::fs::write(&f, upto(recorded.lines().map(|l| serde_json::from_str(l).unwrap()), rev)).unwrap();
+    assert_eq!(replay(&r.0, &f, "77x24"), live, "the --trace file replays the same");
+
+    // A checkpoint: the segment from it replays on its own, on the vault as of then.
+    ok(ui(&r.0, &tmp).args(["send", "trace.checkpoint"]));
+    ok(ui(&r.0, &tmp).args(["send", "keys", "<cr>after the checkpoint"]));
+    ok(thc(&r.0).args(["add", "another from the agent"]).env("THC_ACTOR", "claude").env_remove("THC_NOW").env_remove("THC_FIXTURE_IDS"));
+    wait_for("the second agent line", || ok(ui(&r.0, &tmp).args(["render"])).contains("another from the agent"));
+    let (live, segment, _) = frame_and_trace(&r.0, &tmp, 90, 30, serde_json::json!({"op": "trace.get"}));
+    assert!(segment.starts_with("{\"state\"") && segment.lines().next().unwrap().contains("\"log\""), "{segment}");
+    std::fs::write(&t, &segment).unwrap();
+    assert_eq!(replay(&r.0, &t, "90x30"), live, "the segment replays");
+    let (live, all, _) = frame_and_trace(&r.0, &tmp, 90, 30, serde_json::json!({"op": "trace.get", "all": true}));
+    std::fs::write(&t, &all).unwrap();
+    assert_eq!(replay(&r.0, &t, "90x30"), live, "both segments replay");
     drop(tui);
 }

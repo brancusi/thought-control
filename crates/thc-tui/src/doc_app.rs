@@ -60,7 +60,7 @@ impl Saver {
                         client = thc_core::proto::Client::connect(&paths);
                     }
                     let c = client.as_mut().ok_or("the daemon went away")?;
-                    let mut params = serde_json::json!({ "ops": job.ops });
+                    let mut params = serde_json::json!({ "ops": job.ops, "via": "tui" });
                     match (&job.root, &job.journal) {
                         (Some(r), _) => params["root"] = serde_json::json!(r),
                         (None, Some(j)) => params["journal"] = serde_json::json!(j),
@@ -685,15 +685,22 @@ impl App {
         }
     }
 
-    pub fn doc_tick(&mut self) {
+    /// The runtime's idle step for the open document: the clock, saves that came back, and the
+    /// idle save. True when the idle point passed (the typing so far became one undo step, and
+    /// it saved what there was): the session records that as an `idle` message, so a replay
+    /// does the same at the same point.
+    pub fn doc_tick(&mut self) -> bool {
         self.clock_tick();
         self.drain_saves(false);
-        let Some(d) = self.doc.as_mut() else { return };
+        let Some(d) = self.doc.as_mut() else { return false };
         if !d.idle_elapsed(Duration::from_millis(1500)) {
-            return;
+            return false;
         }
-        let Some(op) = d.plan_idle() else { return };
-        let Some(root) = d.root.clone() else { return self.save_doc(false) };
+        let Some(op) = d.plan_idle() else { return true };
+        let Some(root) = d.root.clone() else {
+            self.save_doc(false);
+            return true;
+        };
         let today = self.ui.today;
         let id = d.caret_block().id.clone();
         let text = d.caret_block().text.clone();
@@ -708,6 +715,7 @@ impl App {
             }
             Err(e) => self.error(format!("not saved: {e:#} · :retry")),
         }
+        true
     }
 
     /// After a key in the document: leaving a line saves the lines left behind.
@@ -745,17 +753,21 @@ impl App {
     }
 
     /// After a frame: the save a line-leave deferred.
-    pub fn after_frame(&mut self) {
-        if std::mem::take(&mut self.doc_save_after_frame) {
-            self.save_doc(false);
-            // A line left with a shape change held for it: take it up now.
-            if self.doc.as_ref().is_some_and(|d| {
-                let caret = &d.caret_block().id;
-                d.blocks().iter().any(|l| l.remote_shape && &l.id != caret && !l.edited())
-            }) {
-                self.patch_doc();
-            }
+    /// What waits for the frame after a key: the save of a line just left. True when it ran
+    /// (the session records that as a `frame` message, so a replay saves there too).
+    pub fn after_frame(&mut self) -> bool {
+        if !std::mem::take(&mut self.doc_save_after_frame) {
+            return false;
         }
+        self.save_doc(false);
+        // A line left with a shape change held for it: take it up now.
+        if self.doc.as_ref().is_some_and(|d| {
+            let caret = &d.caret_block().id;
+            d.blocks().iter().any(|l| l.remote_shape && &l.id != caret && !l.edited())
+        }) {
+            self.patch_doc();
+        }
+        true
     }
 
     /// Changes made elsewhere: lines you aren't on and haven't edited update in place; lines

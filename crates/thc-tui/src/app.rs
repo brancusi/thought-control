@@ -431,6 +431,8 @@ pub struct App {
     pub rail: Vec<RailItem>,
     /// The daemon said something changed that has no transaction (a conflict): refresh.
     pub(crate) live_dirty: bool,
+    /// The daemon pushed a change: poll now, not at the next interval.
+    pub poll_wanted: bool,
     last_agent_tx: Option<String>,
     pub screen_width: u16,
     /// Last accepted frame: input consumes only this frame's geometry and cells.
@@ -785,6 +787,7 @@ impl App {
             live_txs: Vec::new(),
             rail: Vec::new(),
             live_dirty: false,
+            poll_wanted: false,
             last_agent_tx: None,
             screen_width: 80,
             render: crate::ui::RenderOutput::default(),
@@ -3641,7 +3644,8 @@ impl App {
                             }
                             None => self.live_dirty = true,
                         }
-                        let _ = self.poll_external();
+                        // The loop polls next, recorded as a `poll` message (session.rs).
+                        self.poll_wanted = true;
                     }
                     "alert.fire" => self.alert_toast(&data),
                     "alert.withdraw" => {
@@ -3706,8 +3710,9 @@ impl App {
         self.live_rx = Some(crate::live::spawn(self.vault.paths.clone()));
     }
 
-    /// Poll the log for changes from other processes (agents, other devices via sync).
-    pub fn poll_external(&mut self) -> Result<()> {
+    /// Poll the log for changes from other processes (agents, other devices via sync). True when
+    /// it found some (and reloaded): the session records that as a `poll` message.
+    pub fn poll_external(&mut self) -> Result<bool> {
         // The other vaults a cross-vault view shows: their changes reload it.
         let mut others_moved = false;
         for o in self.others.iter_mut() {
@@ -3731,7 +3736,7 @@ impl App {
         let txs = std::mem::take(&mut self.live_txs);
         let dirty = std::mem::take(&mut self.live_dirty);
         if !news.foreign() && txs.is_empty() && !dirty {
-            return Ok(());
+            return Ok(others_moved);
         }
         let eids: Vec<&str> = news.events.iter().filter(|(_, own)| !own).map(|(e, _)| e.as_str()).collect();
         let fresh = self.vault.store.history_where(
@@ -3777,7 +3782,7 @@ impl App {
             let text = if edited { " changed this line too · both versions are kept" } else { " changed this line · it updates when you leave it" };
             self.toast_parts(ToastKind::Agent, vec![(who, Token::Agent), (text.into(), Token::Text)]);
         }
-        Ok(())
+        Ok(true)
     }
 }
 

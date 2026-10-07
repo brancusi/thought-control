@@ -62,6 +62,42 @@ impl Log {
         Ok(out)
     }
 
+    /// The complete lines of `rel` between byte offsets `from` and `to`, exactly as written
+    /// (a UI trace carries the lines another writer added, docs/ui-protocol.md).
+    pub fn lines_between(&self, rel: &str, from: u64, to: u64) -> Result<Vec<String>> {
+        if to <= from {
+            return Ok(vec![]);
+        }
+        let path = self.root.join(rel);
+        let mut f = File::open(&path).with_context(|| format!("opening {}", path.display()))?;
+        f.seek(SeekFrom::Start(from))?;
+        let mut buf = vec![0u8; (to - from) as usize];
+        f.read_exact(&mut buf).with_context(|| format!("{rel} is shorter than {to} bytes"))?;
+        let complete = buf.iter().rposition(|&b| b == b'\n').map_or(0, |i| i + 1);
+        Ok(String::from_utf8_lossy(&buf[..complete]).lines().filter(|l| !l.trim().is_empty()).map(str::to_string).collect())
+    }
+
+    /// Append lines another writer made (replaying a UI trace) to `rel`, under the same lock
+    /// and fsync as `append`. Returns the size before and after.
+    pub fn append_lines(&self, rel: &str, lines: &[String]) -> Result<(u64, u64)> {
+        let path = self.root.join(rel);
+        fs::create_dir_all(path.parent().context("a log file is in a device directory")?)?;
+        let mut f = OpenOptions::new().create(true).append(true).open(&path)?;
+        // SAFETY: f owns a valid descriptor for the duration of this append.
+        if unsafe { libc::flock(f.as_raw_fd(), libc::LOCK_EX) } != 0 {
+            return Err(std::io::Error::last_os_error()).with_context(|| format!("locking {}", path.display()));
+        }
+        let before = f.metadata()?.len();
+        let mut buf = String::new();
+        for l in lines {
+            buf.push_str(l.trim_end());
+            buf.push('\n');
+        }
+        f.write_all(buf.as_bytes())?;
+        f.sync_all()?;
+        Ok((before, before + buf.len() as u64))
+    }
+
     /// All log files with their sizes, as paths relative to the log root.
     pub fn files(&self) -> Result<Vec<(String, u64)>> {
         let mut out = Vec::new();
