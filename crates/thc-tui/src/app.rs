@@ -14,7 +14,8 @@ use thc_core::event::Event;
 use thc_core::model::{HistoryEntry, Node};
 use thc_core::vault::Vault;
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum View {
     Today,
     Inbox,
@@ -92,7 +93,7 @@ pub const EDIT_KEY: &str = "edit:new";
 /// In-place editing (tui-handoff §10): one outline row is a text input. For an existing
 /// node `node` is set; a new line has `node: None` and sits by `after` / `before` (or last
 /// under `parent`), shown as a `Row::Editing`.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Edit {
     pub node: Option<String>,
     pub parent: Option<String>,
@@ -108,7 +109,8 @@ pub struct Edit {
     pub para: bool,
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "id", rename_all = "snake_case")]
 pub enum PromptKind {
     Due(String),
     Sched(String),
@@ -147,7 +149,8 @@ impl PromptKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CaptureTarget {
     Journal(NaiveDate),
     Under(String, String),
@@ -172,7 +175,8 @@ pub struct MoveItem {
     pub target: MoveTarget,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum MoveTarget {
     Inbox,
     Journal(NaiveDate),
@@ -180,7 +184,8 @@ pub enum MoveTarget {
     NewPage(String),
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case")]
 pub enum Overlay {
     /// `scroll`: the first line shown when the keys don't fit (↑↓ PgUp PgDn, the wheel).
     Help { all: bool, scroll: u16 },
@@ -194,7 +199,13 @@ pub enum Overlay {
     Finder { input: LineInput, sel: usize },
     /// `V` / `space g v`: the vaults on this device (vaults.md §8). `naming`: `n` asks for a
     /// new vault's name.
-    Vaults { rows: Vec<VaultRow>, sel: usize, naming: Option<LineInput> },
+    Vaults {
+        /// Derived from the registry when the picker opens (and again after a state set).
+        #[serde(skip)]
+        rows: Vec<VaultRow>,
+        sel: usize,
+        naming: Option<LineInput>,
+    },
     /// `:history` / `space g h`: the places, newest first (navigation.md §7.5). `sel` counts
     /// from the newest.
     History { sel: usize },
@@ -241,7 +252,7 @@ pub struct Recipe {
 }
 
 /// A row of the vault picker.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq)]
 pub struct VaultRow {
     pub name: String,
     pub path: std::path::PathBuf,
@@ -263,7 +274,8 @@ pub enum Go {
 }
 
 /// An in-place update (tui-editor.md §11).
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "kind", content = "detail", rename_all = "snake_case")]
 pub enum UpdateState {
     Idle,
     /// `thc update` running in the background.
@@ -271,7 +283,8 @@ pub enum UpdateState {
     Failed(String),
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum ToastKind {
     Confirm,
     Agent,
@@ -283,21 +296,18 @@ pub enum ToastKind {
     Notice,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Toast {
     pub kind: ToastKind,
     /// (text, token) pieces
     pub parts: Vec<(String, Token)>,
-    pub at: Instant,
+    /// When it appeared (logical ms, UiState::now_ms).
+    pub at: u64,
 }
 
 impl Toast {
-    pub fn alive(&self) -> bool {
-        self.alive_at(Instant::now())
-    }
-
-    pub fn alive_at(&self, now: Instant) -> bool {
-        let age = now.saturating_duration_since(self.at);
+    pub fn alive_at(&self, now_ms: u64) -> bool {
+        let age = std::time::Duration::from_millis(now_ms.saturating_sub(self.at));
         match self.kind {
             ToastKind::Error => true,
             ToastKind::Alert => age.as_secs() < 8,
@@ -307,7 +317,8 @@ impl Toast {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Focus {
     List,
     Detail,
@@ -323,10 +334,11 @@ struct RowProjection {
 }
 
 pub struct App {
+    /// Every presentation choice, serializable (ui_state.rs). `App` derefs to it, so
+    /// `app.view` reads `app.ui.view`.
+    pub ui: crate::ui_state::UiState,
     pub vault: Vault,
     pub theme: crate::theme::Theme,
-    /// The vault's name, for the header (vaults.md §8).
-    pub vault_name: String,
     /// Whether this is the home vault (the crumb names the others).
     pub vault_home: bool,
     /// The vault picker asked to switch to this vault (the loop does it between frames).
@@ -334,8 +346,6 @@ pub struct App {
     /// With `switch_to`: the node to open there, and the vault Esc comes back to (vaults.md §3.5).
     pub switch_focus: Option<String>,
     pub switch_return: Option<std::path::PathBuf>,
-    /// Entered from a cross-vault view: Esc from the document goes back to this vault.
-    pub return_vault: Option<std::path::PathBuf>,
     /// The other registered vaults, read by the cross-vault views (Today, Agenda).
     pub others: Vec<OtherVault>,
     /// Rows on screen from another vault: row index → index in `others`. By position, not id:
@@ -345,153 +355,52 @@ pub struct App {
     pub last_write_vault: Option<usize>,
     /// The next write goes to `others[i]` (a routed undo).
     pub route_next: Option<usize>,
-    /// `space t v`: Today in a section per vault instead of merged.
-    pub today_by_vault: bool,
     /// Where the caret was in each document (this device): crate::doc_app::Carets.
     pub carets: crate::doc_app::Carets,
     /// The other vaults' (open, inbox, overdue), summed.
     pub others_counts: (usize, usize, usize),
-    pub view: View,
     pub rows: Vec<Row>,
-    pub cursor: usize,
-    pub scroll: usize,
-    pub selected: Option<String>,
-    pub today: NaiveDate,
-    pub tasks_filter: String,
     pub tasks_ms: f64,
     /// The Tasks filter's `group:` (the table blanks a `where` that repeats its heading).
     pub tasks_group: Option<String>,
-    /// The row being edited in place, if any (tui-handoff §10).
-    pub edit: Option<Edit>,
-    /// IDs on page and Journal outline rows (§10.5): hidden by default, `.` toggles.
-    pub page_ids: bool,
     /// Notes written as paragraphs (`style = "para"`, §10.8), refreshed on reload.
     pub para_ids: std::collections::HashSet<String>,
     /// (message, bad token, suggested replacement token)
     pub tasks_error: Option<(String, String, Option<String>)>,
     tasks_last_good: Vec<Row>,
     pub search_ms: f64,
-    /// The focused input hasn't been edited since it was focused (digits pick saved filters).
-    pub input_untouched: bool,
-    pub log_actor: Option<String>,
-    pub recent_cmds: Vec<String>,
     /// Saved views (views.md §1.3): the Tasks saved row and palette `view:` entries.
     pub saved_views: Vec<thc_core::views::View>,
     /// The context (views.md §2), resolved at start; `C` turns it off and on for this session.
     pub context: Option<thc_core::context::Context>,
-    pub context_on: bool,
     context_active: Option<thc_core::context::Active>,
     /// Rows the context hid in the current view, and each section's total before filtering.
     pub context_hidden: usize,
     pub section_totals: HashMap<String, usize>,
-    pub search_terms: String,
-    pub pages_filter: String,
-    pub page_open: Option<String>,
-    pub journal_date: NaiveDate,
-    pub agenda_mode: bool,
-    pub show_all_done: bool,
-    pub log_node: Option<String>,
-    /// Log shows only agent transactions waiting for review (agents.md §1.6).
-    pub review_lane: bool,
     pub to_review: usize,
-    pub collapsed: HashSet<String>,
-    pub prompt: Option<(PromptKind, LineInput)>,
-    pub awaiting: Option<(char, String)>,
-    pub overlay: Option<Overlay>,
-    pub toast: Option<Toast>,
-    /// node id -> (when, changed by an agent)
-    pub flashes: HashMap<String, (Instant, bool)>,
-    pub show_detail: bool,
-    pub focus: Focus,
-    /// A key sequence in progress (`g`, `p`, `S`): keymap.rs dispatch.
-    pub pending_keys: Vec<crate::keymap::Key>,
-    /// When the pending prefix started (the which-key popup's delay).
-    pub pending_since: Option<Instant>,
-    /// Documents opened this session, most recent first: the empty ⌃O finder offers them, the
-    /// previous one preselected, so ⌃O Enter goes back.
-    pub recent_docs: Vec<crate::editor::Target>,
     pub quit: bool,
     pub editor_request: Option<String>,
     /// `:mouse on|off` asked for capture to change; the event loop applies it (mouse.md §2).
     pub mouse_request: Option<bool>,
     /// The open document (a journal day, an open page): tui-editor.md.
     pub doc: Option<crate::editor::Doc>,
-    /// Write (typing) or Navigate (single-key commands) inside the document.
-    pub doc_write: bool,
     /// The journal opened with no day ever written: the footer says `just type`.
     pub doc_first_ever: bool,
-    /// `⌥X isn't a writing key` is said once.
-    pub write_alt_hint: bool,
-    /// The document was just arrived at and nothing's been written or moved yet
-    /// (navigation.md §6.1): Tab and ⇧Tab change views; any other key starts writing.
-    pub doc_parked: bool,
-    /// A document opened from inside another (⌃O on an issue's line, a followed link): the
-    /// document Esc goes back to, the line to put the caret on there, and the page it was opened
-    /// for (Esc from anywhere else ignores it).
-    pub doc_back: Option<(crate::editor::Target, String, String)>,
-    /// A drop just attached: (its line's id, the pasted text, the undo depth then). The
-    /// next ⌃Z, if nothing happened since, turns it back into that text.
-    pub last_drop: Option<(String, String, usize)>,
     /// A ⌘ key has arrived from this terminal (now or in an earlier session: <cache>/cmd-seen,
     /// per TERM_PROGRAM and version), so ⌘ keys are known to reach thc (keymap.md §7.0).
     pub cmd_seen: bool,
     /// Terminal images drawn last (and overlay coverage), reconciled with RenderOutput.
     pub images_drawn: (Vec<crate::images::Place>, bool),
-    /// The pointer, when hover (1003) reports it.
-    pub hover: Option<(u16, u16)>,
-    /// Dragging the scrollbar's thumb.
-    pub scroll_drag: bool,
-    /// The wheel moved the view: it stays put until a key brings the caret back (mouse.md §4).
-    pub doc_scroll_free: bool,
-    /// Where a drag started (line, byte).
-    pub drag_from: Option<crate::editor::BlockPos>,
-    /// Navigation history, ⌘[ / ⌘] (history.rs).
-    pub history: crate::history::History,
     /// A history step into another vault: restored once the TUI has reopened there.
     pub hist_pending: Option<crate::history::Place>,
-    /// This device's scope for a view, overriding its stored one (view-explain.md §2): by view.
-    pub scope_override: HashMap<String, String>,
-    /// A plain click landed on a link's title: it's followed on release, unless it became a
-    /// drag (mouse.md §2, editing.md E63).
-    pub click_link: Option<crate::editor::BlockPos>,
-    /// The last left press: when, where and how many in a row (double and triple click).
-    pub last_click: Option<(std::time::Instant, u16, u16, u8)>,
-    /// A new link close to an existing page (writing.md §5): (line id, typed, existing, stub
-    /// id once saved, since). ⌃O while it shows rewrites the link.
-    pub near_miss: Option<(String, String, String, Option<String>, std::time::Instant)>,
     /// The terminal speaks the kitty keyboard protocol (⌥ arrives as Alt there).
     pub kitty: bool,
-    /// A version you haven't opened About on (about.md §3): the footer says `· new`.
-    pub about_new: bool,
-    /// `turn on "Option as Meta"` is said once.
-    pub meta_hint: bool,
-    /// The caret's line when last looked at (leaving it saves).
-    pub doc_line_id: Option<String>,
-    /// ⌥V: the next paste is plain text (no Markdown read).
-    pub paste_plain: bool,
-    /// Focus (tui-editor.md §8): no tabs, bar or meta; the column centred.
-    pub focus_mode: bool,
     /// Under the document: `also today` (today's journal) or `linked from` (a page).
     pub doc_footer: Option<(String, Vec<crate::doc_app::FooterRow>)>,
-    /// The `[[` popup's selected row (None: no cursor yet, e.g. only `+ new page`).
-    pub link_sel: Option<usize>,
-    /// The `[[` popup is open.
-    pub link_open: bool,
     /// The writer thread (saves through the daemon while it's live, so typing never waits).
     pub doc_saver: Option<crate::doc_app::Saver>,
-    /// Navigate's line selection (`V`): the line it started on.
-    pub doc_vsel: Option<usize>,
-    /// Navigate's cursor in the footer (`also today` / `linked from`), past the last line.
-    pub doc_footer_cur: Option<usize>,
     /// `[tui]` settings from ~/.config/thought/config.toml.
     pub tui_prefs: TuiPrefs,
-    /// What Focus shows this session: `[tui.focus]`, then live `:focus` changes.
-    pub focus_cfg: thc_core::tui_config::Focus,
-    /// `footer off · :focus to change` is said once.
-    pub focus_hint_shown: bool,
-    /// A remote change landed on the caret's line (or an edited one): Some(edited). The poll
-    /// that found it says so in §9's words, with who.
-    pub doc_announce: Option<bool>,
     /// A save waiting for the frame to be drawn first (leaving a line offline).
     pub doc_save_after_frame: bool,
     /// A newer thc the last release check found (the bar's `update 0.7.1 · :update`).
@@ -506,7 +415,6 @@ pub struct App {
     /// a vault made, renamed or removed elsewhere shows up live.
     registry_sig: String,
     registry_checked: std::time::Instant,
-    pub update_state: UpdateState,
     /// The background `thc update`'s result: Ok(new version) or Err(reason).
     pub update_rx: Option<std::sync::mpsc::Receiver<Result<String, String>>>,
     /// Set when the new binary is in place: the loop saves where we are and re-execs it.
@@ -515,20 +423,12 @@ pub struct App {
     pub open_count: usize,
     pub overdue_count: usize,
     pub conflicts: Vec<(i64, String, String, Option<String>)>,
-    pub recent_moves: Vec<MoveTarget>,
     pub(crate) log_sizes: Vec<(String, u64)>,
     /// Transactions the daemon pushed that came from elsewhere, not shown yet (live mode: the
     /// daemon catches up, so this vault's news never sees them).
     pub(crate) live_txs: Vec<String>,
-    /// The page last opened: where the Pages list's cursor rests (navigation.md §1).
-    pub last_page: Option<String>,
     /// The rail beside the open document (navigation.md §3), rebuilt with it.
     pub rail: Vec<RailItem>,
-    /// The rail's page order as computed on arrival from a view (navigation.md §8): frozen
-    /// while you go document to document; None recomputes it.
-    pub rail_frozen: Option<Vec<String>>,
-    /// The list view (and row) the open document was reached from; None: Today.
-    pub doc_origin: Option<(View, Option<String>)>,
     /// The daemon said something changed that has no transaction (a conflict): refresh.
     pub(crate) live_dirty: bool,
     last_agent_tx: Option<String>,
@@ -539,9 +439,19 @@ pub struct App {
     pub derived: crate::derived::Derived,
     pub live_rx: Option<std::sync::mpsc::Receiver<crate::live::LiveMsg>>,
     pub daemon_live: bool,
-    offline_toast_shown: bool,
-    /// Node the alert toast refers to (x / z / Z act on it).
-    pub alert_toast_node: Option<String>,
+}
+
+impl std::ops::Deref for App {
+    type Target = crate::ui_state::UiState;
+    fn deref(&self) -> &crate::ui_state::UiState {
+        &self.ui
+    }
+}
+
+impl std::ops::DerefMut for App {
+    fn deref_mut(&mut self) -> &mut crate::ui_state::UiState {
+        &mut self.ui
+    }
 }
 
 pub struct PaletteItem {
@@ -649,11 +559,11 @@ fn scopes_file(cache: &std::path::Path) -> std::path::PathBuf {
     cache.parent().unwrap_or(cache).join("scopes.json")
 }
 
-fn load_scopes(cache: &std::path::Path) -> HashMap<String, String> {
+fn load_scopes(cache: &std::path::Path) -> std::collections::BTreeMap<String, String> {
     std::fs::read(scopes_file(cache)).ok().and_then(|b| serde_json::from_slice(&b).ok()).unwrap_or_default()
 }
 
-fn save_scopes(cache: &std::path::Path, s: &HashMap<String, String>) {
+fn save_scopes(cache: &std::path::Path, s: &std::collections::BTreeMap<String, String>) {
     if let Ok(b) = serde_json::to_vec(s) {
         let _ = std::fs::write(scopes_file(cache), b);
     }
@@ -744,46 +654,22 @@ impl App {
             let real = vault.origin.as_ref().map_or(&vault.paths.vault, |o| &o.vault);
             (reg.name_for(real), reg.vaults.is_empty() || reg.is_home(real))
         };
-        let mut app = App {
-            vault,
-            theme: crate::theme::Theme::detect(),
-            vault_name,
-            vault_home,
-            switch_to: None,
-            switch_focus: None,
-            switch_return: None,
+        let ui = crate::ui_state::UiState {
+            vault_name: vault_name,
             return_vault: None,
-            others,
-            row_vault: HashMap::new(),
-            last_write_vault: None,
-            route_next: None,
             today_by_vault: false,
-            carets: crate::doc_app::load_carets(&vault_cache),
-            others_counts: (0, 0, 0),
             view: View::Today,
-            rows: vec![],
             cursor: 0,
             scroll: 0,
             selected: None,
-            today,
+            today: today,
             tasks_filter: "status:open sort:due".into(),
-            tasks_ms: 0.0,
-            tasks_group: None,
             edit: None,
             page_ids: false,
-            para_ids: Default::default(),
-            tasks_error: None,
-            tasks_last_good: vec![],
-            search_ms: 0.0,
             input_untouched: false,
             log_actor: None,
             recent_cmds: vec![],
-            saved_views: vec![],
-            context: initial_context,
             context_on: true,
-            context_active: None,
-            context_hidden: 0,
-            section_totals: HashMap::new(),
             search_terms: String::new(),
             pages_filter: String::new(),
             page_open: None,
@@ -792,47 +678,93 @@ impl App {
             show_all_done: false,
             log_node: None,
             review_lane: false,
-            to_review: 0,
-            collapsed: HashSet::new(),
+            collapsed: Default::default(),
             prompt: None,
             awaiting: None,
             overlay: None,
             toast: None,
-            doc: None,
             doc_write: false,
             doc_line_id: None,
             paste_plain: false,
             focus_mode: false,
-            doc_footer: None,
             link_sel: None,
             link_open: false,
-            doc_saver: None,
             doc_vsel: None,
             doc_footer_cur: None,
-            tui_prefs: prefs.clone(),
             focus_cfg: prefs.focus,
             focus_hint_shown: false,
-            doc_first_ever: false,
             write_alt_hint: false,
             doc_parked: false,
             doc_back: None,
             last_drop: None,
-            cmd_seen: crate::keymap::cmd_seen_cached(&vault_cache),
-            images_drawn: (Vec::new(), false),
             hover: None,
             scroll_drag: false,
             doc_scroll_free: false,
             drag_from: None,
-            history,
-            hist_pending: None,
+            history: history,
             scope_override: load_scopes(&vault_cache),
             click_link: None,
             last_click: None,
             near_miss: None,
-            kitty: false,
             about_new: false,
             meta_hint: false,
             doc_announce: None,
+            update_state: UpdateState::Idle,
+            flashes: Default::default(),
+            show_detail: true,
+            focus: Focus::List,
+            pending_keys: Vec::new(),
+            pending_since: None,
+            recent_docs: Vec::new(),
+            recent_moves: vec![],
+            last_page: None,
+            rail_frozen: None,
+            doc_origin: None,
+            offline_toast_shown: false,
+            alert_toast_node: None,
+            ..Default::default()
+        };
+        let mut ui = ui;
+        {
+            let (now_ms, offset) = crate::runtime_effects::wall_clock();
+            ui.tick(now_ms, offset);
+        }
+        let mut app = App {
+            ui,
+            vault,
+            theme: crate::theme::Theme::detect(),
+            vault_home,
+            switch_to: None,
+            switch_focus: None,
+            switch_return: None,
+            others,
+            row_vault: HashMap::new(),
+            last_write_vault: None,
+            route_next: None,
+            carets: crate::doc_app::load_carets(&vault_cache),
+            others_counts: (0, 0, 0),
+            rows: vec![],
+            tasks_ms: 0.0,
+            tasks_group: None,
+            para_ids: Default::default(),
+            tasks_error: None,
+            tasks_last_good: vec![],
+            search_ms: 0.0,
+            saved_views: vec![],
+            context: initial_context,
+            context_active: None,
+            context_hidden: 0,
+            section_totals: HashMap::new(),
+            to_review: 0,
+            doc: None,
+            doc_footer: None,
+            doc_saver: None,
+            tui_prefs: prefs.clone(),
+            doc_first_ever: false,
+            cmd_seen: crate::keymap::cmd_seen_cached(&vault_cache),
+            images_drawn: (Vec::new(), false),
+            hist_pending: None,
+            kitty: false,
             doc_save_after_frame: false,
             update_available: thc_core::release::available(env!("CARGO_PKG_VERSION")),
             installed: None,
@@ -840,15 +772,8 @@ impl App {
             exe_checked: std::time::Instant::now(),
             registry_sig: registry_sig(&thc_core::registry::Registry::load()),
             registry_checked: std::time::Instant::now(),
-            update_state: UpdateState::Idle,
             update_rx: None,
             reexec: false,
-            flashes: HashMap::new(),
-            show_detail: true,
-            focus: Focus::List,
-            pending_keys: Vec::new(),
-            pending_since: None,
-            recent_docs: Vec::new(),
             quit: false,
             editor_request: None,
             mouse_request: None,
@@ -856,13 +781,9 @@ impl App {
             open_count: 0,
             overdue_count: 0,
             conflicts: vec![],
-            recent_moves: vec![],
             log_sizes,
             live_txs: Vec::new(),
-            last_page: None,
             rail: Vec::new(),
-            rail_frozen: None,
-            doc_origin: None,
             live_dirty: false,
             last_agent_tx: None,
             screen_width: 80,
@@ -870,8 +791,6 @@ impl App {
             derived: crate::derived::Derived::new(),
             live_rx: None,
             daemon_live: false,
-            offline_toast_shown: false,
-            alert_toast_node: None,
         };
         app.load_page_ids();
         if !deferred {
@@ -885,7 +804,8 @@ impl App {
     // ---- toasts --------------------------------------------------------------------------------
 
     pub fn toast_parts(&mut self, kind: ToastKind, parts: Vec<(String, Token)>) {
-        self.toast = Some(Toast { kind, parts, at: Instant::now() });
+        let at = self.ui.now_ms;
+        self.ui.toast = Some(Toast { kind, parts, at });
     }
 
     /// Focus on or off (⌥Z, F, `thc j`, `:focus`). The first time it opens with the keys
@@ -1218,7 +1138,6 @@ impl App {
     }
 
     pub fn reload(&mut self) -> Result<()> {
-        self.today = dates::today();
         // The other vaults' changes (their logs, a few stat calls when nothing moved).
         for o in self.others.iter_mut() {
             let _ = o.vault.catch_up();
@@ -1249,7 +1168,8 @@ impl App {
         self.context_hidden = 0;
         self.section_totals.clear();
         self.to_review = thc_core::review::pending_count(s).unwrap_or(0);
-        self.flashes.retain(|_, (at, _)| at.elapsed().as_secs() < 3);
+        let now = self.ui.now_ms;
+        self.ui.flashes.retain(|_, (at, _)| now.saturating_sub(*at) < 3000);
         // Which vault the selected row came from, before the rows (and their tags) are rebuilt:
         // two vaults' rows may share an id, and the cursor stays on the one it was on.
         let was_from = self.rows.get(self.cursor).filter(|r| r.key() == self.selected).map(|_| self.row_from(self.cursor));
@@ -3064,7 +2984,7 @@ impl App {
         } else {
             None
         };
-        let from_toast = self.toast.as_ref().filter(|t| t.kind == ToastKind::Agent && t.alive()).and(self.last_agent_tx.clone());
+        let from_toast = self.toast.as_ref().filter(|t| t.kind == ToastKind::Agent && t.alive_at(self.ui.now_ms)).and(self.last_agent_tx.clone());
         // The last write went to another vault (a row from it): undo there (vaults.md §3.5).
         if from_log.is_none() && from_toast.is_none() {
             if let Some(i) = self.last_write_vault.filter(|i| *i < self.others.len()) {
@@ -3786,7 +3706,8 @@ impl App {
         };
         self.alert_toast_node = node.clone();
         if let Some(n) = node {
-            self.flashes.insert(n, (Instant::now(), false));
+            let at = self.ui.now_ms;
+            self.ui.flashes.insert(n, (at, false));
         }
         self.toast_parts(ToastKind::Alert, vec![(format!("{} ", g.alert), Token::Overdue), (text, Token::Text)]);
         let _ = self.reload();
@@ -3842,7 +3763,7 @@ impl App {
             "eid IN (SELECT value FROM json_each(?1)) OR tx IN (SELECT value FROM json_each(?2)) ORDER BY okey",
             &[&serde_json::to_string(&eids)?, &serde_json::to_string(&txs)?],
         )?;
-        let now = Instant::now();
+        let now = self.ui.now_ms;
         for e in &fresh {
             if e.entity.len() == 12 {
                 self.flashes.insert(e.entity.clone(), (now, e.actor.starts_with("agent")));

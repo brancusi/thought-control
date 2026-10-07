@@ -120,7 +120,8 @@ impl El {
     }
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
 pub enum Preset {
     Bare,
     Writer,
@@ -163,7 +164,8 @@ impl Preset {
 }
 
 /// Which elements are on.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(transparent)]
 pub struct FocusSet(u16);
 
 impl FocusSet {
@@ -178,7 +180,7 @@ impl FocusSet {
 
 /// What Focus shows: a preset, the elements as they stand (preset plus overrides) and a
 /// text column width when one was set (else the preset's).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct Focus {
     pub preset: Preset,
     pub set: FocusSet,

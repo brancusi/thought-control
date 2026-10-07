@@ -124,6 +124,39 @@ impl Key {
     }
 }
 
+impl Key {
+    /// The key in the notation `parse` reads (`x`, `X`, `space`, `C-t`, `A-up`, `S-tab`,
+    /// `Cmd-c`, `f1`): `Key::parse(&k.notation()) == Some(k)`.
+    pub fn notation(&self) -> String {
+        let mut s = String::new();
+        for (m, p) in [(KeyModifiers::CONTROL, "C-"), (KeyModifiers::ALT, "A-"), (KeyModifiers::SHIFT, "S-"), (KeyModifiers::SUPER, "Cmd-")] {
+            if self.mods.contains(m) {
+                s.push_str(p);
+            }
+        }
+        s.push_str(&match self.code {
+            KeyCode::Char(' ') => "space".into(),
+            KeyCode::Char(c) => c.to_string(),
+            KeyCode::Enter => "enter".into(),
+            KeyCode::Esc => "esc".into(),
+            KeyCode::Tab => "tab".into(),
+            KeyCode::Backspace => "backspace".into(),
+            KeyCode::Delete => "delete".into(),
+            KeyCode::Up => "up".into(),
+            KeyCode::Down => "down".into(),
+            KeyCode::Left => "left".into(),
+            KeyCode::Right => "right".into(),
+            KeyCode::Home => "home".into(),
+            KeyCode::End => "end".into(),
+            KeyCode::PageUp => "pageup".into(),
+            KeyCode::PageDown => "pagedown".into(),
+            KeyCode::F(n) => format!("f{n}"),
+            other => format!("{other:?}").to_lowercase(),
+        });
+        s
+    }
+}
+
 /// A key sequence (`g g`, `p h`) or a single key.
 pub fn parse_seq(s: &str) -> Option<Vec<Key>> {
     s.split(' ').filter(|t| !t.is_empty()).map(Key::parse).collect()
@@ -752,7 +785,7 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
     if app.prompt.as_ref().is_some_and(|(k, _)| !k.inline()) {
         return vec![Ctx::Prompt];
     }
-    if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(app.derived.now)) {
+    if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(app.ui.now_ms)) {
         match t.kind {
             ToastKind::Alert => return vec![Ctx::ToastAlert],
             ToastKind::Agent => return vec![Ctx::ToastAgent],
@@ -970,10 +1003,10 @@ pub fn remap(mut t: Vec<Binding>, keys: Option<&toml::Table>) -> (Vec<Binding>, 
 
 /// The active contexts outside documents and overlays, top first (§2.1).
 pub fn stack(app: &App) -> Vec<Ctx> {
-    stack_at(app, std::time::Instant::now())
+    stack_at(app, app.ui.now_ms)
 }
 
-fn stack_at(app: &App, now: std::time::Instant) -> Vec<Ctx> {
+fn stack_at(app: &App, now: u64) -> Vec<Ctx> {
     let mut s = Vec::with_capacity(5);
     if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(now)) {
         match t.kind {
@@ -1053,7 +1086,7 @@ pub fn dispatch(app: &mut App, k: &KeyEvent) {
 /// A prefix is pending: the footer shows its breadcrumb and what can follow (§6).
 pub fn start_prefix(app: &mut App, seq: Vec<Key>) {
     if app.pending_keys.is_empty() || app.pending_since.is_none() {
-        app.pending_since = Some(std::time::Instant::now());
+        app.ui.pending_since = Some(app.ui.now_ms);
     }
     app.pending_keys = seq;
 }
@@ -1082,16 +1115,16 @@ pub fn group_name(seq: &[Key]) -> Option<&'static str> {
 /// Whether the which-key popup shows now (§5.1): the leader's at once (unless the config says
 /// otherwise), a prefix's after `which_key_ms`.
 pub fn popup_due(app: &App) -> bool {
-    popup_due_at(app, std::time::Instant::now())
+    popup_due_at(app, app.ui.now_ms)
 }
 
-pub(crate) fn popup_due_at(app: &App, now: std::time::Instant) -> bool {
+pub(crate) fn popup_due_at(app: &App, now: u64) -> bool {
     use thc_core::tui_config::LeaderPopup;
     if app.pending_keys.is_empty() {
         return false;
     }
     let ms = app.tui_prefs.which_key_ms;
-    let waited = |ms: i64| ms >= 0 && app.pending_since.is_some_and(|t| now.saturating_duration_since(t).as_millis() as i64 >= ms);
+    let waited = |ms: i64| ms >= 0 && app.pending_since.is_some_and(|t| now.saturating_sub(t) as i64 >= ms);
     if is_leader(&app.pending_keys) {
         match app.tui_prefs.leader_popup {
             LeaderPopup::Immediate => true,
@@ -1109,7 +1142,7 @@ pub fn popup_wait(app: &App) -> Option<std::time::Duration> {
     if app.pending_keys.is_empty() || popup_due(app) || app.tui_prefs.which_key_ms < 0 {
         return None;
     }
-    Some(std::time::Duration::from_millis(app.tui_prefs.which_key_ms as u64).saturating_sub(since.elapsed()))
+    Some(std::time::Duration::from_millis(app.tui_prefs.which_key_ms as u64).saturating_sub(app.ui.age(since)))
 }
 
 /// The footer while a prefix is pending (§6, §5.1): `space g…` and what can follow, groups
@@ -1123,7 +1156,7 @@ pub fn prefix_footer(app: &App) -> Option<(String, Vec<Hint>)> {
 
 /// What can follow a pending prefix: one hint per next key, groups (`+find`) before leaves.
 pub fn continuations(app: &App, seq: &[Key]) -> Vec<Hint> {
-    let ctxs = stack_at(app, app.derived.now);
+    let ctxs = stack_at(app, app.ui.now_ms);
     let mut groups: Vec<Hint> = Vec::new();
     let mut leaves: Vec<Hint> = Vec::new();
     for &c in &ctxs {

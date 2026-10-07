@@ -1,6 +1,6 @@
 ---
 title: Themes
-blurb: Ember, dark or light, in truecolor, 256 or 16 colours. ASCII if you like.
+blurb: Ember, or redacted and newsprint; dark or light, in truecolor, 256 or 16 colours. ASCII if you like.
 icon: theme
 order: 15
 ---
@@ -12,9 +12,11 @@ thc is square, dense and monospaced, with one accent colour. It looks right in w
 | `ember-dark` | The default: warm dark, truecolor |
 | `ember-light` | Warm paper, truecolor |
 | `ember-dark-256`, `ember-light-256` | The full palette in 256 colours (Terminal.app, tmux, SSH) |
+| `redacted` | The Thought Control look: ink, newsprint and one acid accent. The frames on this site use it |
+| `newsprint` | The same, light: ink on paper |
 | `ansi` | Your terminal's own 16 colours: its palette decides the hues |
 
-- **Picked for you.** Truecolor when `COLORTERM` says so, otherwise 256 colours. `THC_THEME=ember-light` (or any name above) chooses.
+- **Picked for you.** Truecolor when `COLORTERM` says so, otherwise 256 colours. `THC_THEME=ember-light` (or any name above) chooses, or `[theme] theme = "redacted"` in your settings.
 - **`NO_COLOR`** strips colours and keeps bold, dim and reverse. The CLI drops colour on its own when output isn't a terminal.
 - **`THC_GLYPHS=ascii`** swaps box drawing and symbols for plain ASCII, for fonts and terminals that need it.
 - **An accent per vault:** ember at home; rose, sea, iris or graphite elsewhere. Set it in the vault's `settings.toml`:

@@ -1,6 +1,6 @@
 # Architecture
 
-caretline-next is an Elm architecture around Helix's editing core. This page explains the
+caretline is an Elm architecture around Helix's editing core. This page explains the
 pieces, why they're pure, and how that makes every session reproducible.
 
 ## The pieces
@@ -326,7 +326,7 @@ time (outside `update`, as for keys), so the trace still replays exactly.
 ## Helix inside State
 
 The vendored Helix files live in
-[`crates/caretline-next/src/helix`](../../crates/caretline-next/src/helix). Here is how they
+[`crates/caretline/src/helix`](../../crates/caretline/src/helix). Here is how they
 map into caretline.
 
 | Helix | In caretline | How it's used |
@@ -341,7 +341,7 @@ map into caretline.
 | `LineEnding` | `Config.line_ending` | Detected from the text on load. Enter inserts it and pasted text is normalized to it |
 
 What changed from upstream Helix is listed in
-[`src/helix/README.md`](../../crates/caretline-next/src/helix/README.md): module paths, no
+[`src/helix/README.md`](../../crates/caretline/src/helix/README.md): module paths, no
 tree-sitter or regex, caller-supplied timestamps, serde derives, and resuming the formatter
 at a row.
 

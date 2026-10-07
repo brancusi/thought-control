@@ -5,7 +5,7 @@ use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::UnixStream;
 use std::time::{Duration, Instant};
 
-use caretline_next::{By, Dir, Msg, Session, State, Viewport};
+use caretline::{By, Dir, Msg, Session, State, Viewport};
 
 use crate::hub;
 

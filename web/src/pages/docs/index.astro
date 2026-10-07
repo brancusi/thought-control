@@ -6,7 +6,7 @@ import { u } from '../../lib/url';
 const docs = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
 const icon: Record<string, string> = { Start: 'terminal', Guide: 'book', Reference: 'query' };
 ---
-<Docs title="Docs" description="The guide to thc: install it, write, find things, work with vaults and agents, and every key and query term." slug="">
+<Docs title="Docs" description="The guide to Thought Control (thc): install it, write, find things, work with vaults and agents, and every key and query term." slug="">
   <div class="grid" style="margin-top:2rem">
     {docs.map((d) => (
       <a class="cell" href={u(`docs/${d.id}/`)}><Icon name={icon[d.data.group] ?? 'book'} /><h3>{d.data.title}</h3><p>{d.data.description}</p></a>

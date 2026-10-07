@@ -1,6 +1,13 @@
 {
-  // thc's public site on Cloudflare (static assets). Deploy: npm run build && npx wrangler deploy
+  // Thought Control's public site on Cloudflare (static assets), at thoughtcontrol.app.
+  // Deploy from web/: npm run build && npm run scan && npx wrangler deploy --config ./wrangler.jsonc
+  // The worker keeps its old name, so thought-central.atd-ai.workers.dev keeps serving the same site.
   "name": "thought-central",
   "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "routes": [
+    { "pattern": "thoughtcontrol.app", "custom_domain": true },
+    { "pattern": "www.thoughtcontrol.app", "custom_domain": true }
+  ],
   "assets": { "directory": "./dist", "not_found_handling": "404-page" }
 }

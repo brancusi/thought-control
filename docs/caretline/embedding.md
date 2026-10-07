@@ -21,10 +21,8 @@ caretline is on [crates.io](https://crates.io/crates/caretline): `cargo add care
 caretline = "0.2"
 ```
 
-Its library is `caretline::`. Inside this repository the crate is still named
-`caretline-next` until the older engine is removed; the published crate is the same code. For
-something on `main` that is newer than the latest release, use a git dependency on
-`caretline-next` and import it as `caretline_next::`.
+Its library is `caretline::`; this repository's crate is the same code. For something on
+`main` that is newer than the latest release, use a git dependency on this repository.
 
 The crate has no terminal dependency, so it works
 under any renderer.
@@ -307,7 +305,7 @@ written from Python
 
 | Code | License |
 |---|---|
-| `caretline` (`caretline-next` here), except `src/helix/` | MIT |
+| `caretline`, except `src/helix/` | MIT |
 | its `src/helix/` (vendored from Helix) | MPL-2.0, per file |
 | `caretline-app` | MIT |
 

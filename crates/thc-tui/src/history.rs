@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 
 /// The cap (§7.3): the oldest entries drop.
-const CAP: usize = 100;
+pub(crate) const CAP: usize = 100;
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Place {
@@ -43,7 +43,7 @@ impl Place {
     }
 }
 
-#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct History {
     pub entries: Vec<Place>,
     pub pos: usize,
@@ -114,7 +114,7 @@ impl App {
             caret,
             scroll: self.doc.as_ref().map_or(self.scroll, |d| d.scroll),
             label,
-            ms: chrono::Local::now().timestamp_millis(),
+            ms: self.ui.now_ms as i64,
         }
     }
 

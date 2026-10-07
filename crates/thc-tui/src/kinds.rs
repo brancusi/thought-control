@@ -160,10 +160,10 @@ fn a_kind_change_never_moves_another_line() {
     assert!(fails.is_empty(), "{} kind changes moved other lines; first 3:\n{}", fails.len(), fails.iter().take(3).cloned().collect::<Vec<_>>().join("\n\n"));
 }
 
-/// Every test here, once per engine (the old block engine, then caretline-next).
-mod both_engines {
+/// Every test here.
+mod run {
     #[test]
     fn a_kind_change_never_moves_another_line() {
-        crate::editor::on_both_engines(super::a_kind_change_never_moves_another_line);
+        super::a_kind_change_never_moves_another_line();
     }
 }

@@ -9,9 +9,9 @@ use std::time::{Duration, Instant};
 use std::process::{Command, Stdio};
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use caretline_next::protocol::Change;
-use caretline_next::view::Role;
-use caretline_next::{keymap_for, Effect, Frame, Key, KeyCode, Mods, Msg, Session, State};
+use caretline::protocol::Change;
+use caretline::view::Role;
+use caretline::{keymap_for, Effect, Frame, Key, KeyCode, Mods, Msg, Session, State};
 
 use crate::hub::{self, Hub, Input};
 use crossterm::event::{
@@ -647,7 +647,7 @@ fn draw(terminal: &mut Term, frame: &Frame) -> Result<(), String> {
                     if cell.symbol.is_empty() {
                         continue;
                     }
-                    let w = caretline_next::view::display_width(&cell.symbol).max(1);
+                    let w = caretline::view::display_width(&cell.symbol).max(1);
                     buf.set_stringn(x, y, &cell.symbol, w, style(cell.role));
                 }
             }

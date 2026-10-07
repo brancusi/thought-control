@@ -162,7 +162,7 @@ thread_local! {
 /// Hand back every result the late writer holds; again while a save waited for them.
 pub(crate) fn settle(app: &mut App) {
     for _ in 0..20 {
-        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
         let had = !dones.is_empty();
         WRITER.with(|w| {
             if let Some(w) = w.borrow().as_ref() {
@@ -187,7 +187,7 @@ fn flush(app: &mut App) {
 
 /// The late writer hands back the one result it holds, if any.
 fn settle_one(app: &mut App) {
-    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
     WRITER.with(|w| {
         if let Some(w) = w.borrow().as_ref() {
             for d in dones {
@@ -305,7 +305,6 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
         }
         app.journal_date = app.today;
         app.set_view(View::Journal);
-        assert_eq!(app.doc.as_ref().map(|d| d.engine()), Some(crate::editor::engine_kind()), "the day opens on the engine under test");
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
         for (step, op) in ops.iter().enumerate() {
             // Only the caret moves: the notes' IDs, saved before, must not change.
@@ -326,18 +325,13 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
                     settle_one(&mut app);
                 }
             }
-            // Motion (motion.md §6): never edits (I7), and lands on a stop (I1).
+            // Motion (motion.md §6): never edits (I7). (The engine keeps every caret on a stop,
+            // I1: its own goldens and fuzz check that.)
             if let Some(tb) = texts_before {
-                let ctx = crate::doc_ui::DocContext::from_app(&app);
-                if let Some(d) = app.doc.as_mut() {
+                if let Some(d) = app.doc.as_ref() {
                     let ta: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).collect();
                     if ta != tb {
                         return Err(format!("step {step}: a motion changed the text: {tb:?} → {ta:?}"));
-                    }
-                    let (sw, detail) = (app.screen_width, app.show_detail);
-                    let caret = d.caret();
-                    if let Some(valid) = d.caret_off_stop(&|l: &crate::editor::Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth)) {
-                        return Err(format!("step {step}: the caret {caret:?} isn't on a stop (valid: {valid:?})"));
                     }
                 }
             }
@@ -391,7 +385,7 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
         app.journal_date = app.today;
         app.set_view(View::Journal);
         let again: Vec<(String, Note)> = buffer_notes(&app).into_iter().filter(|(id, _)| !skip.contains(id)).collect();
-        // caretline-next reads each note's text as Markdown: one whose saved text starts with a
+        // caretline reads each note's text as Markdown: one whose saved text starts with a
         // list or task marker reads back as that kind (the plan's R8, accepted). Compare what
         // the text means.
         let buf: Vec<(String, Note)> = buf.into_iter().map(|(id, n)| (id, crate::editor::read_back(n))).collect();
@@ -967,57 +961,57 @@ fn sync_sibling_order_after_concurrent_moves() {
     }
 }
 
-/// Every test here, once per engine (the old block engine, then caretline-next).
-mod both_engines {
+/// Every test here.
+mod run {
     #[test]
     fn fuzz_the_editor_keeps_the_vault_equal_to_the_buffer() {
-        crate::editor::on_both_engines(super::fuzz_the_editor_keeps_the_vault_equal_to_the_buffer);
+        super::fuzz_the_editor_keeps_the_vault_equal_to_the_buffer();
     }
 
     #[test]
     fn fuzz_regressions() {
-        crate::editor::on_both_engines(super::fuzz_regressions);
+        super::fuzz_regressions();
     }
 
     #[test]
     fn late_saves_never_roll_back_what_came_after() {
-        crate::editor::on_both_engines(super::late_saves_never_roll_back_what_came_after);
+        super::late_saves_never_roll_back_what_came_after();
     }
 
     #[test]
     fn late_task_cycles_complete_saved_plain_lines() {
-        crate::editor::on_both_engines(super::late_task_cycles_complete_saved_plain_lines);
+        super::late_task_cycles_complete_saved_plain_lines();
     }
 
     #[test]
     fn fuzz_with_late_saves() {
-        crate::editor::on_both_engines(super::fuzz_with_late_saves);
+        super::fuzz_with_late_saves();
     }
 
     #[test]
     fn fuzz_two_devices_converge() {
-        crate::editor::on_both_engines(super::fuzz_two_devices_converge);
+        super::fuzz_two_devices_converge();
     }
 
     #[test]
     fn sync_regressions() {
-        crate::editor::on_both_engines(super::sync_regressions);
+        super::sync_regressions();
     }
 
     #[test]
     fn sync_orphan_under_concurrent_delete() {
-        crate::editor::on_both_engines(super::sync_orphan_under_concurrent_delete);
+        super::sync_orphan_under_concurrent_delete();
     }
 
     #[test]
     #[ignore]
     fn sync_sibling_order_after_concurrent_moves() {
-        crate::editor::on_both_engines(super::sync_sibling_order_after_concurrent_moves);
+        super::sync_sibling_order_after_concurrent_moves();
     }
 }
 
 
-/// Cases the long soak found (THC_FUZZ_CASES=400 THC_FUZZ_OPS=150), kept on both engines.
+/// Cases the long soak found (THC_FUZZ_CASES=400 THC_FUZZ_OPS=150).
 #[cfg(test)]
 mod soak_found {
     use super::Op::*;
@@ -1033,7 +1027,7 @@ mod soak_found {
     }
 
     /// A bullet whose saved text starts with a task box reads back as a task on
-    /// caretline-next (R8): what it means is the same.
+    /// caretline (R8): what it means is the same.
     fn a_bullet_saved_as_a_box_reads_back_as_a_task() {
         let ops = vec![Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Enter, Op::Paste("- [x] done item"), Op::Enter, Op::Type("漢字"), Op::Undo, Op::Undo, Op::TaskCycle, Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Tab, Op::Click(33, 15), Op::Tab, Op::Paste("- [x] done item"), Op::MoveLine(false), Op::Tab, Op::Click(19, 16), Op::Enter, Op::Bs];
         if let Err(e) = run(&ops, 4, "soak108") {
@@ -1043,11 +1037,11 @@ mod soak_found {
 
     #[test]
     fn late_move_and_edit_in_one_save_keeps_the_typing() {
-        crate::editor::on_both_engines(late_move_and_edit_in_one_save);
+        late_move_and_edit_in_one_save();
     }
 
     #[test]
     fn a_bullet_saved_as_a_box() {
-        crate::editor::on_both_engines(a_bullet_saved_as_a_box_reads_back_as_a_task);
+        a_bullet_saved_as_a_box_reads_back_as_a_task();
     }
 }

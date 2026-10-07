@@ -1,7 +1,7 @@
 # caretline
 
 caretline is a text-editing engine and a terminal text editor. The engine (the
-[`caretline`](https://crates.io/crates/caretline) crate, `caretline-next` in this repo) puts Helix's editing model (a rope,
+[`caretline`](https://crates.io/crates/caretline) crate) puts Helix's editing model (a rope,
 multi-range selections, transactions, an undo tree, grapheme-correct motion and soft wrap)
 inside a strict Elm architecture. The whole editor is one serializable `State`. Every input
 is a `Msg`. A pure `update` function applies a message and returns `Effect`s for the
@@ -36,6 +36,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | Deterministic replay | Yes | A trace (state + messages) replays to the identical state and frame |
 | Headless snapshots | Yes | `--snapshot WxH` as plain text or ANSI |
 | State protocol (`serve`, `--listen`, `send`) | Yes | Drive a headless engine or a live editor over JSON lines. See [protocol.md](protocol.md) |
+| MCP server for agents | Yes | `caretline-mcp`: an agent edits a live editor alongside a person, with guarded writes, attribution and replay. See [mcp.md](mcp.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
 | Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and several views per document included |
@@ -46,12 +47,13 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 flowchart TB
     rope["ropey: the text as a rope"]
     helix["Helix model (vendored, MPL-2.0)<br/>Selection · Transaction · History · graphemes · DocumentFormatter"]
-    elm["caretline-next<br/>State · Msg · update → Effects · view → Frame · keymap"]
+    elm["caretline<br/>State · Msg · update → Effects · view → Frame · keymap"]
     rope --> helix --> elm
     elm --> tty["Interactive terminal<br/><code>caretline FILE</code>"]
     elm --> cli["Headless CLI<br/><code>--keys --msgs --snapshot --replay</code>"]
     elm --> proto["State protocol<br/><code>serve</code> · <code>--listen</code> · <code>send</code>"]
     elm --> lib["Your program<br/>(Rust library or child process)"]
+    proto --> mcp["MCP server for agents<br/><code>caretline-mcp</code>"]
 ```
 
 The engine owns the editing rules. A runtime owns everything else: the clock, the terminal,
@@ -60,21 +62,19 @@ files and the clipboard.
 ## The crates
 
 caretline is published on crates.io as [`caretline`](https://crates.io/crates/caretline)
-(`cargo add caretline`, imported as `caretline::`). In this repository its crate is still
-named `caretline-next`, until the older engine below is removed.
+(`cargo add caretline`, imported as `caretline::`).
 
 | Crate in this repo | What it is | Used by |
 |---|---|---|
-| [`caretline-next`](../../crates/caretline-next) | caretline: plain text on Helix's model, in the Elm architecture. Published as `caretline`. **This documentation is about it.** | `caretline-app`, and `thc-tui` with `THC_EDITOR=next` |
+| [`caretline`](../../crates/caretline) | caretline: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app`, `thc-tui` |
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
-| [`crates/caretline`](../../crates/caretline) | An older block editor, internal to thought-central's TUI and going away. Not the published crate | `thc-tui` (by default, for now) |
+| [`caretline-mcp`](../../crates/caretline-mcp) | The `caretline-mcp` binary: an [MCP server](mcp.md) for agents | |
 
-caretline now has a block model ([outline documents](outline.md)), folds and multiple views
-per document, and is replacing the older engine in thc's TUI: with `THC_EDITOR=next` the TUI
-opens each page or journal day as one caretline outline document, behind the same editor API
-(`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each block's mark,
-changes from the vault arrive as `external` changes, and saving makes the same block
-operations as before.
+caretline has a block model ([outline documents](outline.md)), folds and multiple views per
+document. thc's TUI opens each page or journal day as one caretline outline document, behind
+its editor API (`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each
+block's mark, changes from the vault arrive as `external` changes, and saving makes block
+operations for the vault.
 
 ## Where to go next
 
@@ -86,13 +86,14 @@ operations as before.
 | Edit lists, tasks and blocks | [outline.md](outline.md) |
 | Use the `caretline` command | [cli.md](cli.md) |
 | Drive it over JSON lines | [protocol.md](protocol.md) |
+| Let an agent edit alongside you (MCP) | [mcp.md](mcp.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |
 | Write or debug a test | [testing.md](testing.md) |
 | Know how fast it is, and its limits | [performance.md](performance.md) |
 
 ## License
 
-caretline (`caretline-next` here) is MIT, except `src/helix/`, which is vendored from
+caretline is MIT, except `src/helix/`, which is vendored from
 [Helix](https://github.com/helix-editor/helix) and stays under the Mozilla Public License 2.0
 file by file. `caretline-app` is MIT. See [embedding.md](embedding.md#licensing) for what
 that means for you.

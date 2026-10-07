@@ -15,6 +15,7 @@ mod detail_snapshot;
 mod clock_snapshot;
 mod input_snapshot;
 mod update;
+pub mod ui_state;
 mod runtime_effects;
 mod data_snapshot;
 mod node_row;
@@ -439,10 +440,10 @@ fn count_clicks(app: &mut App, m: &event::MouseEvent) -> u8 {
         return 1;
     }
     let n = match app.last_click {
-        Some((at, x, y, n)) if at.elapsed() < Duration::from_millis(400) && x.abs_diff(m.column) <= 1 && y.abs_diff(m.row) <= 1 => (n % 3) + 1,
+        Some((at, x, y, n)) if app.ui.now_ms.saturating_sub(at) < 400 && x.abs_diff(m.column) <= 1 && y.abs_diff(m.row) <= 1 => (n % 3) + 1,
         _ => 1,
     };
-    app.last_click = Some((Instant::now(), m.column, m.row, n));
+    app.ui.last_click = Some((app.ui.now_ms, m.column, m.row, n));
     n
 }
 
@@ -508,6 +509,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
                 reload_keys(app);
             }
         }
+        runtime_effects::tick(app);
         app.drain_update();
         // What a crash now would lose, for the panic hook (recover.rs).
         recover::note(app);
@@ -569,7 +571,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
             if id == "@keys" {
                 runtime_effects::dispatch(app, update::Msg::KeysEdited {
                     result: r.map(|msg| msg.unwrap_or_default()).map_err(|e| format!("{e:#}")),
-                    at: Instant::now(),
+                    at: app.ui.now_ms,
                 });
                 keys_watch.changed(&app.vault.paths.vault);
             } else {
@@ -592,6 +594,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
             r => r?,
         };
         if ready {
+            runtime_effects::tick(app);
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {
                 first = false;
@@ -985,6 +988,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
             (KeyCode::Char(c), KeyModifiers::NONE, c.len_utf8())
         };
         let t0 = Instant::now();
+        runtime_effects::tick(&mut app);
         if code != KeyCode::Null {
             input::handle_key(&mut app, KeyEvent { code, modifiers: mods, kind: KeyEventKind::Press, state: KeyEventState::NONE });
         }

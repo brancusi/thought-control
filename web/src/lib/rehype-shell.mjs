@@ -1,6 +1,6 @@
 // Terminal sessions in code blocks, styled the way a terminal shows them: `$ command` lines in
 // ink with a muted prompt, `# comments` dim, and everything else (output) muted. No syntax
-// colours: one ember is enough. Applies to every fenced block (sh, console, text, none).
+// colours: one accent is enough. Applies to every fenced block (sh, console, text, none).
 const text = (node) => (node.type === 'text' ? node.value : (node.children || []).map(text).join(''));
 const span = (cls, children) => ({ type: 'element', tagName: 'span', properties: { className: [cls] }, children });
 const t = (value) => ({ type: 'text', value });

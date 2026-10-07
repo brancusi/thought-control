@@ -685,7 +685,7 @@ impl App {
         }
         let Some(op) = d.plan_idle() else { return };
         let Some(root) = d.root.clone() else { return self.save_doc(false) };
-        let today = self.today;
+        let today = self.ui.today;
         let id = d.caret_block().id.clone();
         let text = d.caret_block().text.clone();
         match self.vault.transact(move |st| outline::plan(st, &root, &[op], today)) {
@@ -707,10 +707,10 @@ impl App {
         self.doc_scroll_free = false;
         let Some(d) = self.doc.as_mut() else { return };
         let now = d.caret_block().id.clone();
-        if self.doc_line_id.as_deref() != Some(now.as_str()) {
+        if self.ui.doc_line_id.as_deref() != Some(now.as_str()) {
             // The line left: a remote change waiting on it lands now (unless you typed on it:
             // then the save writes yours with its base and the core keeps both).
-            if let Some(prev) = self.doc_line_id.clone() {
+            if let Some(prev) = self.ui.doc_line_id.clone() {
                 d.apply_held_text(&prev);
             }
             // Onto a line moved here (its parent was deleted elsewhere): the bar says why
@@ -830,7 +830,7 @@ impl App {
                 let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
                 let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
                 if let Some((_, existing)) = near {
-                    self.near_miss = Some((l.id.clone(), title, existing, None, Instant::now()));
+                    self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
                     return;
                 }
             }
@@ -854,7 +854,7 @@ impl App {
         let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
         let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
         if let Some((_, existing)) = near {
-            self.near_miss = Some((l.id.clone(), title, existing, None, Instant::now()));
+            self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
         }
     }
 
@@ -862,7 +862,7 @@ impl App {
     /// made goes (when nothing else links to it and it has nothing in it).
     fn take_near_miss(&mut self) -> bool {
         let Some((line_id, typed, existing, _, since)) = self.near_miss.clone() else { return false };
-        if since.elapsed().as_secs() >= 3 {
+        if self.ui.age(since).as_secs() >= 3 {
             self.near_miss = None;
             return false;
         }
@@ -920,7 +920,10 @@ impl App {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
         let caption = std::path::Path::new(&name).file_stem().and_then(|s| s.to_str()).unwrap_or("file").replace(['-', '_'], " ");
         if let Some(id) = self.attach_bytes(&data, &name, &caption, "⌃Z keep the path") {
-            let depth = self.doc.as_ref().map_or(0, |d| d.undo_depth());
+            let depth = self.doc.as_mut().map_or(0, |d| {
+                d.take_host_changes();
+                d.undo_depth()
+            });
             self.last_drop = Some((id, raw.to_string(), depth));
         }
     }
