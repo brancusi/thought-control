@@ -137,4 +137,11 @@ caretline's rules are written as examples, and the examples run:
 
 `cargo test -p caretline` runs them all. The rules themselves are in [SPEC.md](SPEC.md).
 
+## caretline and caretline-next
+
+This crate is the block engine that thought-central's TUI uses today. The newer
+[`caretline-next`](../caretline-next) engine (plain text on Helix's editing model, in an Elm
+architecture) is meant to replace it once the TUI adopts it. The `caretline` binary is built on
+caretline-next, not on this crate. See [docs/caretline](../../docs/caretline/README.md).
+
 Licence: MIT OR Apache-2.0.
