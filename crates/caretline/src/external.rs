@@ -120,7 +120,7 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
         // deleted text, read alone, is a whole line (an empty line's break: "a\n\n" → "a\n").
         let keep = doc.blocks().and_then(|o| {
             let b = o.block_at(text, from);
-            (b.start <= from && to <= b.end && b.id != MarkId(u64::MAX)).then(|| (b.id, b.start, b.attrs))
+            (b.start <= from && to <= b.end && b.id != MarkId(u64::MAX)).then(|| (b.id, b.start, b.attrs.clone()))
         });
         return Ok(Some(edit(doc, vec![least(text, from, to, lines(ins))], move |m, _| keep_mark(m, keep))));
     }
@@ -136,7 +136,7 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
         ExtChange::Replace { .. } | ExtChange::SetData { .. } => unreachable!(),
         ExtChange::ReplaceContent { id, text: content } => {
             let b = block(*id)?;
-            let keep = Some((b.id, b.start, b.attrs));
+            let keep = Some((b.id, b.start, b.attrs.clone()));
             Ok(Some(edit(doc, vec![least(text, b.content_start(), b.end, lines(content))], move |m, _| keep_mark(m, keep))))
         }
         ExtChange::SetShape { id, depth, kind, status, tag } => {
@@ -218,7 +218,7 @@ fn least(text: crate::helix::RopeSlice, from: usize, to: usize, new: String) -> 
 /// history; `fix` adjusts the marks after they are mapped. Returns the change set.
 /// Puts a block's mark back at its start if a change inside the block took it (its start is
 /// before the change, so it's still a line start where it was).
-fn keep_mark(marks: &mut crate::marks::Marks, keep: Option<(MarkId, usize, crate::marks::BlockAttrs)>) {
+fn keep_mark(marks: &mut crate::marks::Marks, keep: Option<(MarkId, usize, crate::marks::MarkAttrs)>) {
     let Some((id, pos, attrs)) = keep else { return };
     if !marks.contains(id) && marks.at(pos).is_none() {
         let _ = marks.insert(crate::marks::Mark { pos, id, attrs });
