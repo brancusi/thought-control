@@ -178,8 +178,10 @@ pub struct RenderOutput {
     pub click_targets: Vec<Target>,
     pub overlay_rect: Option<Rect>,
     pub doc_hits: Vec<crate::doc_ui::HitRow>,
+    /// The document's view on screen (x, y, width, height): where the engine's frame is drawn,
+    /// for its hit-testing.
+    pub doc_view: Option<(u16, u16, u16, u16)>,
     pub image_places: Vec<crate::images::Place>,
-    pub doc_view_rows: usize,
     pub list_height: usize,
     pub doc_scrollbar: Option<(u16, u16, usize, u16, u16)>,
     pub list_scrollbar: Option<(u16, u16, usize, u16, u16)>,
@@ -248,7 +250,7 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
     }
     // A link's title under the pointer underlines in accent: a click follows it (sidebar.md §7).
     if let (Some((hx, hy)), true) = (app.hover, app.overlay.is_none() && app.prompt.is_none()) {
-        if let Some((line, byte, false)) = crate::doc_ui::hit_rows(app, &render.doc_hits, hx, hy) {
+        if let Some((line, byte, false)) = crate::doc_ui::hit_at(app, &render, hx, hy) {
             let text = &app.doc.as_ref().unwrap().blocks()[line].text;
             if let Some(r) = crate::doc_app::link_title_range(text, byte) {
                 let accent = app.theme.s(Token::Accent).fg;
@@ -257,7 +259,7 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
                 // byte is text.)
                 let mut prev = None;
                 for x in 0..buf.area.width {
-                    let at = crate::doc_ui::hit_rows(app, &render.doc_hits, x, hy);
+                    let at = crate::doc_ui::hit_at(app, &render, x, hy);
                     let fresh = at != prev;
                     prev = at;
                     if fresh && matches!(at, Some((l, b, false)) if l == line && r.contains(&b)) {
@@ -4269,8 +4271,7 @@ pub(crate) fn follow_frame(app: &mut App, area: Rect) {
 
 fn update_frame(app: &mut App, area: Rect) {
     prepare_frame(app, area);
-    let viewport = app.derived.doc.as_ref().and_then(|d| d.viewport(app))
-        .or_else(|| app.derived.list.as_ref().map(|l| l.viewport.clone()));
+    let viewport = app.derived.list.as_ref().map(|l| l.viewport.clone());
     if let Some(viewport) = viewport { crate::runtime_effects::dispatch(app, crate::update::Msg::ViewportPrepared(viewport)); }
 }
 
@@ -4321,7 +4322,7 @@ mod render_tests {
     fn state(app: &App) -> String {
         format!("{:?}", (
             app.view, app.cursor, app.scroll, &app.selected, app.screen_width,
-            app.doc.as_ref().map(|d| (d.blocks().to_vec(), d.caret(), d.anchor(), d.scroll)),
+            app.doc.as_ref().map(|d| (d.blocks().to_vec(), d.caret(), d.anchor(), d.scroll())),
             &app.collapsed, &app.scope_override, app.focus_mode, app.show_detail,
         ))
     }
@@ -4401,23 +4402,17 @@ mod render_tests {
         assert_eq!(first, render(&app, size));
     }
 
-    /// On both editor engines.
+    /// The engine's view follows the caret as the frame lays it out: a scroll far past the
+    /// caret comes back to it, and drawing again changes nothing.
     #[test]
-    fn preparation_never_follows_scroll_until_the_viewport_message_is_updated() {
-        preparation_never_follows_scroll_until_the_viewport_message_is_updated_on();
-    }
-
-    fn preparation_never_follows_scroll_until_the_viewport_message_is_updated_on() {
+    fn preparation_lets_the_view_follow_the_caret() {
         let (_scratch, vault) = crate::fuzz::scratch("viewport-update");
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
         app.set_view(View::Journal);
-        app.doc.as_mut().unwrap().scroll = 999;
+        app.doc.as_mut().unwrap().set_scroll(999, false);
         prepare_frame(&mut app, Rect::new(0, 0, 120, 40));
-        assert_eq!(app.doc.as_ref().unwrap().scroll, 999);
-        let viewport = app.derived.doc.as_ref().unwrap().viewport(&app).unwrap();
-        crate::runtime_effects::dispatch(&mut app, crate::update::Msg::ViewportPrepared(viewport));
-        assert!(app.doc.as_ref().unwrap().scroll < 999);
+        assert_eq!(app.doc.as_ref().unwrap().scroll(), 0, "a short day shows from its top");
         let followed = render(&app, (120, 40));
         assert!(!followed.doc_hits.is_empty());
         assert_eq!(followed, render(&app, (120, 40)));

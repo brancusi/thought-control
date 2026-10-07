@@ -24,7 +24,6 @@ use super::tasks;
 use super::Outcome;
 use caretline as cn;
 use cn::helix::Selection;
-use cn::layout::{Layout, RowPos};
 use cn::marks::Mark;
 use cn::outline::{BlockInfo, Hang, NewBlock, OutlineConfig};
 use cn::{Category, Effect, ExtChange, MarkAttrs, MarkId, Msg, OutlineLayout, Viewport};
@@ -76,8 +75,6 @@ pub(crate) struct Engine {
     /// The document's clock (`Doc::tick`).
     pub(super) now_ms: u64,
     pool: IdPool,
-    /// Layouts for `rows_of`, by (text revision, width): one per text column in use.
-    row_layouts: Vec<(u64, usize, Layout)>,
 }
 
 /// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
@@ -99,7 +96,7 @@ fn thc_kind(b: &BlockInfo) -> Kind {
 /// The chars of a block's first line before thc's text: indentation and a list or task marker.
 /// A number, heading or quote marker is thc's text (as it is the content of the engine's
 /// `NewBlock` and `ExtChange::SetShape`).
-fn list_len(b: &BlockInfo) -> usize {
+pub(super) fn list_len(b: &BlockInfo) -> usize {
     match (b.kind, b.hang) {
         (cn::Kind::Bullet, Hang::Bullet) => b.prefix_len,
         _ => b.indent.min(b.end - b.start),
@@ -161,7 +158,6 @@ impl Engine {
             changed_at: None,
             now_ms: 0,
             pool: IdPool::default(),
-            row_layouts: Vec::new(),
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -183,6 +179,17 @@ impl Engine {
             }
         }
         n
+    }
+
+    /// The engine's state, for the view (`view.rs`): the host's changes are in.
+    pub(super) fn state(&self) -> &cn::State {
+        debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
+        &self.st
+    }
+
+    pub(super) fn state_mut(&mut self) -> &mut cn::State {
+        self.flush();
+        &mut self.st
     }
 
     pub(super) fn rev(&self) -> u64 {
@@ -243,15 +250,11 @@ impl Engine {
 
     /// Whether a blank row comes before line `i`: the engine's block, its gap as set or its
     /// kind's default.
+    #[cfg(test)]
     pub(super) fn effective_gap(&self, i: usize) -> bool {
         debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
         let o = self.st.doc.blocks().expect("an outline document");
         o.blocks.get(i).is_some_and(|b| b.gap)
-    }
-
-    /// Anything is folded (in the engine's view).
-    pub(super) fn has_folds(&self) -> bool {
-        !self.st.view.folds.is_empty()
     }
 
     /// Line `i`'s children are folded away (in the engine's view).
@@ -332,7 +335,7 @@ impl Engine {
     }
 
     /// An engine char as a host position.
-    fn pos_of(&self, c: usize) -> BlockPos {
+    pub(super) fn pos_of(&self, c: usize) -> BlockPos {
         let o = self.st.doc.blocks().expect("an outline document");
         let rope = &self.st.doc.text;
         let i = o.index_at(rope.slice(..), c);
@@ -525,89 +528,6 @@ impl Engine {
         }
         md
     }
-
-    /// Up and down follow thc's text column (`width_of` a line at its depth); a page is `page`
-    /// rows.
-    fn set_geometry(&mut self, width_of: &dyn Fn(&Line) -> usize, page: usize) {
-        let at = |d: usize| width_of(&Line::new(d, Kind::Para, "")).min(u16::MAX as usize) as u16;
-        let g = OutlineLayout { column: at(0), min_column: at(64), ..OutlineLayout::default() };
-        if self.st.view.layout.as_ref() != Some(&g) {
-            self.st.view.layout = Some(g);
-        }
-        self.st.view.viewport.height = page.clamp(1, u16::MAX as usize) as u16;
-    }
-
-    /// The rows line `i` wraps into at `w` columns, as byte ranges of its text (the first from
-    /// 0, its marker included): the engine's own wrap.
-    pub(super) fn rows_of(&mut self, i: usize, w: usize, wraps: &mut super::doc::Wraps) -> Vec<(usize, usize)> {
-        self.flush();
-        use std::hash::{Hash, Hasher};
-        let l = &self.lines[i];
-        // A short plain line is one row (the engine measures an ASCII char as one cell and
-        // wraps only a row that reaches the width): no layout needed.
-        if l.text.len() + 1 < w && l.text.bytes().all(|b| (0x20..0x7f).contains(&b)) && (l.kind() != Kind::Para || !l.text.starts_with("```")) {
-            return vec![(0, l.text.len())];
-        }
-        // What the block's text is made of (`block_text`), without building it.
-        let mut h = super::doc::content_hasher();
-        (&l.text, l.depth, l.kind(), l.status.as_deref()).hash(&mut h);
-        let key = (h.finish(), w);
-        if let Some(r) = wraps.get(&key) {
-            return r.clone();
-        }
-        let o = self.st.doc.blocks().expect("an outline document");
-        let b = &o.blocks[i];
-        // Every depth wraps at `w` here (no marks, hang or indent): one layout per width and
-        // text, not one per line.
-        let rev = self.st.doc.rev;
-        self.row_layouts.retain(|(r, _, _)| *r == rev);
-        let k = match self.row_layouts.iter().position(|(_, lw, _)| *lw == w) {
-            Some(k) => k,
-            None => {
-                let mut view = cn::View::new(Viewport { width: 4000, height: 1 });
-                view.layout = Some(OutlineLayout { gutter: 0, hang: 0, indent: 0, column: w.min(3000) as u16, min_column: 1, ..OutlineLayout::default() });
-                self.row_layouts.push((rev, w, Layout::of(&self.st.doc, &view)));
-                self.row_layouts.len() - 1
-            }
-        };
-        let lay = &self.row_layouts[k].2;
-        let rope = &self.st.doc.text;
-        let cs = b.start + list_len(b);
-        let base = rope.char_to_byte(cs);
-        let byte = |c: usize| rope.char_to_byte(c.max(cs)) - base;
-        let mut rows = Vec::new();
-        for line in b.first_line..=b.last_line() {
-            let first = if line == b.first_line { b.start + b.prefix_len } else { rope.line_to_char(line) };
-            let end = if line == b.last_line() { b.end } else { rope.line_to_char(line + 1) - 1 };
-            let mut starts = vec![first];
-            let mut row = 0;
-            let lf = lay.line_format(line);
-            for g in lay.formatter_at_row(RowPos { line, row: lf.before }) {
-                if g.line_idx != line || g.char_idx >= end {
-                    break;
-                }
-                if g.is_virtual() {
-                    continue;
-                }
-                if g.visual_pos.row != row {
-                    row = g.visual_pos.row;
-                    if g.char_idx > *starts.last().unwrap() {
-                        starts.push(g.char_idx);
-                    }
-                }
-            }
-            for k in 0..starts.len() {
-                let a = if line == b.first_line && k == 0 { 0 } else { byte(starts[k]) };
-                let e = starts.get(k + 1).map_or(byte(end), |&c| byte(c));
-                rows.push((a, e));
-            }
-        }
-        if wraps.len() > 20_000 {
-            wraps.clear();
-        }
-        wraps.insert(key, rows.clone());
-        rows
-    }
 }
 
 /// A line's shape and text from its block.
@@ -654,9 +574,9 @@ fn revive(l: &mut Line, deleted: &mut Vec<String>, last_saved: &HashMap<String, 
 impl Doc {
     /// A command at the caret, by its id: one of caretline's catalog (`move.left`,
     /// `select.word_right`, `structure.indent`, `history.undo`, see `caretline::commands`) or
-    /// one of thc's host commands (`thc.task_cycle`). `width_of` is thc's text column for a
-    /// line (up and down follow it); `page` is how many rows a page moves.
-    pub fn run_command(&mut self, id: &str, width_of: &dyn Fn(&Line) -> usize, page: usize) -> Outcome {
+    /// one of thc's host commands (`thc.task_cycle`). Up, down and pages follow the view's
+    /// layout (`Doc::set_view`).
+    pub fn run_command(&mut self, id: &str) -> Outcome {
         let msg = if id.starts_with("thc.") {
             Msg::Command { name: id.into(), args: serde_json::Value::Null }
         } else {
@@ -665,7 +585,6 @@ impl Doc {
                 None => return Outcome::Nothing(format!("{id} isn't a command")),
             }
         };
-        self.engine.set_geometry(width_of, page);
         let rev = self.engine.st.doc.rev;
         let fx = self.run(msg);
         let changed = self.engine.st.doc.rev != rev;
@@ -732,8 +651,6 @@ mod tests {
         assert_eq!(d.engine.st.doc.text.to_string(), want.join("\n"));
     }
 
-    const W: fn(&Line) -> usize = |_| 72;
-
     /// A copy across notes carries each note's fields (as the vault writes
     /// them), and pasting it back over the same selection changes nothing.
     #[test]
@@ -763,10 +680,10 @@ mod tests {
         assert!(!p.reopen);
         assert_eq!(texts(&d), ["alpha!", "gamma (theirs)"]);
         assert_eq!(d.caret(), BlockPos { line: 0, byte: 6 }, "the caret stays where it was");
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["alpha", "gamma (theirs)"], "undo takes back only the local edit");
         same(&mut d);
-        d.run_command("history.redo", &W, 20);
+        d.run_command("history.redo");
         assert_eq!(texts(&d), ["alpha!", "gamma (theirs)"]);
         assert!(d.plan_save(true).ops.iter().all(|o| !matches!(o, BlockOp::Delete { .. })), "a note deleted elsewhere isn't deleted again");
     }
@@ -783,7 +700,7 @@ mod tests {
         assert_eq!(texts(&d), ["one", "two", "three!"]);
         assert_eq!(d.blocks()[1].id, "b");
         assert_eq!(d.caret(), BlockPos { line: 2, byte: 6 });
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["one", "two", "three"]);
         same(&mut d);
     }
@@ -799,9 +716,9 @@ mod tests {
     fn new_notes_get_ids_and_are_created_in_place() {
         let mut d = open(&[blk("a", 0, "bullet", "one")]);
         d.set_caret(BlockPos { line: 0, byte: 3 });
-        d.run_command("edit.newline", &W, 20);
+        d.run_command("edit.newline");
         d.insert("two");
-        d.run_command("structure.indent", &W, 20);
+        d.run_command("structure.indent");
         let id = d.blocks()[1].id.clone();
         assert!(d.blocks()[1].is_new && id != "a");
         let plan = d.plan_save(true);
@@ -812,10 +729,10 @@ mod tests {
     fn a_joined_note_undone_before_its_delete_is_saved_keeps_its_id() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "para", "beta")]);
         d.set_caret(BlockPos { line: 1, byte: 0 });
-        d.run_command("edit.backspace", &W, 20);
+        d.run_command("edit.backspace");
         assert_eq!(texts(&d), ["alpha\nbeta"]);
         assert_eq!(d.engine.deleted, ["b"]);
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["alpha", "beta"]);
         assert_eq!(d.blocks()[1].id, "b");
         assert!(!d.blocks()[1].is_new);
@@ -827,10 +744,10 @@ mod tests {
     fn a_joined_note_undone_after_its_delete_landed_is_new() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "para", "beta")]);
         d.set_caret(BlockPos { line: 1, byte: 0 });
-        d.run_command("edit.backspace", &W, 20);
+        d.run_command("edit.backspace");
         let plan = d.plan_save(true);
         assert!(plan.ops.iter().any(|o| matches!(o, BlockOp::Delete { id, .. } if id == "b")));
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_ne!(d.blocks()[1].id, "b");
         assert!(d.blocks()[1].is_new);
     }
@@ -849,7 +766,7 @@ mod tests {
         d.apply_results(&[r], &plan.afters, &plan.parsed, &plan.sent, today());
         assert_eq!(texts(&d), ["alpha", "call"]);
         same(&mut d);
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["alpha", ""], "undo takes back the typing, not the parse");
     }
 
@@ -863,10 +780,10 @@ mod tests {
         });
         assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
         same(&mut d);
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["alpha", "beta"], "one undo takes the recovery back");
         same(&mut d);
-        d.run_command("history.redo", &W, 20);
+        d.run_command("history.redo");
         assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
     }
 
@@ -879,49 +796,10 @@ mod tests {
         assert_eq!(d.blocks()[1].id, ids[0]);
         assert_eq!(d.caret().line, 2);
         same(&mut d);
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["alpha"], "{:?}", texts(&d));
     }
 
-    /// The rows the document draws are the engine's (motion uses the same), and they are the
-    /// ones thc's chrome wraps by (`text::wrap`): words move whole, a word that fills the row keeps its space at the row's
-    /// end (the next row starts with the next word), and only a word longer than a row breaks.
-    #[test]
-    fn rows_follow_the_engines_wrap() {
-        let texts = [
-            "one two three four five six seven eight nine ten eleven",
-            "a\nb",
-            "",
-            "trailing\n",
-            "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字",
-            "👨\u{200d}👩\u{200d}👧 family 👨\u{200d}👩\u{200d}👧 again and again and again",
-            &"x".repeat(50),
-            "The quick brown fox jumps over the lazy dog and keeps running through the long grass until dusk.",
-            "aaaa bbbbbbbbbbbbbbb cc",
-            "aaaa bbbbbbbbbbbbbbbb cc",
-            "0123456789012345678 01234567890123456789 x",
-            "a 🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂 b 字字字字字 🇯🇵🇯🇵 e\u{301}e\u{301}",
-        ];
-        let blocks: Vec<Block> = texts.iter().enumerate().map(|(i, t)| blk(&format!("n{i}"), 0, "para", t)).collect();
-        let mut d = open(&blocks);
-        let mut wraps = super::super::doc::Wraps::default();
-        for w in [20, 24, 33, 40] {
-            for (i, t) in texts.iter().enumerate() {
-                let rows = d.engine.rows_of(i, w, &mut wraps);
-                let old = crate::text::wrap(t, w);
-                assert_eq!(rows.len() >= old.len(), true, "{t:?} at {w}: {rows:?} vs {old:?}");
-                let mut at = 0;
-                for &(a, b) in &rows {
-                    assert!(a == at || (a == at + 1 && &t[at..a] == "\n"), "{t:?} at {w}: contiguous {rows:?}");
-                    assert!(t.is_char_boundary(a) && t.is_char_boundary(b));
-                    assert!(crate::text::width(t[a..b].trim_end()) <= w, "{t:?} at {w}: {rows:?}");
-                    at = b;
-                }
-                assert_eq!(at, t.len(), "{t:?} at {w}: {rows:?}");
-                assert_eq!(rows, old, "{t:?} at {w}: text::wrap's rows");
-            }
-        }
-    }
 }
 #[cfg(test)]
 mod widths {

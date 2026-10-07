@@ -476,7 +476,7 @@ pub fn hit(doc: &Document, view: &View, col: u16, row: u16) -> Hit {
         }
     }
     let c = col as usize + if layout.wraps() { 0 } else { view.scroll.col };
-    Hit::Text { pos: layout.pos_at(at, c) }
+    Hit::Text { pos: layout.click_at(at, c) }
 }
 
 /// The status bar: the file name and dirty marker on the left, the message in the middle,

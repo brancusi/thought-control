@@ -1,5 +1,18 @@
 # Changelog
 
+## Unreleased
+
+### Added
+
+- `Layout::click_at`: where a click puts the caret.
+- `ViewConfig::page_overlap`: rows of the previous screen a page motion keeps on screen (a page
+  moves the text rows less this). Default 0, as before.
+
+### Fixed
+
+- A click (`Msg::Click`, `view::hit`) on the right half of a wide grapheme puts the caret after
+  it, not before.
+
 ## 0.3.0 (2026-10-07)
 
 caretline is a text-editing engine only. What a line *means* (a task, a status) belongs in the

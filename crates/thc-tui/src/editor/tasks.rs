@@ -238,11 +238,14 @@ fn shorthand(ctx: &Ctx, msg: &Msg) -> Option<Edit> {
     Some(Edit { changes: vec![(from, p, ins)], selection: Some(Selection::point(caret)), ..Edit::default() })
 }
 
-/// A task's box in the hang, styled by its status (`thc.task.done`), hit as `box`.
+/// The id a task's box is hit as.
+pub const BOX: &str = "box";
+
+/// A task's box in the hang, styled by its status (`thc.task.done`), hit as [`BOX`].
 fn decorate(_: &Ctx, b: &BlockInfo) -> Decoration {
     match b.tag.filter(|_| is_task(b)) {
         Some(c) => Decoration {
-            hang: Some(Deco { text: format!("[{c}]"), role: format!("thc.task.{}", status_name(Some(c))), id: Some("box".into()) }),
+            hang: Some(Deco { text: format!("[{c}]"), role: format!("thc.task.{}", status_name(Some(c))), id: Some(BOX.into()) }),
             gutter: None,
         },
         None => Decoration::default(),

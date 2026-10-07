@@ -1,7 +1,7 @@
 //! Keys inside a document (tui-editor.md §2, §4): Write by default, Esc to Navigate.
 
 use crate::app::App;
-use crate::editor::{BlockPos, Line, Outcome, Target};
+use crate::editor::{BlockPos, Outcome, Target};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use thc_core::outline::Kind;
@@ -53,10 +53,6 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
             app.info("turn on \"Option as Meta\" in your terminal for ⌥ keys · F1 keys");
         }
     }
-    let ctx = crate::doc_ui::DocContext::from_app(app);
-    let sw = app.screen_width;
-    let detail = app.show_detail;
-    let width_of = move |l: &Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth);
     // The `[[` popup takes ↑ ↓ ⌃N ⌃P Enter Tab Esc while it's open.
     if app.link_open {
         if let Some((_, q)) = app.link_query() {
@@ -105,7 +101,7 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
     // anything else does nothing (sealed: writing.md §3, keymap.md §3.2).
     let key = crate::keymap::Key::of(&k);
     if let Some(Some(b)) = crate::keymap::lookup(app, &[crate::keymap::Ctx::Write], &[key]) {
-        return write_action(app, b.action, shift, &width_of);
+        return write_action(app, b.action, shift);
     }
     if let KeyCode::Char(c) = k.code {
         if !ctrl && !alt && !k.modifiers.contains(KeyModifiers::SUPER) {
@@ -131,30 +127,24 @@ pub fn run_write(app: &mut App, action: &str) -> bool {
     if app.doc.is_none() || !crate::keymap::table().iter().any(|b| b.ctx == crate::keymap::Ctx::Write && b.action == action) {
         return false;
     }
-    let ctx = crate::doc_ui::DocContext::from_app(app);
-    let sw = app.screen_width;
-    let detail = app.show_detail;
-    let width_of = move |l: &Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth);
-    let r = write_action(app, action, false, &width_of);
+    let r = write_action(app, action, false);
     app.doc_after_key();
     r
 }
 
 /// A `write` action from the table, on the open document. `shift`: a move extends the selection.
-fn write_action(app: &mut App, action: &str, shift: bool, width_of: &dyn Fn(&Line) -> usize) -> bool {
+fn write_action(app: &mut App, action: &str, shift: bool) -> bool {
     // ⌘↑ ⌘↓ are big jumps: history keeps where the caret was (navigation.md §7.1).
     if !shift && matches!(action, "move.doc_start" | "move.doc_end") {
         let before = app.place();
-        let r = write_action_inner(app, action, shift, width_of);
+        let r = write_action_inner(app, action, shift);
         app.history_jumped(before);
         return r;
     }
-    write_action_inner(app, action, shift, width_of)
+    write_action_inner(app, action, shift)
 }
 
-fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn Fn(&Line) -> usize) -> bool {
-    // The view's height (last frame's), less two rows of context: a page (motion.md §4).
-    let page = app.render.doc_view_rows.saturating_sub(2).max(1);
+fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
     // ⌥V: an image on the clipboard is attached at the caret (attachments.md §2); otherwise the
     // next paste is plain text, as before.
     if action == "paste.plain_next" && app.attach_clipboard_image() {
@@ -232,7 +222,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // Editing and motion: caretline's commands (and thc's ⌃T), run on the document.
         other if crate::editing_keys::command_for(other, shift).is_some() => {
             let cmd = crate::editing_keys::command_for(other, shift).unwrap();
-            match d.run_command(cmd, width_of, page) {
+            match d.run_command(cmd) {
                 Outcome::Done => {}
                 Outcome::Nothing(why) => app.info(why),
                 Outcome::Completed => app.save_doc(true),
@@ -336,8 +326,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         MouseEventKind::ScrollUp | MouseEventKind::ScrollDown => {
             let rows = app.tui_prefs.wheel_rows.max(1);
             let d = app.doc.as_mut().unwrap();
-            d.scroll = if m.kind == MouseEventKind::ScrollUp { d.scroll.saturating_sub(rows) } else { d.scroll + rows };
-            app.doc_scroll_free = true;
+            d.scroll_view(if m.kind == MouseEventKind::ScrollUp { -(rows as isize) } else { rows as isize });
             true
         }
         MouseEventKind::Down(button @ (MouseButton::Left | MouseButton::Middle)) => {
@@ -350,7 +339,7 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             }
             let Some((line, byte, hang)) = crate::doc_ui::hit(app, m.column, m.row) else { return false };
             app.doc_parked = false;
-            app.doc_scroll_free = false;
+            app.doc.as_mut().unwrap().follow_caret();
             app.link_open = false;
             app.click_link = None;
             let d = app.doc.as_mut().unwrap();

@@ -214,26 +214,14 @@ pub struct Doc {
     pub root: Option<String>,
     /// The engine's document (text, selection, folds, undo) and thc's lines beside it.
     pub(super) engine: Box<super::engine::Engine>,
-    /// The first visual row on screen.
-    pub scroll: usize,
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
     pub(super) last_saved: HashMap<String, Line>,
-    pub(super) wraps: Wraps,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
-}
-
-/// Rows by (a line's content hash, width).
-pub(super) type Wraps = HashMap<(u64, usize), Vec<(usize, usize)>, foldhash::fast::FixedState>;
-
-/// A fast, fixed-seed hasher for content keys.
-pub(super) fn content_hasher() -> impl std::hash::Hasher {
-    use std::hash::BuildHasher;
-    foldhash::fast::FixedState::with_seed(0).build_hasher()
 }
 
 impl Doc {
@@ -249,7 +237,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: Wraps::default(), words: Default::default(), now_ms: 0 }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0 }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -399,6 +387,8 @@ impl Doc {
         self.engine.undo_depth()
     }
 
+    /// Whether a blank row comes before line `i` (tests: the engine draws it).
+    #[cfg(test)]
     pub fn effective_gap(&self, i: usize) -> bool {
         self.engine.effective_gap(i)
     }
@@ -768,20 +758,9 @@ impl Doc {
     }
 }
 
-// ---- wrapping and the view ------------------------------------------------------------------------
-
-impl Doc {
-    /// The wrap of line `i` at `w` columns, cached by (text, width).
-    pub fn rows_of(&mut self, i: usize, w: usize) -> Vec<(usize, usize)> {
-        self.engine.rows_of(i, w, &mut self.wraps)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    const W: fn(&Line) -> usize = |_| 72;
 
     fn doc(lines: &[(usize, Kind, &str)]) -> Doc {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
@@ -807,12 +786,12 @@ mod tests {
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
         d.newline(); // a blank line: two notes
         assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.run_command("edit.backspace", &W, 20); // at the start of a paragraph: join, the break kept
+        d.run_command("edit.backspace"); // at the start of a paragraph: join, the break kept
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
         assert_eq!(d.caret(), BlockPos { line: 0, byte: 7 });
-        d.run_command("history.undo", &W, 20);
+        d.run_command("history.undo");
         assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.run_command("history.redo", &W, 20);
+        d.run_command("history.redo");
         assert_eq!(texts(&d), ["Para Hello \nworld"]);
     }
 
@@ -824,14 +803,14 @@ mod tests {
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
-        d.run_command("structure.indent", &W, 20);
+        d.run_command("structure.indent");
         d.newline();
         d.newline(); // an empty item ends the list: an empty paragraph line
         assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Para "]);
         at(&mut d, 0, 4);
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].kind(), Kind::Task);
-        assert_eq!(d.run_command("thc.task_cycle", &W, 20), crate::editor::Outcome::Completed);
+        assert_eq!(d.run_command("thc.task_cycle"), crate::editor::Outcome::Completed);
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
     }
 
@@ -848,10 +827,10 @@ mod tests {
     fn move_with_children_and_selection_delete() {
         let mut d = doc(&[(0, Kind::Bullet, "A"), (1, Kind::Bullet, "A1"), (0, Kind::Bullet, "B")]);
         at(&mut d, 2, 0);
-        d.run_command("structure.move_up", &W, 20);
+        d.run_command("structure.move_up");
         assert_eq!(texts(&d), ["Bullet B", "Bullet A", " Bullet A1"]);
         assert_eq!(d.caret().line, 0);
-        assert!(matches!(d.run_command("structure.move_up", &W, 20), crate::editor::Outcome::Nothing(_)));
+        assert!(matches!(d.run_command("structure.move_up"), crate::editor::Outcome::Nothing(_)));
         d.select_range(Some(BlockPos { line: 2, byte: 1 }), BlockPos { line: 0, byte: 1 });
         d.delete_selection();
         assert_eq!(texts(&d), ["Bullet B1"]);
@@ -894,15 +873,15 @@ mod tests {
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
             let n = d.lines()[0].text.len();
             at(&mut d, 0, n);
-            d.run_command("edit.backspace", &W, 20);
+            d.run_command("edit.backspace");
             assert_eq!(d.lines()[0].text, "a", "⌫ removes all of {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}"))]);
             at(&mut d, 0, 1);
-            d.run_command("edit.delete_forward", &W, 20);
+            d.run_command("edit.delete_forward");
             assert_eq!(d.lines()[0].text, "a", "⌦ removes all of {g:?}");
             let mut d = doc(&[(0, Kind::Para, &format!("a{g}b"))]);
             at(&mut d, 0, 1);
-            d.run_command("move.right", &W, 20);
+            d.run_command("move.right");
             assert_eq!(d.caret().byte, 1 + g.len(), "→ over {g:?}");
         }
     }
@@ -914,11 +893,11 @@ mod tests {
         l.is_new = false;
         l.saved = Some(l.text.clone());
         l.saved_kind = Some(Kind::Para);
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         let first = d.plan_save(true);
         assert!(first.ops.iter().any(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })));
         assert!(!first.ops.iter().any(|op| matches!(op, BlockOp::Status { .. })), "Kind(Task) already initializes todo");
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         let second = d.plan_save(true);
         let kind = second.ops.iter().position(|op| matches!(op, BlockOp::Kind { kind: Kind::Task, .. })).unwrap();
         let status = second.ops.iter().position(|op| matches!(op, BlockOp::Status { status, .. } if status == "done")).unwrap();
@@ -930,21 +909,21 @@ mod tests {
     #[test]
     fn task_cycle_and_marker_steps() {
         let mut d = doc(&[(0, Kind::Para, "call")]);
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Task, Some("todo")));
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Para, None));
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         at(&mut d, 0, 0);
-        d.run_command("edit.backspace", &W, 20);
+        d.run_command("edit.backspace");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None));
-        d.run_command("edit.backspace", &W, 20);
+        d.run_command("edit.backspace");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Para, "call"));
         let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
         d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 2, byte: 1 });
-        d.run_command("thc.task_cycle", &W, 20);
+        d.run_command("thc.task_cycle");
         assert!(d.lines().iter().all(|l| l.kind() == Kind::Task), "{:?}", texts(&d));
     }
 
@@ -971,7 +950,7 @@ mod tests {
         assert_eq!(texts(&d), ["Para abc", "Para def"], "A4: a split");
         assert_eq!(d.lines()[0].id, id, "the first part keeps the id");
         at(&mut d, 1, 0);
-        d.run_command("edit.backspace", &W, 20);
+        d.run_command("edit.backspace");
         assert_eq!(texts(&d), ["Para abc\ndef"], "A5: a join keeps the break");
         assert_eq!(d.lines()[0].id, id);
         let mut d = doc(&[(0, Kind::Para, "")]);

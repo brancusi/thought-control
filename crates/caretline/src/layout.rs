@@ -834,7 +834,26 @@ impl Layout {
             return self.text().len_chars();
         }
         let col = col as usize + if self.wraps() { 0 } else { scroll.col };
-        self.pos_at(at, col)
+        self.click_at(at, col)
+    }
+
+    /// Where a click at screen column `col` of visual row `at` puts the caret: [`Layout::pos_at`],
+    /// except that the right half of a wide grapheme (a CJK character, an emoji) puts it after
+    /// the grapheme, as text fields do.
+    pub fn click_at(&self, at: RowPos, col: usize) -> usize {
+        let pos = self.pos_at(at, col);
+        let text = self.text();
+        if pos >= text.len_chars() {
+            return pos;
+        }
+        let next = crate::helix::graphemes::next_grapheme_boundary(text, pos);
+        let w = crate::view::display_width(&text.slice(pos..next).to_string());
+        let (row, x) = self.pos_coords(pos);
+        let col = col + self.line_offset(at.line);
+        if w > 1 && row == at && col >= x + w / 2 && col < x + w {
+            return next;
+        }
+        pos
     }
 }
 

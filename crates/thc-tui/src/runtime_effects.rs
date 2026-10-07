@@ -2,17 +2,9 @@
 //! in update. Additional legacy effects migrate in later P3 steps.
 use crate::{
     app::App,
-    update::{self, DocumentFields, DocumentIdentity, Effect, Fields, Msg},
+    update::{self, Effect, Fields, Msg},
 };
 
-pub(crate) fn document_identity(app: &App) -> Option<DocumentIdentity> {
-    app.doc.as_ref().map(|doc| DocumentIdentity {
-        vault: app.vault.paths.vault.clone(),
-        target: doc.target.clone(),
-        revision: doc.revision(),
-        caret: doc.caret(),
-    })
-}
 /// Perform one effect: the IO update asked for. Results come back as messages.
 fn perform(app: &mut App, effect: Effect) {
     match effect {
@@ -63,10 +55,8 @@ pub(crate) fn run(app: &mut App, effects: Vec<Effect>) {
 }
 
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {
-    let identity = document_identity(app);
-    let document = identity.zip(app.doc.as_mut()).map(|(identity, doc)| DocumentFields { identity, scroll: &mut doc.scroll });
     let effects = update::update(
-        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, document, toast: &mut app.ui.toast },
+        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, toast: &mut app.ui.toast },
         msg,
     );
     run(app, effects);

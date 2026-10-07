@@ -669,6 +669,18 @@ fn page_down_moves_a_screenful_and_keeps_the_column() {
 }
 
 #[test]
+fn a_page_keeps_the_overlap_on_screen() {
+    // Ten text rows, two kept: a page is eight rows, for the caret and the view alike.
+    let mut s = state_wh(&numbered(60).replacen("line 5", "▮line 5", 1), 20, 11);
+    s.view.config.page_overlap = 2;
+    keys(&mut s, "<pgdn>");
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 12, "the caret moved eight rows");
+    assert_eq!(s.view.scroll.line, 8, "lines 9 and 10, the last two before, are still on screen");
+    keys(&mut s, "<pgup>");
+    assert_eq!((s.doc.text.char_to_line(s.caret()), s.view.scroll.line), (4, 0));
+}
+
+#[test]
 fn the_view_follows_the_caret_with_a_margin() {
     let mut s = state_wh(&format!("▮{}", numbered(40)), 20, 11);
     for _ in 0..9 {

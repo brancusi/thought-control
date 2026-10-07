@@ -213,8 +213,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
         match m.kind {
             K::Drag(MouseButton::Left) => {
                 if let (Some((top, h, total, _, _)), Some(d)) = (app.render.doc_scrollbar, app.doc.as_mut()) {
-                    d.scroll = (y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1));
-                    app.doc_scroll_free = true;
+                    d.set_scroll((y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1)), true);
                 } else if let Some((top, h, total, _, _)) = app.render.list_scrollbar {
                     // A list has no caret to protect: the cursor goes to the row under the thumb.
                     let row = (y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1));
@@ -371,11 +370,10 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                     if i >= ty && i < ty + th {
                         app.scroll_drag = true;
                     } else if i < ty {
-                        d.scroll = d.scroll.saturating_sub(h as usize);
+                        d.set_scroll(d.scroll().saturating_sub(h as usize), true);
                     } else {
-                        d.scroll += h as usize;
+                        d.set_scroll(d.scroll() + h as usize, true);
                     }
-                    app.doc_scroll_free = true;
                 }
                 return;
             }

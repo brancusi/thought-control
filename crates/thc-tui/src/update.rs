@@ -3,20 +3,11 @@
 //! This is the first P3 migration; legacy input/persistence paths remain outside it.
 use crate::{
     app::{Toast, ToastKind},
-    editor::{BlockPos, Target},
     theme::Token,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(crate) struct DocumentIdentity {
-    pub vault: std::path::PathBuf,
-    pub target: Target,
-    pub revision: u64,
-    pub caret: BlockPos,
-}
-#[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Viewport {
-    Document { identity: DocumentIdentity, rows: usize, caret: Option<usize>, height: usize, free: bool, typewriter: bool },
     List { cursor: usize, scroll: usize, height: usize, previous_section: bool, heights: Vec<usize> },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -253,15 +244,10 @@ fn cursor(ui: &mut crate::ui_state::UiState, facts: &Facts<'_>, delta: isize) ->
     Some(vec![])
 }
 
-pub(crate) struct DocumentFields<'a> {
-    pub identity: DocumentIdentity,
-    pub scroll: &'a mut usize,
-}
 pub(crate) struct Fields<'a> {
     pub page_ids: Option<&'a mut bool>,
     pub cursor: usize,
     pub scroll: &'a mut usize,
-    pub document: Option<DocumentFields<'a>>,
     pub toast: &'a mut Option<Toast>,
 }
 /// The initial list position also tells derivation which row heights are needed.
@@ -280,30 +266,8 @@ pub(crate) fn list_start(mut scroll: usize, cursor: usize, height: usize, previo
 }
 pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
     match msg {
-        Msg::ViewportPrepared(Viewport::Document { identity, rows, caret, height, free, typewriter }) => {
-            let Some(document) = state.document.filter(|d| d.identity == identity) else { return vec![] };
-            let scroll = document.scroll;
-            if free {
-                *scroll = (*scroll).min(rows.saturating_sub(1));
-            } else if let Some(caret) = caret {
-                if typewriter {
-                    *scroll = caret.saturating_sub(height * 45 / 100);
-                } else {
-                    let context = 2.min(height.saturating_sub(1) / 2);
-                    if caret < scroll.saturating_add(context) {
-                        *scroll = caret.saturating_sub(context);
-                    } else if caret.saturating_add(context) >= scroll.saturating_add(height) {
-                        *scroll = caret
-                            .saturating_add(context + 1)
-                            .saturating_sub(height)
-                            .min(rows.saturating_sub(height))
-                            .max(caret.saturating_add(1).saturating_sub(height));
-                    }
-                }
-            }
-        }
         Msg::ViewportPrepared(Viewport::List { cursor, scroll, height, previous_section, heights }) => {
-            if state.document.is_some() || state.cursor != cursor || *state.scroll != scroll {
+            if state.cursor != cursor || *state.scroll != scroll {
                 return vec![];
             }
             let mut start = list_start(scroll, cursor, height, previous_section);
@@ -351,55 +315,8 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
 mod tests {
     use super::*;
 
-    fn identity() -> DocumentIdentity {
-        DocumentIdentity {
-            vault: "/scratch/one".into(),
-            target: Target::Journal { date: chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap() },
-            revision: 7,
-            caret: BlockPos { line: 110, byte: 0 },
-        }
-    }
-    fn apply(scroll: &mut usize, doc_scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
-        update(
-            Fields {
-                page_ids: None,
-                cursor: 4,
-                scroll,
-                document: Some(DocumentFields { identity: identity(), scroll: doc_scroll }),
-                toast,
-            },
-            msg,
-        )
-    }
-
-    #[test]
-    fn document_follow_replays_and_rejects_another_vault_or_revision() {
-        let mut left = (0, 0, None);
-        let mut right = (0, 0, None);
-        let message = Msg::ViewportPrepared(Viewport::Document {
-            identity: identity(),
-            rows: 200,
-            caret: Some(110),
-            height: 40,
-            free: false,
-            typewriter: true,
-        });
-        assert!(apply(&mut left.0, &mut left.1, &mut left.2, message.clone()).is_empty());
-        assert!(apply(&mut right.0, &mut right.1, &mut right.2, message).is_empty());
-        assert_eq!((left.0, left.1), (right.0, right.1));
-        assert_eq!(left.1, 92);
-        for other in [DocumentIdentity { vault: "/scratch/two".into(), ..identity() }, DocumentIdentity { revision: 8, ..identity() }] {
-            let message = Msg::ViewportPrepared(Viewport::Document {
-                identity: other,
-                rows: 200,
-                caret: Some(190),
-                height: 40,
-                free: false,
-                typewriter: false,
-            });
-            apply(&mut left.0, &mut left.1, &mut left.2, message);
-            assert_eq!(left.1, 92);
-        }
+    fn apply(scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
+        update(Fields { page_ids: None, cursor: 4, scroll, toast }, msg)
     }
 
     #[test]
@@ -413,9 +330,9 @@ mod tests {
             previous_section: false,
             heights: vec![1, 1, 4, 1, 2],
         });
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, document: None, toast: &mut toast }, message.clone());
+        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast }, message.clone());
         assert_eq!(scroll, 3);
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, document: None, toast: &mut toast }, message);
+        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast }, message);
         assert_eq!(scroll, 3);
     }
 
@@ -426,13 +343,13 @@ mod tests {
         let mut toast = None;
         let at = 1_000;
         let effects = update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, document: None, toast: &mut toast },
+            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast },
             Msg::TogglePageIds { at },
         );
         assert!(page_ids);
         assert_eq!(effects, vec![Effect::WritePageIds { visible: true }]);
         update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, document: None, toast: &mut toast },
+            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast },
             Msg::PageIdsPersisted { result: Err("cache unavailable".into()) },
         );
         assert!(page_ids);
@@ -442,33 +359,30 @@ mod tests {
     #[test]
     fn remap_requests_only_emit_an_effect_until_the_editor_result_arrives() {
         let mut scroll = 0;
-        let mut doc_scroll = 0;
-        let mut toast = None;
-        assert_eq!(apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::RemapKeys), vec![Effect::EditKeys]);
+                let mut toast = None;
+        assert_eq!(apply(&mut scroll, &mut toast, Msg::RemapKeys), vec![Effect::EditKeys]);
         assert!(toast.is_none());
         let at = 1_000;
-        apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::KeysEdited { result: Ok("keys ok · 1 remapped".into()), at });
+        apply(&mut scroll, &mut toast, Msg::KeysEdited { result: Ok("keys ok · 1 remapped".into()), at });
         let success = toast.take().unwrap();
         assert_eq!((success.kind, success.parts, success.at), (ToastKind::Info, vec![("keys ok · 1 remapped".into(), Token::Muted)], at));
-        apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::KeysEdited { result: Err("line 2: invalid key".into()), at });
+        apply(&mut scroll, &mut toast, Msg::KeysEdited { result: Err("line 2: invalid key".into()), at });
         assert_eq!(toast.unwrap().kind, ToastKind::Error);
     }
 
     #[test]
     fn clipboard_emits_one_value_effect_and_waits_for_an_explicit_result() {
         let mut scroll = 0;
-        let mut doc_scroll = 0;
-        let mut toast = None;
-        let effects = apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::Copy { text: "bé🙂".into(), notice: "copied 3 chars".into() });
+                let mut toast = None;
+        let effects = apply(&mut scroll, &mut toast, Msg::Copy { text: "bé🙂".into(), notice: "copied 3 chars".into() });
         assert_eq!(effects, vec![Effect::WriteClipboard { text: "bé🙂".into(), notice: "copied 3 chars".into() }]);
         assert!(toast.is_none());
         let at = 1_000; // supplied replay input; update itself never samples time
-        apply(&mut scroll, &mut doc_scroll, &mut toast, Msg::ClipboardResult { result: Ok(()), notice: "copied 3 chars".into(), at });
+        apply(&mut scroll, &mut toast, Msg::ClipboardResult { result: Ok(()), notice: "copied 3 chars".into(), at });
         let success = toast.take().unwrap();
         assert_eq!((success.kind, success.parts, success.at), (ToastKind::Info, vec![("copied 3 chars".into(), Token::Muted)], at));
         apply(
             &mut scroll,
-            &mut doc_scroll,
             &mut toast,
             Msg::ClipboardResult { result: Err("clipboard refused".into()), notice: "unused".into(), at },
         );

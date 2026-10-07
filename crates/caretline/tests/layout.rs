@@ -79,6 +79,18 @@ fn extra_rows_follow_a_block_and_are_never_caret_stops() {
 }
 
 #[test]
+fn the_right_half_of_a_wide_character_is_after_it() {
+    // "a漢字b" from column 6 (gutter 2, hang 4): a=6, 漢=7-8, 字=9-10.
+    let s = laid_out("a漢字b\n", 40, 4);
+    assert_eq!(hit(&s.doc, &s.view, 7, 0), Hit::Text { pos: 1 }, "the left half: before it");
+    assert_eq!(hit(&s.doc, &s.view, 8, 0), Hit::Text { pos: 2 }, "the right half: after it");
+    assert_eq!(hit(&s.doc, &s.view, 10, 0), Hit::Text { pos: 3 });
+    let mut c = s.clone();
+    update(&mut c, Msg::Click { col: 8, row: 0, extend: false });
+    assert_eq!(c.caret(), 2, "a click lands where the hit says");
+}
+
+#[test]
 fn hit_tells_hang_marks_gap_and_text() {
     let s = laid_out(TRIP, 50, 16);
     let ids = ids(&s);

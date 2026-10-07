@@ -1,10 +1,14 @@
 //! Drawing the document (tui-editor.md §3): marks, hang, a text column wrapped at
 //! min(72, available), the meta right-aligned (or on its own row), the journal header and the
 //! page title. The caret is the terminal's cursor; the selection is the `sel` fill.
+//!
+//! caretline lays the document out, scrolls it and draws it (`Doc::set_view`, `Doc::frame`):
+//! which rows show, what each holds, where the caret is. thc gives it the geometry (the text
+//! column, rows after a note for a meta or an image) and styles what the frame shows.
 
 use crate::app::App;
 use crate::ui::RenderOutput;
-use crate::editor::{Line, Target};
+use crate::editor::{DocRow, Line, Target, ViewGeometry};
 use crate::text::width;
 use crate::theme::Token;
 use ratatui::Frame;
@@ -15,10 +19,10 @@ use ratatui::widgets::Paragraph;
 use thc_core::outline::Kind;
 use thc_core::tui_config::{El, FocusSet};
 
-const MARKS: usize = 2;
+const MARKS: usize = crate::editor::MARKS as usize;
 /// `Line::conflict_with` for a line moved here because its parent was deleted elsewhere.
 pub const MOVED_HERE: &str = "\u{1}moved here";
-const HANG: usize = 4;
+const HANG: usize = crate::editor::HANG as usize;
 const META: usize = 24;
 const BLOCK: usize = MARKS + HANG + 72 + 2 + META;
 
@@ -123,11 +127,6 @@ pub fn is_code(l: &Line) -> bool {
     l.kind() == Kind::Para && l.text.starts_with("```")
 }
 
-/// How far a code block is scrolled sideways for a caret at `caret_col` in a `tw`-wide column.
-fn code_offset(caret_col: usize, tw: usize) -> usize {
-    (caret_col + 2).saturating_sub(tw)
-}
-
 /// What a line looks like: its hang and text style (§3.2).
 struct Form {
     hang: String,
@@ -200,12 +199,14 @@ pub fn human_bytes(b: u64) -> String {
     }
 }
 
-/// One visual row ready to draw: (line index, text byte range, row index within the line).
+/// One row on screen, from the engine's frame: (line index, text byte range).
 #[derive(Clone, Copy)]
 struct Row {
     line: usize,
     start: usize,
     end: usize,
+    /// The first byte the frame shows (a code block scrolled sideways starts later).
+    shown: usize,
     first: bool,
     /// The meta's own row under the line (narrow, or the text runs into it).
     meta_row: bool,
@@ -215,85 +216,94 @@ struct Row {
     image: Option<(u16, u16, u16)>,
 }
 
-/// The document's visual rows (blank spacer rows included), and the caret's (row, col).
-fn layout(app: &mut App, w: usize) -> (Vec<Row>, Option<(usize, isize)>) {
+/// What a note draws after its text: its meta on its own row, an image's rows (rows, cols).
+#[derive(Clone, Copy, Default)]
+struct After {
+    meta_row: bool,
+    image: Option<(u16, u16)>,
+}
+
+/// The document laid out by the engine in a view `w` wide and `h` high: the rows on screen
+/// (blank spacer rows included), the caret's cell, the lines whose meta has its own row, and
+/// (all rows, the first on screen) for the scrollbar.
+fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize)) {
     let ctx = DocContext::from_app(app);
+    let left = left_edge(ctx, w);
     let app_vault = app.vault.paths.vault.clone();
     let inline_images = app.derived.inline_images;
     let attachments = &app.derived.attachments;
     let sw = app.screen_width;
     let detail = app.show_detail;
+    let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
+    let mut g = ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, sw, detail, 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter };
     let d = app.doc.as_mut().unwrap();
-    let mut rows = Vec::new();
-    let mut caret = None;
-    let n = d.blocks().len();
-    for i in 0..n {
-        // A blank row before the note: its `gap`, else the default for its kind (Doc::effective_gap).
-        if d.effective_gap(i) && !rows.last().is_some_and(|r: &Row| r.blank) {
-            rows.push(Row { line: i, start: 0, end: 0, first: false, meta_row: false, blank: true, image: None });
+    d.set_view(&g);
+    // Whether the meta gets its own row follows the saved meta, never the live chip: lines
+    // below don't jump while a token is typed (the chip may run into the margin instead).
+    let with_meta: Vec<(usize, String)> = d.blocks().iter().enumerate().map(|(i, l)| (i, meta_of(ctx, l, None))).filter(|(_, m)| !m.is_empty()).collect();
+    let ends = d.first_row_ends(&with_meta.iter().map(|(i, _)| *i).collect::<Vec<_>>());
+    let mut after: std::collections::HashMap<usize, After> = std::collections::HashMap::new();
+    for ((i, meta), end) in with_meta.iter().zip(ends) {
+        let l = &d.blocks()[*i];
+        let last_row_end_col = width(&l.text[..end.min(l.text.len())]);
+        let own = w < 60 || MARKS + HANG + l.depth * 4 + last_row_end_col + 2 > w.saturating_sub(left).saturating_sub(width(meta));
+        if own {
+            after.entry(*i).or_default().meta_row = true;
         }
-        if d.hidden_by_fold(i) {
-            continue;
-        }
-        let tw = text_width(ctx, sw, detail, d.blocks()[i].depth);
-        let wr = d.rows_of(i, tw);
-        // Whether the meta gets its own row follows the saved meta, never the live chip: lines
-        // below don't jump while a token is typed (the chip may run into the margin instead).
-        let meta = meta_of(ctx, &d.blocks()[i], None);
-        // (Measured only when there's a meta: most lines have none, and this runs per line.)
-        let own_row = !meta.is_empty() && (w < 60 || {
-            let last_row_end_col = width(&d.blocks()[i].text[wr[0].0..wr[0].1]);
-            MARKS + HANG + d.blocks()[i].depth * 4 + last_row_end_col + 2 > w.saturating_sub(left_edge(ctx, w)).saturating_sub(width(&meta))
-        });
-        for (k, (s, e)) in wr.iter().enumerate() {
-            if i == d.caret().line && d.caret().byte >= *s && (d.caret().byte < *e || (d.caret().byte == *e && (k + 1 == wr.len() || d.blocks()[i].text.as_bytes().get(*e) == Some(&b'\n')))) && caret.is_none() {
-                // On the first row the marker is drawn in the hang: columns count from after it,
-                // and a caret inside it sits in the hang (negative).
-                let m = if k == 0 { marker_len(&d.blocks()[i]) } else { 0 };
-                let t = &d.blocks()[i].text;
-                let mut col = if d.caret().byte >= s + m { width(&t[s + m..d.caret().byte]) as isize } else { -(width(&t[d.caret().byte..s + m]) as isize) };
-                // A code block scrolls sideways to keep the caret in view.
-                if is_code(&d.blocks()[i]) {
-                    col -= code_offset(width(&t[*s..d.caret().byte]), tw) as isize;
-                }
-                caret = Some((rows.len(), col));
+    }
+    // An image attachment: rows under its chip, reserved whether or not the caret's on it,
+    // so nothing moves while you type (attachments.md §3).
+    if inline_images {
+        for (i, l) in d.blocks().iter().enumerate() {
+            let Some((_, path)) = image_line(&l.text) else { continue };
+            if !thc_core::attach::is_image(&path) {
+                continue;
             }
-            rows.push(Row { line: i, start: *s, end: *e, first: k == 0, meta_row: false, blank: false, image: None });
+            if let Some((iw, ih)) = attachments.get(&(app_vault.clone(), path.clone())).and_then(|a| a.dimensions) {
+                let tw = text_width(ctx, sw, detail, l.depth);
+                let (cols, n) = crate::images::cells(iw, ih, tw.min(u16::MAX as usize) as u16);
+                if n > 0 {
+                    after.entry(i).or_default().image = Some((n, cols));
+                }
+            }
         }
-        if own_row {
-            rows.push(Row { line: i, start: 0, end: 0, first: false, meta_row: true, blank: false, image: None });
-        }
-        // An image attachment: rows under its chip, reserved whether or not the caret's on it,
-        // so nothing moves while you type (attachments.md §3).
-        if let (true, Some((_, path))) = (inline_images, image_line(&d.blocks()[i].text)) {
-            if thc_core::attach::is_image(&path) {
-                if let Some((w, h)) = attachments.get(&(app_vault.clone(), path.clone())).and_then(|a| a.dimensions) {
-                    let (cols, n) = crate::images::cells(w, h, tw.min(u16::MAX as usize) as u16);
-                    for k in 0..n {
-                        rows.push(Row { line: i, start: 0, end: 0, first: false, meta_row: false, blank: false, image: Some((k, n, cols)) });
+    }
+    if !after.is_empty() {
+        g.extra_rows = after.iter().map(|(&i, a)| (i, a.meta_row as u16 + a.image.map_or(0, |(n, _)| n))).collect();
+        g.extra_rows.sort();
+        d.set_view(&g);
+    }
+    let f = d.frame();
+    let rows = f
+        .rows
+        .iter()
+        .filter_map(|r| {
+            let blank = Row { line: 0, start: 0, end: 0, shown: 0, first: false, meta_row: false, blank: true, image: None };
+            Some(match *r {
+                DocRow::Text { line, start, end, first, shown, .. } => Row { line, start, end, shown, first, ..blank }.text(),
+                DocRow::Gap { line } => Row { line, ..blank },
+                DocRow::Extra { line, index } => {
+                    let a = after.get(&line).copied().unwrap_or_default();
+                    if a.meta_row && index == 0 {
+                        Row { line, meta_row: true, ..blank }.text()
+                    } else {
+                        let k = index - a.meta_row as u16;
+                        let (n, cols) = a.image.unwrap_or((1, 0));
+                        Row { line, image: Some((k, n, cols)), ..blank }.text()
                     }
                 }
-            }
-        }
-    }
-    (rows, caret)
+                DocRow::Past => return None,
+            })
+        })
+        .collect();
+    let own = after.iter().filter(|(_, a)| a.meta_row).map(|(&i, _)| i).collect();
+    (rows, f.cursor, own, d.scroll_rows())
 }
 
-/// Line `i` is hidden under a folded parent above (folds are the view's).
-pub(crate) fn folded_hidden(lines: &[Line], i: usize, folded: impl Fn(usize) -> bool) -> bool {
-    let mut depth = lines[i].depth;
-    for (k, l) in lines[..i].iter().enumerate().rev() {
-        if l.depth < depth {
-            if folded(k) {
-                return true;
-            }
-            depth = l.depth;
-        }
-        if depth == 0 {
-            break;
-        }
+impl Row {
+    fn text(self) -> Row {
+        Row { blank: false, ..self }
     }
-    false
 }
 
 /// The meta to show: the chip while the caret's line has tokens, else the saved meta.
@@ -482,9 +492,9 @@ pub fn word_count(app: &App) -> usize {
     app.doc.as_ref().map_or(0, |d| d.word_count())
 }
 
-/// One visible row of the document on screen, for the mouse (mouse.md §3): which line and bytes
-/// it shows, where its text starts, where its hang is. The renderer writes these every frame, so
-/// a click maps to exactly what was drawn.
+/// One visible row of the document on screen, as drawn: which line and bytes it shows, where its
+/// text starts, where its hang is. Clicks go through the engine's hit-testing ([`hit`]); these
+/// say where thc's own marks (`≠`) are.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct HitRow {
     pub y: u16,
@@ -558,22 +568,17 @@ fn source_revision(app: &App) -> u64 {
 pub struct PreparedDoc {
     area: Rect,
     revision: u64,
+    /// The rows on screen.
     rows: Vec<Row>,
-    caret: Option<(usize, isize)>,
+    /// The caret's cell in the view (from the marks column, the first row on screen).
+    cursor: Option<(u16, u16)>,
+    /// Lines whose meta has its own row.
+    own_meta: std::collections::HashSet<usize>,
+    /// All the document's rows, and the first on screen (the scrollbar).
+    scroll: (usize, usize),
     header: Vec<TLine<'static>>,
     days: Vec<(u16, u16, u16, chrono::NaiveDate)>,
     body: Rect,
-}
-
-impl PreparedDoc {
-    pub(crate) fn viewport(&self, app: &App) -> Option<crate::update::Viewport> {
-        let ctx = DocContext::from_app(app);
-        Some(crate::update::Viewport::Document {
-            identity: crate::runtime_effects::document_identity(app)?, rows: self.rows.len(),
-            caret: self.caret.map(|(row, _)| row), height: self.body.height as usize,
-            free: app.doc_scroll_free, typewriter: ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter)),
-        })
-    }
 }
 
 pub(crate) fn prepare(app: &mut App, mut area: Rect) {
@@ -588,8 +593,8 @@ pub(crate) fn prepare(app: &mut App, mut area: Rect) {
     let header = header(ctx, &mut days, app, w);
     let head_h = (header.len() as u16).min(area.height);
     let body = Rect { y: area.y + head_h, height: area.height.saturating_sub(head_h), ..area };
-    let (rows, caret) = layout(app, w);
-    app.derived.doc = Some(PreparedDoc { area: source_area, revision: source_revision(app), rows, caret, header, days, body });
+    let (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
+    app.derived.doc = Some(PreparedDoc { area: source_area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body });
 }
 
 pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
@@ -640,10 +645,8 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(prepared.header.clone()), Rect { height: head_h, ..area });
     let body = prepared.body;
     let rows = &prepared.rows;
-    let caret = prepared.caret;
     let th = app.theme;
     let h = body.height as usize;
-    render.doc_view_rows = h;
     let d = app.doc.as_ref().unwrap();
     let sel = d.selection();
     let left = left_edge(ctx, w);
@@ -651,7 +654,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     let mut lines: Vec<TLine<'static>> = Vec::new();
     let mut hits: Vec<HitRow> = Vec::new();
     let mut places: Vec<crate::images::Place> = Vec::new();
-    for r in rows.iter().skip(d.scroll).take(h) {
+    for r in rows.iter().take(h) {
         if let Some((k, n, cols)) = r.image {
             // The image goes over its reserved rows, when they're all on screen.
             if k == 0 && lines.len() + n as usize <= h {
@@ -704,23 +707,13 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         spans.push(Span::styled(" ".repeat(indent), row_fill));
         spans.push(if r.first { Span::styled(format!("{:>4}", fm.hang), fm.hang_style.patch(row_fill)) } else { Span::styled("    ", row_fill) });
         // Text, with the selection filled (a first row's marker is in the hang).
-        let start = if r.first { (r.start + marker_len(l)).min(r.end) } else { r.start };
+        let start = if r.first { r.start.max(marker_len(l)).min(r.end) } else { r.start };
         let r = &Row { start, ..*r };
-        // A code block: cut to the column, scrolled to the caret, `→` where it runs on.
+        // A code block: cut to the column, from where the engine scrolled it sideways to keep
+        // the caret in view, `→` where it runs on.
         let tw_here = text_width(ctx, app.screen_width, app.show_detail, l.depth);
         let (r, more) = if is_code(l) {
-            let off = if r.line == d.caret().line && app.doc_write {
-                let caret_row = d.caret().byte >= r.start && d.caret().byte <= r.end;
-                if caret_row { code_offset(width(&l.text[r.start..d.caret().byte]), tw_here) } else { 0 }
-            } else {
-                0
-            };
-            let (mut a, mut col) = (r.start, 0);
-            while a < r.end && col < off {
-                let g = crate::text::next_char(&l.text[..r.end], a);
-                col += width(&l.text[a..g]);
-                a = g;
-            }
+            let a = r.shown.clamp(r.start, r.end);
             let (mut b, mut cw) = (a, 0);
             while b < r.end {
                 let g = crate::text::next_char(&l.text[..r.end], b);
@@ -876,7 +869,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                 let n = d.descendants(r.line);
                 meta = if meta.is_empty() { format!("+{n}") } else { format!("{meta} · +{n}") };
             }
-            let own_row = rows.iter().any(|x| x.meta_row && x.line == r.line);
+            let own_row = prepared.own_meta.contains(&r.line);
             if !meta.is_empty() && !own_row {
                 let used = left + MARKS + indent + HANG + width(text);
                 let pad = meta_right.saturating_sub(used + width(&meta)).max(2);
@@ -919,7 +912,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         lines.push(TLine::from(spans));
     }
     // The footer after the document's own lines (read-only; the caret never goes there).
-    let shown_rows = rows.len().saturating_sub(d.scroll);
+    let shown_rows = rows.len();
     // In Focus, `also today` and `linked from` are elements.
     let footer_on = |title: &str| match fv {
         None => true,
@@ -972,7 +965,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     f.render_widget(Paragraph::new(lines), body);
     // The scrollbar (mouse.md §5): one column at the right edge, only when the document overflows
     // (not in Focus, not under 60 columns). Clicking the track pages; dragging the thumb scrolls.
-    app_scrollbar_draw(render, f, app_view(fv), body, rows.len(), d.scroll, &th);
+    app_scrollbar_draw(render, f, app_view(fv), body, prepared.scroll.0, prepared.scroll.1, &th);
     if let Some(fv) = fv {
         // The month, top-aligned with the header, right of the text (and the meta).
         if let (true, Some(Target::Journal { date })) = (fv.month_fits(w), app.doc.as_ref().map(|d| &d.target)) {
@@ -1026,23 +1019,20 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         }
     }
     if app.doc_write {
-        if let Some((cr, col)) = caret {
-            if cr >= d.scroll && cr < d.scroll + h {
-                let l = &d.blocks()[rows[cr].line];
-                let x = (left + MARKS + l.depth * 4 + HANG) as isize + col;
-                let cx = ((body.x as isize + x).max(0) as usize).min(body.right() as usize - 1) as u16;
-                let cy = body.y + (cr - d.scroll) as u16;
-                // Under help, the leader's panel or any overlay the caret would show through it
-                // An overlay that takes text places its own.
-                if crate::ui::caret_allowed(app) {
-                    f.set_cursor_position((cx, cy));
-                }
-                if app.link_open {
-                    link_popup(render, f, app, area, cx, cy);
-                }
+        if let Some((col, row)) = prepared.cursor.filter(|&(_, row)| (row as usize) < h) {
+            let cx = (body.x as usize + left + col as usize).min(body.right() as usize - 1) as u16;
+            let cy = body.y + row;
+            // Under help, the leader's panel or any overlay the caret would show through it
+            // An overlay that takes text places its own.
+            if crate::ui::caret_allowed(app) {
+                f.set_cursor_position((cx, cy));
+            }
+            if app.link_open {
+                link_popup(render, f, app, area, cx, cy);
             }
         }
     }
+    render.doc_view = Some((body.x + left as u16, body.y, body.width.saturating_sub(left as u16), body.height));
     render.doc_hits = hits;
     render.image_places = places;
 }
@@ -1054,60 +1044,29 @@ pub fn conflict_mark_at(app: &App, x: u16, y: u16) -> Option<usize> {
     (l.conflict && x + (MARKS as u16) >= r.hang_x && x < r.hang_x).then_some(r.line)
 }
 
-/// Where a click at (x, y) lands in the document (mouse.md §3): the line and byte of the
-/// grapheme under it (the right half of a wide one goes after it), the row's end past its text,
-/// the line's start in the hang. `hang` is true when the click was in the hang.
+/// Where a click at (x, y) lands in the document (mouse.md §3), as the engine hit-tests its
+/// view: the line and byte of the grapheme under it (the right half of a wide one goes after
+/// it), the row's end past its text, a blank or meta row's the end of the text row above. `hang`
+/// is true when the click was on a task's box.
 pub fn hit(app: &App, x: u16, y: u16) -> Option<(usize, usize, bool)> {
-    hit_rows(app, &app.render.doc_hits, x, y)
+    hit_at(app, &app.render, x, y)
 }
 
-pub(crate) fn hit_rows(app: &App, hits: &[HitRow], x: u16, y: u16) -> Option<(usize, usize, bool)> {
+/// [`hit`] in the view a render drew.
+pub(crate) fn hit_at(app: &App, render: &RenderOutput, x: u16, y: u16) -> Option<(usize, usize, bool)> {
+    use crate::editor::DocHit;
+    let (vx, vy, vw, vh) = render.doc_view?;
+    if y < vy || y >= vy + vh || x >= vx + vw {
+        return None;
+    }
     let d = app.doc.as_ref()?;
-    let Some(r) = hits.iter().find(|h| h.y == y) else {
-        // A row between the text's rows that isn't a stop (a gap, a meta on its own row): the
-        // end of the nearest stop row above it (motion.md §4). Below the text, the footers and
-        // the rest keep their own clicks.
-        if !hits.iter().any(|h| h.y > y) {
-            return None;
-        }
-        let r = hits.iter().filter(|h| h.y < y).max_by_key(|h| h.y)?;
-        let text = &d.blocks().get(r.line)?.text;
-        return Some((r.line, row_last(text, r.end), false));
-    };
-    let text = &d.blocks().get(r.line)?.text;
-    // The layout is the last frame's: if the line changed under it since (a remote change, a
-    // reopen), the click lands at the line's end rather than past it (sync soak: a panic).
-    if r.end > text.len() || !text.is_char_boundary(r.start) || !text.is_char_boundary(r.end) {
-        return Some((r.line, text.len(), false));
+    let (col, row) = (x.saturating_sub(vx), y - vy);
+    match d.hit(col, row)? {
+        DocHit::Text(p) => Some((p.line, p.byte, false)),
+        DocHit::Hang { line, task_box: true, .. } => Some((line, 0, true)),
+        // The hang or the marks: where the row starts.
+        DocHit::Hang { row, .. } | DocHit::Marks { row, .. } => Some((row.line, row.byte, false)),
     }
-    if x < r.text_x {
-        // Only the box's own three cells (`[ ]`) are its button; the gap after it is margin.
-        return Some((r.line, if r.first { 0 } else { r.start }, r.first && x >= r.hang_x && x < r.hang_x + 3));
-    }
-    let mut col = r.text_x;
-    let mut b = r.start;
-    while b < r.end {
-        let next = crate::text::next_char(&text[..r.end], b);
-        let w = width(&text[b..next]).max(1) as u16;
-        if x < col + w {
-            // The right half of a wide character puts the caret after it.
-            let after = w > 1 && x >= col + w / 2;
-            return Some((r.line, if !after { b } else if next == r.end { row_last(text, next) } else { next }, false));
-        }
-        col += w;
-        b = next;
-    }
-    Some((r.line, row_last(text, r.end), false))
-}
-
-/// The last position a row owns, given the byte its range ends at: where the next row starts
-/// belongs to that row (motion.md §2), so a wrapped row's own end is just before it. A row ending
-/// at a soft break or the note's end owns its end.
-fn row_last(text: &str, end: usize) -> usize {
-    if end >= text.len() || text.as_bytes().get(end) == Some(&b'\n') {
-        return end.min(text.len());
-    }
-    crate::text::prev_char(text, end)
 }
 
 /// The `[[` popup: 40 columns, up to 8 rows, under the caret (above when there's no room).

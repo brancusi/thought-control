@@ -5,16 +5,6 @@
 use unicode_segmentation::UnicodeSegmentation;
 use unicode_width::UnicodeWidthStr;
 
-/// The start of the character before `i`: a grapheme cluster, what a person sees as one
-/// character (👨‍👩‍👧, 🇯🇵, e + ◌́). The caret, Backspace and Delete step by these (jank A3–A5).
-pub fn prev_char(s: &str, i: usize) -> usize {
-    s[..i]
-        .grapheme_indices(true)
-        .next_back()
-        .map(|(k, _)| k)
-        .unwrap_or(0)
-}
-
 /// The end of the character starting at `i` (a grapheme cluster).
 pub fn next_char(s: &str, i: usize) -> usize {
     s[i..]
