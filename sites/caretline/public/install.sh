@@ -147,7 +147,7 @@ main() {
 	say "  caretline demo            a guided tour, learned by doing"
 	say "  caretline demo scenes     ASCII animations running inside the editor"
 	say "  caretline demo agent      a scripted agent co-editing beside you"
-	say "  caretline notes.md        edit a file (--outline for lists and tasks)"
+	say "  caretline notes.md        edit a file (--outline for lists and folds)"
 	say ""
 	say "Docs: https://caretline.app/docs/"
 }
