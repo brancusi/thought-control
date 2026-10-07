@@ -809,8 +809,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> bool {
         return true;
     }
     if !pk.kind.is_doc() {
-        // List panels: a later phase (sidebar.md §16.3).
-        return true;
+        return crate::sidebar_list::key(app, &pk, k);
     }
     // Tab in a parked panel goes to the main view's tabs (§5.1).
     let parked = app.panels.get(&pk).is_some_and(|rt| rt.slot.parked);
@@ -1097,6 +1096,10 @@ pub fn pane_next(app: &mut App) {
 /// The runtime half of the pure update's effects.
 pub(crate) fn perform(app: &mut App, effect: Effect) {
     match effect {
+        Effect::SidebarLoad { key } if !key.kind.is_doc() => app.refresh_list(&key),
+        Effect::SidebarDrop { key } if !key.kind.is_doc() => {
+            app.lists.remove(&key);
+        }
         Effect::SidebarLoad { key } => app.load_panel(&key),
         Effect::SidebarDrop { key } => app.drop_panel(&key),
         Effect::SidebarPersist => {

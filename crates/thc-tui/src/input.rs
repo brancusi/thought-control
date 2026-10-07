@@ -305,6 +305,12 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
         crate::sidebar_app::header_click(app, i, part, clicks, m.kind == K::Down(MouseButton::Middle));
         return;
     }
+    if let Some(crate::ui::Click::PanelRow(i, row)) = at.clone().filter(|_| left_down) {
+        if let Some(k) = app.ui.sidebar.open.get(i).map(|p| p.key()) {
+            crate::sidebar_list::click_row(app, &k, row, clicks);
+        }
+        return;
+    }
     if crate::sidebar_app::mouse(app, m, clicks) {
         return;
     }
@@ -456,7 +462,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 return;
             }
             Some(Click::Text) => return,
-            Some(Click::Panel(..)) => return,
+            Some(Click::Panel(..) | Click::PanelRow(..)) => return,
             Some(Click::Menu(_) | Click::Caret { .. } | Click::Box | Click::Link) | None => {}
         }
     }

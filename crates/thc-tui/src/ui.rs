@@ -167,6 +167,8 @@ pub enum Click {
     Action(&'static str),
     /// A sidebar panel's header part (by its place in the stack), or its `↓ N more` row.
     Panel(usize, crate::sidebar_ui::Part),
+    /// A list panel's row (the panel by its place in the stack, the row by its index).
+    PanelRow(usize, usize),
 }
 
 /// A clickable span on screen, recorded while drawing.
