@@ -32,13 +32,22 @@ fn jump_to_a_page_from_inside_a_document() {
 }
 
 #[test]
-#[ignore = "gj4x1"]
 fn jump_to_a_page_with_the_palette() {
     flow("jump to a page with :")
         .keys(":")
         .type_text("Q4 Plan")
         .keys("<cr>")
         .expect_page("Q4 Plan")
+        .done();
+}
+
+#[test]
+fn jump_to_a_day_with_the_palette() {
+    flow("jump to yesterday with :")
+        .keys(":")
+        .type_text("yesterday")
+        .keys("<cr>")
+        .expect_day(-1)
         .done();
 }
 
