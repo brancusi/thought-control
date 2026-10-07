@@ -31,7 +31,7 @@ sha2 = "0.10"
 # LOCAL-ONLY (feat/layers, never pushed): the engine and caretline-layers from a sibling
 # checkout, so both use one engine. Must become published versions (caretline 0.4.0,
 # caretline-layers 0.1.0) before this branch is pushed.
-caretline = { path = "../caretline/crates/caretline" }
+caretline = { path = "../.caretline-for-thc/crates/caretline" }
 
 [profile.release]
 lto = "fat"
