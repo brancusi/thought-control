@@ -11,7 +11,7 @@ use caretline_next::{script_to_msgs, update, view, Effect, Msg, State, Viewport}
 pub fn state_wh(notation: &str, width: u16, height: u16) -> State {
     let (text, anchor, head) = parse(notation);
     let mut state = State::new(&text, Some("test.md".into()), Viewport { width, height });
-    state.selection = Selection::single(anchor, head);
+    state.view.selection = Selection::single(anchor, head);
     // A resize message settles the view around the caret.
     update(&mut state, Msg::Resize { width, height });
     state
@@ -51,8 +51,8 @@ pub fn parse(notation: &str) -> (String, usize, usize) {
 
 /// The primary selection in notation.
 pub fn show(state: &State) -> String {
-    let r = state.selection.primary();
-    let text = state.text.to_string();
+    let r = state.view.selection.primary();
+    let text = state.doc.text.to_string();
     let mut out = String::new();
     for (i, c) in text.chars().enumerate() {
         mark(&mut out, i, r.anchor, r.head);
@@ -86,7 +86,7 @@ fn mark(out: &mut String, i: usize, anchor: usize, head: usize) {
 
 /// Runs a key script through the keymap and update; returns all effects.
 pub fn keys(state: &mut State, script: &str) -> Vec<Effect> {
-    let msgs = script_to_msgs(script, state.now_ms).expect("key script parses");
+    let msgs = script_to_msgs(script, state.doc.now_ms).expect("key script parses");
     msgs.into_iter().flat_map(|m| update(state, m)).collect()
 }
 
@@ -182,8 +182,8 @@ pub mod gen {
                 extend: rng.random_bool(0.4),
             },
             67..=69 => Msg::Click {
-                col: rng.random_range(0..state.viewport.width.saturating_add(3)),
-                row: rng.random_range(0..state.viewport.height.saturating_add(3)),
+                col: rng.random_range(0..state.view.viewport.width.saturating_add(3)),
+                row: rng.random_range(0..state.view.viewport.height.saturating_add(3)),
                 extend: rng.random_bool(0.3),
             },
             70 => Msg::Scroll { rows: rng.random_range(-30..30) },
@@ -202,14 +202,14 @@ pub mod gen {
                 let (width, height) = size(rng);
                 Msg::Resize { width, height }
             }
-            _ => Msg::Tick { now_ms: state.now_ms + rng.random_range(0..3000) },
+            _ => Msg::Tick { now_ms: state.doc.now_ms + rng.random_range(0..3000) },
         }
     }
 
     /// A random multi-range selection on grapheme boundaries (as a state file could hold).
     pub fn multi_selection(rng: &mut StdRng, state: &State) -> Selection {
         use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
-        let text = state.text.slice(..);
+        let text = state.doc.text.slice(..);
         let len = text.len_chars();
         let n = rng.random_range(1..4);
         let ranges: SmallVec<[Range; 1]> = (0..n)

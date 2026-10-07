@@ -24,9 +24,9 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             | Msg::ShowStatus { .. }
     );
     if !passive {
-        state.status = None;
+        state.view.status = None;
         if !matches!(msg, Msg::Quit) {
-            state.quit_armed = false;
+            state.view.quit_armed = false;
         }
     }
     // Anything but an edit of the same kind (or a passive message) ends an edit run.
@@ -36,23 +36,23 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
             Msg::InsertText { .. } | Msg::InsertNewline | Msg::DeleteBackward | Msg::DeleteForward
         );
     if !keeps_run {
-        state.run = None;
+        state.doc.run = None;
     }
-    let outline_on = state.outline.is_some();
-    let before = outline_on.then(|| (state.selection.clone(), caret_block(state), msg.clone(), state.status.clone()));
+    let outline_on = state.doc.outline.is_some();
+    let before = outline_on.then(|| (state.view.selection.clone(), caret_block(state), msg.clone(), state.view.status.clone()));
     if !passive && !matches!(msg, Msg::Click { extend: true, .. }) {
-        state.word_drag = None;
+        state.view.word_drag = None;
     }
 
     let pins = if outline_on { crate::outline::rules::pins_for(state, &msg) } else { None };
-    let edits_before = state.edits.0;
+    let edits_before = state.doc.edits.0;
     let handled = if outline_on { crate::outline::rules::update(state, &msg) } else { None };
     if let Some(fx) = handled {
         effects.extend(fx);
     } else {
         plain(state, msg, &mut effects);
     }
-    if let Some(pins) = pins.filter(|_| state.edits.0 != edits_before) {
+    if let Some(pins) = pins.filter(|_| state.doc.edits.0 != edits_before) {
         crate::outline::rules::pin(state, pins);
     }
 
@@ -62,19 +62,19 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         if now != prev_block {
             effects.push(Effect::BlockLeft { from: prev_block, to: now });
         }
-        if matches!(msg, Msg::Undo | Msg::Redo) && state.status.is_none() {
+        if matches!(msg, Msg::Undo | Msg::Redo) && state.view.status.is_none() {
             effects.push(Effect::Restored);
         }
-        if !state.config.status_bar && state.status != status {
-            if let Some(text) = state.status.clone() {
+        if !state.view.config.status_bar && state.view.status != status {
+            if let Some(text) = state.view.status.clone() {
                 effects.push(Effect::Notice { text });
             }
         }
     }
 
-    state.dirty = state.compute_dirty();
-    if state.run.is_some_and(|r| r.revision != state.history.current_revision()) {
-        state.run = None;
+    state.doc.dirty = state.compute_dirty();
+    if state.doc.run.is_some_and(|r| r.revision != state.doc.history.current_revision()) {
+        state.doc.run = None;
     }
     ensure_caret_visible(state);
     effects
@@ -83,20 +83,20 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
 /// The block holding the primary caret, in an outline document.
 fn caret_block(state: &State) -> Option<crate::marks::MarkId> {
     let o = state.blocks()?;
-    Some(o.block_at(state.text.slice(..), state.caret()).id)
+    Some(o.block_at(state.doc.text.slice(..), state.caret()).id)
 }
 
 /// A message as the plain-text editor handles it.
 fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
     match msg {
         Msg::InsertText { text } => {
-            let text = normalize_line_endings(&text, state.config.line_ending.as_str());
+            let text = normalize_line_endings(&text, state.doc.config.line_ending.as_str());
             if !text.is_empty() {
                 insert(state, &text, Some(RunKind::Typing));
             }
         }
         Msg::InsertNewline | Msg::SoftBreak => {
-            let le = state.config.line_ending.as_str().to_string();
+            let le = state.doc.config.line_ending.as_str().to_string();
             insert(state, &le, Some(RunKind::Typing));
         }
         Msg::DeleteBackward => delete(state, Some(RunKind::DeleteBackward), |text, _, head| {
@@ -155,24 +155,24 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         Msg::Move { dir, by, extend } => motion(state, dir, by, extend),
         Msg::Click { col, row, extend } => {
             let layout = Layout::new(state);
-            let pos = layout.pos_at_screen(&state.scroll, col, row);
-            let primary = state.selection.primary();
-            let range = match (extend, state.word_drag) {
+            let pos = layout.pos_at_screen(&state.view.scroll, col, row);
+            let primary = state.view.selection.primary();
+            let range = match (extend, state.view.word_drag) {
                 // After a double-click, extending goes by whole words.
                 (true, Some((a, b))) => {
-                    let (wa, wb) = word_at(state.text.slice(..), pos);
+                    let (wa, wb) = word_at(state.doc.text.slice(..), pos);
                     if pos >= b { Range::new(a, wb.max(b)) } else { Range::new(b, wa.min(a)) }
                 }
                 (true, None) => Range::new(primary.anchor, pos),
                 (false, _) => Range::point(pos),
             };
-            state.selection = Selection::single(range.anchor, range.head);
+            state.view.selection = Selection::single(range.anchor, range.head);
         }
         Msg::SelectWordAt { pos } => {
-            let pos = pos.min(state.text.len_chars());
-            let (a, b) = word_at(state.text.slice(..), pos);
-            state.selection = Selection::single(a, b);
-            state.word_drag = Some((a, b));
+            let pos = pos.min(state.doc.text.len_chars());
+            let (a, b) = word_at(state.doc.text.slice(..), pos);
+            state.view.selection = Selection::single(a, b);
+            state.view.word_drag = Some((a, b));
         }
         Msg::PastePlain { text } => plain(state, Msg::Paste { text }, effects),
         Msg::Indent
@@ -182,43 +182,44 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         | Msg::MoveBlock { .. }
         | Msg::SelectBlock { .. }
         | Msg::InsertBlocks { .. } => {
-            state.status = Some("only in outline documents".into());
+            state.view.status = Some("only in outline documents".into());
         }
         Msg::Scroll { rows } => scroll(state, rows),
         Msg::SelectAll => {
-            state.selection = Selection::single(0, state.text.len_chars());
+            state.view.selection = Selection::single(0, state.doc.text.len_chars());
         }
         Msg::Collapse => {
-            state.selection = state
+            state.view.selection = state
+                .view
                 .selection
                 .clone()
                 .transform(|r| Range::point(r.head));
         }
         Msg::Copy => {
             if let Some(text) = selected_text(state) {
-                state.status = Some(format!("copied {}", count_label(&text)));
-                state.clipboard = Clipboard::from(text.clone());
+                state.view.status = Some(format!("copied {}", count_label(&text)));
+                state.doc.clipboard = Clipboard::from(text.clone());
                 effects.push(Effect::ClipboardSet { text });
             } else {
-                state.status = Some("nothing selected".into());
+                state.view.status = Some("nothing selected".into());
             }
         }
         Msg::Cut => {
             if let Some(text) = selected_text(state) {
-                state.status = Some(format!("cut {}", count_label(&text)));
+                state.view.status = Some(format!("cut {}", count_label(&text)));
                 // One range: the register keeps the marks the cut takes, so pasting it
                 // back re-creates the same ids.
-                let single = (state.selection.len() == 1).then(|| state.selection.primary());
+                let single = (state.view.selection.len() == 1).then(|| state.view.selection.primary());
                 // Only the non-empty ranges are cut; carets elsewhere stay as they are.
                 let removed = delete_marks(state, None, |_, _, head| (head, head));
                 let marks = match single {
                     Some(r) => carried(&removed, r.from(), r.to()),
                     None => Vec::new(),
                 };
-                state.clipboard = Clipboard { text: text.clone(), external: None, marks };
+                state.doc.clipboard = Clipboard { text: text.clone(), external: None, marks };
                 effects.push(Effect::ClipboardSet { text });
             } else {
-                state.status = Some("nothing selected".into());
+                state.view.status = Some("nothing selected".into());
             }
         }
         Msg::Paste { text } => {
@@ -226,78 +227,78 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
             // document, so it goes back exactly as it was copied (with any marks it holds).
             let (text, marks) = match text {
                 Some(text) => {
-                    let text = normalize_line_endings(&text, state.config.line_ending.as_str());
-                    if state.clipboard.is_own(&text) {
-                        (state.clipboard.text.clone(), state.clipboard.marks.clone())
+                    let text = normalize_line_endings(&text, state.doc.config.line_ending.as_str());
+                    if state.doc.clipboard.is_own(&text) {
+                        (state.doc.clipboard.text.clone(), state.doc.clipboard.marks.clone())
                     } else {
                         (text, Vec::new())
                     }
                 }
-                None => (state.clipboard.text.clone(), state.clipboard.marks.clone()),
+                None => (state.doc.clipboard.text.clone(), state.doc.clipboard.marks.clone()),
             };
             if text.is_empty() {
-                state.status = Some("the clipboard is empty".into());
+                state.view.status = Some("the clipboard is empty".into());
             } else {
                 paste_text(state, &text, &marks);
             }
         }
         Msg::Undo => {
-            let rev = state.history.current_revision();
-            let txn = state.history.undo().cloned();
+            let rev = state.doc.history.current_revision();
+            let txn = state.doc.history.undo().cloned();
             match txn {
                 Some(txn) => apply_history(state, &txn, rev, true),
-                None => state.status = Some("nothing to undo".into()),
+                None => state.view.status = Some("nothing to undo".into()),
             }
         }
         Msg::Redo => {
-            let txn = state.history.redo().cloned();
-            let rev = state.history.current_revision();
+            let txn = state.doc.history.redo().cloned();
+            let rev = state.doc.history.current_revision();
             match txn {
                 Some(txn) => apply_history(state, &txn, rev, false),
-                None => state.status = Some("nothing to redo".into()),
+                None => state.view.status = Some("nothing to redo".into()),
             }
         }
-        Msg::Save => match &state.path {
+        Msg::Save => match &state.doc.path {
             Some(path) => {
-                state.saving = Some(state.history.current_revision());
-                let text = if state.outline.is_some() {
+                state.doc.saving = Some(state.doc.history.current_revision());
+                let text = if state.doc.outline.is_some() {
                     crate::outline::markdown::to_file(state)
                 } else {
-                    state.text.to_string()
+                    state.doc.text.to_string()
                 };
                 effects.push(Effect::WriteFile { path: path.clone(), text });
             }
-            None => state.status = Some("no file name: start caretline with a path".into()),
+            None => state.view.status = Some("no file name: start caretline with a path".into()),
         },
         Msg::Saved => {
-            if let Some(rev) = state.saving.take() {
-                state.saved_revision = Some(rev);
-                state.status = Some(format!("saved {}", state.name()));
+            if let Some(rev) = state.doc.saving.take() {
+                state.doc.saved_revision = Some(rev);
+                state.view.status = Some(format!("saved {}", state.name()));
             }
         }
         Msg::SaveFailed { err } => {
-            state.saving = None;
-            state.status = Some(format!("save failed: {err}"));
+            state.doc.saving = None;
+            state.view.status = Some(format!("save failed: {err}"));
         }
         Msg::Quit => {
-            if state.dirty && !state.quit_armed {
-                state.quit_armed = true;
-                state.status = Some("unsaved changes: quit again to discard them".into());
+            if state.doc.dirty && !state.view.quit_armed {
+                state.view.quit_armed = true;
+                state.view.status = Some("unsaved changes: quit again to discard them".into());
             } else {
                 effects.push(Effect::Quit);
             }
         }
         Msg::Resize { width, height } => {
-            state.viewport.width = width.max(1);
-            state.viewport.height = height.max(1);
+            state.view.viewport.width = width.max(1);
+            state.view.viewport.height = height.max(1);
         }
         Msg::Tick { now_ms } => {
-            state.now_ms = now_ms;
+            state.doc.now_ms = now_ms;
         }
         Msg::ShowStatus { text } => {
             // One line: a newline would break the status bar.
             let line = text.lines().next().unwrap_or("").to_string();
-            state.status = (!line.is_empty()).then_some(line);
+            state.view.status = (!line.is_empty()).then_some(line);
         }
     }
 }
@@ -356,38 +357,38 @@ pub(crate) fn commit_with(
     step: Step,
     fix: impl FnOnce(&mut Marks, RopeSlice),
 ) -> Vec<Mark> {
-    let marks_before = state.marks.clone();
-    let old_text = state.text.clone();
+    let marks_before = state.doc.marks.clone();
+    let old_text = state.doc.text.clone();
     let text_changed = !txn.changes().is_empty();
     if text_changed {
-        txn.apply(&mut state.text);
-        state.wrap.edited(txn.changes());
+        txn.apply(&mut state.doc.text);
+        state.view.wrap.edited(txn.changes());
     }
-    let removed = state.marks.map(old_text.slice(..), state.text.slice(..), txn.changes());
-    let naive = state.marks.clone();
-    fix(&mut state.marks, state.text.slice(..));
+    let removed = state.doc.marks.map(old_text.slice(..), state.doc.text.slice(..), txn.changes());
+    let naive = state.doc.marks.clone();
+    fix(&mut state.doc.marks, state.doc.text.slice(..));
     after_marks_changed(state);
-    if state.outline.is_some() {
+    if state.doc.outline.is_some() {
         crate::outline::rules::settle(state);
     }
-    let before_selection = state.selection.clone();
+    let before_selection = state.view.selection.clone();
     if let Some(sel) = txn.selection() {
-        state.selection = sel.clone();
+        state.view.selection = sel.clone();
     }
-    if !text_changed && state.marks == marks_before {
+    if !text_changed && state.doc.marks == marks_before {
         return removed;
     }
-    state.edits.0 = state.edits.0.wrapping_add(1);
-    let tracked = !marks_before.is_empty() || !state.marks.is_empty();
+    state.doc.edits.0 = state.doc.edits.0.wrapping_add(1);
+    let tracked = !marks_before.is_empty() || !state.doc.marks.is_empty();
 
-    let now = state.now_ms;
+    let now = state.doc.now_ms;
     let changed = changed_chars(&txn);
     let continues = step.merge
-        || match (step.kind, state.run) {
+        || match (step.kind, state.doc.run) {
             (Some(kind), Some(run)) => {
                 !step.replaced
                     && run.kind == kind
-                    && run.revision == state.history.current_revision()
+                    && run.revision == state.doc.history.current_revision()
                     && now.saturating_sub(run.at_ms) < RUN_GAP_MS
                     && !run_is_full(run, &txn)
             }
@@ -395,14 +396,14 @@ pub(crate) fn commit_with(
         };
     // A revision being amended: the marks as they were when it began.
     state.fit_mark_log();
-    let rev = state.history.current_revision();
-    let start_marks = if continues && rev > 0 && (tracked || !state.mark_log[rev].is_empty()) {
-        let inversion = state.history.current_inversion().clone();
+    let rev = state.doc.history.current_revision();
+    let start_marks = if continues && rev > 0 && (tracked || !state.doc.mark_log[rev].is_empty()) {
+        let inversion = state.doc.history.current_inversion().clone();
         let mut start_text = old_text.clone();
         inversion.apply(&mut start_text);
         let mut m = marks_before.clone();
         m.map(old_text.slice(..), start_text.slice(..), inversion.changes());
-        m.apply(&state.mark_log[rev].undo);
+        m.apply(&state.doc.mark_log[rev].undo);
         Some((m, start_text))
     } else {
         None
@@ -414,38 +415,38 @@ pub(crate) fn commit_with(
     // A change of marks alone folds into the current revision without touching its text
     // (Helix can't compose an empty change set).
     let amended = continues
-        && if text_changed { state.history.amend_current_revision(&txn, &old_text, now) } else { rev > 0 };
+        && if text_changed { state.doc.history.amend_current_revision(&txn, &old_text, now) } else { rev > 0 };
     if !amended {
-        state.history.commit_revision_at_timestamp(&txn, &before, now);
+        state.doc.history.commit_revision_at_timestamp(&txn, &before, now);
     }
-    let rev = state.history.current_revision();
+    let rev = state.doc.history.current_revision();
     state.fit_mark_log();
-    state.mark_log[rev] = match (amended, start_marks) {
+    state.doc.mark_log[rev] = match (amended, start_marks) {
         (true, Some((start, start_text))) => {
-            let forward = state.history.current_transaction().clone();
-            let backward = state.history.current_inversion().clone();
+            let forward = state.doc.history.current_transaction().clone();
+            let backward = state.doc.history.current_inversion().clone();
             mark_delta(&start, &start_text, &forward, &backward, state)
         }
         (true, None) => MarkDelta::default(),
         (false, _) if tracked => {
-            let backward = state.history.current_inversion().clone();
+            let backward = state.doc.history.current_inversion().clone();
             let undo = {
-                let mut m = state.marks.clone();
-                m.map(state.text.slice(..), old_text.slice(..), backward.changes());
+                let mut m = state.doc.marks.clone();
+                m.map(state.doc.text.slice(..), old_text.slice(..), backward.changes());
                 m.diff(&marks_before)
             };
-            MarkDelta { undo, redo: naive.diff(&state.marks) }
+            MarkDelta { undo, redo: naive.diff(&state.doc.marks) }
         }
         (false, _) => MarkDelta::default(),
     };
 
-    let so_far = match state.run {
+    let so_far = match state.doc.run {
         Some(run) if amended => run.chars,
         _ => 0,
     };
-    state.run = step.kind.map(|kind| EditRun {
+    state.doc.run = step.kind.map(|kind| EditRun {
         kind,
-        revision: state.history.current_revision(),
+        revision: state.doc.history.current_revision(),
         at_ms: now,
         chars: so_far + changed,
     });
@@ -455,28 +456,28 @@ pub(crate) fn commit_with(
 /// Changes only marks, as one undo step (a host's own block edit: binding, splitting or
 /// joining blocks without touching the text). `f` gets the marks and the text.
 pub fn mark_only_edit(state: &mut State, f: impl FnOnce(&mut Marks, RopeSlice)) {
-    state.run = None;
-    let txn = Transaction::new(&state.text);
+    state.doc.run = None;
+    let txn = Transaction::new(&state.doc.text);
     commit_with(state, txn, Step::default(), f);
-    state.dirty = state.compute_dirty();
+    state.doc.dirty = state.compute_dirty();
 }
 
 /// The delta of a revision that turned `start` (on `start_text`) into the state's marks
 /// through `forward`; `backward` is its inversion.
 fn mark_delta(start: &Marks, start_text: &crate::helix::Rope, forward: &Transaction, backward: &Transaction, state: &State) -> MarkDelta {
     let mut fwd = start.clone();
-    fwd.map(start_text.slice(..), state.text.slice(..), forward.changes());
-    let mut bwd = state.marks.clone();
-    bwd.map(state.text.slice(..), start_text.slice(..), backward.changes());
+    fwd.map(start_text.slice(..), state.doc.text.slice(..), forward.changes());
+    let mut bwd = state.doc.marks.clone();
+    bwd.map(state.doc.text.slice(..), start_text.slice(..), backward.changes());
     MarkDelta {
         undo: bwd.diff(start),
-        redo: fwd.diff(&state.marks),
+        redo: fwd.diff(&state.doc.marks),
     }
 }
 
 /// Whatever is derived from the marks or the text must be recomputed.
 pub(crate) fn after_marks_changed(state: &mut State) {
-    state.derived.clear();
+    state.doc.derived.clear();
 }
 
 /// The marks a cut of `[from, to]` took, as offsets into the cut text.
@@ -492,17 +493,17 @@ pub(crate) fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark>
 /// where they were in the pasted text (when their ids aren't in use), and a mark at the
 /// paste point stays there unless the register brings its own.
 pub(crate) fn paste_text(state: &mut State, text: &str, carried: &[ClipMark]) {
-    let single = state.selection.len() == 1;
+    let single = state.view.selection.len() == 1;
     if carried.is_empty() || !single {
         insert(state, text, None);
         return;
     }
     let replaced = has_selection(state);
-    let from = state.selection.primary().from();
+    let from = state.view.selection.primary().from();
     // Whole lines pasted at a line start push the line there (and its mark) down; any other
     // paste continues the line it lands in, which keeps its mark.
-    let whole = text.ends_with('\n') && crate::marks::is_line_start(state.text.slice(..), from);
-    let at_from = if whole { None } else { state.marks.at(from) };
+    let whole = text.ends_with('\n') && crate::marks::is_line_start(state.doc.text.slice(..), from);
+    let at_from = if whole { None } else { state.doc.marks.at(from) };
     let tendril = Tendril::from(text);
     let txn = change_each(state, |_, r| (r.from(), r.to(), Some(tendril.clone())));
     commit_with(state, txn, Step { kind: None, replaced, merge: false }, |marks, new| {
@@ -553,11 +554,11 @@ pub(crate) fn change_each(
     state: &State,
     mut f: impl FnMut(RopeSlice, Range) -> (usize, usize, Option<Tendril>),
 ) -> Transaction {
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let len = text.len_chars();
     let mut changes: Vec<(usize, usize, Option<Tendril>)> = Vec::new();
     let mut last = 0usize;
-    for range in state.selection.iter() {
+    for range in state.view.selection.iter() {
         let (from, to, ins) = f(text, *range);
         let from = from.min(len).max(last);
         let to = to.min(len).max(from);
@@ -572,13 +573,13 @@ pub(crate) fn change_each(
         carets.push(Range::point(pos));
         delta += ins_len as isize - (*to as isize - *from as isize);
     }
-    let primary = state.selection.primary_index().min(carets.len() - 1);
+    let primary = state.view.selection.primary_index().min(carets.len() - 1);
     let selection = Selection::new(carets, primary);
-    Transaction::change(&state.text, changes.into_iter()).with_selection(selection)
+    Transaction::change(&state.doc.text, changes.into_iter()).with_selection(selection)
 }
 
 pub(crate) fn has_selection(state: &State) -> bool {
-    state.selection.iter().any(|r| !r.is_empty())
+    state.view.selection.iter().any(|r| !r.is_empty())
 }
 
 /// Types or pastes `text` at every range, replacing selections.
@@ -620,28 +621,29 @@ pub(crate) fn delete_marks(
 /// Applies an undo or redo transaction from the history: `rev` is the revision being
 /// undone, or the one redone.
 fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
-    let old = state.text.clone();
-    txn.apply(&mut state.text);
-    state.wrap.edited(txn.changes());
+    let old = state.doc.text.clone();
+    txn.apply(&mut state.doc.text);
+    state.view.wrap.edited(txn.changes());
     state.fit_mark_log();
-    state.derived.clear();
-    let delta = &state.mark_log[rev];
-    if !state.marks.is_empty() || !delta.is_empty() {
+    state.doc.derived.clear();
+    let delta = &state.doc.mark_log[rev];
+    if !state.doc.marks.is_empty() || !delta.is_empty() {
         let fixup = if undo { delta.undo.clone() } else { delta.redo.clone() };
-        state.marks.map(old.slice(..), state.text.slice(..), txn.changes());
-        state.marks.apply(&fixup);
+        state.doc.marks.map(old.slice(..), state.doc.text.slice(..), txn.changes());
+        state.doc.marks.apply(&fixup);
         after_marks_changed(state);
     }
-    state.selection = match txn.selection() {
+    state.view.selection = match txn.selection() {
         Some(sel) => sel.clone(),
-        None => state.selection.clone().map(txn.changes()),
+        None => state.view.selection.clone().map(txn.changes()),
     };
-    state.run = None;
+    state.doc.run = None;
 }
 
 pub(crate) fn selected_text(state: &State) -> Option<String> {
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let parts: Vec<String> = state
+        .view
         .selection
         .iter()
         .filter(|r| !r.is_empty())
@@ -650,7 +652,7 @@ pub(crate) fn selected_text(state: &State) -> Option<String> {
     if parts.is_empty() {
         None
     } else {
-        Some(parts.join(state.config.line_ending.as_str()))
+        Some(parts.join(state.doc.config.line_ending.as_str()))
     }
 }
 
@@ -767,7 +769,7 @@ fn vertical(layout: &Layout, origin: usize, n: isize, goal: usize) -> usize {
 
 fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
     // Outside an outline, moving by block is moving by a document line.
-    let by = if by == By::Block && state.outline.is_none() { By::Line } else { by };
+    let by = if by == By::Block && state.doc.outline.is_none() { By::Line } else { by };
     // The direction a selection collapses towards.
     let dir = match by {
         By::LineStart | By::DocStart => Dir::Backward,
@@ -781,13 +783,14 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
     let len = text.len_chars();
 
     let focused: Vec<bool> = state
+        .view
         .selection
         .iter()
         .map(|r| crate::outline::rules::is_focused_atomic(state, r))
         .collect();
     let mut index = 0;
     let st: &State = state;
-    let selection = st.selection.clone().transform(|r| {
+    let selection = st.view.selection.clone().transform(|r| {
         let is_focused = focused.get(index).copied().unwrap_or(false);
         index += 1;
         let collapsing = !extend && !r.is_empty();
@@ -849,7 +852,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
             By::Block => finish(crate::outline::rules::block_step(st, origin, dir), None),
         }
     });
-    state.selection = selection;
+    state.view.selection = selection;
 
     if by == By::Page {
         // Scroll by the same amount so the caret keeps its place on screen.
@@ -857,12 +860,12 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
             Dir::Backward => -page,
             Dir::Forward => page,
         };
-        let top = wrapped.top(&state.scroll);
+        let top = wrapped.top(&state.view.scroll);
         let (top, _) = wrapped.step_rows(top, n);
-        state.scroll = Scroll {
+        state.view.scroll = Scroll {
             line: top.line,
             row: top.row,
-            col: state.scroll.col,
+            col: state.view.scroll.col,
         };
     }
 }
@@ -874,7 +877,7 @@ fn scroll(state: &mut State, rows: i32) {
         return;
     }
     let layout = Layout::new(state);
-    let top = layout.top(&state.scroll);
+    let top = layout.top(&state.view.scroll);
     let (mut new_top, _) = layout.step_rows(top, rows as isize);
     // Never scroll past the point where the last row sits at the bottom.
     let end = layout.pos_coords(layout.text().len_chars()).0;
@@ -882,13 +885,13 @@ fn scroll(state: &mut State, rows: i32) {
     if rows > 0 && new_top > max_top {
         new_top = max_top.max(top);
     }
-    state.scroll = Scroll {
+    state.view.scroll = Scroll {
         line: new_top.line,
         row: new_top.row,
-        col: state.scroll.col,
+        col: state.view.scroll.col,
     };
-    let so = (state.config.scrolloff as usize).min((h - 1) / 2);
-    let primary = state.selection.primary();
+    let so = (state.view.config.scrolloff as usize).min((h - 1) / 2);
+    let primary = state.view.selection.primary();
     let (caret, col) = layout.pos_coords(primary.head);
     let dist = layout.rows_between(new_top, caret, h + so);
     let target_row = if dist < so as isize {
@@ -908,7 +911,7 @@ fn scroll(state: &mut State, rows: i32) {
         };
         let mut range = Range::point(pos);
         range.old_visual_position = Some((0, goal as u32));
-        state.selection = Selection::single(pos, pos).transform(|_| range);
+        state.view.selection = Selection::single(pos, pos).transform(|_| range);
     }
 }
 

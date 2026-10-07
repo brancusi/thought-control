@@ -282,7 +282,7 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
 fn terminal_msgs(state: &State, ev: Event) -> Vec<Msg> {
     match ev {
         Event::Key(k) if matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat) => {
-            match to_key(&k).and_then(|key| keymap_for(state.outline.is_some(), &key)) {
+            match to_key(&k).and_then(|key| keymap_for(state.doc.outline.is_some(), &key)) {
                 // The keymap is pure, so a paste key carries no text; fill it in here from
                 // the system clipboard so the trace records exactly what was pasted.
                 Some(Msg::Paste { text: None }) => vec![Msg::Paste { text: read_system_clipboard() }],
@@ -336,7 +336,7 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Res
     let mut term = terminal.size().map(|s| (s.width, s.height)).ok();
 
     let mut start = vec![Msg::Tick { now_ms: now_ms() }];
-    let v = hub.session.state().viewport;
+    let v = hub.session.state().view.viewport;
     if let Some((w, h)) = term
         && (w, h) != (v.width, v.height) {
             start.push(Msg::Resize { width: w, height: h });
@@ -355,7 +355,7 @@ fn event_loop(hub: &mut Hub, rx: Receiver<Input>, status: Option<String>) -> Res
             let change = hub.request(client, &line, Some(&mut |e| perform(e, quit)));
             // A replaced state keeps the terminal's size.
             if let (Some(c), Some((w, h))) = (change, term) {
-                let v = hub.session.state().viewport;
+                let v = hub.session.state().view.viewport;
                 if c.state_set && (w, h) != (v.width, v.height) {
                     dispatch_local(hub, vec![Msg::Resize { width: w, height: h }], quit, "runtime");
                 }

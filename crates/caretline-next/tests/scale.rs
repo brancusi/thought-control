@@ -27,16 +27,16 @@ const PROSE: &str = "The quick brown fox jumps over the lazy dog, again and agai
 fn a_long_run_splits_into_bounded_undo_steps() {
     for pattern in ["x", PROSE] {
         let (mut s, _) = type_run(4000, pattern, 0);
-        let typed = s.state().text.len_chars();
+        let typed = s.state().doc.text.len_chars();
         assert_eq!(typed, 4000);
         // Every step holds at most RUN_MAX_CHARS, so there are at least n / max steps.
-        let steps = s.state().history.len() - 1;
+        let steps = s.state().doc.history.len() - 1;
         assert!(steps >= 4000 / RUN_MAX_CHARS, "{pattern:?}: {steps} steps");
         // Each undo removes one step: never more than RUN_MAX_CHARS characters.
         let mut prev = typed;
         while prev > 0 {
             s.apply(Msg::Undo);
-            let now = s.state().text.len_chars();
+            let now = s.state().doc.text.len_chars();
             assert!(now < prev && prev - now <= RUN_MAX_CHARS, "{pattern:?}: undo {prev} -> {now}");
             prev = now;
         }
@@ -47,14 +47,14 @@ fn a_long_run_splits_into_bounded_undo_steps() {
 fn prose_runs_break_at_word_boundaries() {
     let (s, _) = type_run(2000, PROSE, 0);
     let mut state = s.state().clone();
-    let full = state.text.to_string();
+    let full = state.doc.text.to_string();
     caretline_next::update(&mut state, Msg::Undo);
-    let kept = state.text.len_chars();
+    let kept = state.doc.text.len_chars();
     let removed: String = full.chars().skip(kept).collect();
     assert!(removed.starts_with(' '), "the last step starts at a word boundary: {removed:?}");
     assert!(removed.chars().count() <= RUN_MAX_CHARS);
     let (s, _) = type_run(RUN_WORD_BREAK_CHARS - 1, PROSE, 0);
-    assert_eq!(s.state().history.len(), 2, "a short run is one step");
+    assert_eq!(s.state().doc.history.len(), 2, "a short run is one step");
 }
 
 /// 16,000 characters in one run, on one line and as prose, finish well under a second in a
@@ -66,13 +66,13 @@ fn prose_runs_break_at_word_boundaries() {
 fn a_16k_character_run_is_linear() {
     if cfg!(debug_assertions) {
         let (s, _) = type_run(3000, "x", 1);
-        assert_eq!(s.state().text.len_chars(), 3000);
+        assert_eq!(s.state().doc.text.len_chars(), 3000);
         return;
     }
     for (pattern, render_every) in [("x", 0), (PROSE, 0), ("x", 1), (PROSE, 1)] {
         let (_, small) = type_run(4000, pattern, render_every);
         let (s, big) = type_run(16000, pattern, render_every);
-        assert_eq!(s.state().text.len_chars(), 16000);
+        assert_eq!(s.state().doc.text.len_chars(), 16000);
         let ratio = big.as_secs_f64() / small.as_secs_f64().max(1e-6);
         eprintln!("{pattern:.1?} render {render_every}: 4k {small:?}, 16k {big:?}, ratio {ratio:.1}");
         if render_every == 0 {
@@ -95,8 +95,8 @@ fn typing_in_a_5000_block_outline() {
     }
     let mut s = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
     let keys = if cfg!(debug_assertions) { 20 } else { 400 };
-    for pos in [10, s.text.len_chars() - 3] {
-        s.selection = caretline_next::helix::Selection::point(pos);
+    for pos in [10, s.doc.text.len_chars() - 3] {
+        s.view.selection = caretline_next::helix::Selection::point(pos);
         let t = Instant::now();
         for k in 0..keys {
             caretline_next::update(&mut s, Msg::InsertText { text: "x".into() });

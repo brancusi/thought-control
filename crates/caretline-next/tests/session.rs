@@ -72,7 +72,7 @@ fn msgs_apply_in_order_and_return_effects() {
     let effects: Vec<Effect> = serde_json::from_value(r["result"]["effects"].clone()).unwrap();
     assert!(matches!(&effects[0], Effect::ClipboardSet { text } if text.starts_with("Xhello")));
     assert!(matches!(&effects[1], Effect::WriteFile { path, .. } if path == "doc.md"));
-    assert!(s.state().text.to_string().starts_with("Xhello"));
+    assert!(s.state().doc.text.to_string().starts_with("Xhello"));
 }
 
 #[test]
@@ -83,7 +83,7 @@ fn keys_go_through_the_keymap() {
     assert_eq!(msgs[0], Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::VisualLine, extend: false });
     assert_eq!(*msgs.last().unwrap(), Msg::Undo);
     assert_eq!(r["result"]["rev"], msgs.len() as u64);
-    assert_eq!(s.state().text.to_string(), "hello world\nsecond line\n");
+    assert_eq!(s.state().doc.text.to_string(), "hello world\nsecond line\n");
 }
 
 #[test]
@@ -317,18 +317,18 @@ fn state_set_takes_a_minimal_state() {
     );
     assert!(r["result"]["rev"].is_u64(), "{r}");
     let st = s.state();
-    assert_eq!(st.text.to_string(), "hello\nworld\n");
-    assert_eq!((st.selection.primary().anchor, st.selection.primary().head), (0, 5));
-    assert!(!st.dirty, "a pushed state counts as saved");
-    assert!(!st.config.soft_wrap);
-    assert_eq!(st.config.tab_width, 4);
+    assert_eq!(st.doc.text.to_string(), "hello\nworld\n");
+    assert_eq!((st.view.selection.primary().anchor, st.view.selection.primary().head), (0, 5));
+    assert!(!st.doc.dirty, "a pushed state counts as saved");
+    assert!(!st.doc.config.soft_wrap);
+    assert_eq!(st.doc.config.tab_width, 4);
     // A working editor: type over the selection, then undo it.
     ask(&mut s, json!({"op": "msgs", "msgs": [{"msg": "insert_text", "text": "bye"}]}));
-    assert_eq!(s.state().text.to_string(), "bye\nworld\n");
-    assert!(s.state().dirty);
+    assert_eq!(s.state().doc.text.to_string(), "bye\nworld\n");
+    assert!(s.state().doc.dirty);
     ask(&mut s, json!({"op": "msgs", "msgs": [{"msg": "undo"}]}));
-    assert_eq!(s.state().text.to_string(), "hello\nworld\n");
-    assert!(!s.state().dirty);
+    assert_eq!(s.state().doc.text.to_string(), "hello\nworld\n");
+    assert!(!s.state().doc.dirty);
 
     // Text alone works too: the rest takes State::new's defaults.
     let r = ask(&mut s, json!({"op": "state.set", "state": {"text": "a\r\nb\r\n"}}));
@@ -337,7 +337,7 @@ fn state_set_takes_a_minimal_state() {
     assert_eq!(s.state(), &fresh);
     // An explicit null saved_revision means never saved.
     ask(&mut s, json!({"op": "state.set", "state": {"text": "x", "saved_revision": null}}));
-    assert!(s.state().dirty);
+    assert!(s.state().doc.dirty);
 }
 
 #[test]
@@ -352,7 +352,7 @@ fn apply_with_feeds_effect_results_back() {
     assert_eq!(performed, effects);
     assert_eq!(applied, vec![Msg::Save, Msg::Saved]);
     assert_eq!(s.rev(), 2);
-    assert!(!s.state().dirty);
+    assert!(!s.state().doc.dirty);
 
     // Through the protocol, with an executor and apply_effects.
     let mut exec = |e: &Effect| matches!(e, Effect::WriteFile { .. }).then_some(Msg::Saved);
@@ -362,7 +362,7 @@ fn apply_with_feeds_effect_results_back() {
     // The response lists every message applied, the fed-back result included.
     assert_eq!(r["result"]["msgs"].as_array().unwrap().last().unwrap()["msg"], "saved");
     assert_eq!(h.change.unwrap().msgs.last(), Some(&Msg::Saved));
-    assert!(!s.state().dirty);
+    assert!(!s.state().doc.dirty);
     // Without apply_effects the executor is not used.
     let mut never = |_: &Effect| -> Option<Msg> { panic!("performed an effect") };
     s.handle(r#"{"op":"msgs","msgs":[{"msg":"save"}]}"#, Some(&mut never));
@@ -372,12 +372,12 @@ fn apply_with_feeds_effect_results_back() {
 fn show_status_is_passive() {
     let mut s = session();
     s.apply(Msg::ShowStatus { text: "hi there\nignored".into() });
-    assert_eq!(s.state().status.as_deref(), Some("hi there"));
+    assert_eq!(s.state().view.status.as_deref(), Some("hi there"));
     assert!(view(s.state()).to_text().contains("hi there"));
     s.apply(Msg::Tick { now_ms: 9 });
-    assert_eq!(s.state().status.as_deref(), Some("hi there"));
+    assert_eq!(s.state().view.status.as_deref(), Some("hi there"));
     s.apply(Msg::InsertText { text: "a".into() });
-    assert_eq!(s.state().status, None);
+    assert_eq!(s.state().view.status, None);
 }
 
 #[test]
@@ -388,7 +388,7 @@ fn requests_tick_to_their_own_time_or_the_runtimes() {
     let msgs = &r["result"]["msgs"];
     assert_eq!(msgs[0], json!({"msg": "tick", "now_ms": 1000}));
     assert_eq!(msgs[2], json!({"msg": "tick", "now_ms": 1500}));
-    assert_eq!(s.state().now_ms, 1500);
+    assert_eq!(s.state().doc.now_ms, 1500);
 
     // A runtime clock ticks forward only, and the request's own time wins.
     let h = s.handle_at(r#"{"op":"msgs","msgs":[{"msg":"insert_text","text":"c"}]}"#, None, Some(9000));
@@ -403,18 +403,18 @@ fn requests_tick_to_their_own_time_or_the_runtimes() {
     ask(&mut s, json!({"op": "keys", "now_ms": 1, "keys": "ab"}));
     ask(&mut s, json!({"op": "keys", "now_ms": 5000, "keys": "cd"}));
     ask(&mut s, json!({"op": "keys", "keys": "<c-z>"}));
-    assert!(s.state().text.to_string().starts_with("abhello"));
+    assert!(s.state().doc.text.to_string().starts_with("abhello"));
 }
 
 #[test]
 fn the_status_bar_can_be_hidden() {
     let mut st = State::new("one\ntwo\nthree\n", None, Viewport { width: 20, height: 3 });
-    st.config.status_bar = false;
+    st.view.config.status_bar = false;
     let text = view(&st).to_text();
     assert_eq!(text, "one\ntwo\nthree\n");
     // A state saved before the setting existed shows it.
     let mut v = serde_json::to_value(&st).unwrap();
     v["config"].as_object_mut().unwrap().remove("status_bar");
     let old: State = serde_json::from_value(v).unwrap();
-    assert!(old.config.status_bar);
+    assert!(old.view.config.status_bar);
 }

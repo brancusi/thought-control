@@ -214,7 +214,7 @@ impl Session {
     /// Runs a key script through the keymap (the `--keys` syntax). Returns the messages it
     /// became and their effects, unperformed.
     pub fn keys(&mut self, script: &str) -> Result<(Vec<Msg>, Vec<Effect>), String> {
-        let msgs = script_to_msgs_for(script, self.state.now_ms, self.state.outline.is_some())?;
+        let msgs = script_to_msgs_for(script, self.state.doc.now_ms, self.state.doc.outline.is_some())?;
         let effects = self.apply_all(msgs.iter().cloned());
         Ok((msgs, effects))
     }
@@ -239,7 +239,7 @@ impl Session {
     /// Renders at `width`x`height` without changing the session: the frame `--snapshot`
     /// would print, which resizes through `update` first when the size differs.
     pub fn render(&self, width: u16, height: u16) -> Frame {
-        let v = self.state.viewport;
+        let v = self.state.view.viewport;
         if (v.width, v.height) == (width, height) {
             return view(&self.state);
         }

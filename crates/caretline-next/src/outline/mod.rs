@@ -35,7 +35,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::helix::{RopeSlice};
 use crate::marks::{BlockAttrs, MarkId, Marks};
-use crate::state::State;
+use crate::state::{Document, State};
 
 /// One entry of a task vocabulary: the character between the brackets and its name.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
@@ -442,9 +442,9 @@ impl OutlineCache {
     }
 }
 
-impl State {
-    /// The outline, when this is an outline document (`state.outline` is set). Derived from
-    /// the text and the marks, and remembered until they change.
+impl Document {
+    /// The outline, when this is an outline document (`outline` is set). Derived from the
+    /// text and the marks, and remembered until they change.
     pub fn blocks(&self) -> Option<Arc<Outline>> {
         let cfg = self.outline.as_ref()?;
         if let Some(o) = self.derived.get() {
@@ -457,45 +457,52 @@ impl State {
         self.derived.put(o.clone());
         Some(o)
     }
+}
+
+impl State {
+    /// The outline, when this is an outline document (see [`Document::blocks`]).
+    pub fn blocks(&self) -> Option<Arc<Outline>> {
+        self.doc.blocks()
+    }
 
     /// Makes this an outline document: derives its blocks and gives every block a mark
     /// (outside the undo history).
     pub fn enable_outline(&mut self, cfg: OutlineConfig) {
-        self.outline = Some(cfg);
-        self.derived.clear();
-        mint_missing(self);
-        rules::normalize(self, &self.selection.clone(), &crate::Msg::Tick { now_ms: self.now_ms });
+        self.doc.outline = Some(cfg);
+        self.doc.derived.clear();
+        mint_missing(&mut self.doc);
+        rules::normalize(self, &self.view.selection.clone(), &crate::Msg::Tick { now_ms: self.doc.now_ms });
     }
 
     /// Call after changing `text` or `marks` directly (not through `update`).
     pub fn outline_changed(&mut self) {
-        self.derived.clear();
-        if self.outline.is_some() {
-            mint_missing(self);
-            rules::normalize(self, &self.selection.clone(), &crate::Msg::Tick { now_ms: self.now_ms });
+        self.doc.derived.clear();
+        if self.doc.outline.is_some() {
+            mint_missing(&mut self.doc);
+            rules::normalize(self, &self.view.selection.clone(), &crate::Msg::Tick { now_ms: self.doc.now_ms });
         }
     }
 }
 
 /// Gives every block start without a mark a new one. Returns whether it added any.
-pub(crate) fn mint_missing(state: &mut State) -> bool {
-    let Some(o) = state.blocks() else { return false };
+pub(crate) fn mint_missing(doc: &mut Document) -> bool {
+    let Some(o) = doc.blocks() else { return false };
     let missing: Vec<usize> = o.blocks.iter().filter(|b| b.id == MarkId(u64::MAX)).map(|b| b.start).collect();
     if missing.is_empty() {
         return false;
     }
     for pos in missing {
-        state.marks.mint(pos);
+        doc.marks.mint(pos);
     }
-    state.derived.clear();
+    doc.derived.clear();
     true
 }
 
 /// A block's content as text: its lines after the prefix, joined with `\n`.
-pub fn content(state: &State, id: MarkId) -> Option<String> {
-    let o = state.blocks()?;
+pub fn content(doc: &Document, id: MarkId) -> Option<String> {
+    let o = doc.blocks()?;
     let b = o.get(id)?;
-    Some(state.text.slice(b.content_start()..b.end).to_string().replace("\r\n", "\n"))
+    Some(doc.text.slice(b.content_start()..b.end).to_string().replace("\r\n", "\n"))
 }
 
 /// A new block for [`crate::Msg::InsertBlocks`] and Markdown paste: its shape and content.
