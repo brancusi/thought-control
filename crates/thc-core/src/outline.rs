@@ -163,11 +163,16 @@ pub fn markdown(blocks: &[Block]) -> String {
         if prev_para.is_some() && b.gap.unwrap_or(para || prev_para == Some(true)) {
             out.push('\n');
         }
+        let pad = "  ".repeat(b.depth.saturating_sub(base));
         if para {
-            out.push_str(&b.text);
-            out.push_str(&f);
+            // A nested paragraph (a paragraph's child, or under an item) is indented, its soft
+            // breaks too.
+            let mut lines = b.text.split('\n');
+            out.push_str(&format!("{pad}{}{f}", lines.next().unwrap_or("")));
+            for l in lines {
+                out.push_str(&format!("\n{pad}{l}"));
+            }
         } else {
-            let pad = "  ".repeat(b.depth.saturating_sub(base));
             let mut lines = b.text.split('\n');
             out.push_str(&format!("{pad}- {}{}{f}", checkbox(b.status.as_deref()), lines.next().unwrap_or("")));
             for l in lines {

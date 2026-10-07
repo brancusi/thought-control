@@ -59,7 +59,7 @@ the text through edits:
   logical line, or to the start of the visual row. With a selection, only the selection. At a
   block's edge, they join, as `Backspace` and `Delete` do.
 - **`Indent` / `Outdent`:** nest or un-nest list items and tasks, with their children. Every
-  selected line. Paragraphs don't nest (`Outcome::Nothing`).
+  selected line. Any block nests under the one above, paragraphs too; Tab on a later line of a paragraph makes that line a nested paragraph of its own.
 - **`TaskCycle`:** text → `[ ]` → `[x]` → text.
   - It acts on the line the caret is on. Inside a multi-line paragraph it splits the paragraph
     there (§2), so only that line changes.
