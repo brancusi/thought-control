@@ -451,3 +451,38 @@ fn goldens_narrow() {
     golden("frame-f-100x30-ember-light.ansi", &Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").env("THC_THEME", "ember-light").run("5<sclick:31,9>"));
     golden("frame-g-80x24-ascii.txt", &Snap::new(sample()).size("80x24").env("THC_GLYPHS", "ascii").run("5<sclick:31,9>"));
 }
+
+// ---- phase 3: list panels ----------------------------------------------------------------------
+
+#[test]
+fn s15_a_today_panel() {
+    let s = Snap::new(sample());
+    let open = "5<m-:>aside @today<cr>";
+    let f = s.run(open);
+    assert!(f.contains("▌▾ ≡ Today"), "{f}");
+    assert!(sidebar(&f).iter().any(|l| l.contains("[ ] Summarize unread newsletters")), "{f}");
+    // x completes the panel's row (not the main view's caret line).
+    let f = s.run(&format!("{open}jjx"));
+    assert!(sidebar(&f).iter().any(|l| l.contains("[x] Summarize unread newsletters")), "{f}");
+    assert!(main_area(&f).iter().any(|l| l.contains("[x] Summarize unread newsletters")), "the main view sees it too: {f}");
+    // Enter opens the row in the main view, and the keyboard goes with it.
+    let f = s.run(&format!("{open}jjj<cr>"));
+    assert!(f.lines().last().unwrap().contains("⌃T task"), "{f}");
+    // o opens its page or day beside.
+    let f = s.run(&format!("{open}jjjo"));
+    assert!(f.contains("▾ § Wed 07 Oct · today"), "{f}");
+}
+
+#[test]
+fn tag_and_query_panels() {
+    let s = Snap::new(sample());
+    let f = s.run("1:aside #health<cr>");
+    assert!(f.contains("▾ # health") && f.contains("Call dentist to reschedule"), "{f}");
+    let f = s.run("1:aside status:opn<cr>");
+    assert!(f.contains("unknown status \"opn\""), "{f}");
+}
+
+#[test]
+fn goldens_lists() {
+    golden("frame-c-140x40.txt", &Snap::new(sample()).run("5<sclick:54,8><m-:>aside @today<cr>"));
+}
