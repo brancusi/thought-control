@@ -9,7 +9,7 @@
 #
 # Environment:
 #   CARETLINE_INSTALL_DIR      where to put the binary (default: ~/.local/bin)
-#   CARETLINE_VERSION          a version to install, like 0.2.0 (default: the newest)
+#   CARETLINE_VERSION          a version to install, like 0.3.0 (default: the newest)
 #   CARETLINE_NO_MODIFY_PATH=1 don't add the directory to your shell's startup file
 #
 # Or build it with Rust instead:
@@ -70,7 +70,7 @@ latest() {
 		tag="$(curl -fsSLI -o /dev/null -w '%{url_effective}' "https://github.com/$REPO/releases/latest" 2>/dev/null |
 			sed -n 's#.*/tag/caretline-v\(.*\)$#\1#p' || true)"
 	fi
-	[ -n "$tag" ] || err "couldn't find a caretline release; set CARETLINE_VERSION, like CARETLINE_VERSION=0.2.0"
+	[ -n "$tag" ] || err "couldn't find a caretline release; set CARETLINE_VERSION, like CARETLINE_VERSION=0.3.0"
 	printf '%s' "$tag"
 }
 
