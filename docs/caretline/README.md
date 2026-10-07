@@ -36,6 +36,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | Deterministic replay | Yes | A trace (state + messages) replays to the identical state and frame |
 | Headless snapshots | Yes | `--snapshot WxH` as plain text or ANSI |
 | State protocol (`serve`, `--listen`, `send`) | Yes | Drive a headless engine or a live editor over JSON lines. See [protocol.md](protocol.md) |
+| MCP server for agents | Yes | `caretline-mcp`: an agent edits a live editor alongside a person, with guarded writes, attribution and replay. See [mcp.md](mcp.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
 | Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and several views per document included |
@@ -52,6 +53,7 @@ flowchart TB
     elm --> cli["Headless CLI<br/><code>--keys --msgs --snapshot --replay</code>"]
     elm --> proto["State protocol<br/><code>serve</code> · <code>--listen</code> · <code>send</code>"]
     elm --> lib["Your program<br/>(Rust library or child process)"]
+    proto --> mcp["MCP server for agents<br/><code>caretline-mcp</code>"]
 ```
 
 The engine owns the editing rules. A runtime owns everything else: the clock, the terminal,
@@ -66,6 +68,7 @@ caretline is published on crates.io as [`caretline`](https://crates.io/crates/ca
 |---|---|---|
 | [`caretline`](../../crates/caretline) | caretline: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app`, `thc-tui` |
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
+| [`caretline-mcp`](../../crates/caretline-mcp) | The `caretline-mcp` binary: an [MCP server](mcp.md) for agents | |
 
 caretline has a block model ([outline documents](outline.md)), folds and multiple views per
 document. thc's TUI opens each page or journal day as one caretline outline document, behind
@@ -83,6 +86,7 @@ operations for the vault.
 | Edit lists, tasks and blocks | [outline.md](outline.md) |
 | Use the `caretline` command | [cli.md](cli.md) |
 | Drive it over JSON lines | [protocol.md](protocol.md) |
+| Let an agent edit alongside you (MCP) | [mcp.md](mcp.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |
 | Write or debug a test | [testing.md](testing.md) |
 | Know how fast it is, and its limits | [performance.md](performance.md) |
