@@ -58,9 +58,8 @@ fn enter_makes_a_new_note() {
 }
 
 #[test]
-#[ignore = "02pjq"]
 fn enter_splits_a_line() {
-    q4().named("Enter in the middle of a line splits it")
+    q4().named("Enter in the middle of a line splits it").known("02pjq", Known::Restore)
         .click_caret(doc_at("Last line of the plan", 9))
         .keys("<cr>")
         .expect_caret_before(" of the plan")

@@ -37,9 +37,8 @@ fn tasks_navigation_and_done() {
 }
 
 #[test]
-#[ignore = "cjn86"]
 fn tasks_filter() {
-    flow("Tasks: f filters")
+    flow("Tasks: f filters").known("cjn86", Known::Restore)
         .keys("3f")
         .type_text(" #work")
         .keys("<cr>")
@@ -60,9 +59,8 @@ fn tasks_open_a_row() {
 }
 
 #[test]
-#[ignore = "cjn86"]
 fn tasks_open_beside() {
-    flow("Tasks: o opens a row beside")
+    flow("Tasks: o opens a row beside").known("cjn86", Known::Restore)
         .keys("3")
         .click(text("Draft the budget"))
         .timed("sidebar_open", |f| {
