@@ -3158,6 +3158,18 @@ impl App {
                 out.insert(i.min(out.len()), e);
             }
         }
+        // In a document: caretline's editing commands, in its words (editing_keys.rs).
+        if self.doc.is_some() {
+            let mut seen = Vec::new();
+            for (cmd, action) in crate::editing_keys::ACTIONS {
+                let Some(info) = caretline::commands::command(cmd) else { continue };
+                if cmd.starts_with("select.") && *cmd != "select.all" || seen.contains(action) {
+                    continue;
+                }
+                seen.push(*action);
+                out.push(PaletteEntry { label: format!("edit: {}", info.name.to_lowercase()), keys: format!("edit:{action}"), cmd: String::new(), shown: crate::keymap::key_for(self, action).unwrap_or_default() });
+            }
+        }
         for v in &self.saved_views {
             out.push(PaletteEntry { label: format!("view: {}", v.name), keys: format!("@{}", v.name), cmd: format!("thc q @{}", v.name), shown: String::new() });
         }

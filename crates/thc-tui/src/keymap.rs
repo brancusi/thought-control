@@ -401,7 +401,7 @@ macro_rules! b {
 /// Navigate, no line select, no footer cursor; outline-row editing is gone with outline rows).
 /// The first row that matches and holds wins, top context first.
 pub fn defaults() -> Vec<Binding> {
-    vec![
+    let mut t = vec![
         // ---- global (§12.1)
         b!(Global, "*", "view.scope", Always, "scope", "View"),
         b!(Global, "Cmd-[", "nav.back", Always, "back", "Go"),
@@ -632,64 +632,17 @@ pub fn defaults() -> Vec<Binding> {
         b!(Write, "A-6", "go.search", Always, "Search", "View"),
         b!(Write, "A-7", "go.log", Always, "Log", "View"),
         b!(Write, "A-:", "palette.open", Always, "commands", "View"),
-        // Editing: deleting and moving the caret (⇧ with a move selects).
-        b!(Write, "backspace", "edit.backspace", Always, "", "Write"),
-        b!(Write, "A-backspace", "edit.delete_word", Always, "", "Write"),
-        b!(Write, "C-backspace", "edit.delete_word", Always, "", "Write"),
-        b!(Write, "C-w", "edit.delete_word", Always, "", "Write"),
-        b!(Write, "delete", "edit.delete_forward", Always, "", "Write"),
+        // Editing: caretline's keys are imported below (editing_keys.rs); these are thc's own.
         b!(Write, "C-d", "edit.delete_forward", Always, "", "Write"),
-        b!(Write, "C-k", "edit.kill_to_end", Always, "", "Write"),
-        b!(Write, "C-u", "edit.kill_to_start", Always, "", "Write"),
-        b!(Write, "left", "move.left", Always, "", "Move"),
-        b!(Write, "S-left", "move.left", Always, "", "Move"),
-        b!(Write, "right", "move.right", Always, "", "Move"),
-        b!(Write, "S-right", "move.right", Always, "", "Move"),
-        b!(Write, "A-left", "move.word_left", Always, "", "Move"),
-        b!(Write, "A-S-left", "move.word_left", Always, "", "Move"),
-        b!(Write, "A-b", "move.word_left", Always, "", "Move"),
-        b!(Write, "A-right", "move.word_right", Always, "", "Move"),
-        b!(Write, "A-S-right", "move.word_right", Always, "", "Move"),
-        b!(Write, "A-f", "move.word_right", Always, "", "Move"),
-        b!(Write, "up", "move.up", Always, "", "Move"),
-        b!(Write, "S-up", "move.up", Always, "", "Move"),
-        b!(Write, "down", "move.down", Always, "", "Move"),
-        b!(Write, "S-down", "move.down", Always, "", "Move"),
-        b!(Write, "C-up", "move.para_up", Always, "", "Move"),
-        b!(Write, "C-S-up", "move.para_up", Always, "", "Move"),
-        b!(Write, "C-down", "move.para_down", Always, "", "Move"),
-        b!(Write, "C-S-down", "move.para_down", Always, "", "Move"),
-        b!(Write, "pageup", "move.page_up", Always, "", "Move"),
-        b!(Write, "S-pageup", "move.page_up", Always, "", "Move"),
-        b!(Write, "pagedown", "move.page_down", Always, "", "Move"),
-        b!(Write, "S-pagedown", "move.page_down", Always, "", "Move"),
-        b!(Write, "home", "move.home", Always, "", "Move"),
-        b!(Write, "S-home", "move.home", Always, "", "Move"),
-        b!(Write, "C-a", "move.home", Always, "", "Move"),
-        b!(Write, "end", "move.end", Always, "", "Move"),
-        b!(Write, "S-end", "move.end", Always, "", "Move"),
-        b!(Write, "C-e", "move.end", Always, "", "Move"),
-        // macOS / VS Code (keymap.md §12.5): ⌘ arrives as itself only under the kitty protocol;
-        // otherwise as the Home / End / C-Home / C-End / ⌃U the terminal (or thc's WezTerm
-        // snippet) sends, bound above and below.
-        b!(Write, "Cmd-left", "move.home", Always, "", "Move"),
-        b!(Write, "Cmd-S-left", "move.home", Always, "", "Move"),
-        b!(Write, "Cmd-right", "move.end", Always, "", "Move"),
-        b!(Write, "Cmd-S-right", "move.end", Always, "", "Move"),
-        b!(Write, "Cmd-up", "move.doc_start", Always, "", "Move"),
-        b!(Write, "Cmd-S-up", "move.doc_start", Always, "", "Move"),
-        b!(Write, "Cmd-down", "move.doc_end", Always, "", "Move"),
-        b!(Write, "Cmd-S-down", "move.doc_end", Always, "", "Move"),
-        b!(Write, "Cmd-backspace", "edit.kill_to_start", Always, "", "Write"),
         // ⌘V as the kitty protocol reports it (thc's WezTerm keys send it while thc runs): thc
         // reads the clipboard itself, so a screenshot attaches and text pastes.
         b!(Write, "Cmd-v", "clip.paste_system", Always, "paste (screenshots too)", "Clipboard"),
         // ⌃V reads this machine's clipboard too, in any terminal (a local session's).
         b!(Write, "C-v", "clip.paste_system", Always, "paste (screenshots too)", "Clipboard"),
-        b!(Write, "C-home", "move.doc_start", Always, "", "Move"),
-        b!(Write, "C-S-home", "move.doc_start", Always, "", "Move"),
-        b!(Write, "C-end", "move.doc_end", Always, "", "Move"),
-        b!(Write, "C-S-end", "move.doc_end", Always, "", "Move"),
+    ];
+    let imported = crate::editing_keys::rows(&t);
+    t.extend(imported);
+    t.extend(vec![
         // ---- overlays and prompts (§12.6): sealed; these rows feed the footer and help.
         b!(Link, "up", "link.prev", Always, "choose", "Move", 1),
         b!(Link, "down", "link.next", Always, "choose", "Move", 1),
@@ -751,7 +704,8 @@ pub fn defaults() -> Vec<Binding> {
         b!(Help, "?", "help.all", Always, "every key", "View", 1),
         b!(Help, "esc", "help.close", Always, "close", "View", 2),
         b!(Notes, "esc", "notes.close", Always, "close", "View", 1),
-    ]
+    ]);
+    t
 }
 
 /// One footer hint: its keys as shown (`⌃P ⌃N`, `↑↓`), its word, and each key's action.
@@ -1600,19 +1554,15 @@ fn doc_words(c: Ctx, b: &Binding) -> &'static str {
     if !b.label.is_empty() {
         return b.label;
     }
-    // The editing keys: help leaves them out (arrows need no telling); the tables name them.
-    match b.action {
-        "edit.backspace" => "delete back",
-        "edit.delete_forward" => "delete forward",
-        "edit.kill_to_start" => "delete to start",
-        "move.left" | "move.right" | "move.up" | "move.down" => "move (⇧ selects)",
-        "move.word_left" | "move.word_right" => "by word (⇧ selects)",
-        "move.para_up" | "move.para_down" => "by note (⇧ selects)",
-        "move.doc_start" | "move.doc_end" => "to the start or end (⇧ selects)",
-        "move.page_up" | "move.page_down" => "by page (⇧ selects)",
-        "move.home" | "move.end" => "line start · end (⇧ selects)",
-        a => help_text(c, a).unwrap_or(""),
+    // The editing keys: help leaves them out (arrows need no telling); the tables name them,
+    // in caretline's words (its command catalog).
+    // Enter is thc's own (twice: a new note), so its words are thc's.
+    if c == Ctx::Write && b.action != "line.newline" {
+        if let Some(w) = crate::editing_keys::words(b.action) {
+            return leak(&w);
+        }
     }
+    help_text(c, b.action).unwrap_or("")
 }
 
 /// The effective table as JSON: every binding with its context, keys, action, condition, label,

@@ -27,6 +27,7 @@ mod quiet;
 mod snapshot_fmt;
 mod input;
 mod keymap;
+mod editing_keys;
 pub mod keys_edit;
 mod images;
 mod recover;
