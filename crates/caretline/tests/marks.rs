@@ -7,7 +7,7 @@
 mod common;
 
 use caretline::helix::Selection;
-use caretline::marks::{BlockAttrs, Mark, MarkId};
+use caretline::marks::{MarkAttrs, Mark, MarkId};
 use caretline::{update, Msg, State, Viewport};
 use common::*;
 use rand::rngs::StdRng;
@@ -165,10 +165,10 @@ fn a_typing_run_undoes_to_its_start_marks_included() {
 #[test]
 fn attributes_travel_with_their_mark() {
     let mut s = marked("ab\n▮cd", &[0, 1]);
-    s.doc.marks.set_attrs(MarkId(1), BlockAttrs { gap: Some(false) });
+    s.doc.marks.set_attrs(MarkId(1), MarkAttrs::gap(Some(false)));
     keys(&mut s, "<bs>");
     keys(&mut s, "<c-z>");
-    assert_eq!(s.doc.marks.attrs(MarkId(1)), BlockAttrs { gap: Some(false) });
+    assert_eq!(s.doc.marks.attrs(MarkId(1)), MarkAttrs::gap(Some(false)));
 }
 
 #[test]
@@ -328,15 +328,15 @@ fn cut_and_paste_in_place_is_the_identity_for_marks() {
 /// The example in docs/caretline/api.md.
 #[test]
 fn the_api_example_runs() {
-    use caretline::{BlockAttrs, By, Dir};
+    use caretline::{MarkAttrs, By, Dir};
     let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
     let list = s.doc.marks.mint(0);
     let milk = s.doc.marks.mint(s.doc.text.line_to_char(1));
-    s.doc.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
+    s.doc.marks.set_attrs(milk, MarkAttrs::gap(Some(false)));
     update(&mut s, Msg::InsertText { text: "Weekly ".into() });
     assert_eq!(s.doc.marks.pos(list), Some(0));
     update(&mut s, Msg::Move { dir: Dir::Forward, by: By::DocEnd, extend: false });
     update(&mut s, Msg::Undo);
     assert_eq!(s.doc.marks.pos(milk), Some(s.doc.text.line_to_char(1)));
-    assert_eq!(s.doc.marks.attrs(milk), BlockAttrs { gap: Some(false) });
+    assert_eq!(s.doc.marks.attrs(milk), MarkAttrs::gap(Some(false)));
 }

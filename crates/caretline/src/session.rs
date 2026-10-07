@@ -348,6 +348,10 @@ impl Session {
     /// Recorded in the trace as the start of a new segment. Returns the new rev.
     pub fn set_state(&mut self, mut state: State) -> u64 {
         state.sanitize();
+        // The session's host stays: a state from JSON has none.
+        if state.doc.host.is_empty() {
+            state.doc.host = self.state.doc.host.clone();
+        }
         self.rev += 1;
         self.state = state;
         for (_, v) in &mut self.views {
@@ -372,6 +376,7 @@ impl Session {
         let mut doc = crate::state::Document::new(text, old.doc.path.clone());
         doc.config = crate::state::Config { line_ending: doc.config.line_ending, ..old.doc.config.clone() };
         doc.now_ms = old.doc.now_ms;
+        doc.host = old.doc.host.clone();
         let mut view = crate::state::View::new(old.view.viewport);
         view.config = old.view.config.clone();
         view.scroll = old.view.scroll;

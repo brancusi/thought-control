@@ -16,7 +16,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::helix::history::History;
 use crate::helix::{ChangeSet, Rope, Tendril, Transaction};
-use crate::marks::{BlockAttrs, Fixup, Mark, MarkDelta, MarkId};
+use crate::marks::{MarkAttrs, Fixup, Mark, MarkDelta, MarkId};
 use crate::msg::{Effect, Msg};
 use crate::outline::{Hang, Kind, NewBlock};
 use crate::state::{Document, ExternalUndo, View};
@@ -39,12 +39,21 @@ pub enum ExtChange {
         kind: Kind,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         status: Option<char>,
+        /// A bullet's tag (`- [c] `).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        tag: Option<char>,
     },
     /// A block's blank row before it (`null`: the default for its kind).
     SetGap {
         id: MarkId,
         #[serde(default)]
         gap: Option<bool>,
+    },
+    /// A mark's payload (`null`: none). Any document with marks; the text is untouched.
+    SetData {
+        id: MarkId,
+        #[serde(default)]
+        data: Option<serde_json::Value>,
     },
     /// A new block after a block (its own lines, not its children), or first when `after` is
     /// absent. `block.mark` binds the new block to that id when it is free.
@@ -109,16 +118,21 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
         let to = (*to).clamp(from, len);
         return Ok(Some(edit(doc, vec![least(text, from, to, lines(ins))], |_, _| {})));
     }
+    if let ExtChange::SetData { id, data } = change {
+        doc.marks.set_data(*id, data.clone()).ok_or(format!("no mark {}", id.0))?;
+        doc.derived.marks_changed();
+        return Ok(None);
+    }
     let o = doc.blocks().ok_or("block changes need an outline document")?;
     let cfg = doc.outline.clone().expect("outline");
     let block = |id: MarkId| o.get(id).cloned().ok_or(format!("no block {}", id.0));
     match change {
-        ExtChange::Replace { .. } => unreachable!(),
+        ExtChange::Replace { .. } | ExtChange::SetData { .. } => unreachable!(),
         ExtChange::ReplaceContent { id, text: content } => {
             let b = block(*id)?;
             Ok(Some(edit(doc, vec![least(text, b.content_start(), b.end, lines(content))], |_, _| {})))
         }
-        ExtChange::SetShape { id, depth, kind, status } => {
+        ExtChange::SetShape { id, depth, kind, status, tag } => {
             let b = block(*id)?;
             // The indentation and list marker; a number, heading or quote marker is content.
             let list = match (b.kind, b.hang) {
@@ -127,14 +141,14 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
             };
             let line_end = crate::helix::line_ending::line_end_char_index(&text, b.first_line);
             let rest = text.slice(b.start + list..line_end).to_string();
-            let nb = NewBlock { depth: *depth, kind: *kind, status: *status, text: rest.clone(), gap: None, mark: None };
+            let nb = NewBlock { depth: *depth, kind: *kind, status: *status, tag: *tag, text: rest.clone(), gap: None, mark: None };
             let full = nb.to_lines(&cfg);
             let prefix = full[..full.len() - rest.len()].to_string();
             Ok(Some(edit(doc, vec![(b.start, b.start + list, prefix)], |_, _| {})))
         }
         ExtChange::SetGap { id, gap } => {
             block(*id)?;
-            doc.marks.set_attrs(*id, BlockAttrs { gap: *gap });
+            doc.marks.set_gap(*id, *gap);
             doc.derived.marks_changed();
             Ok(None)
         }
@@ -149,12 +163,12 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
             let (mark, gap) = (nb.mark, nb.gap);
             Ok(Some(edit(doc, vec![(at, at, ins)], move |marks, new| {
                 let pos = new.line_to_char(line);
-                let attrs = BlockAttrs { gap };
-                let placed = mark.is_some_and(|id| marks.insert(Mark { pos, id, attrs }).is_ok());
+                let attrs = MarkAttrs::gap(gap);
+                let placed = mark.is_some_and(|id| marks.insert(Mark { pos, id, attrs: attrs.clone() }).is_ok());
                 if !placed {
                     match marks.at(pos) {
                         Some(id) => {
-                            marks.set_attrs(id, attrs);
+                            marks.set_gap(id, attrs.gap);
                         }
                         None => {
                             marks.mint_with(pos, attrs);
@@ -267,7 +281,7 @@ fn map_fixup(f: &Fixup, changes: &ChangeSet, text: &Rope) -> Fixup {
         .iter()
         .map(|m| {
             let p = changes.map_pos(m.pos.min(changes.len()), crate::helix::Assoc::After);
-            Mark { pos: crate::marks::line_start_at(t, p), ..*m }
+            Mark { pos: crate::marks::line_start_at(t, p), ..m.clone() }
         })
         .collect();
     Fixup { set, drop: f.drop.clone() }

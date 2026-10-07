@@ -167,6 +167,14 @@ pub enum Msg {
     /// takes them back (see docs/caretline/messages.md#external-changes). Passive: it
     /// doesn't end an edit run or clear the status.
     External { changes: Vec<ExtChange> },
+
+    /// Run the host's command `name` (registered with [`crate::Host::command`]) with `args`:
+    /// one transaction and one undo step. An unknown name changes nothing and says so.
+    Command {
+        name: String,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        args: serde_json::Value,
+    },
 }
 
 impl Msg {
@@ -217,6 +225,7 @@ impl Msg {
                 | Msg::MoveBlock { .. }
                 | Msg::InsertBlocks { .. }
                 | Msg::Edit { .. }
+                | Msg::Command { .. }
         )
     }
 }
@@ -248,4 +257,10 @@ pub enum Effect {
     },
     /// An editing message reached a read-only view: nothing changed.
     Refused,
+    /// An effect of the host's own, from a host command or input rule ([`crate::host::Edit`]).
+    Host {
+        name: String,
+        #[serde(default, skip_serializing_if = "serde_json::Value::is_null")]
+        data: serde_json::Value,
+    },
 }

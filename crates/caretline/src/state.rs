@@ -215,6 +215,10 @@ pub struct Document {
     /// Where the text changed since a host last asked ([`Document::take_touched`]).
     #[serde(skip)]
     pub(crate) touched: Touched,
+    /// The host's commands, input rules and decorator ([`crate::Host`]): not part of the
+    /// value, never serialized.
+    #[serde(skip)]
+    pub(crate) host: crate::host::Host,
 }
 
 /// One view of a [`Document`]: where its carets are, what it shows, and how.
@@ -397,6 +401,7 @@ impl Document {
             edits: EditCount::default(),
             journal: Journal::default(),
             touched: Touched::all(),
+            host: crate::host::Host::default(),
         };
         doc.dirty = doc.compute_dirty();
         doc
@@ -428,6 +433,16 @@ impl Document {
             crate::outline::mint_missing(self);
         }
         self.dirty = self.compute_dirty();
+    }
+
+    /// Sets the host's extensions (commands, input rules, decorator) for this document and
+    /// every view of it.
+    pub fn set_host(&mut self, host: crate::host::Host) {
+        self.host = host;
+    }
+
+    pub fn host(&self) -> &crate::host::Host {
+        &self.host
     }
 
     /// The display name for the status bar.
@@ -588,6 +603,7 @@ impl From<StateInput> for State {
             edits: EditCount::default(),
             journal: Journal::default(),
             touched: Touched::all(),
+            host: crate::host::Host::default(),
         };
         let view = View {
             selection: input.selection.unwrap_or_else(|| Selection::point(0)),

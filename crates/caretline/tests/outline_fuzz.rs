@@ -88,7 +88,7 @@ fn outline_msg(rng: &mut StdRng, s: &State) -> Msg {
         19 => Msg::SelectWordAt { pos: rng.random_range(0..=s.doc.text.len_chars()) },
         20 => Msg::InsertBlocks {
             after: rng.random_bool(0.8).then_some(id),
-            blocks: vec![NewBlock { depth: 0, kind: Kind::Bullet, status: None, text: "new".into(), gap: None, mark: None }],
+            blocks: vec![NewBlock { depth: 0, kind: Kind::Bullet, status: None, tag: None, text: "new".into(), gap: None, mark: None }],
         },
         21 => Msg::Paste { text: Some("- a\n  - [ ] b\n\npara".into()) },
         22 => Msg::PastePlain { text: Some("one\ntwo\n\nthree".into()) },

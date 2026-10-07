@@ -215,7 +215,7 @@ pub fn error_line(id: Option<&Value>, e: &ProtoError) -> String {
 struct CellRow {
     text: String,
     #[serde(skip_serializing_if = "Vec::is_empty")]
-    spans: Vec<(u16, u16, &'static str)>,
+    spans: Vec<(u16, u16, String)>,
     /// What the row shows (text of a line, a block's blank row, …).
     info: crate::view::RowInfo,
 }
@@ -228,6 +228,8 @@ pub fn role_name(role: Role) -> &'static str {
         Role::Status => "status",
         Role::StatusAccent => "status_accent",
         Role::Hang => "hang",
+        // A host's role: its name is the frame's ([`Frame::role_name`]).
+        Role::Named(_) => "host",
     }
 }
 
@@ -271,17 +273,17 @@ fn cell_rows(frame: &Frame) -> Vec<CellRow> {
     (0..frame.height)
         .map(|y| {
             let mut text = String::with_capacity(frame.width as usize);
-            let mut spans: Vec<(u16, u16, &'static str)> = Vec::new();
+            let mut spans: Vec<(u16, u16, String)> = Vec::new();
             for x in 0..frame.width {
                 let cell = frame.cell(x, y);
                 text.push_str(&cell.symbol);
                 if cell.role == Role::Text {
                     continue;
                 }
-                let name = role_name(cell.role);
+                let name = frame.role_name(cell.role);
                 match spans.last_mut() {
-                    Some((sx, len, r)) if *r == name && *sx + *len == x => *len += 1,
-                    _ => spans.push((x, 1, name)),
+                    Some((sx, len, r)) if r == name && *sx + *len == x => *len += 1,
+                    _ => spans.push((x, 1, name.to_string())),
                 }
             }
             CellRow { text, spans, info: frame.rows.get(y as usize).cloned().unwrap_or(crate::view::RowInfo::Past) }
@@ -404,6 +406,7 @@ impl Session {
                     "version": env!("CARGO_PKG_VERSION"),
                     "rev": self.rev(),
                     "ops": OPS,
+                    "commands": self.state().doc.host().command_names(),
                 }),
             ))),
             "state.get" => {

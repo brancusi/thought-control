@@ -39,35 +39,47 @@ use crate::helix::{Assoc, ChangeSet, Operation, RopeSlice};
 #[serde(transparent)]
 pub struct MarkId(pub u64);
 
-/// Per-block attributes that live beside the text, never in it.
-#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Serialize, Deserialize)]
-pub struct BlockAttrs {
+/// What a mark carries beside its position: attributes that live beside the text, never in
+/// it.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+pub struct MarkAttrs {
     /// A blank row before the block: `Some(true)` always, `Some(false)` never, `None` the
     /// default for its kind and its neighbour's (see [`crate::outline`]). Drawn as a virtual
     /// row, never stored as text.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<bool>,
+    /// The host's payload: any JSON value. The engine never reads it; it travels with the
+    /// mark through edits, cut and paste, undo and redo, changes from elsewhere and JSON.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data: Option<serde_json::Value>,
 }
 
-impl BlockAttrs {
-    pub fn is_default(&self) -> bool {
-        *self == BlockAttrs::default()
+impl MarkAttrs {
+    /// Attributes with only a blank-row setting.
+    pub fn gap(gap: Option<bool>) -> MarkAttrs {
+        MarkAttrs { gap, data: None }
     }
 }
 
-/// One mark: an id at a line start, with its block attributes.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+impl MarkAttrs {
+    pub fn is_default(&self) -> bool {
+        *self == MarkAttrs::default()
+    }
+}
+
+/// One mark: an id at a line start, with its attributes.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Mark {
     /// A char index; always the start of a line.
     pub pos: usize,
     pub id: MarkId,
-    #[serde(default, skip_serializing_if = "BlockAttrs::is_default")]
-    pub attrs: BlockAttrs,
+    #[serde(default, skip_serializing_if = "MarkAttrs::is_default")]
+    pub attrs: MarkAttrs,
 }
 
 impl Mark {
     pub fn new(pos: usize, id: MarkId) -> Mark {
-        Mark { pos, id, attrs: BlockAttrs::default() }
+        Mark { pos, id, attrs: MarkAttrs::default() }
     }
 }
 
@@ -159,11 +171,11 @@ impl Marks {
     /// Puts a new mark at `pos` (a line start) and returns its id. If the line already
     /// has a mark, returns that one instead.
     pub fn mint(&mut self, pos: usize) -> MarkId {
-        self.mint_with(pos, BlockAttrs::default())
+        self.mint_with(pos, MarkAttrs::default())
     }
 
     /// As [`Marks::mint`], with attributes for a new mark.
-    pub fn mint_with(&mut self, pos: usize, attrs: BlockAttrs) -> MarkId {
+    pub fn mint_with(&mut self, pos: usize, attrs: MarkAttrs) -> MarkId {
         match self.index_of(pos) {
             Ok(i) => self.marks[i].id,
             Err(i) => {
@@ -183,8 +195,8 @@ impl Marks {
         match self.index_of(mark.pos) {
             Ok(i) => Err(InsertError::LineTaken(self.marks[i].id)),
             Err(i) => {
-                self.marks.insert(i, mark);
                 self.next = self.next.max(mark.id.0 + 1);
+                self.marks.insert(i, mark);
                 Ok(())
             }
         }
@@ -194,7 +206,7 @@ impl Marks {
     /// in order, in about linear time when none is refused.
     pub fn insert_all(&mut self, marks: Vec<Mark>) -> Result<(), InsertError> {
         let mut all = self.marks.clone();
-        all.extend(marks.iter().copied());
+        all.extend(marks.iter().cloned());
         let mut ids = std::collections::HashSet::with_capacity(all.len());
         let unique_ids = all.iter().all(|m| ids.insert(m.id));
         all.sort_by_key(|m| m.pos);
@@ -229,14 +241,26 @@ impl Marks {
         self.marks.drain(a..b).collect()
     }
 
-    pub fn attrs(&self, id: MarkId) -> BlockAttrs {
-        self.get(id).map(|m| m.attrs).unwrap_or_default()
+    pub fn attrs(&self, id: MarkId) -> MarkAttrs {
+        self.get(id).map(|m| m.attrs.clone()).unwrap_or_default()
     }
 
     /// Sets a mark's attributes; returns the old ones (`None` if there is no such mark).
-    pub fn set_attrs(&mut self, id: MarkId, attrs: BlockAttrs) -> Option<BlockAttrs> {
+    pub fn set_attrs(&mut self, id: MarkId, attrs: MarkAttrs) -> Option<MarkAttrs> {
         let m = self.marks.iter_mut().find(|m| m.id == id)?;
         Some(std::mem::replace(&mut m.attrs, attrs))
+    }
+
+    /// Sets a mark's blank-row attribute, keeping its payload; returns the old setting.
+    pub fn set_gap(&mut self, id: MarkId, gap: Option<bool>) -> Option<Option<bool>> {
+        let m = self.marks.iter_mut().find(|m| m.id == id)?;
+        Some(std::mem::replace(&mut m.attrs.gap, gap))
+    }
+
+    /// Sets a mark's payload, keeping its other attributes; returns the old payload.
+    pub fn set_data(&mut self, id: MarkId, data: Option<serde_json::Value>) -> Option<Option<serde_json::Value>> {
+        let m = self.marks.iter_mut().find(|m| m.id == id)?;
+        Some(std::mem::replace(&mut m.attrs.data, data))
     }
 
     /// Maps every mark through `changes`, which turned `old` into `new`. Returns the marks
@@ -291,9 +315,9 @@ impl Marks {
                 }
             });
             if gone {
-                removed.push(*m);
+                removed.push(m.clone());
             } else {
-                middle.push(*m);
+                middle.push(m.clone());
             }
         }
         let mut positions: Vec<usize> = middle.iter().map(|m| m.pos).collect();
@@ -354,7 +378,7 @@ impl Marks {
         let mut set = Vec::new();
         for m in bm {
             if naive.remove(&m.id) != Some(m) {
-                set.push(*m);
+                set.push(m.clone());
             }
         }
         let mut drop: Vec<MarkId> = naive.into_keys().collect();
@@ -374,7 +398,7 @@ impl Marks {
                 // A fix-up made for this text never collides; if a state was edited by hand,
                 // the mark already there wins.
                 Ok(_) => {}
-                Err(i) => self.marks.insert(i, *m),
+                Err(i) => self.marks.insert(i, m.clone()),
             }
             self.next = self.next.max(m.id.0 + 1);
         }
@@ -425,12 +449,12 @@ impl MarkDelta {
 }
 
 /// A mark carried in the clipboard register: its offset into the copied text.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct ClipMark {
     pub offset: usize,
     pub id: MarkId,
-    #[serde(default, skip_serializing_if = "BlockAttrs::is_default")]
-    pub attrs: BlockAttrs,
+    #[serde(default, skip_serializing_if = "MarkAttrs::is_default")]
+    pub attrs: MarkAttrs,
 }
 
 /// The clipboard register: the last copy or cut, with the marks a cut took (so pasting it
@@ -542,13 +566,13 @@ mod tests {
 
     #[test]
     fn inserting_all_at_once_is_inserting_each() {
-        let m = |pos: usize, id: u64| Mark { pos, id: MarkId(id), attrs: BlockAttrs::default() };
+        let m = |pos: usize, id: u64| Mark { pos, id: MarkId(id), attrs: MarkAttrs::default() };
         for batch in [vec![m(10, 3), m(0, 1), m(5, 2)], vec![m(0, 1), m(5, 1)], vec![m(0, 1), m(0, 2)], vec![m(7, 9)]] {
             let (mut a, mut b) = (Marks::new(), Marks::new());
             a.insert(m(3, 7)).unwrap();
             b.insert(m(3, 7)).unwrap();
             let ra = a.insert_all(batch.clone());
-            let rb = batch.iter().try_for_each(|x| b.insert(*x));
+            let rb = batch.iter().try_for_each(|x| b.insert(x.clone()));
             assert_eq!((ra, &a), (rb, &b), "{batch:?}");
             assert_eq!(a.next_id(), b.next_id());
         }
@@ -599,7 +623,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&c).unwrap(), "\"abc\"");
         let back: Clipboard = serde_json::from_str("\"abc\"").unwrap();
         assert_eq!(back, c);
-        let full = Clipboard { text: "a\nb".into(), external: None, marks: vec![ClipMark { offset: 2, id: MarkId(4), attrs: BlockAttrs::default() }], blocks: false };
+        let full = Clipboard { text: "a\nb".into(), external: None, marks: vec![ClipMark { offset: 2, id: MarkId(4), attrs: MarkAttrs::default() }], blocks: false };
         let json = serde_json::to_string(&full).unwrap();
         assert_eq!(serde_json::from_str::<Clipboard>(&json).unwrap(), full);
     }
