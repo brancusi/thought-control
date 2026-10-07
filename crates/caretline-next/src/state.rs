@@ -7,6 +7,7 @@ use crate::helix::history::History;
 use crate::helix::line_ending::auto_detect_line_ending;
 use crate::helix::{LineEnding, Range, Rope, Selection, SmallVec};
 use crate::layout::WrapCache;
+use crate::marks::{Clipboard, MarkDelta, Marks};
 
 /// Editor settings that change behaviour or layout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,8 +115,9 @@ pub struct State {
     pub selection: Selection,
     pub scroll: Scroll,
     pub viewport: Viewport,
-    /// The internal clipboard register (the last copy or cut).
-    pub clipboard: String,
+    /// The internal clipboard register (the last copy or cut, with the marks a cut took).
+    /// Serializes as a plain string when it carries no marks.
+    pub clipboard: Clipboard,
     /// The file the document saves to, if any.
     pub path: Option<String>,
     /// Undo history (Helix's revision tree).
@@ -135,6 +137,14 @@ pub struct State {
     pub run: Option<EditRun>,
     /// A first quit with unsaved changes arms this; a second quit then exits.
     pub quit_armed: bool,
+    /// Block marks: numeric ids at line starts, mapped through every edit
+    /// ([`crate::marks`]). Empty unless a host or the outline layer adds some.
+    #[serde(skip_serializing_if = "Marks::is_unused")]
+    pub marks: Marks,
+    /// What each history revision did to the marks, indexed by revision (so undo and redo
+    /// restore them exactly). Always as long as the history.
+    #[serde(skip_serializing_if = "mark_log_is_empty")]
+    pub mark_log: Vec<MarkDelta>,
     /// Where long lines' rows start: a layout memo, not part of the state's value.
     #[serde(skip)]
     pub(crate) wrap: WrapCache,
@@ -156,7 +166,7 @@ pub struct StateInput {
     #[serde(default)]
     pub viewport: Option<Viewport>,
     #[serde(default)]
-    pub clipboard: String,
+    pub clipboard: Clipboard,
     #[serde(default)]
     pub path: Option<String>,
     #[serde(default)]
@@ -179,6 +189,10 @@ pub struct StateInput {
     pub run: Option<EditRun>,
     #[serde(default)]
     pub quit_armed: bool,
+    #[serde(default)]
+    pub marks: Marks,
+    #[serde(default)]
+    pub mark_log: Vec<MarkDelta>,
 }
 
 /// The deserialized form of [`Config`] inside a [`StateInput`]: every field optional, with
@@ -236,8 +250,12 @@ impl From<StateInput> for State {
             now_ms: input.now_ms,
             run: input.run,
             quit_armed: input.quit_armed,
+            marks: input.marks,
+            mark_log: input.mark_log,
             wrap: WrapCache::default(),
         };
+        state.marks.repair(state.text.slice(..));
+        state.fit_mark_log();
         state.dirty = state.compute_dirty();
         state
     }
@@ -256,7 +274,7 @@ impl State {
                 width: viewport.width.max(1),
                 height: viewport.height.max(1),
             },
-            clipboard: String::new(),
+            clipboard: Clipboard::default(),
             path,
             history: History::default(),
             saved_revision: Some(0),
@@ -270,6 +288,8 @@ impl State {
             now_ms: 0,
             run: None,
             quit_armed: false,
+            marks: Marks::default(),
+            mark_log: vec![MarkDelta::default()],
             wrap: WrapCache::default(),
         };
         state.dirty = state.compute_dirty();
@@ -322,8 +342,17 @@ impl State {
         }
         if self.history.current_revision() >= self.history.len() {
             self.history = History::default();
+            self.mark_log.clear();
         }
+        self.marks.repair(self.text.slice(..));
+        self.fit_mark_log();
         self.dirty = self.compute_dirty();
+    }
+
+    /// Keeps the mark log exactly as long as the history (a state from an older version, or
+    /// written by hand, may have none).
+    pub(crate) fn fit_mark_log(&mut self) {
+        self.mark_log.resize(self.history.len(), MarkDelta::default());
     }
 
     pub fn compute_dirty(&self) -> bool {
@@ -354,6 +383,10 @@ impl State {
             None => "[scratch]".to_string(),
         }
     }
+}
+
+fn mark_log_is_empty(log: &[MarkDelta]) -> bool {
+    log.iter().all(MarkDelta::is_empty)
 }
 
 mod rope_as_string {

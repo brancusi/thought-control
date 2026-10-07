@@ -71,8 +71,8 @@ the last row to the end, as in a macOS text field.
 | Msg | JSON | Does |
 |---|---|---|
 | `Copy` | `{"msg":"copy"}` | Copies the selection to the register and returns `clipboard_set`. Several ranges join with the line ending |
-| `Cut` | `{"msg":"cut"}` | Copy, then delete the selection. One undo step |
-| `Paste { text }` | `{"msg":"paste","text":"x"}` or `{"msg":"paste"}` | Pastes `text`, or the internal register when `text` is absent. Outside text is converted to the document's line ending; the register is pasted as is |
+| `Cut` | `{"msg":"cut"}` | Copy, then delete the selection. One undo step. With one range, the register keeps the [marks](architecture.md#block-marks) the cut removed |
+| `Paste { text }` | `{"msg":"paste","text":"x"}` or `{"msg":"paste"}` | Pastes `text`, or the internal register when `text` is absent. Outside text is converted to the document's line ending; the register is pasted as is. Pasting the register, or text equal to what it put on the system clipboard, brings its marks back where their ids aren't in use |
 | `Undo` | `{"msg":"undo"}` | Steps back one revision, restoring text and selection |
 | `Redo` | `{"msg":"redo"}` | Steps forward one revision |
 

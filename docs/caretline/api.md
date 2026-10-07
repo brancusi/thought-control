@@ -38,6 +38,8 @@ log. There's no terminal crate and no ratatui.
 | `layout::{Layout, RowPos, text_format, ensure_caret_visible}` | `caretline_next::layout` | Lower-level layout queries |
 | `helix::*` | `caretline_next::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
 | `Session`, `protocol::*` | `caretline_next` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
+| `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline_next` | Block identity that survives edits: see [Block marks](#block-marks) |
+| `marks::{Clipboard, ClipMark, MarkDelta, Fixup, is_line_start}`, `update::mark_only_edit` | `caretline_next::marks`, `::update` | The register with carried marks, the per-revision deltas, a host's undoable mark edit |
 
 ## Create a state
 
@@ -276,6 +278,37 @@ assert!(!s.dirty && s.history.len() == 1); // clean, with a fresh history
 Undo grouping constants live in `caretline_next::state`: `RUN_GAP_MS` (1500), `RUN_MAX_CHARS`
 (256) and `RUN_WORD_BREAK_CHARS` (128). See
 [architecture.md](architecture.md#undo-grouping-worked-through).
+
+## Block marks
+
+`state.marks` holds ids at line starts that follow their lines through every edit, undo and
+redo (see [architecture.md](architecture.md#block-marks)). Add marks directly, outside the
+undo history, when you load a document; use `update::mark_only_edit` for a change of marks
+that should be one undo step.
+
+```rust
+use caretline_next::{update, BlockAttrs, Msg, State, Viewport};
+
+let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
+let list = s.marks.mint(0);                        // MarkId(0) on line 0
+let milk = s.marks.mint(s.text.line_to_char(1));   // MarkId(1) on line 1
+s.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
+
+update(&mut s, Msg::InsertText { text: "Weekly ".into() });  // at the start of line 0
+assert_eq!(s.marks.pos(list), Some(0));                      // still line 0
+update(&mut s, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
+update(&mut s, Msg::Undo);                                   // the marks come back exactly
+assert_eq!(s.marks.pos(milk), Some(s.text.line_to_char(1)));
+```
+
+| `Marks` method | Does |
+|---|---|
+| `mint(pos)`, `mint_with(pos, attrs)` | A new id at a line start (or the line's existing mark) |
+| `insert(Mark)` | Put a known id back; refuses a taken line or a live id |
+| `remove(id)`, `remove_at(pos)`, `remove_range(from, to)` | Take marks out, returning them |
+| `at(pos)`, `mark_at(pos)`, `pos(id)`, `get(id)`, `in_range(from, to)`, `at_or_before(pos)` | Look marks up |
+| `attrs(id)`, `set_attrs(id, attrs)` | A block's attributes |
+| `iter()`, `len()`, `next_id()` | Walk them in document order |
 
 ## Session
 

@@ -9,6 +9,7 @@ use crate::helix::{Range, RopeSlice, Selection, SmallVec, Tendril, Transaction};
 use crate::layout::{ensure_caret_visible, Layout};
 use crate::msg::{By, Dir, Effect, Msg};
 use crate::helix::transaction::Operation;
+use crate::marks::{ClipMark, Clipboard, Mark, MarkDelta, Marks};
 use crate::state::{EditRun, RunKind, Scroll, State, RUN_GAP_MS, RUN_MAX_CHARS, RUN_WORD_BREAK_CHARS};
 
 /// Applies one message. Returns the effects for the runtime to perform.
@@ -127,7 +128,7 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::Copy => {
             if let Some(text) = selected_text(state) {
                 state.status = Some(format!("copied {}", count_label(&text)));
-                state.clipboard = text.clone();
+                state.clipboard = Clipboard::from(text.clone());
                 effects.push(Effect::ClipboardSet { text });
             } else {
                 state.status = Some("nothing selected".into());
@@ -136,38 +137,54 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::Cut => {
             if let Some(text) = selected_text(state) {
                 state.status = Some(format!("cut {}", count_label(&text)));
-                state.clipboard = text.clone();
-                effects.push(Effect::ClipboardSet { text });
+                // One range: the register keeps the marks the cut takes, so pasting it
+                // back re-creates the same ids.
+                let single = (state.selection.len() == 1).then(|| state.selection.primary());
                 // Only the non-empty ranges are cut; carets elsewhere stay as they are.
-                delete(state, None, |_, _, head| (head, head));
+                let removed = delete_marks(state, None, |_, _, head| (head, head));
+                let marks = match single {
+                    Some(r) => carried(&removed, r.from(), r.to()),
+                    None => Vec::new(),
+                };
+                state.clipboard = Clipboard { text: text.clone(), external: None, marks };
+                effects.push(Effect::ClipboardSet { text });
             } else {
                 state.status = Some("nothing selected".into());
             }
         }
         Msg::Paste { text } => {
             // Outside text takes the document's line ending; the register came from this
-            // document, so it goes back exactly as it was copied.
-            let text = match text {
-                Some(text) => normalize_line_endings(&text, state.config.line_ending.as_str()),
-                None => state.clipboard.clone(),
+            // document, so it goes back exactly as it was copied (with any marks it holds).
+            let (text, marks) = match text {
+                Some(text) => {
+                    let text = normalize_line_endings(&text, state.config.line_ending.as_str());
+                    if state.clipboard.is_own(&text) {
+                        (state.clipboard.text.clone(), state.clipboard.marks.clone())
+                    } else {
+                        (text, Vec::new())
+                    }
+                }
+                None => (state.clipboard.text.clone(), state.clipboard.marks.clone()),
             };
             if text.is_empty() {
                 state.status = Some("the clipboard is empty".into());
             } else {
-                insert(state, &text, None);
+                paste_text(state, &text, &marks);
             }
         }
         Msg::Undo => {
+            let rev = state.history.current_revision();
             let txn = state.history.undo().cloned();
             match txn {
-                Some(txn) => apply_history(state, &txn),
+                Some(txn) => apply_history(state, &txn, rev, true),
                 None => state.status = Some("nothing to undo".into()),
             }
         }
         Msg::Redo => {
             let txn = state.history.redo().cloned();
+            let rev = state.history.current_revision();
             match txn {
-                Some(txn) => apply_history(state, &txn),
+                Some(txn) => apply_history(state, &txn, rev, false),
                 None => state.status = Some("nothing to redo".into()),
             }
         }
@@ -232,48 +249,183 @@ pub fn replay(state: &mut State, msgs: impl IntoIterator<Item = Msg>) {
 // Edits
 
 /// Applies `txn` (which carries its resulting selection) and records it in the history,
-/// amending the open run when `kind` continues it.
-fn commit(state: &mut State, txn: Transaction, kind: Option<RunKind>, replaced_selection: bool) {
-    if txn.changes().is_empty() {
-        if let Some(sel) = txn.selection() {
-            state.selection = sel.clone();
-        }
-        return;
+/// amending the open run when `kind` continues it. Returns the marks the edit removed.
+pub(crate) fn commit(state: &mut State, txn: Transaction, kind: Option<RunKind>, replaced_selection: bool) -> Vec<Mark> {
+    commit_with(state, txn, Step { kind, replaced: replaced_selection, merge: false }, |_, _| {})
+}
+
+/// How an edit joins the undo history.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct Step {
+    /// The edit run it belongs to, if any (typing, held Backspace).
+    pub kind: Option<RunKind>,
+    /// It replaced a selection (which starts a new step).
+    pub replaced: bool,
+    /// Fold it into the current revision: the second half of one command.
+    pub merge: bool,
+}
+
+/// [`commit`], with a hook that adjusts the marks after they are mapped through `txn`
+/// (given the new text). An edit that changes only marks is still one undo step.
+pub(crate) fn commit_with(
+    state: &mut State,
+    txn: Transaction,
+    step: Step,
+    fix: impl FnOnce(&mut Marks, RopeSlice),
+) -> Vec<Mark> {
+    let marks_before = state.marks.clone();
+    let old_text = state.text.clone();
+    let text_changed = !txn.changes().is_empty();
+    if text_changed {
+        txn.apply(&mut state.text);
+        state.wrap.edited(txn.changes());
     }
-    let before = HistoryState {
-        doc: state.text.clone(),
-        selection: state.selection.clone(),
-    };
-    txn.apply(&mut state.text);
-    state.wrap.edited(txn.changes());
+    let removed = state.marks.map(old_text.slice(..), state.text.slice(..), txn.changes());
+    let naive = state.marks.clone();
+    fix(&mut state.marks, state.text.slice(..));
+    after_marks_changed(state);
+    let before_selection = state.selection.clone();
     if let Some(sel) = txn.selection() {
         state.selection = sel.clone();
     }
+    if !text_changed && state.marks == marks_before {
+        return removed;
+    }
+    let tracked = !marks_before.is_empty() || !state.marks.is_empty();
+
     let now = state.now_ms;
     let changed = changed_chars(&txn);
-    let continues = match (kind, state.run) {
-        (Some(kind), Some(run)) => {
-            !replaced_selection
-                && run.kind == kind
-                && run.revision == state.history.current_revision()
-                && now.saturating_sub(run.at_ms) < RUN_GAP_MS
-                && !run_is_full(run, &txn)
-        }
-        _ => false,
+    let continues = step.merge
+        || match (step.kind, state.run) {
+            (Some(kind), Some(run)) => {
+                !step.replaced
+                    && run.kind == kind
+                    && run.revision == state.history.current_revision()
+                    && now.saturating_sub(run.at_ms) < RUN_GAP_MS
+                    && !run_is_full(run, &txn)
+            }
+            _ => false,
+        };
+    // A revision being amended: the marks as they were when it began.
+    state.fit_mark_log();
+    let rev = state.history.current_revision();
+    let start_marks = if continues && rev > 0 && (tracked || !state.mark_log[rev].is_empty()) {
+        let inversion = state.history.current_inversion().clone();
+        let mut start_text = old_text.clone();
+        inversion.apply(&mut start_text);
+        let mut m = marks_before.clone();
+        m.map(old_text.slice(..), start_text.slice(..), inversion.changes());
+        m.apply(&state.mark_log[rev].undo);
+        Some((m, start_text))
+    } else {
+        None
     };
-    let amended = continues && state.history.amend_current_revision(&txn, &before.doc, now);
+    let before = HistoryState {
+        doc: old_text.clone(),
+        selection: before_selection,
+    };
+    let amended = continues && state.history.amend_current_revision(&txn, &old_text, now);
     if !amended {
         state.history.commit_revision_at_timestamp(&txn, &before, now);
     }
+    let rev = state.history.current_revision();
+    state.fit_mark_log();
+    state.mark_log[rev] = match (amended, start_marks) {
+        (true, Some((start, start_text))) => {
+            let forward = state.history.current_transaction().clone();
+            let backward = state.history.current_inversion().clone();
+            mark_delta(&start, &start_text, &forward, &backward, state)
+        }
+        (true, None) => MarkDelta::default(),
+        (false, _) if tracked => {
+            let backward = state.history.current_inversion().clone();
+            let undo = {
+                let mut m = state.marks.clone();
+                m.map(state.text.slice(..), old_text.slice(..), backward.changes());
+                m.diff(&marks_before)
+            };
+            MarkDelta { undo, redo: naive.diff(&state.marks) }
+        }
+        (false, _) => MarkDelta::default(),
+    };
+
     let so_far = match state.run {
         Some(run) if amended => run.chars,
         _ => 0,
     };
-    state.run = kind.map(|kind| EditRun {
+    state.run = step.kind.map(|kind| EditRun {
         kind,
         revision: state.history.current_revision(),
         at_ms: now,
         chars: so_far + changed,
+    });
+    removed
+}
+
+/// Changes only marks, as one undo step (a host's own block edit: binding, splitting or
+/// joining blocks without touching the text). `f` gets the marks and the text.
+pub fn mark_only_edit(state: &mut State, f: impl FnOnce(&mut Marks, RopeSlice)) {
+    state.run = None;
+    let txn = Transaction::new(&state.text);
+    commit_with(state, txn, Step::default(), f);
+    state.dirty = state.compute_dirty();
+}
+
+/// The delta of a revision that turned `start` (on `start_text`) into the state's marks
+/// through `forward`; `backward` is its inversion.
+fn mark_delta(start: &Marks, start_text: &crate::helix::Rope, forward: &Transaction, backward: &Transaction, state: &State) -> MarkDelta {
+    let mut fwd = start.clone();
+    fwd.map(start_text.slice(..), state.text.slice(..), forward.changes());
+    let mut bwd = state.marks.clone();
+    bwd.map(state.text.slice(..), start_text.slice(..), backward.changes());
+    MarkDelta {
+        undo: bwd.diff(start),
+        redo: fwd.diff(&state.marks),
+    }
+}
+
+/// Whatever is derived from the marks or the text must be recomputed.
+pub(crate) fn after_marks_changed(_state: &mut State) {}
+
+/// The marks a cut of `[from, to]` took, as offsets into the cut text.
+fn carried(removed: &[Mark], from: usize, to: usize) -> Vec<ClipMark> {
+    removed
+        .iter()
+        .filter(|m| from <= m.pos && m.pos <= to)
+        .map(|m| ClipMark { offset: m.pos - from, id: m.id, attrs: m.attrs })
+        .collect()
+}
+
+/// Pastes `text` at every range. With one range, marks carried in the register go back
+/// where they were in the pasted text (when their ids aren't in use), and a mark at the
+/// paste point stays there unless the register brings its own.
+fn paste_text(state: &mut State, text: &str, carried: &[ClipMark]) {
+    let single = state.selection.len() == 1;
+    if carried.is_empty() || !single {
+        insert(state, text, None);
+        return;
+    }
+    let replaced = has_selection(state);
+    let from = state.selection.primary().from();
+    // Whole lines pasted at a line start push the line there (and its mark) down; any other
+    // paste continues the line it lands in, which keeps its mark.
+    let whole = text.ends_with('\n') && crate::marks::is_line_start(state.text.slice(..), from);
+    let at_from = if whole { None } else { state.marks.at(from) };
+    let tendril = Tendril::from(text);
+    let txn = change_each(state, |_, r| (r.from(), r.to(), Some(tendril.clone())));
+    commit_with(state, txn, Step { kind: None, replaced, merge: false }, |marks, new| {
+        let leading = carried.iter().any(|c| c.offset == 0);
+        if let (Some(id), false) = (at_from, leading) {
+            if let Some(m) = marks.remove(id) {
+                let _ = marks.insert(Mark { pos: from, ..m });
+            }
+        }
+        for c in carried {
+            let pos = from + c.offset;
+            if pos <= new.len_chars() && crate::marks::is_line_start(new, pos) {
+                let _ = marks.insert(Mark { pos, id: c.id, attrs: c.attrs });
+            }
+        }
     });
 }
 
@@ -346,11 +498,16 @@ fn insert(state: &mut State, text: &str, kind: Option<RunKind>) {
 }
 
 /// Deletes each selection; for an empty range, deletes the span `f` gives.
-fn delete(
+fn delete(state: &mut State, kind: Option<RunKind>, f: impl FnMut(RopeSlice, usize, usize) -> (usize, usize)) {
+    delete_marks(state, kind, f);
+}
+
+/// [`delete`], returning the marks it removed.
+fn delete_marks(
     state: &mut State,
     kind: Option<RunKind>,
     mut f: impl FnMut(RopeSlice, usize, usize) -> (usize, usize),
-) {
+) -> Vec<Mark> {
     let replaced = has_selection(state);
     let kind = if replaced { None } else { kind };
     let txn = change_each(state, |text, r| {
@@ -365,13 +522,23 @@ fn delete(
             (from, to, None)
         }
     });
-    commit(state, txn, kind, replaced);
+    commit(state, txn, kind, replaced)
 }
 
-/// Applies an undo or redo transaction from the history.
-fn apply_history(state: &mut State, txn: &Transaction) {
+/// Applies an undo or redo transaction from the history: `rev` is the revision being
+/// undone, or the one redone.
+fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
+    let old = state.text.clone();
     txn.apply(&mut state.text);
     state.wrap.edited(txn.changes());
+    state.fit_mark_log();
+    let delta = &state.mark_log[rev];
+    if !state.marks.is_empty() || !delta.is_empty() {
+        let fixup = if undo { delta.undo.clone() } else { delta.redo.clone() };
+        state.marks.map(old.slice(..), state.text.slice(..), txn.changes());
+        state.marks.apply(&fixup);
+        after_marks_changed(state);
+    }
     state.selection = match txn.selection() {
         Some(sel) => sel.clone(),
         None => state.selection.clone().map(txn.changes()),

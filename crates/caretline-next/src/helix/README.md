@@ -25,7 +25,9 @@ Each file's header lists what changed from upstream. In short:
 - Tree-sitter, textobject and regex code is removed, so no syntax or loader crates are needed.
 - `History` takes caller-supplied millisecond timestamps instead of reading
   `std::time::Instant`, so editing stays a pure function of its inputs. It also gains
-  `amend_current_revision`, which folds a run of typing into one undo step.
+  `amend_current_revision`, which folds a run of typing into one undo step, and
+  `current_transaction` / `current_inversion`, which the block marks read to record what each
+  revision did to them.
 - `DocumentFormatter` gains `resume_at_row` and `indent_level`, so layout can restart inside a
   long soft-wrapped line at a row it already knows.
 - The selection, transaction and history types derive serde, so editor state serializes.

@@ -32,7 +32,7 @@ assert_eq!(view(&state).cursor, Some((2, 0)));            // the caret is after 
 | `selection` | Helix `Selection`: one or more ranges, each an `anchor` and a `head` (the caret). `old_visual_position` holds the goal column |
 | `scroll` | The top of the view: a document `line`, a visual `row` inside it, and a `col` offset when wrapping is off |
 | `viewport` | `width` × `height` in cells. The last row is the status bar, unless `config.status_bar` is off |
-| `clipboard` | The internal register: the last copy or cut |
+| `clipboard` | The internal register: the last copy or cut, with the marks a cut took. A plain string in JSON when it carries no marks |
 | `path` | Where `save` writes, if anywhere |
 | `history` | Helix's undo tree |
 | `saved_revision`, `saving`, `dirty` | Which history revision is on disk, a save in flight, and whether they differ |
@@ -41,6 +41,8 @@ assert_eq!(view(&state).cursor, Some((2, 0)));            // the caret is after 
 | `now_ms` | The clock, as the last `tick` reported it |
 | `run` | The open edit run (for undo grouping) |
 | `quit_armed` | A first quit with unsaved changes arms it; the second quits |
+| `marks` | Block marks: numeric ids at line starts, mapped through every edit (see [Block marks](#block-marks)). Left out of the JSON when unused |
+| `mark_log` | What each history revision did to the marks, by revision. Left out of the JSON when empty |
 
 Only `text` matters when a state is parsed: every other field is optional and gets what
 `State::new` would give (see [Rehydration](#rehydration)).
@@ -248,6 +250,43 @@ margin (a row's start depends only on the text before it and the next row), so t
 end of a long line re-lays about three rows. The memo is derived data: a property test checks
 that states, frames, coordinates and row counts match layout from scratch after random
 edits, motions, undos and resizes.
+
+## Block marks
+
+A mark is a `MarkId` (a plain `u64`) at a char position that is always the start of a line.
+Marks are block identity: the [outline layer](outline.md) puts one on the first line of every
+block, and a host keys its own data (a database row, a node id) by them. The engine only
+hands out numbers, from a counter in `Marks` that never goes back, so an id is never reused.
+Each mark also carries `BlockAttrs` (today a block's `gap`, its blank row before it).
+
+**Mapping.** After every transaction each mark is mapped with `Assoc::After` and snapped to
+the start of its line:
+
+| Edit | What happens to the mark |
+|---|---|
+| Typing at a line's start | It stays on the line |
+| A line break typed at a mark | The mark moves down with the text after the break; the new line above has none |
+| A line break typed mid-line | Nothing moves: the new line has no mark |
+| Deleting the line break before a mark (Backspace at a line start) | The mark is removed: its line joined the one above |
+| Deleting a selection that spans lines | The first line keeps its mark; marks on the lines the deletion reached are removed |
+| Deleting (or cutting) whole lines: from a line start to a line start, nothing typed in their place | Those lines' marks are removed; the line after keeps its own |
+| Deleting the start of a line (a marker such as `- `) | The mark stays |
+
+If two marks would land on one line, the one that was earlier keeps it. Every removed mark is
+recorded.
+
+**Undo and redo.** History revisions don't hold marks. `mark_log[r]` holds revision `r`'s
+`MarkDelta`: fix-ups applied after mapping the marks through the revision's inversion (undo)
+or transaction (redo). They are computed when the revision is made, by comparing the plain
+mapping with the marks the edit left, so undo and redo restore every mark, id and attribute
+exactly, typing runs included. Mapping costs time in the marks after the first change; a
+document without marks pays nothing.
+
+**Cut and paste.** A cut of one range keeps the marks it removed in the register, as offsets
+into the cut text. Pasting the register (or the same text from the system clipboard) puts each
+one back where its offset lands on a line start, unless that id is in use. So a cut and a paste
+in one session move blocks with their ids, and cut then paste in place gives back the same
+marks.
 
 ## What `update` does after every message
 

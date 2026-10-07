@@ -2,7 +2,7 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: module paths; revision timestamps are caller-supplied milliseconds (`Timestamp`) instead of `std::time::Instant`, so no clock is read; removed `commit_revision` (it read the clock) and the regex-based duration parser; serde derives; added `amend_current_revision`, `len`, `is_empty` and `can_redo`.
+// Changes from upstream: `current_transaction` and `current_inversion` accessors; module paths; revision timestamps are caller-supplied milliseconds (`Timestamp`) instead of `std::time::Instant`, so no clock is read; removed `commit_revision` (it read the clock) and the regex-based duration parser; serde derives; added `amend_current_revision`, `len`, `is_empty` and `can_redo`.
 
 use crate::helix::{Assoc, ChangeSet, Range, Rope, Selection, Transaction};
 use std::num::NonZeroUsize;
@@ -140,6 +140,16 @@ impl History {
         rev.inversion = transaction.invert(original_doc).compose(inversion);
         rev.timestamp = timestamp;
         true
+    }
+
+    /// The current revision's transaction (from its parent to it). The root's is empty.
+    pub fn current_transaction(&self) -> &Transaction {
+        &self.revisions[self.current].transaction
+    }
+
+    /// The current revision's inversion (from it back to its parent).
+    pub fn current_inversion(&self) -> &Transaction {
+        &self.revisions[self.current].inversion
     }
 
     /// The number of revisions, including the root.

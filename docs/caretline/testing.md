@@ -10,6 +10,7 @@ keys or messages, and the expected result. No terminal, no timing, no mocks.
 | [`caretline-next/tests/goldens.rs`](../../crates/caretline-next/tests/goldens.rs) | Behaviour goldens: text and selection before, keys, text and selection after (and frames where it matters). The baseline is a macOS text field |
 | [`caretline-next/tests/rehydrate.rs`](../../crates/caretline-next/tests/rehydrate.rs) | A state survives JSON exactly; a recorded session replays to the live result |
 | [`caretline-next/tests/fuzz.rs`](../../crates/caretline-next/tests/fuzz.rs) | Property tests: seeded random documents and messages, with invariants checked after every step |
+| [`caretline-next/tests/marks.rs`](../../crates/caretline-next/tests/marks.rs) | Block marks: each mapping rule, undo and redo restoring marks exactly, cut and paste keeping ids, serialization; random sessions with marks at line starts and unique ids after every step, every undo restoring the marks |
 | [`caretline-next/tests/keymap.rs`](../../crates/caretline-next/tests/keymap.rs) | Key bindings and the key-script parser |
 | [`caretline-next/tests/common/mod.rs`](../../crates/caretline-next/tests/common/mod.rs) | Shared helpers: caret notation, `golden`, `keys`, `send`, `frame`, random generators |
 | `caretline-next/src/helix/**` | Helix's own unit tests, vendored with the code |
