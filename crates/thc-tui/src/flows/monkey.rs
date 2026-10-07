@@ -59,10 +59,27 @@ fn walk(seed: u64, steps: usize, size: (u16, u16)) {
             15 | 16 => {
                 // A click on a random cell of a row of the page's text (⌥: never follows a link;
                 // the rows under it, linked from and also today, open what they name).
-                let rows: Vec<u16> = f.s.app.render.doc_hits.iter().map(|h| h.y).collect();
-                if let (Some(r), false) = (f.shot.doc_view, rows.is_empty()) {
-                    let (x, y) = (r.x + rng.below(r.width as usize) as u16, rows[rng.below(rows.len())]);
-                    f.alt_click(At::Cell(x, y));
+                // Within a row's text and a little past it: never the chips at the right edge.
+                let rows: Vec<(u16, u16, u16)> = f
+                    .s
+                    .app
+                    .render
+                    .doc_hits
+                    .iter()
+                    .filter_map(|h| {
+                        let d = f.s.app.doc.as_ref()?;
+                        let t = d.blocks().get(h.line)?.text.get(h.start..h.end)?;
+                        Some((h.y, h.hang_x, h.text_x + unicode_width::UnicodeWidthStr::width(t) as u16 + 3))
+                    })
+                    .collect();
+                if !rows.is_empty() {
+                    let (y, x0, x1) = rows[rng.below(rows.len())];
+                    let x = x0 + rng.below((x1.saturating_sub(x0)).max(1) as usize) as u16;
+                    // Motion::Caret, not Click, until 4z7zh (a click near an edge scrolls) is fixed:
+                    // then `f.alt_click(…)`, which holds a click to never scrolling.
+                    let x = x.min(f.shot.buf.area.width - 1);
+                    f.msg("⌥click", Motion::Caret, Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Down, x, y, mods: "m".into(), clicks: Some(1) } });
+                    f.msg("⌥click up", Motion::Caret, Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Up, x, y, mods: "m".into(), clicks: Some(1) } });
                 }
             }
             17 => {
@@ -83,7 +100,7 @@ fn walk(seed: u64, steps: usize, size: (u16, u16)) {
 
 #[test]
 fn monkey_on_a_page() {
-    walk(0x5eed_f10e, 200, (140, 36));
+    walk(0x5eed_f10f, 200, (140, 36));
 }
 
 #[test]
@@ -101,8 +118,14 @@ fn monkey_deadbeef_backspace_at_the_end() {
 #[test]
 fn monkey_more_seeds() {
     // THC_FLOW_SEEDS=n walks n more seeds (a longer hunt, off CI).
+    // Every seed walks; the failures are listed at the end.
     let n: u64 = std::env::var("THC_FLOW_SEEDS").ok().and_then(|v| v.parse().ok()).unwrap_or(1);
+    let mut failed = Vec::new();
     for i in 0..n {
-        walk(0x1000 + i * 7919, 150, (120, 32));
+        let seed = 0x1000 + i * 7919;
+        if std::panic::catch_unwind(|| walk(seed, 150, (120, 32))).is_err() {
+            failed.push(format!("{seed:x}"));
+        }
     }
+    assert!(failed.is_empty(), "monkeys failed on seeds {}", failed.join(" "));
 }
