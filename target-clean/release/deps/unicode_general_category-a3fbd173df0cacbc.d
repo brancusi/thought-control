@@ -1,0 +1,12 @@
+/Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/deps/unicode_general_category-a3fbd173df0cacbc.d: /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/lib.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/category.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/tables.rs /Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/build/unicode-general-category-be2de8d4d57cf98d/out/category.rs
+
+/Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/deps/libunicode_general_category-a3fbd173df0cacbc.rlib: /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/lib.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/category.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/tables.rs /Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/build/unicode-general-category-be2de8d4d57cf98d/out/category.rs
+
+/Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/deps/libunicode_general_category-a3fbd173df0cacbc.rmeta: /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/lib.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/category.rs /Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/tables.rs /Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/build/unicode-general-category-be2de8d4d57cf98d/out/category.rs
+
+/Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/lib.rs:
+/Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/category.rs:
+/Users/aramzadikian/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/unicode-general-category-1.1.0/src/tables.rs:
+/Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/build/unicode-general-category-be2de8d4d57cf98d/out/category.rs:
+
+# env-dep:OUT_DIR=/Users/aramzadikian/Documents/projects/thc-sidebar-wt/target-clean/release/build/unicode-general-category-be2de8d4d57cf98d/out

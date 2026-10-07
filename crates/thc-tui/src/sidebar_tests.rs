@@ -257,3 +257,27 @@ fn a_panels_typing_saves_into_its_own_page() {
         assert!(!app.vault.store.children(&j).unwrap().iter().any(|n| n.text.contains("Note")));
     }
 }
+
+/// S14: a `today` day panel turns over at midnight.
+#[test]
+fn s14_a_today_panel_turns_over_at_midnight() {
+    crate::SNAPSHOT.with(|s| s.set(true));
+    let (_s, v, _, _) = page_vault("midnight");
+    let mut app = App::new(reopen(&v)).unwrap();
+    app.daemon_live = false;
+    let vault = app.ui.vault_name.clone();
+    let key = PanelKey::day(&vault, "today");
+    app.open_aside(key.clone(), false);
+    let day = |app: &App| match app.panel_doc(&key).map(|d| d.target.clone()) {
+        Some(Target::Journal { date }) => Some(date),
+        _ => None,
+    };
+    let before = app.ui.today;
+    assert_eq!(day(&app), Some(before));
+    // The clock passes midnight.
+    let next = app.ui.now_ms + 24 * 3600 * 1000;
+    app.ui.tick(next, app.ui.utc_offset_min);
+    let _ = app.reload();
+    assert_eq!(day(&app), Some(before + chrono::Duration::days(1)));
+    assert_eq!(app.panel_title(&key), (before + chrono::Duration::days(1)).format("%a %d %b").to_string());
+}

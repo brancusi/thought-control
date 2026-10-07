@@ -54,6 +54,79 @@ impl PanelRt {
     }
 }
 
+/// Why a target can't open beside (exit 3, 5 and 6 for `thc ui aside`).
+#[derive(Clone, Debug, PartialEq)]
+pub enum AsideError {
+    NotFound(String),
+    Ambiguous(String, Vec<String>),
+    Invalid(String),
+}
+
+impl AsideError {
+    pub fn message(&self) -> String {
+        match self {
+            AsideError::NotFound(m) | AsideError::Invalid(m) => m.clone(),
+            AsideError::Ambiguous(m, c) => format!("{m} · {}", c.join(", ")),
+        }
+    }
+}
+
+/// `:aside <target>` and `:sidebar close | close all | pin | hide | show | width <n|auto>`.
+pub fn palette(app: &mut App, buf: &str) -> bool {
+    if let Some(t) = buf.strip_prefix("aside") {
+        if !(t.is_empty() || t.starts_with(' ')) {
+            return false;
+        }
+        match app.resolve_aside(t) {
+            Ok(k) => app.open_aside(k, true),
+            Err(e) => app.error(e.message()),
+        }
+        return true;
+    }
+    let Some(rest) = buf.strip_prefix("sidebar") else { return false };
+    let screen = app.render.size.width.max(app.screen_width);
+    match rest.trim() {
+        "close" => run(app, "sidebar.close"),
+        "close all" => run(app, "sidebar.close_all"),
+        "pin" => run(app, "sidebar.pin"),
+        "hide" => {
+            if app.ui.sidebar.shown {
+                run(app, "sidebar.toggle");
+            }
+            true
+        }
+        "show" | "" => {
+            if !app.ui.sidebar.shown {
+                run(app, "sidebar.toggle");
+            }
+            true
+        }
+        w if w.starts_with("width") => {
+            let v = w["width".len()..].trim();
+            let change = if v == "auto" { Some(WidthChange::Auto) } else { v.parse::<u16>().ok().map(WidthChange::Set) };
+            match change {
+                Some(change) => crate::runtime_effects::sidebar_op(app, SidebarOp::Width { change, screen }),
+                None => app.error("sidebar width <columns|auto>"),
+            }
+            true
+        }
+        other => {
+            app.error(format!("sidebar {other}? · close, close all, pin, hide, show, width <n|auto>"));
+            true
+        }
+    };
+    true
+}
+
+/// A drag in the sidebar (§3.5, §6.1).
+#[derive(Clone, Debug, PartialEq)]
+pub enum Drag {
+    /// The divider: the column follows the pointer.
+    Divider,
+    /// A header pressed at row `from`; `to` is where it would drop (a stack index), once moved.
+    Header { key: PanelKey, from: u16, to: Option<usize> },
+}
+
 /// Something a key in a panel asked for that happens in the main view, after it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Deferred {
@@ -453,6 +526,58 @@ impl App {
         root.title.is_some().then(|| PanelKey::page(&vault, &root.id))
     }
 
+    /// What `:aside <target>` and `thc ui aside <target>` name (§2, §10.3): a page by title or
+    /// id, a day (`today`, `fri`, `2026-10-06`), `@view`, `#tag`, or any query.
+    pub fn resolve_aside(&self, target: &str) -> Result<PanelKey, AsideError> {
+        let t = target.trim();
+        let vault = self.ui.vault_name.clone();
+        let s = &self.vault.store;
+        if t.is_empty() {
+            return Err(AsideError::Invalid("name a page, a day, @view, #tag or a query".into()));
+        }
+        if t.eq_ignore_ascii_case("today") {
+            return Ok(PanelKey::day(&vault, "today"));
+        }
+        if let Some(name) = t.strip_prefix('@') {
+            if matches!(name, "today" | "inbox" | "tasks" | "log") || self.saved_views.iter().any(|v| v.name == name) {
+                return Ok(PanelKey::view(&vault, if matches!(name, "today" | "inbox" | "tasks" | "log") { name.to_string() } else { format!("@{name}") }.as_str()));
+            }
+            return Err(AsideError::Invalid(format!("unknown view @{name} · :views edit")));
+        }
+        if t.starts_with('#') && !t.contains(' ') {
+            return Ok(PanelKey::query(&vault, t));
+        }
+        if let Ok(Some(id)) = s.find_root_by_title(t, false) {
+            return Ok(PanelKey::page(&vault, &id));
+        }
+        if let Ok(d) = thc_core::dates::parse(t, self.today) {
+            return Ok(PanelKey::day(&vault, &d.date().format("%Y-%m-%d").to_string()));
+        }
+        match s.resolve(t) {
+            Ok(id) => {
+                return match s.node(&id).ok().flatten() {
+                    Some(n) if n.journal.is_some() => Ok(PanelKey::day(&vault, n.journal.as_deref().unwrap_or(""))),
+                    Some(n) if n.parent.is_none() && n.title.is_some() => Ok(PanelKey::page(&vault, &id)),
+                    Some(_) => Err(AsideError::Invalid(format!("{t} isn't a page or a day"))),
+                    None => Err(AsideError::NotFound(format!("no page or day {t:?}"))),
+                };
+            }
+            Err(e) => {
+                if let Some(thc_core::error::ThcError::Ambiguous { candidates, .. }) = e.downcast_ref::<thc_core::error::ThcError>() {
+                    return Err(AsideError::Ambiguous(format!("{t:?} is ambiguous"), candidates.clone()));
+                }
+            }
+        }
+        // A query (anything with a field, a status, a sort).
+        if t.contains(':') || t.starts_with('-') {
+            return match thc_core::query::compile(t, s, self.today) {
+                Ok(_) => Ok(PanelKey::query(&vault, t)),
+                Err(e) => Err(AsideError::Invalid(format!("{e:#}"))),
+            };
+        }
+        Err(AsideError::NotFound(format!("no page ¶ {t}")))
+    }
+
     /// Open `key` beside (§2). `focus`: the keyboard goes to it (the finder, the palette).
     pub fn open_aside(&mut self, key: PanelKey, focus: bool) {
         if self.in_panel.is_some() {
@@ -484,7 +609,8 @@ impl App {
 
     /// Whether the sidebar is a column at this width (else the drawer or replace).
     pub fn sidebar_fits(&self) -> bool {
-        self.render.size.width == 0 || self.render.size.width >= crate::sidebar::policy::COLUMN_AT
+        let w = if self.render.size.width > 0 { self.render.size.width } else { self.screen_width.max(crate::sidebar::policy::COLUMN_AT) };
+        w >= crate::sidebar::policy::COLUMN_AT
     }
 
     // ---- focus --------------------------------------------------------------------------------
@@ -775,6 +901,20 @@ pub fn run(app: &mut App, action: &str) -> bool {
             }
         }
         "sidebar.reopen" => crate::runtime_effects::sidebar_op(app, SidebarOp::Reopen),
+        "sidebar.day_prev" | "sidebar.day_next" => {
+            let Some(k) = active.filter(|k| k.kind == PanelKind::Day) else {
+                app.info("days are in the journal · ⌃O to go");
+                return true;
+            };
+            let Some(d) = k.day_date(app.today) else { return true };
+            let to = d + chrono::Duration::days(if action == "sidebar.day_prev" { -1 } else { 1 });
+            app.commit_panel(&k);
+            let key = PanelKey::day(&k.vault, &to.format("%Y-%m-%d").to_string());
+            crate::runtime_effects::sidebar_op(app, SidebarOp::Retarget { key: k, to: key.clone() });
+            if app.ui.focus == Focus::Sidebar {
+                crate::runtime_effects::sidebar_op(app, SidebarOp::Focus { key: Some(key) });
+            }
+        }
         "sidebar.toggle" => {
             if app.ui.focus == Focus::Sidebar {
                 app.focus_main();
@@ -817,10 +957,48 @@ pub fn header_click(app: &mut App, i: usize, part: crate::sidebar_ui::Part, clic
             app.panel_to_main(&key);
         }
         Part::Title => {
-            app.commit_panel(&key);
-            crate::runtime_effects::sidebar_op(app, SidebarOp::Fold { key });
+            // A press: a drag reorders it (§3.5); released where it was, it folds.
+            let y = app.derived.sidebar.as_ref().and_then(|p| p.panels.iter().find(|pp| pp.key == key)).map_or(0, |pp| pp.header_y);
+            app.sidebar_drag = Some(Drag::Header { key, from: y, to: None });
         }
     }
+}
+
+/// Where a header dragged to row `y` would drop: the stack index it would take.
+fn drop_index(app: &App, key: &PanelKey, y: u16) -> usize {
+    let Some(p) = app.derived.sidebar.as_ref() else { return 0 };
+    p.panels.iter().filter(|pp| pp.key != *key && pp.header_y < y).count()
+}
+
+/// A drag or release while a sidebar drag is on. True: it was the sidebar's.
+fn drag(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8) -> bool {
+    use ratatui::crossterm::event::{MouseButton, MouseEventKind as K};
+    let Some(d) = app.sidebar_drag.clone() else { return false };
+    let w = app.render.size.width;
+    match (m.kind, d) {
+        (K::Drag(MouseButton::Left), Drag::Divider) => {
+            let width = w.saturating_sub(m.column + 1);
+            crate::runtime_effects::sidebar_op(app, SidebarOp::Width { change: WidthChange::Set(width), screen: w });
+        }
+        (K::Drag(MouseButton::Left), Drag::Header { key, from, .. }) => {
+            let to = (m.row != from).then(|| drop_index(app, &key, m.row));
+            app.sidebar_drag = Some(Drag::Header { key, from, to });
+        }
+        (K::Up(_), Drag::Header { key, to, .. }) => {
+            app.sidebar_drag = None;
+            match to {
+                Some(at) => crate::runtime_effects::sidebar_op(app, SidebarOp::MoveTo { key, at }),
+                None => {
+                    let _ = clicks;
+                    app.commit_panel(&key);
+                    crate::runtime_effects::sidebar_op(app, SidebarOp::Fold { key });
+                }
+            }
+        }
+        (K::Up(_), Drag::Divider) => app.sidebar_drag = None,
+        _ => return false,
+    }
+    true
 }
 
 /// The mouse over a panel's body: a press focuses it and places its caret, exactly as in the
@@ -830,6 +1008,23 @@ pub fn header_click(app: &mut App, i: usize, part: crate::sidebar_ui::Part, clic
 pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8) -> bool {
     use ratatui::crossterm::event::{MouseButton, MouseEventKind as K};
     let (x, y) = (m.column, m.row);
+    if drag(app, m, clicks) {
+        return true;
+    }
+    // The divider: a drag resizes, a double-click goes back to automatic (§6.1).
+    if let (K::Down(MouseButton::Left), Some(s)) = (m.kind, app.sidebar_col) {
+        let dx = app.render.size.width.saturating_sub(s + 1);
+        let rows = app.derived.sidebar.as_ref().map(|p| (p.area.y, p.area.bottom()));
+        if x == dx && rows.is_some_and(|(a, b)| y >= a && y < b) {
+            if clicks >= 2 {
+                app.sidebar_drag = None;
+                crate::runtime_effects::sidebar_op(app, SidebarOp::Width { change: WidthChange::Auto, screen: app.render.size.width });
+            } else {
+                app.sidebar_drag = Some(Drag::Divider);
+            }
+            return true;
+        }
+    }
     let over = app.render.panel_views.iter().find(|(_, r)| x >= r.x && x < r.right() && y >= r.y && y < r.bottom()).map(|(k, _)| k.clone());
     match m.kind {
         K::ScrollUp | K::ScrollDown => {
@@ -845,7 +1040,10 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         K::Down(MouseButton::Left | MouseButton::Middle) => {
             let Some(k) = over else {
                 // A press in the main view takes the keyboard back there (the click goes on).
-                let in_sidebar = app.derived.sidebar.as_ref().is_some_and(|p| x >= p.area.x && y >= p.area.y && y < p.area.bottom());
+                let in_sidebar = match app.sidebar_over {
+                    Some((_, r)) => x >= r.x && x < r.right() && y >= r.y && y < r.bottom(),
+                    None => app.derived.sidebar.as_ref().is_some_and(|p| x >= p.area.x && y >= p.area.y && y < p.area.bottom()),
+                };
                 if app.ui.focus == Focus::Sidebar && !in_sidebar && y > 1 && y + 1 < app.render.size.height {
                     app.focus_main();
                 }

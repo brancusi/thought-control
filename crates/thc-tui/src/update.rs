@@ -80,6 +80,8 @@ pub(crate) enum SidebarOp {
     Step { delta: isize },
     /// ⌥\: hide or show.
     ToggleShown,
+    /// A day panel goes to another day in place (⌃P ⌃N, §8.1): no history step.
+    Retarget { key: crate::sidebar::PanelKey, to: crate::sidebar::PanelKey },
     /// ⌥= ⌥- ⌥0 and the divider: a width, from the current one at screen width `screen`.
     Width { change: WidthChange, screen: u16 },
 }
@@ -186,6 +188,22 @@ pub(crate) fn sidebar(ui: &mut crate::ui_state::UiState, op: SidebarOp) -> Vec<E
         }
         SidebarOp::Step { delta } => {
             ui.sidebar.step_focus(delta);
+        }
+        SidebarOp::Retarget { key, to } => {
+            if ui.sidebar.get(&to).is_some() {
+                ui.sidebar.focused = Some(to);
+            } else if let Some(p) = ui.sidebar.get_mut(&key) {
+                let (pinned, folded) = (p.pinned, p.folded);
+                let mut np = crate::sidebar::Panel::new(to.clone());
+                np.pinned = pinned;
+                np.folded = folded;
+                *p = np;
+                if ui.sidebar.focused.as_ref() == Some(&key) {
+                    ui.sidebar.focused = Some(to.clone());
+                }
+                fx.push(Effect::SidebarDrop { key });
+                fx.push(Effect::SidebarLoad { key: to });
+            }
         }
         SidebarOp::ToggleShown => {
             if ui.sidebar.open.is_empty() {
