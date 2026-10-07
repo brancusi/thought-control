@@ -249,7 +249,11 @@ fn finish_daemon(me: &Path, expect: &str) -> Option<String> {
     let _ = std::env::set_current_dir("/");
     let paths = crate::daemon_cmd::login_paths().or_else(|| thc_core::vault::Paths::resolve(std::env::var_os("THC_VAULT").map(PathBuf::from).as_deref()).ok())?;
     let expect = expect.trim_start_matches("thc ").trim();
-    Some(match crate::daemon_cmd::ensure(&paths, me, true) {
+    let done = crate::daemon_cmd::ensure(&paths, me, true);
+    // Other vaults' own daemons on the replaced binary restart too (their lines aren't part of
+    // the summary the old binary prints; doctor reports any left).
+    let _ = crate::daemon_cmd::ensure_registered(me, Some(&paths));
+    Some(match done {
         Ok(e) if e.action == "offline" => return None,
         Ok(e) => match &e.after {
             Some(v) if v["version"].as_str() == Some(expect) => "daemon restarted on the new thc".into(),

@@ -322,6 +322,32 @@ pub fn ensure(paths: &Paths, exe: &Path, force: bool) -> Result<Ensured> {
     Ok(Ensured { action: "restarted", manager: m, before: Some(before), after: Some(after), reason })
 }
 
+/// The other registered vaults: a daemon of their own (a plain `thc daemon start` there, not
+/// the login daemon's thread for it) on a replaced or other binary restarts on `exe`. Run after
+/// the login daemon is current; `login_pid` is its pid, whose threads are never touched here
+/// (a shutdown sent to one would reach the whole process). One line per restart or failure.
+pub fn ensure_registered(exe: &Path, login: Option<&Paths>) -> Vec<String> {
+    let login_pid = login.and_then(status).and_then(|s| s["pid"].as_u64());
+    let reg = thc_core::registry::Registry::load();
+    let mut lines = vec![];
+    for e in &reg.vaults {
+        if login.is_some_and(|l| canon(&l.vault) == canon(&e.path)) || !e.path.join(thc_core::vault::VAULT_MARKER).exists() {
+            continue;
+        }
+        let paths = Paths { vault: e.path.clone(), cache: thc_core::vault::default_cache(&e.path) };
+        let Some(st) = status(&paths) else { continue };
+        if st["pid"].as_u64() == login_pid || stale_reason(&st, exe).is_none() {
+            continue;
+        }
+        lines.push(match ensure(&paths, exe, false) {
+            Ok(r) if r.action == "restarted" => format!("{}: {}", e.name, r.line()),
+            Ok(_) => continue,
+            Err(err) => format!("{}: ! {err:#}", e.name),
+        });
+    }
+    lines
+}
+
 /// Under THC_TEST a plain daemon outlives the test that started it (a first run in a scratch
 /// HOME left one running): only tests that ask for one get it.
 fn test_guarded() -> bool {
@@ -812,8 +838,15 @@ fn refresh_item(out: &mut Out, paths: &Paths, m: Manager, p: &Path, exe: &Path) 
         let note = (e.action == "restarted").then(|| e.line());
         (e.json(), note)
     };
+    // Other vaults' own daemons on the replaced binary, too.
+    let others = ensure_registered(exe, Some(&lp));
+    let note = match (note, others.is_empty()) {
+        (n, true) => n,
+        (Some(n), false) => Some(format!("{n} · {}", others.join(" · "))),
+        (None, false) => Some(others.join(" · ")),
+    };
     if out.json {
-        out.json(&json!({ "ok": true, "already": true, "install": install_info(), "daemon": daemon, "note": note }));
+        out.json(&json!({ "ok": true, "already": true, "install": install_info(), "daemon": daemon, "others": others, "note": note }));
     } else {
         out.line(format!("{} already a login item ({})", out.green("●"), tilde(p)));
         if let Some(n) = note {
