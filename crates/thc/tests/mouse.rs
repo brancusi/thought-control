@@ -193,7 +193,11 @@ fn m7_m8_chrome_clicks() {
     // (today's journal on the unpinned clock, as the snapshots here run)
     assert!(v.cmd(&[("THC_NOW", "")], &["todo", "Pay rent", "--due", "fri"]).status.success());
     let f = v.tui("5");
-    let (x, y) = pos(&f, "due fri");
+    // Its due chip, whatever it reads today (`due fri`, or `due tomorrow` on a Thursday: the
+    // snapshot runs on the real clock, as a pinned one would hide the footer behind its warning).
+    let (_, y) = pos(&f, "Pay rent");
+    let line = f.lines().nth(y).unwrap();
+    let x = line[..line.rfind("due ").expect("a due chip on Pay rent's row")].chars().count();
     let f = v.tui(&format!("5<click:{},{y}>", x + 2));
     assert!(f.lines().last().unwrap().contains("due ›"), "{f}");
 }
