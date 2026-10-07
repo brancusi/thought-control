@@ -4,7 +4,8 @@
 //!
 //! Each keystroke reads the rev and the agent's caret (`view.list`), then sends the
 //! character as a change from elsewhere (`external`, so the person's undo never takes it
-//! back) with `if_rev`. If the person typed in between, the editor answers `stale` and the
+//! back) with `if_rev`, and moves its caret past it (a change from elsewhere leaves every
+//! caret before the text it puts in). If the person typed in between, the editor answers `stale` and the
 //! agent reads again.
 
 use std::io::{BufRead, BufReader, Write};
@@ -170,8 +171,14 @@ pub(crate) fn run(
                 if attempt == 1 {
                     between(report.writes);
                 }
-                let write = json!({"op": "msgs", "if_rev": rev, "msgs": [
+                // A change from elsewhere leaves every caret before what it puts in, this
+                // view's too, so the agent moves its own caret past it in the same request
+                // (which clears the status: it is set again).
+                let status = format!("agent · typing · {} writes · {} stale, retried", report.writes + 1, report.stale);
+                let write = json!({"op": "msgs", "view": view, "if_rev": rev, "msgs": [
                     {"msg": "external", "changes": [{"change": "replace", "from": caret, "to": caret, "text": c.to_string()}]},
+                    {"msg": "move", "dir": "forward", "by": "doc_end"},
+                    {"msg": "show_status", "text": status},
                 ]});
                 match conn.request(write)? {
                     Reply::Ok(_) => break (rev, caret),
@@ -189,10 +196,6 @@ pub(crate) fn run(
             report.typed.push(c);
             if let Ok(mut p) = progress.lock() {
                 p.writes = report.writes;
-            }
-            if report.writes % 8 == 0 {
-                let text = format!("agent · typing · {} writes · {} stale, retried", report.writes, report.stale);
-                conn.ask(json!({"op": "msgs", "view": view, "msgs": [{"msg": "show_status", "text": text}]}))?;
             }
         }
         std::thread::sleep(pace.line);

@@ -32,6 +32,8 @@ pub enum Input {
 struct Client {
     out: Sender<String>,
     sub: Option<Subscription>,
+    /// The client's own view (with [`Hub::client_views`]), once it has written.
+    view: Option<u32>,
 }
 
 pub struct Hub {
@@ -41,22 +43,31 @@ pub struct Hub {
     traced: usize,
     /// Tick to the real time before each client's messages.
     pub clock: bool,
+    /// Each client writes through its own view unless a request names one (a live editor,
+    /// where view 0 is the person's). Off for `serve`: there view 0 is the clients'.
+    pub client_views: bool,
 }
 
 impl Hub {
     pub fn new(session: Session, trace: Option<File>) -> Hub {
-        let mut hub = Hub { session, clients: HashMap::new(), trace, traced: 0, clock: true };
+        let mut hub = Hub { session, clients: HashMap::new(), trace, traced: 0, clock: true, client_views: false };
         hub.flush_trace();
         hub
     }
 
     pub fn connect(&mut self, client: ClientId, out: Sender<String>) {
-        self.clients.insert(client, Client { out, sub: None });
+        self.clients.insert(client, Client { out, sub: None, view: None });
     }
 
-    /// Forgets a client; dropping its sender lets its writer finish and close the stream.
+    /// Forgets a client, closing its own view; dropping its sender lets its writer finish and
+    /// close the stream.
     pub fn disconnect(&mut self, client: ClientId) {
-        self.clients.remove(&client);
+        let gone = self.clients.remove(&client);
+        if let Some(v) = gone.and_then(|c| c.view)
+            && self.session.close_view(v) {
+                let change = Change { rev: self.session.rev(), msgs: Vec::new(), state_set: false, view: Some(v) };
+                self.changed(&change, "client");
+            }
     }
 
     pub fn has_clients(&self) -> bool {
@@ -69,7 +80,17 @@ impl Hub {
             return None;
         }
         let clock = self.clock.then(crate::runtime::now_ms);
-        let handled = self.session.handle_at(line, exec, clock);
+        let handled = match self.client_views {
+            true => {
+                let mut own = self.clients.get(&client).and_then(|c| c.view);
+                let handled = self.session.handle_client(line, exec, clock, Some(&mut own));
+                if let Some(c) = self.clients.get_mut(&client) {
+                    c.view = own;
+                }
+                handled
+            }
+            false => self.session.handle_at(line, exec, clock),
+        };
         if let Some(c) = self.clients.get_mut(&client) {
             match handled.control {
                 Some(Control::Subscribe(sub)) => c.sub = Some(sub),

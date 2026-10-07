@@ -29,7 +29,10 @@ can use safely:
 - **Edits by meaning, not by luck.** Replace by a search that must match exactly once, by
   line and column, insert at a position, or play keys through the editor's own keymap.
 - **Its own caret.** The agent opens its own view, so its selection and typing never move the
-  person's caret. The person's edits move it only as the text shifts.
+  person's caret. The person's edits move it only as the text shifts. Text edits go through
+  the agent's view, or before it has one, through its connection's own view, never the
+  person's, and text put in exactly at the person's caret goes after it: they keep typing on
+  their own line.
 - **Attribution.** The person sees `claude: edited line 3` in the status bar. `watch` tells the
   agent whether a change came from the person at the keyboard, another client or itself.
 - **Exact replay.** The trace of a session, the person's keys and the agent's edits in the
@@ -178,7 +181,8 @@ cursor cell.
 - **Text operations** (`replace`, `replace_range`, `insert`) in one edit are all resolved
   against the text read at `if_rev` and applied as one change (they must not overlap).
   **Caret operations** (`select`, `keys`) go in their own edit; in a live editor they need
-  `view_open` first, so they never move the person's caret.
+  `view_open` first, so they never move the person's caret. Text operations never move it
+  either: an `insert` at the person's caret puts the text after it.
 - **The guard.** `if_rev` is required. When the text at `if_rev` is not the text now, the edit
   is refused with `{"error": "stale", "rev", "changed_by", "diff"}` and nothing is written.
   Read again and redo it. A rev this session never read counts as stale unless it is the

@@ -310,6 +310,40 @@ impl Session {
         Ok((msgs, effects))
     }
 
+    /// Puts `text` in as the whole text, safely while someone else is typing: only the chars
+    /// that differ change ([`crate::diff::changes`]), applied as one change from elsewhere
+    /// ([`Msg::External`]) through view `id`. Every view keeps its caret, selection, scroll
+    /// and folds on its text (text put in at a caret goes after it), and undo never takes the
+    /// change back. Line breaks are converted to the document's. Returns the message applied:
+    /// `None` when the text is already `text` or there is no view `id`.
+    pub fn set_text_on(&mut self, id: u32, text: &str) -> Option<Msg> {
+        self.view(id)?;
+        let msg = self.text_change(text)?;
+        self.apply_on(id, msg.clone());
+        Some(msg)
+    }
+
+    /// [`Session::set_text_on`] through the state's own view (0). Every view is mapped the
+    /// same way whichever view it goes through.
+    pub fn set_text(&mut self, text: &str) -> Option<Msg> {
+        self.set_text_on(0, text)
+    }
+
+    /// The [`Msg::External`] that turns the current text into `text` with the least changes,
+    /// or `None` when they are equal. Nothing is applied.
+    pub fn text_change(&self, text: &str) -> Option<Msg> {
+        use crate::external::ExtChange;
+        let doc = &self.state.doc;
+        let text = crate::update::normalize_line_endings(text, doc.config.line_ending.as_str());
+        let changes = crate::diff::changes(&doc.text.to_string(), &text);
+        if changes.is_empty() {
+            return None;
+        }
+        // From the end back, so each change's positions are still those of the current text.
+        let changes = changes.into_iter().rev().map(|(from, to, text)| ExtChange::Replace { from, to, text }).collect();
+        Some(Msg::External { changes })
+    }
+
     /// Replaces the state (repairing anything out of bounds, as loading a file does).
     /// Recorded in the trace as the start of a new segment. Returns the new rev.
     pub fn set_state(&mut self, mut state: State) -> u64 {

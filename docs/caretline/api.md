@@ -395,7 +395,8 @@ face of the [state protocol](protocol.md).
 | `apply_all(msgs)` | Applies several |
 | `apply_with(msg, exec)` | Applies, performs effects with `exec`, and applies the messages `exec` returns (such as `Saved`) |
 | `keys(script)` | Runs a key script; returns the messages and effects |
-| `set_state(state)` | Replaces the state (sanitized) and starts a new trace segment; rev + 1 |
+| `set_state(state)` | Replaces the state (sanitized) and starts a new trace segment; rev + 1. Replaces every caret and the undo history: not for use while someone types |
+| `set_text(text)`, `set_text_on(id, text)`, `text_change(text)` | Puts in a whole new text, changing only what differs, as one change from elsewhere (`Msg::External`, outside the undo history); every view keeps its caret, selection, scroll and folds on its text. Returns the message applied (`None` when nothing differs). `text_change` builds it without applying it |
 | `open_view(view) -> id`, `close_view(id)`, `views()`, `view(id)`, `state_of(id)` | Other views of the document (view 0 is the state's own); opening and closing is a change and is traced |
 | `apply_on(id, msg)`, `apply_with_on`, `keys_on(id, script)` | Apply through view `id`; every other view is rebased |
 | `render_view(id, size)` | The frame of view `id` |
@@ -404,6 +405,7 @@ face of the [state protocol](protocol.md).
 | `render(w, h)` | The frame at another size, without changing the session |
 | `handle(line, exec)` | Answers one protocol request line (`protocol::Handled`): the response line, the `Change` it made and any `subscribe` control |
 | `handle_at(line, exec, clock_ms)` | `handle` for a runtime with a clock: ticks to `clock_ms` before a request's messages (see [Time](protocol.md#time)) |
+| `handle_client(line, exec, clock_ms, own)` | `handle_at` for one client of a server with a person on view 0: `msgs`, `keys` and `text.set` without a `view` go through the client's own view `own` (opened on first use; the caller closes it when the client goes). See [Collaborating with a person](protocol.md#collaborating-with-a-person) |
 
 `protocol::event_line(&session, &change, &subscription, source)` builds the event a
 subscriber receives for a change.

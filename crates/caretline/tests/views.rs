@@ -245,7 +245,68 @@ fn undo_is_the_documents_and_lands_in_the_acting_view() {
     assert_eq!(views[0].caret(), 3, "the other view is mapped back");
     send(&mut doc, &mut views, 0, Msg::Redo);
     assert_eq!(doc.text.to_string(), "one!\ntwo\nthree");
-    assert_eq!(views[1].caret(), 4);
+    assert_eq!(views[1].caret(), 3, "text another view puts in at a caret goes after it");
+    assert_eq!(views[0].caret(), 4, "the acting view lands after its redone step");
+}
+
+/// The live-demo bug: a person typing at the end of a line, and an agent inserting there.
+const LINE: &str = "Hey there, \nnext\n";
+
+#[test]
+fn text_inserted_at_a_caret_from_another_view_goes_after_it() {
+    let mut doc = State::new(LINE, None, Viewport { width: 60, height: 5 }).doc;
+    let mut views = [at(60, 5), at(60, 5)];
+    views[0].selection = Selection::point(11); // the person: the end of "Hey there, "
+    views[1].selection = Selection::point(11); // the agent's view, at the same place
+    send(&mut doc, &mut views, 1, Msg::InsertText { text: "\n- Agent note: safely.".into() });
+    assert_eq!(views[0].caret(), 11, "the person's caret stays before the agent's text");
+    assert_eq!(views[1].caret(), 11 + 22, "the agent's own caret moves past what it typed");
+    send(&mut doc, &mut views, 0, Msg::InsertText { text: "w".into() });
+    assert_eq!(doc.text.to_string(), "Hey there, w\n- Agent note: safely.\nnext\n");
+    // The person's undo takes back only their own step; the agent's text stays.
+    send(&mut doc, &mut views, 0, Msg::Undo);
+    assert_eq!(doc.text.to_string(), "Hey there, \n- Agent note: safely.\nnext\n");
+}
+
+#[test]
+fn a_selection_keeps_covering_what_it_covered_when_another_view_inserts_at_its_ends() {
+    let mut doc = State::new("one two three", None, Viewport { width: 60, height: 5 }).doc;
+    let mut views = [at(60, 5), at(60, 5)];
+    for (anchor, head) in [(4, 7), (7, 4)] {
+        let mut d = doc.clone();
+        views[0].selection = Selection::single(anchor, head); // "two", either direction
+        views[1].selection = Selection::point(7);
+        send(&mut d, &mut views, 1, Msg::InsertText { text: "X".into() });
+        views[1].selection = Selection::point(4);
+        send(&mut d, &mut views, 1, Msg::InsertText { text: "Y".into() });
+        let r = views[0].selection.primary();
+        assert_eq!(d.text.slice(r.from()..r.to()).to_string(), "two", "{anchor}..{head} in {:?}", d.text.to_string());
+        assert_eq!(r.anchor > r.head, anchor > head, "the direction stays");
+    }
+    // Text typed inside it still grows it.
+    views[0].selection = Selection::single(4, 7);
+    views[1].selection = Selection::point(5);
+    send(&mut doc, &mut views, 1, Msg::InsertText { text: "w".into() });
+    let r = views[0].selection.primary();
+    assert_eq!(doc.text.slice(r.from()..r.to()).to_string(), "twwo");
+}
+
+#[test]
+fn a_host_edit_by_position_leaves_the_acting_views_caret_before_it() {
+    // `Msg::Edit` (what an MCP `insert` sends) is an edit by position, not typing at the caret.
+    let mut s = State::new(LINE, None, Viewport { width: 60, height: 5 });
+    s.view.selection = Selection::point(11);
+    update(&mut s, Msg::Edit { changes: vec![(11, 11, "\n- Agent note: safely.".into())], join: false });
+    assert_eq!(s.view.caret(), 11);
+    update(&mut s, Msg::InsertText { text: "w".into() });
+    assert_eq!(s.doc.text.to_string(), "Hey there, w\n- Agent note: safely.\nnext\n");
+    // Through update_doc, with another view at the same place: both stay.
+    let mut doc = State::new(LINE, None, Viewport { width: 60, height: 5 }).doc;
+    let mut views = [at(60, 5), at(60, 5)];
+    views[0].selection = Selection::point(11);
+    views[1].selection = Selection::point(11);
+    send(&mut doc, &mut views, 1, Msg::Edit { changes: vec![(11, 11, "!".into())], join: false });
+    assert_eq!((views[0].caret(), views[1].caret()), (11, 11));
 }
 
 #[test]

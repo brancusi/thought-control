@@ -267,6 +267,27 @@ $ caretline --state crates/caretline-app/fixtures/no-wrap-table.state.json --key
 
 The status bar's `N sel` counts Unicode scalar values, while `line:col` counts graphemes.
 
+## Collaborating with a person
+
+While someone types in `caretline FILE --listen`, push changes so their caret never moves:
+
+```sh
+caretline send --latest set-text notes-v2.md     # text.set: only what differs changes
+caretline send --latest keys '<d-down>- a note'  # through this connection's own view
+```
+
+- `set-text` (`text.set`) diffs your text against the live one and applies only the changes,
+  outside the undo history. Every caret, selection, scroll and fold stays on its text, and
+  text put in exactly at the person's caret goes after it. Pass `if_rev` in a raw request to
+  write only if nothing changed since you read.
+- `msgs` and `keys` go through the connection's own view (a copy of the person's, closed
+  when `send` exits), not the person's. `--view 0` acts as the person, for demos and tests.
+- `set-state` (`state.set`) replaces the whole state, the person's caret and undo history
+  included: for time travel and hand-off, not for collaborating. The `frame` op (below)
+  replaces the screen on purpose too.
+
+See [protocol.md](protocol.md#collaborating-with-a-person).
+
 ## Animate a live editor
 
 `caretline demo scenes` plays six ASCII scenes (warp, donut, cube, tunnel, plasma, fire) inside

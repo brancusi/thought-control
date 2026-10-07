@@ -134,6 +134,43 @@ fn the_agents_view_leaves_the_persons_caret_alone() {
 }
 
 #[test]
+fn an_agent_inserting_at_the_persons_caret_leaves_their_typing_on_their_line() {
+    // The live-demo bug: the person types at the end of a line; the agent inserts a note at
+    // exactly that place; the person's next key must continue their own line.
+    let dir = scratch("caret");
+    let file = dir.join("notes.md");
+    std::fs::write(&file, "Hey there, \nnext\n").unwrap();
+    let mut pty = live_editor(&dir, &file);
+    let mut mcp = Mcp::start(&dir, &[]);
+    let s = mcp.ok("open", json!({}))["session"].clone();
+    pty.send(b"\x05"); // ctrl-e: the end of the line
+    eventually("the person's caret at the line's end", || mcp.ok("read", json!({"session": s}))["carets"]["person"]["caret"] == json!({"line": 1, "col": 12}));
+
+    let mut want = String::from("Hey there, ");
+    let mut notes = String::new();
+    // Shared undo and outside it, without an agent view; then through the agent's own view.
+    for (i, (undo, view)) in [("shared", false), ("outside", false), ("shared", true)].into_iter().enumerate() {
+        if view {
+            mcp.ok("view_open", json!({"session": s}));
+        }
+        let read = mcp.ok("read", json!({"session": s}));
+        let caret = read["carets"]["person"]["caret"].clone();
+        assert_eq!(caret["line"], 1, "{read}");
+        let note = format!("\n- Agent note {i}: safely.");
+        mcp.ok("edit", json!({"session": s, "if_rev": rev(&read), "undo": undo, "ops": [{"kind": "insert", "at": caret, "text": note}]}));
+        let after = mcp.ok("read", json!({"session": s}));
+        assert_eq!(after["carets"]["person"]["caret"], caret, "{undo} view={view}: the person's caret stayed before the note");
+        let key = (b'w' + i as u8) as char;
+        pty.send(key.to_string().as_bytes());
+        want.push(key);
+        notes = format!("{note}{notes}");
+        let full = format!("{want}{notes}\nnext\n");
+        eventually("the person's key on their own line", || mcp.ok("read", json!({"session": s}))["text"] == json!(full));
+    }
+    pty.wait("the person's line", |sc| sc.contains("Hey there, wxy"));
+}
+
+#[test]
 fn watch_reports_the_persons_typing() {
     let dir = scratch("watch");
     let file = dir.join("notes.md");

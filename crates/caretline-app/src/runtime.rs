@@ -322,6 +322,8 @@ pub fn run_interactive(state: State, opts: Interactive<'_>) -> Result<(), String
     let mut session = Session::new(state);
     session.set_trace_limit(opts.trace_limit);
     let mut hub = Hub::new(session, trace);
+    // Clients write through their own views: view 0 is the person's.
+    hub.client_views = true;
     let (tx, rx) = mpsc::channel::<Input>();
 
     // Bind before touching the terminal, so a bad path is an ordinary error.

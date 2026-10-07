@@ -17,7 +17,7 @@ The same operations are available in process through
 $ printf 'hello world\nsecond line\n' > notes.md
 $ printf '%s\n' '{"id":1,"op":"hello"}' '{"id":2,"op":"keys","keys":"<a-right><s-a-right>"}' '{"id":3,"op":"render","w":30,"h":4}' \
     | caretline serve notes.md --size 30x4 --no-clock
-{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
+{"id":1,"result":{"proto":1,"version":"0.1.0","rev":0,"ops":["hello","state.get","state.set","text.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
 {"id":2,"result":{"rev":2,"effects":[],"msgs":[{"msg":"move","dir":"forward","by":"word","extend":false},{"msg":"move","dir":"forward","by":"word","extend":true}]}}
 {"id":3,"result":{"rev":2,"w":30,"h":4,"format":"text","cursor":[11,0],"frame":"hello world\nsecond line\n\n notes.md         6 sel  1:12\n"}}
 ```
@@ -42,8 +42,9 @@ result carries the current `rev`.
 | `state.get` | optional `history` (default true) | `rev`, `state` (the full [State](architecture.md#what-state-holds) JSON). With `history: false`, the state [without its undo history](#the-state-without-its-history) |
 | `history.get` | | `rev` and what `state.get` with `history: false` leaves out: `history`, `saved_revision`, `saving`, `run`, and `mark_log` and `undo_floor` when set |
 | `state.set` | `state` (only `text` needed, see [Minimal state](#minimal-state)), optional `if_rev` | `rev`. Replaces the state (repaired as on load) and starts a new trace segment |
+| `text.set` | `text`, optional `if_rev`, `view` | `rev`, `changed`, `view`, `msgs` (the `external` message applied, if any). Puts `text` in as the whole text, changing only what differs, outside the undo history. Safe while someone types: see [Collaborating with a person](#collaborating-with-a-person) |
 | `frame` | `text`, optional `highlights` (`[[start, end], …]` char ranges), `caret`, `status`, `if_rev` | `rev`. Shows `text` as the whole document with no undo history: see [Frames](#frames) |
-| `msgs` | `msgs` (array of [messages](messages.md)), optional `if_rev`, `apply_effects`, `now_ms` | `rev`, `effects`, `msgs` (every message applied: a leading `tick`, the request's messages, and fed-back results such as `saved`), and `executed: true` when effects were performed |
+| `msgs` | `msgs` (array of [messages](messages.md)), optional `if_rev`, `apply_effects`, `now_ms`, `view` | `rev`, `effects`, `msgs` (every message applied: a leading `tick`, the request's messages, and fed-back results such as `saved`), `view` (the view they went through), and `executed: true` when effects were performed |
 | `keys` | `keys` (a [key script](messages.md#key-scripts)), optional `if_rev`, `apply_effects`, `now_ms` | Like `msgs`; `msgs` shows what the script became |
 | `render` | optional `w`, `h` (default: the state's viewport), `format` | `rev`, `w`, `h`, `format`, `cursor` (`[x, y]` or null), and `frame` or `rows` |
 | `subscribe` | optional `frame` (`{w, h, format}`), `with_msgs` (default true), `with_state` (default false) | `rev`, `subscribed: true`. Then events, below |
@@ -54,7 +55,10 @@ result carries the current `rev`.
 | `view.close` | `view` | `rev`, `closed` |
 | `view.list` | | `rev`, `views`: `{view, w, h, caret, read_only}` for each, view 0 first |
 
-`msgs`, `keys`, `render` and `state.get` take an optional `view` (default 0, the state's own).
+`render` and `state.get` take an optional `view` (default 0, the state's own). `msgs`, `keys`
+and `text.set` take one too; without it they go through view 0 in `caretline serve`, and
+through the client's own view in a live editor (see
+[Collaborating with a person](#collaborating-with-a-person)).
 
 `render` never changes the state. A size other than the viewport is rendered on a copy, so
 the frame is byte for byte what `caretline --state S --snapshot WxH` prints.
@@ -236,7 +240,7 @@ Use `rev` two ways.
 
 - **Did something change?** Compare the `rev` you last saw. The difference is the number of
   changes you missed, and `trace.get` with `since_rev` has them.
-- **Write only if nothing changed:** pass `if_rev` on `state.set`, `msgs` or `keys`. If the
+- **Write only if nothing changed:** pass `if_rev` on `state.set`, `text.set`, `msgs` or `keys`. If the
   rev differs, nothing is applied and you get a `stale` error. Re-read, then decide.
 
 ```console
@@ -246,6 +250,37 @@ caretline: the request failed
 ```
 
 Reads (`hello`, `state.get`, `render`, `trace.get`) ignore `if_rev`.
+
+## Collaborating with a person
+
+In a live editor (`caretline FILE --listen`) view 0 is the person at the keyboard. A client
+never moves their caret unless it asks to:
+
+- **Each client writes through its own view.** A `msgs`, `keys` or `text.set` request without
+  a `view` goes through the connection's own view: the first one opens it as a copy of view
+  0 (one more `rev`; `if_rev` is checked first), and it closes when the connection does. The
+  response's `view` names it, for `render` or `state.get` with `"view": n`. `"view": 0` acts
+  as the person (demos, tests, the status bar: `caretline send status` uses it). `caretline
+  serve` has no person, so there everything goes through view 0 as before.
+- **Text put in at a caret goes after it.** Whatever view a change goes through, a caret
+  exactly where text is inserted stays before it, so the person's next key continues their
+  own line. A selection keeps what it covered.
+
+| Safe while someone types | Replaces the world |
+|---|---|
+| `text.set`: your version of the whole text; only what differs changes, outside the undo history, every caret, scroll and fold stays on its text | `state.set`: the whole state, the person's selection, scroll and undo history included. For time travel and hand-off |
+| `msgs` and `keys` through your own view; an `external` message for changes the person's undo must not take back | `frame`: shows a text with no history (animations, mirrors). It replaces the screen on purpose |
+
+Guard each write with the `rev` you read (`if_rev`): a `stale` error means the person typed in
+between, so read again and redo it. `msgs` that edit through any view are steps in the shared
+undo history, so the person's undo may take one back; `text.set` and `external` changes never
+are.
+
+```console
+$ caretline send --latest state.get no-history --raw > s.json      # read
+$ caretline send --latest set-text notes-v2.md                      # push a new version
+{"result":{"rev":41,"changed":true,"view":3,"msgs":[{"msg":"external","changes":[…]}]}}
+```
 
 ## Effects
 
@@ -380,7 +415,8 @@ A small client for any server.
 | `render [WxH] [text\|ansi\|cells]` | `render` |
 | `keys SCRIPT` | `keys` |
 | `msgs FILE\|-\|JSON` | `msgs` from a file, stdin or inline JSON |
-| `set-state FILE\|-` | `state.set` |
+| `set-text FILE\|-` | `text.set`: only what differs changes; carets stay put |
+| `set-state FILE\|-` | `state.set`: replaces everything, carets and undo too |
 | `status TEXT` | A `show_status` message: text in the editor's status bar |
 | `subscribe [WxH [format]] [state]` | `subscribe`, then prints events until interrupted; `state` adds the state, without its history, to each |
 | `'{"op":…}'` | A raw JSON request |
@@ -393,6 +429,7 @@ A small client for any server.
 | `--latest` | Connect to the newest live editor (the default) |
 | `--raw` | Print the payload: the frame for `render`, the state for `state.get`, JSON Lines for `trace.get` |
 | `--apply-effects` | Ask the editor to perform the effects of `msgs` or `keys` |
+| `--view N` | Act through view `N` (`msgs`, `keys`, `set-text`, `render`, `state.get`). In a live editor, writes otherwise go through the connection's own view, closed when `send` exits; `--view 0` acts as the person |
 
 `send` exits 1 if any response is an error.
 
@@ -408,7 +445,7 @@ The status bar says `listening on …/caretline-<pid>.sock`. In another shell:
 
 ```console
 $ caretline send hello
-{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
+{"result":{"proto":1,"version":"0.1.0","rev":3,"ops":["hello","state.get","state.set","text.set","history.get","msgs","keys","render","subscribe","unsubscribe","trace.get","trace.checkpoint","view.open","view.close","view.list"]}}
 $ caretline send keys '<d-down>from another shell'
 {"result":{"rev":23,"effects":[],"msgs":[{"msg":"tick","now_ms":1791353251020},{"msg":"move","dir":"forward","by":"doc_end","extend":false},{"msg":"insert_text","text":"f"}, …]}}
 $ caretline send render 40x5 --raw
@@ -426,7 +463,9 @@ $ caretline send --apply-effects keys '<c-q>'
 The save took three revs (23 to 26): the clock's `tick`, the `save` message and the `saved`
 the editor fed back.
 
-The person at the keyboard sees each change as it lands. Without `--apply-effects`, `<c-s>`
+Each `send` writes through its own view, a copy of the person's taken at its first write, so
+the person's caret stays where it was (text put in at it goes after it). The person at the
+keyboard sees each change as it lands. Without `--apply-effects`, `<c-s>`
 would only return the `write_file` effect, and `<c-q>` would leave the editor running.
 
 To watch everything that happens, including the person's typing:

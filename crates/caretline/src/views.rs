@@ -6,6 +6,10 @@
 //! folds, status line and whether it may edit. A message acts through one view (the
 //! *acting* view); when it changes the text, every other view's selection is mapped through
 //! the same changes, so each keeps its place in the text it was on.
+//!
+//! Text someone else puts in at a view's caret goes *after* the caret ([`map_elsewhere`]):
+//! a person typing at the end of a line keeps typing there when an agent inserts at the same
+//! place, through its own view, by position, or as a change from elsewhere.
 
 use crate::helix::{Assoc, ChangeSet, Range, Selection, SmallVec};
 use crate::marks::MarkId;
@@ -75,7 +79,7 @@ pub(crate) fn rebase(doc: &Document, view: &mut View, journal: &[ChangeSet], top
     let mut top = top;
     let mut selection = view.selection.clone();
     for cs in journal {
-        selection = selection.map(cs);
+        selection = map_elsewhere(selection, cs);
         view.wrap.edited(cs);
         top = cs.map_pos(top, Assoc::Before);
     }
@@ -95,6 +99,25 @@ pub(crate) fn rebase(doc: &Document, view: &mut View, journal: &[ChangeSet], top
             view.selection = sel;
         }
     }
+}
+
+/// Maps a selection through changes its view didn't make: another view's edit, a change
+/// from elsewhere, or a host's edit by position. Text inserted exactly at a caret (an empty
+/// range) goes after it, so the caret stays where it was (it associates *before*); a
+/// non-empty range keeps covering what it covered, so text inserted at either end goes
+/// outside it. A view's own typing still moves its caret past what it typed: that mapping is
+/// the transaction's own selection, not this.
+pub(crate) fn map_elsewhere(selection: Selection, changes: &ChangeSet) -> Selection {
+    if changes.is_empty() {
+        return selection;
+    }
+    selection.transform(|r| {
+        if r.anchor == r.head {
+            Range::point(changes.map_pos(r.head, Assoc::BeforeSticky))
+        } else {
+            r.map(changes)
+        }
+    })
 }
 
 // ---------------------------------------------------------------------------------------
