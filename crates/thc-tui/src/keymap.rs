@@ -828,6 +828,10 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
         }
     }
     if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.has_panels() {
+        // A list panel: its view's and the list's keys after the sidebar's (sidebar.md §5.2).
+        if let Some(k) = app.ui.sidebar.active_key().filter(|k| !k.kind.is_doc()) {
+            return vec![Ctx::Sidebar, Ctx::of_view(crate::sidebar_list::view_of(&k).0)];
+        }
         return vec![Ctx::Sidebar];
     }
     if app.doc.is_some() {
@@ -1419,7 +1423,9 @@ pub fn help(app: &App, ctxs: &[Ctx]) -> Vec<(&'static str, Vec<(String, String)>
 /// The contexts help covers now: the document's, else the view's, the list's and global; with
 /// `all`, every view and toast too.
 pub fn help_ctxs(app: &App, all: bool) -> Vec<Ctx> {
-    let mut v = if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.has_panels() {
+    let mut v = if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.active_key().is_some_and(|k| !k.kind.is_doc()) {
+        vec![Ctx::Sidebar, Ctx::of_view(crate::sidebar_list::view_of(&app.ui.sidebar.active_key().unwrap()).0), Ctx::List]
+    } else if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.has_panels() {
         vec![Ctx::Sidebar, Ctx::Write]
     } else if app.doc.is_some() {
         vec![Ctx::Write]
@@ -1454,6 +1460,17 @@ pub fn run(app: &mut App, action: &str) -> bool {
     // In a panel (sidebar_app.rs): anything beyond the document runs in the main view after
     // the key. ⌥O there opens what's at the panel's caret.
     if app.in_panel.is_some() {
+        if action == "sidebar.open_aside" {
+            if let Some(k) = app.aside_target() {
+                app.panel_defer.push(crate::sidebar_app::Deferred::Aside(k));
+            }
+        } else {
+            app.panel_defer.push(crate::sidebar_app::Deferred::Action(action.to_string()));
+        }
+        return true;
+    }
+    // In a list panel (sidebar_list.rs): its own list keys run here; the rest go to main.
+    if app.in_list.is_some() && !crate::sidebar_list::runs_in_list(action) {
         if action == "sidebar.open_aside" {
             if let Some(k) = app.aside_target() {
                 app.panel_defer.push(crate::sidebar_app::Deferred::Aside(k));

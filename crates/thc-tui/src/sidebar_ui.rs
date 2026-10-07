@@ -49,6 +49,8 @@ pub struct PreparedPanel {
     pub caret: Option<(u16, u16)>,
     /// A `↓ N more` row's y.
     pub more_y: Option<u16>,
+    /// A list panel's rows on screen: (y, row index).
+    pub rows: Vec<(u16, usize)>,
 }
 
 /// The sidebar, laid out for one frame.
@@ -128,7 +130,8 @@ fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16) -> Option<usize> {
 fn measure(app: &mut App, key: &PanelKey, w: u16) -> Measure {
     let linked = backlinks(app, key);
     if !key.kind.is_doc() {
-        return Measure { natural: 1, linked: 0 };
+        let n = app.lists.get(key).map_or(1, |rt| rt.rows.len().max(1));
+        return Measure { natural: n.min(u16::MAX as usize) as u16, linked: 0 };
     }
     if app.panels.get(key).is_some_and(|rt| rt.problem.is_some()) {
         return Measure { natural: 1, linked: 0 };
@@ -309,6 +312,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         let mut view = None;
         let mut caret = None;
         let mut more_y = None;
+        let mut list_rows_at = Vec::new();
         if !folded && body_h > 0 {
             let m = &measures[i];
             if let Some(why) = app.panels.get(key).and_then(|rt| rt.problem.clone()) {
@@ -334,15 +338,87 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
                     body.push(Line::from(vec![Span::raw("   "), Span::styled(format!("{} linked from {}", g.fold_closed, m.linked), th.s(Token::Muted))]));
                 }
             } else {
-                body.push(Line::from(vec![Span::raw("   "), Span::styled("lists beside you come in the next release", th.s(Token::Muted))]));
+                let (lines, rows_at) = list_rows(app, key, s_w, body_h, focused, body_y);
+                body.extend(lines);
+                list_rows_at = rows_at;
             }
         }
         y = body_y + body.len() as u16;
-        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, caret, more_y });
+        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, caret, more_y, rows: list_rows_at });
         // A blank row between panels.
         y += 1;
     }
     app.derived.sidebar = Some(PreparedSidebar { area, panels: out, hidden });
+}
+
+/// A list panel's rows (§4.2: list rows without the ID column, sections kept; the meta drops
+/// where the row lives first, then goes on its own row only if it still doesn't fit), its
+/// selection kept in sight. With the rows' screen positions.
+fn list_rows(app: &mut App, key: &PanelKey, s_w: u16, h: u16, focused: bool, y0: u16) -> (Vec<Line<'static>>, Vec<(u16, usize)>) {
+    let th = app.theme;
+    let g = th.glyphs();
+    let rows = crate::sidebar_list::rows_of(app, key);
+    let problem = app.lists.get(key).and_then(|rt| rt.problem.clone());
+    let cursor = app.lists.get(key).map_or(0, |rt| rt.cursor);
+    let mut out = Vec::new();
+    let mut at = Vec::new();
+    if let Some(p) = problem {
+        out.push(Line::from(vec![Span::raw("   "), Span::styled(p, th.s(Token::Overdue))]));
+        return (out, at);
+    }
+    if rows.iter().all(|(t, _, _, _)| t.is_empty()) {
+        out.push(Line::from(vec![Span::raw("   "), Span::styled("nothing here", th.s(Token::Muted))]));
+        return (out, at);
+    }
+    // Keep the selection in sight (one row each).
+    let h = h as usize;
+    let start = cursor.saturating_add(1).saturating_sub(h).min(rows.len().saturating_sub(h.min(rows.len())));
+    let w = s_w as usize;
+    for (i, (text, meta, status, heading)) in rows.iter().enumerate().skip(start).take(h) {
+        let y = y0 + out.len() as u16;
+        if *heading {
+            out.push(Line::from(vec![Span::raw("   "), Span::styled(text.clone(), th.s(Token::Muted).add_modifier(Modifier::BOLD))]));
+            continue;
+        }
+        at.push((y, i));
+        let sel = i == cursor;
+        let fill = if sel && focused { th.fill(Token::Selection) } else { Style::default() };
+        let (cell, tok) = match status.as_deref() {
+            Some("done") => ("[x] ", Token::Done),
+            Some("doing") => ("[/] ", Token::Doing),
+            Some("waiting") => ("[w] ", Token::Waiting),
+            Some("cancelled") => ("[-] ", Token::Muted),
+            Some(_) => ("[ ] ", Token::Text),
+            None => ("  · ", Token::Muted),
+        };
+        let mark = if sel { Span::styled(g.cursor, th.s(Token::Accent).patch(fill)) } else { Span::raw(" ") };
+        // The meta without where the row lives (`¶ Home`, `§ tue`), when it doesn't fit.
+        let room = w.saturating_sub(1 + 2 + 4 + 2);
+        let mut meta = meta.clone();
+        let text_w = width(text);
+        if text_w + 2 + width(&meta) > room {
+            meta = meta.split(" · ").filter(|p| !p.starts_with(g.page) && !p.starts_with(g.journal) && !p.starts_with(g.agent)).collect::<Vec<_>>().join(" · ");
+        }
+        let own_row = !meta.is_empty() && text_w + 2 + width(&meta) > room;
+        let shown = crate::ui::truncate_str(text, room, g.ellipsis);
+        let base = th.s(if status.as_deref() == Some("done") { Token::Muted } else { Token::Text });
+        let mut spans = vec![mark, Span::styled("  ", fill), Span::styled(cell, th.s(tok).patch(fill))];
+        spans.extend(crate::ui::text_spans(&th, &shown, base, "").into_iter().map(|s| Span::styled(s.content, s.style.patch(fill))));
+        let used: usize = spans.iter().map(|s| width(&s.content)).sum();
+        if !own_row && !meta.is_empty() {
+            let pad = w.saturating_sub(used + width(&meta) + 1);
+            spans.push(Span::styled(" ".repeat(pad), fill));
+            spans.push(Span::styled(meta.clone(), th.s(Token::Muted).patch(fill)));
+        } else if focused && sel {
+            spans.push(Span::styled(" ".repeat(w.saturating_sub(used + 1)), fill));
+        }
+        out.push(Line::from(spans));
+        if own_row && out.len() < h {
+            let pad = w.saturating_sub(width(&meta) + 1);
+            out.push(Line::from(vec![Span::raw(" ".repeat(pad)), Span::styled(meta, th.s(Token::Muted))]));
+        }
+    }
+    (out, at)
 }
 
 /// A doc panel's rows at `w` × `h`, styled, and its caret's cell in the view.
@@ -461,6 +537,11 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, div
         let h = (pp.body.len() as u16).min(area.bottom().saturating_sub(pp.body_y));
         if h > 0 {
             f.render_widget(Paragraph::new(pp.body.clone()), Rect { x: area.x, y: pp.body_y, width: area.width, height: h });
+        }
+        for &(y, row) in &pp.rows {
+            if y < area.bottom() {
+                crate::ui::target(render, area.x, area.right(), y, Click::PanelRow(i, row));
+            }
         }
         if let Some(my) = pp.more_y.filter(|y| *y < area.bottom()) {
             crate::ui::target(render, area.x, area.right(), my, Click::Panel(i, Part::More));

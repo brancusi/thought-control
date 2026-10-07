@@ -61,6 +61,11 @@ it.
 newest on top; opening one that's already there moves it back to the top. A plain click still
 follows the link in the main view, from a panel too.
 
+A list beside (Today, a saved view, a `#tag`) works like the list itself: `j` `k` move, `x`
+completes, `d` `p` `#` `m` act on its row, `Enter` opens the row in the main view and `o` (or
+`⇧Enter`) opens its page or day as another panel. From a list in the main view, `o`, `⇧Enter` or
+`⌥O` open the selected row's page beside.
+
 A panel is an editor, not a preview: the same page open in the main view and in a panel is one
 page, so typing in either shows in both at once, and `⌃Z` undoes it from either. Changes from an
 agent or another device show in panels as they happen.
@@ -80,7 +85,7 @@ agent or another device show in panels as they happen.
 | `⌥=` / `⌥-` / `⌥0` | Wider / narrower / automatic width |
 | `⌃P` / `⌃N` | In a day panel: the day before / after, in the same panel |
 | `Space w` | The same, from the leader: `w w` focus, `w o` aside, `w x` close, `w X` close all, … |
-| `:aside …` | Open a page by title, a day (`today`, `fri`, `2026-10-06`) beside. `:aside today` follows the date at midnight |
+| `:aside …` | Open a page by title, a day (`today`, `fri`, `2026-10-06`), a list (`@today`, `@inbox`, `@tasks`, `@log`, a saved `@view`), a `#tag` or any query beside. `:aside today` follows the date at midnight |
 
 The sidebar is a column from 120 columns wide (a third of the screen, 40 to 64 columns; drag
 the divider to change it, double-click it for automatic); the detail pane and the Journal's

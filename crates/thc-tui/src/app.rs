@@ -457,6 +457,10 @@ pub struct App {
     pub sidebar_checked: bool,
     /// The panel a press started in: its drag and release go there too.
     pub panel_pointer: Option<crate::sidebar::PanelKey>,
+    /// The sidebar's list panels at runtime: rows and selection (sidebar_list.rs).
+    pub lists: HashMap<crate::sidebar::PanelKey, crate::sidebar_list::ListRt>,
+    /// A list panel's key is running as the main list (sidebar_list.rs `with_list_panel`).
+    pub in_list: Option<crate::sidebar::PanelKey>,
     /// The sidebar's column width this frame (None: no column), set before drawing.
     pub sidebar_col: Option<u16>,
     /// The sidebar's place this frame when it isn't a column: the drawer's or replace's rect.
@@ -830,6 +834,8 @@ impl App {
             panel_defer: Vec::new(),
             sidebar_checked: false,
             panel_pointer: None,
+            lists: HashMap::new(),
+            in_list: None,
             sidebar_col: None,
             sidebar_over: None,
             sidebar_drag: None,
@@ -1248,11 +1254,16 @@ impl App {
             self.place_edit_row();
         }
         self.restore_cursor_from(was_from);
+        // A list panel's rows (sidebar_list.rs): no document, no other panels.
+        if self.in_list.is_some() {
+            return Ok(());
+        }
         self.sync_doc();
         // The sidebar's panels: loaded, live (sidebar.md §4.3, §11). Not from inside one.
         if self.in_panel.is_none() {
             self.ensure_panels();
             self.patch_panels();
+            self.refresh_lists();
         }
         Ok(())
     }

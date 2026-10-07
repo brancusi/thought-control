@@ -18,6 +18,7 @@ mod update;
 mod sidebar;
 mod sidebar_app;
 mod sidebar_ui;
+mod sidebar_list;
 pub mod ui_state;
 mod session;
 mod ui_proto;
