@@ -480,7 +480,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         }
         // Time-dependent things on screen (a toast, a flash, the which-key delay, the bar's
         // minute) need the clock to move while nothing is typed.
-        if session.app.ui.wants_clock(runtime_effects::wall_clock().0) {
+        if session.app.ui.wants_clock(runtime_effects::wall_clock().0) || session.app.doc_wants_clock() {
             session.tick_wall();
         }
         let app = &mut session.app;

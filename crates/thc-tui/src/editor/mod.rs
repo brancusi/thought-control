@@ -33,19 +33,6 @@ pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
 
 use thc_core::outline::Kind;
 
-/// The editor's clock: milliseconds on one process-wide scale. The model keeps times in it
-/// (when a save started, until when a meta flashes, the last edit) and never reads a clock:
-/// the runtime turns an `Instant` into ms here and hands it in ([`Doc::tick`]).
-pub fn ms(t: std::time::Instant) -> u64 {
-    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
-    // An hour back, so a time a little before the first call still counts forward.
-    let epoch = *EPOCH.get_or_init(|| {
-        let now = std::time::Instant::now();
-        now.checked_sub(std::time::Duration::from_secs(3600)).unwrap_or(now)
-    });
-    t.saturating_duration_since(epoch).as_millis() as u64
-}
-
 /// A note as the document reads it back from the vault: saved text that starts with a list
 /// or task marker (`[x] done`, `- a`) reads as that kind. (Test-only: the fuzz compares a
 /// reopened document with what it meant.)
