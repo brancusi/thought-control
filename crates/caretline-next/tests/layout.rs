@@ -252,3 +252,109 @@ fn the_layout_survives_json() {
     let v: View = serde_json::from_str(r#"{"layout":{"column":40},"folds":[2]}"#).unwrap();
     assert_eq!(v.layout.unwrap().indent, 4, "defaults fill the rest");
 }
+
+// ---------------------------------------------------------------------------------------
+// Wide views: the content column stops at `column`, the frame doesn't
+
+const LISBON: &str = "# Lisbon trip\n\n- [ ] Before we go\n  - [ ] Pay the deposit\n  - [ ] Book flights\n  - [x] Renew passport\n- [ ] In Lisbon\n  - [ ] Tram 28 early\n- Packing\n  - Linen shirts\n";
+
+const LISBON_FRAME: &str = "  #   Lisbon trip\n\n  [ ] Before we go\n      [ ] Pay the deposit\n      [ ] Book flights\n      [x] Renew passport\n  [ ] In Lisbon\n      [ ] Tram 28 early\n  •   Packing\n      •   Linen shirts\n\n";
+
+/// Views wider than the content column (78 = marks 2 + hang 4 + column 72) once drew every
+/// row with the column's width as the row stride, so rows slid into each other.
+#[test]
+fn the_same_outline_at_narrow_exact_and_wide_widths() {
+    for w in [40u16, 78, 79, 80, 120, 200] {
+        let s = laid_out(LISBON, w, 11);
+        assert_eq!(view(&s).to_text(), LISBON_FRAME, "at width {w}");
+    }
+    // A long item wraps at its column, whatever the view's width past it.
+    let long = "- [ ] one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen\n- next\n";
+    let at = |w: u16| view(&laid_out(long, w, 4)).to_text();
+    let expected = "  [ ] one two three four five six seven eight nine ten eleven twelve thirteen\n      fourteen fifteen\n  •   next\n\n";
+    for w in [79u16, 80, 120, 200] {
+        assert_eq!(at(w), expected, "at width {w}");
+    }
+}
+
+fn random_outline(rng: &mut StdRng) -> String {
+    const WORDS: &[&str] = &["one", "two", "日本", "é", "longer words here", "a", "🙂", "x.", "quite a long run of words to wrap"];
+    let mut md = String::new();
+    let mut depth = 0usize;
+    for _ in 0..rng.random_range(1..12) {
+        depth = match rng.random_range(0..3) {
+            0 => 0,
+            1 => depth,
+            _ => depth + 1,
+        }
+        .min(5);
+        let pad = "  ".repeat(depth);
+        let text: Vec<&str> = (0..rng.random_range(1..8)).map(|_| WORDS[rng.random_range(0..WORDS.len())]).collect();
+        let text = text.join(" ");
+        md.push_str(&match rng.random_range(0..5) {
+            0 => format!("{text}\n\n"),
+            1 => format!("{pad}- [ ] {text}\n"),
+            2 => format!("{pad}{}. {text}\n", rng.random_range(1..30)),
+            3 => format!("## {text}\n\n"),
+            _ => format!("{pad}- {text}\n"),
+        });
+    }
+    md
+}
+
+/// Random outlines at random widths 1–300: every text row shows exactly its own chars, in
+/// order, starting at its column (right after the hang), and nothing else on the row carries
+/// document text. A block's first row has its hang cells just before its text.
+#[test]
+fn every_block_shows_on_its_own_rows_after_its_hang_at_any_width() {
+    let mut rng = StdRng::seed_from_u64(0x3a1d);
+    for case in 0..400 {
+        let md = random_outline(&mut rng);
+        let w = rng.random_range(1..=300u16);
+        let h = rng.random_range(1..40u16);
+        let s = laid_out(&md, w, h);
+        let f = view(&s);
+        let g = s.view.layout.clone().unwrap();
+        let text = s.doc.text.slice(..);
+        let ctx = format!("case {case} at {w}x{h}: {md:?}");
+        assert_eq!(f.rows.len(), h as usize, "{ctx}");
+        for (y, info) in f.rows.iter().enumerate() {
+            let cells: Vec<_> = (0..w).map(|x| f.cell(x, y as u16)).collect();
+            let RowInfo::Text { chars, x, first, .. } = info else {
+                assert!(cells.iter().all(|c| c.char_idx.is_none()), "{ctx}: row {y} isn't text but shows text");
+                continue;
+            };
+            let x = *x as usize;
+            // Document chars only from the row's column on, and only its own.
+            let mut shown = String::new();
+            let mut last: Option<u32> = None;
+            for (cx, c) in cells.iter().enumerate() {
+                let Some(i) = c.char_idx else { continue };
+                assert!(cx >= x, "{ctx}: row {y} has text at {cx}, before its column {x}");
+                assert!(chars.contains(&(i as usize)), "{ctx}: row {y} shows char {i} outside {chars:?}");
+                assert!(last.is_none_or(|l| l <= i), "{ctx}: row {y} out of order");
+                if last != Some(i) {
+                    shown.push_str(&c.symbol);
+                }
+                last = Some(i);
+            }
+            let own = text.slice(chars.clone()).to_string();
+            if x + 1 < w as usize && w > 10 {
+                // Fully visible rows show all their chars (a row too narrow is clipped).
+                let room = w as usize - x;
+                if own.chars().count() < room && own.is_ascii() {
+                    assert_eq!(shown, own, "{ctx}: row {y}");
+                }
+                if !own.is_empty() {
+                    assert_eq!(cells[x].char_idx, Some(chars.start as u32), "{ctx}: row {y} doesn't start at its column");
+                }
+            }
+            if *first && x < w as usize {
+                let from = x.saturating_sub(g.hang as usize).max(g.marks as usize).min(x);
+                for c in &cells[from..x] {
+                    assert_eq!(c.role, Role::Hang, "{ctx}: row {y}'s hang");
+                }
+            }
+        }
+    }
+}
