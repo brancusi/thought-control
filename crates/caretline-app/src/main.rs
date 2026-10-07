@@ -8,6 +8,7 @@ mod bench;
 mod client;
 mod demo;
 mod hub;
+mod keys;
 mod runtime;
 
 use std::fs;
@@ -24,7 +25,7 @@ use clap::Parser;
     name = "caretline",
     version,
     about = "A terminal text editor with serializable state and exact replay",
-    after_help = "Try it:\n  caretline demo                       a guided tour (also: demo scenes, demo agent)\n\nExamples:\n  caretline notes.md\n  caretline --outline notes.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)\n\nState protocol (see docs/caretline/protocol.md):\n  caretline notes.md --listen          serve it from the running editor\n  caretline serve [FILE] [--socket P]  a headless engine on stdio or a socket\n  caretline send --latest state.get    a client (render WxH, keys S, msgs F, set-state F)\n  caretline bench                      protocol benchmarks"
+    after_help = "Try it:\n  caretline demo                       a guided tour (also: demo scenes, demo agent)\n  caretline keys [--outline]           every key and what it does (F1 in the editor)\n\nExamples:\n  caretline notes.md\n  caretline --outline notes.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)\n\nState protocol (see docs/caretline/protocol.md):\n  caretline notes.md --listen          serve it from the running editor\n  caretline serve [FILE] [--socket P]  a headless engine on stdio or a socket\n  caretline send --latest state.get    a client (render WxH, keys S, msgs F, set-state F)\n  caretline bench                      protocol benchmarks"
 )]
 struct Args {
     /// The file to edit (created on first save if it doesn't exist).
@@ -262,6 +263,7 @@ fn run() -> Result<(), String> {
         Some("send") => return client::main(&argv[2..]),
         Some("bench") => return bench::main(&argv[2..]),
         Some("demo") => return demo::main(&argv[2..]),
+        Some("keys") => return keys::main(&argv[2..]),
         _ => {}
     }
     let args = Args::parse();

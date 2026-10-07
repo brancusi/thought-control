@@ -502,7 +502,9 @@ fn event_loop(
         d.after(hub);
     }
 
-    let process = |hub: &mut Hub, demo: &mut Option<Box<dyn Demo>>, term: &mut Option<(u16, u16)>, input: Input, quit: &mut bool| match input {
+    // The keys overlay (F1 or Alt-?): its scroll offset while it is shown.
+    let mut help: Option<usize> = None;
+    let process = |hub: &mut Hub, demo: &mut Option<Box<dyn Demo>>, term: &mut Option<(u16, u16)>, help: &mut Option<usize>, input: Input, quit: &mut bool| match input {
         Input::Connect { client, out } => hub.connect(client, out),
         Input::Disconnect { client } => hub.disconnect(client),
         Input::Line { client, line } => {
@@ -518,6 +520,30 @@ fn event_loop(
             }
         }
         Input::Terminal(ev) => {
+            if let Event::Key(k) = &ev
+                && matches!(k.kind, KeyEventKind::Press | KeyEventKind::Repeat)
+            {
+                let asks = k.code == event::KeyCode::F(1) || (k.code == event::KeyCode::Char('?') && k.modifiers.contains(KeyModifiers::ALT));
+                match (*help, k.code) {
+                    (Some(o), event::KeyCode::Down | event::KeyCode::PageDown) => {
+                        *help = Some(o + if k.code == event::KeyCode::Down { 1 } else { 10 });
+                        return;
+                    }
+                    (Some(o), event::KeyCode::Up | event::KeyCode::PageUp) => {
+                        *help = Some(o.saturating_sub(if k.code == event::KeyCode::Up { 1 } else { 10 }));
+                        return;
+                    }
+                    (Some(_), _) => {
+                        *help = None;
+                        return;
+                    }
+                    (None, _) if asks => {
+                        *help = Some(0);
+                        return;
+                    }
+                    _ => {}
+                }
+            }
             if let Event::Resize(w, h) = ev {
                 *term = Some((w, h));
                 if demo.is_some() {
@@ -556,7 +582,7 @@ fn event_loop(
     let gap = if pacing.max_fps > 0 { Duration::from_secs_f64(1.0 / pacing.max_fps as f64) } else { Duration::ZERO };
     let epoch = Instant::now();
     let slot = |t: Instant| if gap.is_zero() { 0 } else { (t - epoch).as_nanos() / gap.as_nanos() };
-    let mut drawn: Option<(u64, u64)> = None;
+    let mut drawn: Option<(u64, u64, Option<usize>)> = None;
     let mut painted_slot: Option<u128> = None;
     // The frame clock's next deadline, on an absolute schedule so it doesn't drift.
     let mut next_frame: Option<Instant> = None;
@@ -577,28 +603,31 @@ fn event_loop(
             None => next_frame = None,
         }
         let demo_wake = demo.as_mut().and_then(|d| d.poll(hub, now));
-        let key = |hub: &Hub, demo: &Option<Box<dyn Demo>>| (hub.session.rev(), demo.as_ref().map_or(0, |d| d.generation()));
-        let dirty = drawn != Some(key(hub, &demo));
+        let key = |hub: &Hub, demo: &Option<Box<dyn Demo>>, help: Option<usize>| (hub.session.rev(), demo.as_ref().map_or(0, |d| d.generation()), help);
+        let dirty = drawn != Some(key(hub, &demo, help));
         let free = gap.is_zero() || painted_slot != Some(slot(now));
         if dirty && free {
             let t = Instant::now();
-            let frame = match &demo {
+            let mut frame = match &demo {
                 Some(d) => match d.overlay() {
                     Some(f) => f,
                     None => compose(hub, term.map_or(0, |(_, h)| d.pane_rows(hub, h).min(h.saturating_sub(2)))),
                 },
                 None => hub.session.frame(),
             };
+            if let Some(offset) = help {
+                crate::keys::overlay(&mut frame, hub.session.state().doc.outline.is_some(), offset);
+            }
             draw(&mut terminal, &frame)?;
             stats.paints += 1;
             stats.paint_time += t.elapsed();
-            drawn = Some(key(hub, &demo));
+            drawn = Some(key(hub, &demo, help));
             painted_slot = Some(slot(t));
         }
         let paint_at = painted_slot.map(|k| epoch + gap * (k + 1) as u32);
         // Sleep until input, the next repaint a pending change is waiting for, the next
         // clock frame or the demo's next step, whichever is first.
-        let dirty = drawn != Some(key(hub, &demo));
+        let dirty = drawn != Some(key(hub, &demo, help));
         let wake = [dirty.then_some(paint_at).flatten(), next_frame, demo_wake].into_iter().flatten().min();
         let input = match wake {
             Some(t) => match rx.recv_timeout(t.saturating_duration_since(Instant::now())) {
@@ -613,13 +642,13 @@ fn event_loop(
         };
         if let Some(input) = input {
             stats.inputs += 1;
-            process(hub, &mut demo, &mut term, input, &mut quit);
+            process(hub, &mut demo, &mut term, &mut help, input, &mut quit);
             // Apply everything already queued before drawing again.
             while !quit {
                 match rx.try_recv() {
                     Ok(input) => {
                         stats.inputs += 1;
-                        process(hub, &mut demo, &mut term, input, &mut quit)
+                        process(hub, &mut demo, &mut term, &mut help, input, &mut quit)
                     }
                     Err(_) => break,
                 }

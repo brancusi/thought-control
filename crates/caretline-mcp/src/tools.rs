@@ -289,8 +289,20 @@ impl Tools {
             "watch" => self.watch(args),
             "trace" => self.trace(args),
             "save" => self.save(args),
+            "commands" => Ok(Self::commands(args)),
             _ => Err(format!("no tool {name:?}").into()),
         }
+    }
+
+    /// The editing vocabulary and the default keymap (caretline's own tables).
+    fn commands(args: &Map<String, Value>) -> Output {
+        let outline = arg_bool(args, "outline");
+        json!({
+            "commands": caretline::commands(),
+            "keymap": caretline::default_keymap(outline),
+            "notation": "<c-x> Ctrl, <a-x> Alt, <d-x> Cmd (macOS, platform mac), <s-x> Shift; printable keys without Ctrl, Alt or Cmd type themselves",
+        })
+        .into()
     }
 
     fn list_editors(&self) -> Output {

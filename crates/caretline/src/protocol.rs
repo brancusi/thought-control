@@ -36,6 +36,8 @@ pub const OPS: &[&str] = &[
     "view.open",
     "view.close",
     "view.list",
+    "commands.list",
+    "keymap.get",
 ];
 
 /// A frame format.
@@ -145,6 +147,9 @@ struct Request {
     /// trace.get: every line kept, not just the current segment.
     #[serde(default)]
     all: bool,
+    /// keymap.get: the outline keymap (default: the document's own kind).
+    #[serde(default)]
+    outline: Option<bool>,
     /// msgs, keys, text.set, render, state.get, view.close: the view (0 is the state's own;
     /// others come from view.open). Without it, msgs, keys and text.set go through the
     /// client's own view when the server gives clients one (a live editor), else view 0.
@@ -605,6 +610,17 @@ impl Session {
                     change: Some(Change { rev, msgs: Vec::new(), state_set: false, view: Some(v) }),
                     control: None,
                 })
+            }
+            "commands.list" => Ok(reply(to_line(
+                id,
+                serde_json::json!({
+                    "commands": crate::commands::commands(),
+                    "host_commands": self.state().doc.host().command_names(),
+                }),
+            ))),
+            "keymap.get" => {
+                let outline = req.outline.unwrap_or(self.state().doc.outline.is_some());
+                Ok(reply(to_line(id, serde_json::json!({ "outline": outline, "bindings": crate::commands::default_keymap(outline) }))))
             }
             "view.list" => {
                 let mut list = vec![view_summary(0, &self.state().view)];

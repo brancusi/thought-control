@@ -6,7 +6,7 @@ use rmcp::transport::TokioChildProcess;
 use rmcp::ServiceExt;
 use serde_json::json;
 
-const TOOLS: [&str; 10] = ["list_editors", "open", "read", "edit", "view_open", "view_close", "watch", "trace", "save", "close"];
+const TOOLS: [&str; 11] = ["list_editors", "open", "read", "edit", "view_open", "view_close", "watch", "trace", "save", "commands", "close"];
 
 async fn session(config: ClientConfig) {
     let dir = std::env::temp_dir().join(format!("clm-hs-{}", std::process::id()));
@@ -41,6 +41,10 @@ async fn session(config: ClientConfig) {
     assert_ne!(edit.is_error, Some(true), "{edit:?}");
     let read = client.call_tool(call("read", json!({"session": s, "numbered": false}))).await.unwrap();
     assert_eq!(read.structured_content.unwrap()["text"], "the cat\n");
+    let c = client.call_tool(call("commands", json!({"outline": true}))).await.unwrap();
+    let c = c.structured_content.unwrap();
+    assert!(c["commands"].as_array().unwrap().iter().any(|x| x["id"] == "history.undo"), "{c}");
+    assert!(c["keymap"].as_array().unwrap().iter().any(|b| b["keys"] == "<tab>" && b["command"] == "structure.indent"), "{c}");
 
     // A tool error is a result the model sees, not a protocol error.
     let stale = client.call_tool(call("edit", json!({"session": s, "if_rev": 999, "ops": [{"kind": "insert", "at": {"line": 1, "col": 1}, "text": "x"}]}))).await.unwrap();
@@ -60,3 +64,4 @@ async fn the_sdk_client_with_initialize() {
     let config = ClientConfig::new(ClientCapabilities::default(), Implementation::new("sdk-test", "0")).with_protocol_version(ProtocolVersion::V_2025_11_25);
     session(config).await;
 }
+

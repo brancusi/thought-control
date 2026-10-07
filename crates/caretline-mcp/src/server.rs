@@ -184,6 +184,13 @@ pub fn tools() -> Vec<Tool> {
             true,
         ),
         tool(
+            "commands",
+            "The editing commands (id, name, description, category) and the default keymap (key chord → command id), so you can tell the person which key does what or send the matching keys. outline: the outline document's keymap.",
+            json!({"type": "object", "properties": {"outline": {"type": "boolean", "description": "The keymap of an outline document (lists and blocks)"}}}),
+            true,
+            false,
+        ),
+        tool(
             "close",
             "Close a session: the agent's view closes and the server detaches. The live editor keeps running.",
             json!({"type": "object", "properties": {"session": session_prop()}}),
