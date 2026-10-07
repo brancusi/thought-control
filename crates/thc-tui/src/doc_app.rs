@@ -461,7 +461,7 @@ impl App {
         let journal = matches!(target, Target::Journal { .. });
         let recovered = crate::recover::take(&self.vault.paths.cache, &target);
         let mut d = Doc::new(target, root, &blocks, self.today);
-        d.tick(crate::editor::ms(Instant::now()));
+        d.tick(self.ui.now_ms);
         if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
             eprintln!("open: render {:.1} ms · buffer {:.1} ms · {} lines", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3, blocks.len());
         }
@@ -527,7 +527,7 @@ impl App {
         if plan.ops.is_empty() {
             return;
         }
-        let started = crate::editor::ms(Instant::now());
+        let started = self.ui.now_ms;
         d.mark_saving(&plan.parsed, Some(started));
         // Review fixture: a save that never lands, as if more than 3 s late (◌ in the marks).
         if std::env::var_os("THC_TUI_FAKE_SAVE_LATE").is_some() {
@@ -671,8 +671,10 @@ impl App {
 
     /// The 1.5 s idle save (text only) and leaving a line (a full save of the others).
     /// The editor's clock, given before input and on every tick (the model reads none).
+    /// The editor's clock is the UI's logical clock (UiState::now_ms, moved by ticks), so a
+    /// trace replays the same typing runs, undo steps and idle saves.
     pub fn clock_tick(&mut self) {
-        let now = crate::editor::ms(Instant::now());
+        let now = self.ui.now_ms;
         if let Some(d) = self.doc.as_mut() {
             d.tick(now);
             // Node ids for what the next edits make: minted here, never by the model.
