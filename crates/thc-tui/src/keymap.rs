@@ -182,6 +182,9 @@ pub enum Ctx {
     ToastAgent,
     ToastConfirm,
     Write,
+    /// The keyboard is in the sidebar (sidebar.md §5.2): chords only, on top of the panel's
+    /// own keys.
+    Sidebar,
     // Overlays, prompts and the link popup: sealed, with their own handlers; their rows here
     // give the footer, help and `thc keys` (§12.6).
     Link,
@@ -216,6 +219,7 @@ impl Ctx {
             Ctx::ToastAgent => "toast.agent",
             Ctx::ToastConfirm => "toast.confirm",
             Ctx::Write => "write",
+            Ctx::Sidebar => "sidebar",
             Ctx::Link => "link",
             Ctx::Prompt => "prompt",
             Ctx::Palette => "palette",
@@ -230,7 +234,7 @@ impl Ctx {
         }
     }
 
-    pub const ALL: [Ctx; 24] = [
+    pub const ALL: [Ctx; 25] = [
         Ctx::Global,
         Ctx::List,
         Ctx::Today,
@@ -244,6 +248,7 @@ impl Ctx {
         Ctx::ToastAgent,
         Ctx::ToastConfirm,
         Ctx::Write,
+        Ctx::Sidebar,
         Ctx::Link,
         Ctx::Prompt,
         Ctx::Palette,
@@ -307,6 +312,15 @@ pub enum When {
     ToReview,
     /// A newer thc is out (`space u`).
     UpdateAvailable,
+    /// Something to open beside (sidebar.md §5.3): the caret in a link, a row with a page or day.
+    HasTarget,
+    /// `o` opens aside: a row with a page or day, outside Pages and Search (they type `o`).
+    RowAside,
+    SidebarHasPanels,
+    SidebarShown,
+    SidebarClosedAny,
+    /// The active panel is a page or a day.
+    PanelIsDoc,
 }
 
 impl When {
@@ -335,13 +349,19 @@ impl When {
             When::AnyConflict => "any_conflict",
             When::ToReview => "to_review",
             When::UpdateAvailable => "update_available",
+            When::HasTarget => "has_target",
+            When::RowAside => "row_aside",
+            When::SidebarHasPanels => "sidebar_has_panels",
+            When::SidebarShown => "sidebar_shown",
+            When::SidebarClosedAny => "sidebar_closed_any",
+            When::PanelIsDoc => "panel_is_doc",
         }
     }
 
     /// For help: a row's state (a task, children, an alert) is taken as given, since help
     /// describes keys, not this row; the app's state (Pages, the lane, a filter) still decides.
     pub fn holds_for_help(self, app: &App) -> bool {
-        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable) || self.holds(app)
+        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable | When::HasTarget | When::RowAside | When::SidebarHasPanels | When::SidebarShown | When::SidebarClosedAny | When::PanelIsDoc) || self.holds(app)
     }
 
     pub fn holds(self, app: &App) -> bool {
@@ -369,6 +389,12 @@ impl When {
             When::AnyConflict => !app.conflicts.is_empty(),
             When::ToReview => app.to_review > 0,
             When::UpdateAvailable => app.update_available.is_some() || app.installed.is_some(),
+            When::HasTarget => app.aside_target().is_some(),
+            When::RowAside => app.doc.is_none() && !matches!(app.view, View::Pages | View::Search) && app.aside_target().is_some(),
+            When::SidebarHasPanels => app.ui.sidebar.has_panels(),
+            When::SidebarShown => app.ui.sidebar.has_panels() && app.ui.sidebar.shown,
+            When::SidebarClosedAny => !app.ui.sidebar.closed.is_empty(),
+            When::PanelIsDoc => app.ui.sidebar.active_key().is_some_and(|k| k.kind.is_doc()),
         }
     }
 }
@@ -436,6 +462,13 @@ pub fn defaults() -> Vec<Binding> {
         b!(Global, "C-c", "quit", Always, "quit", "View"),
         b!(Global, "C-q", "quit", Always, "quit", "View"),
         b!(Global, "C-l", "redraw", Always, "", ""),
+        // ---- the sidebar from anywhere (sidebar.md §5.3): also in `write`, which is sealed.
+        b!(Global, "A-s", "sidebar.focus", SidebarHasPanels, "sidebar", "Sidebar"),
+        b!(Global, "A-T", "sidebar.reopen", SidebarClosedAny, "reopen", "Sidebar"),
+        b!(Global, "A-\\", "sidebar.toggle", SidebarHasPanels, "hide · show", "Sidebar"),
+        b!(Global, "A-=", "sidebar.wider", SidebarShown, "width", "Sidebar"),
+        b!(Global, "A--", "sidebar.narrower", SidebarShown, "width", "Sidebar"),
+        b!(Global, "A-0", "sidebar.width_auto", SidebarShown, "width", "Sidebar"),
         // ---- the leader (§5.2, less `space s` and `space y`: §0 step 4). Lists and views only.
         b!(Global, "space space", "palette.open", Always, "commands", "Leader"),
         b!(Global, "space f p", "finder.open", Always, "page or day", "Leader"),
@@ -483,6 +516,18 @@ pub fn defaults() -> Vec<Binding> {
         b!(Global, "space q", "quit", Always, "quit", "Leader"),
         b!(Global, "space ?", "help.all", Always, "every key", "Leader"),
         b!(Global, "space a", "about", Always, "about · what's new", "Leader"),
+        b!(Global, "space w w", "sidebar.focus", Always, "focus", "Leader"),
+        b!(Global, "space w o", "sidebar.open_aside", Always, "aside", "Leader"),
+        b!(Global, "space w x", "sidebar.close", Always, "close", "Leader"),
+        b!(Global, "space w X", "sidebar.close_all", Always, "close all", "Leader"),
+        b!(Global, "space w p", "sidebar.pin", Always, "pin", "Leader"),
+        b!(Global, "space w c", "sidebar.fold", Always, "fold", "Leader"),
+        b!(Global, "space w m", "sidebar.to_main", Always, "to main", "Leader"),
+        b!(Global, "space w h", "sidebar.toggle", Always, "hide · show", "Leader"),
+        b!(Global, "space w r", "sidebar.reopen", Always, "reopen", "Leader"),
+        b!(Global, "space w =", "sidebar.wider", Always, "wider", "Leader"),
+        b!(Global, "space w -", "sidebar.narrower", Always, "narrower", "Leader"),
+        b!(Global, "space w 0", "sidebar.width_auto", Always, "auto width", "Leader"),
         // ---- list (§12.2)
         b!(List, "S-v", "vault.picker", Always, "vaults", "View"),
         b!(List, "j", "cursor.down", Always, "down", "Move"),
@@ -536,6 +581,9 @@ pub fn defaults() -> Vec<Binding> {
         b!(List, "Y", "node.copy_full_id", HasNode, "copy full id", "Change"),
         b!(List, "space", "leader", Always, "leader", "View"),
         b!(List, "a", "capture.here", Always, "add", "Change", 2),
+        b!(List, "A-o", "sidebar.open_aside", HasTarget, "aside", "Sidebar", 6),
+        b!(List, "S-enter", "sidebar.open_aside", HasTarget, "aside", "Sidebar"),
+        b!(List, "o", "sidebar.open_aside", RowAside, "aside", "Sidebar"),
         b!(List, "A", "capture.inbox", Always, "inbox", "Change"),
         // ---- views (§12.3)
         b!(Today, "x", "node.done", NodeIsTask, "done", "Change", 1),
@@ -592,6 +640,13 @@ pub fn defaults() -> Vec<Binding> {
         b!(Write, "C-n", "doc.day_next", DocIsJournal, "day", "Time", 3),
         b!(Write, "C-p", "doc.day_prev", Always, "day", "Time"),
         b!(Write, "C-n", "doc.day_next", Always, "day", "Time"),
+        b!(Write, "A-o", "sidebar.open_aside", HasTarget, "aside", "Sidebar", 3),
+        b!(Write, "A-s", "sidebar.focus", SidebarHasPanels, "sidebar", "Sidebar", 4),
+        b!(Write, "A-T", "sidebar.reopen", SidebarClosedAny, "reopen", "Sidebar"),
+        b!(Write, "A-\\", "sidebar.toggle", SidebarHasPanels, "hide · show", "Sidebar"),
+        b!(Write, "A-=", "sidebar.wider", SidebarShown, "width", "Sidebar"),
+        b!(Write, "A--", "sidebar.narrower", SidebarShown, "width", "Sidebar"),
+        b!(Write, "A-0", "sidebar.width_auto", SidebarShown, "width", "Sidebar"),
         b!(Write, "esc", "doc.done", Always, "done", "Write", 4),
         // Undo is one of writing.md's ten keys: help lists it with them.
         b!(Write, "C-z", "doc.undo", Always, "undo", "Write"),
@@ -642,6 +697,26 @@ pub fn defaults() -> Vec<Binding> {
     ];
     let imported = crate::editing_keys::rows(&t);
     t.extend(imported);
+    t.extend(vec![
+        // ---- sidebar (sidebar.md §5.3): chords only, over the panel's own keys.
+        b!(Sidebar, "A-s", "sidebar.focus", Always, "main", "Sidebar", 1),
+        b!(Sidebar, "esc", "sidebar.back", Always, "main", "Sidebar"),
+        b!(Sidebar, "A-j", "sidebar.next", Always, "panel", "Sidebar", 2),
+        b!(Sidebar, "A-k", "sidebar.prev", Always, "panel", "Sidebar", 2),
+        b!(Sidebar, "A-c", "sidebar.fold", Always, "fold", "Sidebar", 3),
+        b!(Sidebar, "A-w", "sidebar.close", Always, "close", "Sidebar", 4),
+        b!(Sidebar, "A-m", "sidebar.to_main", PanelIsDoc, "to main", "Sidebar", 5),
+        b!(Sidebar, "A-p", "sidebar.pin", Always, "pin · unpin", "Sidebar"),
+        b!(Sidebar, "A-K", "sidebar.move_up", Always, "move", "Sidebar"),
+        b!(Sidebar, "A-J", "sidebar.move_down", Always, "move", "Sidebar"),
+        b!(Sidebar, "A-T", "sidebar.reopen", SidebarClosedAny, "reopen", "Sidebar"),
+        b!(Sidebar, "A-\\", "sidebar.toggle", Always, "hide · show", "Sidebar"),
+        b!(Sidebar, "A-=", "sidebar.wider", SidebarShown, "width", "Sidebar"),
+        b!(Sidebar, "A--", "sidebar.narrower", SidebarShown, "width", "Sidebar"),
+        b!(Sidebar, "A-0", "sidebar.width_auto", SidebarShown, "width", "Sidebar"),
+        b!(Sidebar, "C-w", "pane.next", Always, "next pane", "Sidebar"),
+        b!(Sidebar, "f1", "help.context", Always, "keys", "View", 9),
+    ]);
     t.extend(vec![
         // ---- overlays and prompts (§12.6): sealed; these rows feed the footer and help.
         b!(Link, "up", "link.prev", Always, "choose", "Move", 1),
@@ -747,6 +822,9 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
             _ => {}
         }
     }
+    if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.has_panels() {
+        return vec![Ctx::Sidebar];
+    }
     if app.doc.is_some() {
         return vec![if app.link_open { Ctx::Link } else { Ctx::Write }];
     }
@@ -832,7 +910,7 @@ pub fn remap_problems() -> &'static [String] {
 /// The contexts a remap can name (§8.1). Pop-ups keep their own keys for now.
 fn ctx_named(name: &str) -> Option<Ctx> {
     Ctx::ALL.into_iter().find(|c| c.name() == name).filter(|c| {
-        matches!(c, Ctx::Global | Ctx::List | Ctx::Today | Ctx::Inbox | Ctx::Tasks | Ctx::Pages | Ctx::Journal | Ctx::Search | Ctx::Log | Ctx::Write)
+        matches!(c, Ctx::Global | Ctx::List | Ctx::Today | Ctx::Inbox | Ctx::Tasks | Ctx::Pages | Ctx::Journal | Ctx::Search | Ctx::Log | Ctx::Write | Ctx::Sidebar)
     })
 }
 
@@ -897,8 +975,8 @@ pub fn remap(mut t: Vec<Binding>, keys: Option<&toml::Table>) -> (Vec<Binding>, 
             }
             seen.push((seq.clone(), action.to_string()));
             let one = seq.len() == 1;
-            if ctx == Ctx::Write && one && matches!(seq[0].code, KeyCode::Char(_)) && seq[0].mods.is_empty() {
-                problems.push(format!("write can't bind \"{k}\" (it would stop typing {k}) · use A-{k} or C-{k}"));
+            if matches!(ctx, Ctx::Write | Ctx::Sidebar) && one && matches!(seq[0].code, KeyCode::Char(_)) && seq[0].mods.is_empty() {
+                problems.push(format!("{} can't bind \"{k}\" (it would stop typing {k}) · use A-{k} or C-{k}", ctx.name()));
                 continue;
             }
             let reserved = (ctx == Ctx::Write && seq == [Key { code: KeyCode::Esc, mods: KeyModifiers::NONE }] && action != "doc.done")
@@ -1062,6 +1140,7 @@ pub fn group_name(seq: &[Key]) -> Option<&'static str> {
         "space n" => "new",
         "space t" => "toggle",
         "space v" => "views",
+        "space w" => "sidebar",
         _ => return None,
     })
 }
@@ -1190,7 +1269,7 @@ fn help_text(ctx: Ctx, action: &str) -> Option<&'static str> {
 }
 
 /// The groups help shows, in order.
-const GROUPS: [&str; 9] = ["Write", "Clipboard", "Move", "Change", "Time", "Find", "View", "Outline", "Leader"];
+const GROUPS: [&str; 10] = ["Write", "Clipboard", "Move", "Change", "Time", "Find", "View", "Sidebar", "Outline", "Leader"];
 
 /// This terminal, for the ⌘ memory: TERM_PROGRAM and its version.
 fn terminal_id() -> String {
@@ -1335,7 +1414,13 @@ pub fn help(app: &App, ctxs: &[Ctx]) -> Vec<(&'static str, Vec<(String, String)>
 /// The contexts help covers now: the document's, else the view's, the list's and global; with
 /// `all`, every view and toast too.
 pub fn help_ctxs(app: &App, all: bool) -> Vec<Ctx> {
-    let mut v = if app.doc.is_some() { vec![Ctx::Write] } else { vec![Ctx::of_view(app.view), Ctx::List, Ctx::Global] };
+    let mut v = if app.ui.focus == crate::app::Focus::Sidebar && app.ui.sidebar.has_panels() {
+        vec![Ctx::Sidebar, Ctx::Write]
+    } else if app.doc.is_some() {
+        vec![Ctx::Write]
+    } else {
+        vec![Ctx::of_view(app.view), Ctx::List, Ctx::Global]
+    };
     if all {
         for c in [Ctx::Today, Ctx::Inbox, Ctx::Tasks, Ctx::Pages, Ctx::Journal, Ctx::Search, Ctx::Log, Ctx::List, Ctx::Global, Ctx::ToastAlert, Ctx::ToastAgent] {
             if !v.contains(&c) {
@@ -1361,6 +1446,25 @@ pub fn key_for(app: &App, action: &str) -> Option<String> {
 
 /// Every action the table names, with what it does. `false`: not an action here.
 pub fn run(app: &mut App, action: &str) -> bool {
+    // In a panel (sidebar_app.rs): anything beyond the document runs in the main view after
+    // the key. ⌥O there opens what's at the panel's caret.
+    if app.in_panel.is_some() {
+        if action == "sidebar.open_aside" {
+            if let Some(k) = app.aside_target() {
+                app.panel_defer.push(crate::sidebar_app::Deferred::Aside(k));
+            }
+        } else {
+            app.panel_defer.push(crate::sidebar_app::Deferred::Action(action.to_string()));
+        }
+        return true;
+    }
+    if action.starts_with("sidebar.") {
+        return crate::sidebar_app::run(app, action);
+    }
+    if action == "pane.next" && app.ui.sidebar.has_panels() && app.ui.sidebar.shown {
+        crate::sidebar_app::pane_next(app);
+        return true;
+    }
     // Presentation-only actions: a pure update on the state, IO as effects (update.rs).
     if crate::runtime_effects::action(app, action) {
         return true;

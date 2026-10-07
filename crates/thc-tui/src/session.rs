@@ -210,7 +210,7 @@ impl Session {
     /// vault the new segment pins holds every line on screen, then a checkpoint.
     pub fn checkpoint_saved(&mut self) {
         if self.app.doc.is_some() {
-            self.app.save_doc(true);
+            self.app.save_everything();
             self.app.drain_saves(true);
             // The save's look ends the old segment.
             self.sync_external();
@@ -462,7 +462,8 @@ impl Session {
             }
             Msg::Mouse { mouse } => self.mouse(mouse),
             Msg::Paste { text } => {
-                if self.app.doc.is_some() {
+                if crate::sidebar_app::paste(&mut self.app, &text) {
+                } else if self.app.doc.is_some() {
                     crate::doc_keys::paste(&mut self.app, &text);
                 }
             }
@@ -475,7 +476,7 @@ impl Session {
                 if gained {
                     self.app.check_installed(true);
                 } else {
-                    self.app.save_doc(true);
+                    self.app.save_everything();
                 }
             }
             Msg::SetState { state, actor } => {

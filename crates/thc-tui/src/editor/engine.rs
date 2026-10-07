@@ -75,6 +75,11 @@ pub(crate) struct Engine {
     /// The document's clock (`Doc::tick`).
     pub(super) now_ms: u64,
     pool: IdPool,
+    /// The document's other views, by id (`st.view` is view `current`): a page shown in the
+    /// main view and in a sidebar panel is one document with two views (sidebar.md §7.1). An
+    /// edit through one maps every other one (`caretline::update_doc`).
+    others: Vec<(u32, cn::View)>,
+    current: u32,
 }
 
 /// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
@@ -158,6 +163,8 @@ impl Engine {
             changed_at: None,
             now_ms: 0,
             pool: IdPool::default(),
+            others: Vec::new(),
+            current: 0,
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -314,7 +321,7 @@ impl Engine {
         self.flush();
         cn::update(&mut self.st, Msg::Tick { now_ms: self.now_ms });
         let rev = self.st.doc.rev;
-        let fx = cn::update(&mut self.st, msg);
+        let fx = self.step(msg);
         if self.st.doc.rev != rev {
             self.changed_at = Some(self.now_ms);
         }
@@ -453,7 +460,7 @@ impl Engine {
         self.external(changes);
         let inserted = !steps.is_empty();
         for (after, blocks) in steps {
-            cn::update(&mut self.st, Msg::InsertBlocks { after, blocks });
+            self.step(Msg::InsertBlocks { after, blocks });
         }
         // Each line's text, shape and blank row.
         let o = self.st.doc.blocks().expect("an outline document");
@@ -474,7 +481,7 @@ impl Engine {
         if undoable && !replace.is_empty() {
             // The host's own change (recovered text): one undo step, with the lines it put in.
             replace.sort_by_key(|r| r.0);
-            cn::update(&mut self.st, Msg::Edit { changes: replace, join: inserted });
+            self.step(Msg::Edit { changes: replace, join: inserted });
             self.external(gaps);
         } else {
             // From the end back, so each range is still where it was.
@@ -488,8 +495,96 @@ impl Engine {
 
     fn external(&mut self, changes: Vec<ExtChange>) {
         if !changes.is_empty() {
-            cn::update(&mut self.st, Msg::External { changes });
+            self.step(Msg::External { changes });
         }
+    }
+
+    /// One message through the current view, every other view of the document mapped
+    /// through what it changed (in a stable order by id, so a typing run stays one view's).
+    fn step(&mut self, msg: Msg) -> Vec<Effect> {
+        if self.others.is_empty() {
+            return cn::update(&mut self.st, msg);
+        }
+        let mut all: Vec<(u32, cn::View)> = std::mem::take(&mut self.others);
+        all.push((self.current, std::mem::take(&mut self.st.view)));
+        all.sort_by_key(|(id, _)| *id);
+        let acting = all.iter().position(|(id, _)| *id == self.current).unwrap_or(0);
+        let (ids, mut views): (Vec<u32>, Vec<cn::View>) = all.into_iter().unzip();
+        let fx = cn::update_doc(&mut self.st.doc, &mut views, acting, msg);
+        for (id, v) in ids.into_iter().zip(views) {
+            if id == self.current {
+                self.st.view = v;
+            } else {
+                self.others.push((id, v));
+            }
+        }
+        fx
+    }
+
+    /// The view messages act through, and the one `state()` shows.
+    pub(super) fn current_view(&self) -> u32 {
+        self.current
+    }
+
+    /// The document's views, by id.
+    pub(super) fn view_ids(&self) -> Vec<u32> {
+        let mut v: Vec<u32> = self.others.iter().map(|(id, _)| *id).chain([self.current]).collect();
+        v.sort();
+        v
+    }
+
+    /// A new view `id` (or nothing, when there is one): laid out like the current one, its
+    /// caret at the start of the first note, at the top, nothing folded (sidebar.md §9).
+    pub(super) fn add_view(&mut self, id: u32) {
+        self.flush();
+        if self.view_ids().contains(&id) {
+            return;
+        }
+        let mut v = cn::View::new(self.st.view.viewport);
+        v.config = self.st.view.config.clone();
+        v.layout = self.st.view.layout.clone();
+        v.focused = false;
+        let start = self.char_of(BlockPos { line: 0, byte: 0 });
+        v.selection = Selection::point(start);
+        self.others.push((id, v));
+    }
+
+    /// Make view `id` the current one. False: the document has no such view.
+    pub(super) fn use_view(&mut self, id: u32) -> bool {
+        if id == self.current {
+            return true;
+        }
+        let Some(i) = self.others.iter().position(|(v, _)| *v == id) else { return false };
+        self.flush();
+        let (_, mut v) = self.others.swap_remove(i);
+        std::mem::swap(&mut v, &mut self.st.view);
+        self.others.push((self.current, v));
+        self.current = id;
+        true
+    }
+
+    /// Drop view `id`; when it's the current one, another becomes current. False: it's the
+    /// document's last view (or not one of its views).
+    pub(super) fn remove_view(&mut self, id: u32) -> bool {
+        if self.others.is_empty() {
+            return false;
+        }
+        if id == self.current {
+            let next = self.others[0].0;
+            self.use_view(next);
+        }
+        let before = self.others.len();
+        self.others.retain(|(v, _)| *v != id);
+        self.others.len() != before
+    }
+
+    /// The current view takes id `id` (a document that moves from the main view to a panel).
+    pub(super) fn rename_view(&mut self, id: u32) -> bool {
+        if self.view_ids().contains(&id) && id != self.current {
+            return false;
+        }
+        self.current = id;
+        true
     }
 
     /// `text` is what the engine last copied or cut (its register).

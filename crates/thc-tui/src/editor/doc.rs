@@ -222,6 +222,9 @@ pub struct Doc {
     words: std::cell::Cell<Option<(u64, usize)>>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
+    /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
+    /// you type in). False for a view nobody types in now (a panel without the keyboard).
+    pub hold_caret_line: bool,
 }
 
 impl Doc {
@@ -237,7 +240,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0 }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), now_ms: 0, hold_caret_line: true }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.

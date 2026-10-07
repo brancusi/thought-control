@@ -36,6 +36,8 @@ const MISSING_RETRY: std::time::Duration = std::time::Duration::from_secs(3);
 pub(crate) struct Derived {
     pub doc: Option<crate::doc_ui::PreparedDoc>,
     pub list: Option<crate::ui::PreparedList>,
+    /// The sidebar, laid out (sidebar_ui.rs).
+    pub sidebar: Option<crate::sidebar_ui::PreparedSidebar>,
     pub preview: Option<PagePreview>,
     pub attachments: HashMap<(PathBuf, String), Attachment>,
     attachment_source: Option<AttachmentSource>,
@@ -58,7 +60,7 @@ pub(crate) struct Derived {
 impl Derived {
     pub fn new() -> Self {
         Self {
-            doc: None, list: None, preview: None, attachments: HashMap::new(),
+            doc: None, list: None, sidebar: None, preview: None, attachments: HashMap::new(),
             attachment_source: None,
             attachment_paths: vec![],
             attachment_probes: HashMap::new(),

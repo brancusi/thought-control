@@ -177,6 +177,10 @@ pub struct UiState {
     // ---- history ---------------------------------------------------------------------------------
     /// Navigation history, ⌘[ / ⌘] (history.rs).
     pub history: crate::history::History,
+
+    // ---- the sidebar -----------------------------------------------------------------------------
+    /// Pages beside the page (sidebar.md): the stack of panels, which is active, its width.
+    pub sidebar: crate::sidebar::SidebarState,
 }
 
 impl Default for UiState {
@@ -254,6 +258,7 @@ impl Default for UiState {
             focus_hint_shown: false,
             offline_toast_shown: false,
             history: Default::default(),
+            sidebar: Default::default(),
         }
     }
 }
@@ -409,6 +414,10 @@ impl UiState {
             if s.len() > MAX_INPUT {
                 return Err(format!("a filter is at most {MAX_INPUT} bytes"));
             }
+        }
+        self.sidebar.validate()?;
+        if self.focus == Focus::Sidebar && self.sidebar.open.is_empty() {
+            return Err("focus: \"sidebar\" needs a panel in sidebar.open".into());
         }
         Ok(())
     }

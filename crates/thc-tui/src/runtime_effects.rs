@@ -29,6 +29,7 @@ fn perform(app: &mut App, effect: Effect) {
         Effect::Quit => app.quit = true,
         Effect::SetMouse { on } => app.mouse_request = Some(on),
         Effect::SpawnEditor { target } => app.editor_request = Some(target),
+        e @ (Effect::SidebarLoad { .. } | Effect::SidebarDrop { .. } | Effect::SidebarPersist | Effect::SidebarEvicted { .. }) => crate::sidebar_app::perform(app, e),
         Effect::WriteClipboard { text, notice } => {
             let result = set_clipboard(&text);
             dispatch(app, Msg::ClipboardResult { result, notice, at: app.ui.now_ms });
@@ -55,6 +56,12 @@ pub(crate) fn run(app: &mut App, effects: Vec<Effect>) {
     for effect in effects {
         perform(app, effect);
     }
+}
+
+/// A change to the sidebar through its pure update (update::sidebar), its effects run here.
+pub(crate) fn sidebar_op(app: &mut App, op: update::SidebarOp) {
+    let effects = update::sidebar(&mut app.ui, op);
+    run(app, effects);
 }
 
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {

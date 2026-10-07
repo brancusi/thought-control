@@ -314,7 +314,8 @@ First plan removes the gate. Agents never accept work on the human's behalf.
     The older commands in the `Cmd` enum move over in turn.
 - **Reviewing the TUI without a terminal:** `THC_TUI_SNAPSHOT=120x32 THC_TUI_KEYS="3jd" thc tui`
   renders one frame as text after replaying keys (`<cr>`, `<esc>`, `<tab>`, `<s-tab>`, `<bs>`,
-  `<up>`/`<down>`/`<left>`/`<right>`, `<space>`, `<c-x>` supported).
+  `<up>`/`<down>`/`<left>`/`<right>`, `<space>`, `<c-x>`, `<m-s>` (⌥), `<sclick:x,y>` (⇧-click)
+  supported).
   Keys that write land in a scratch copy of the vault, so a snapshot never changes the real one;
   `THC_TUI_SNAPSHOT_WRITE=1` writes for real.
   `THC_THEME=ansi|ember-dark|ember-light` and `THC_GLYPHS=ascii` select themes.
@@ -335,6 +336,12 @@ First plan removes the gate. Agents never accept work on the human's behalf.
     --default`). `THC_TUI_SNAPSHOT` still works and reads the same key scripts.
   - Record and replay: `thc tui --trace t.jsonl`, then `thc ui replay t.jsonl [--every]`.
     With `THC_NOW` pinned, renders and replays are byte-identical across runs.
+- **The sidebar** (docs/design/sidebar.md in the internal repo): `sidebar.rs` is the stack as
+  UiState with its pure rules (and `policy`, the owner's open choices in one place),
+  `update::sidebar` the pure update, `sidebar_app.rs` the runtime (a doc panel is a caretline
+  view on a shared `Doc`; `App::with_panel` runs a key through it), `sidebar_ui.rs` the drawing.
+  Its keys are the `sidebar` context of the keymap. Acceptance checks and goldens:
+  `crates/thc/tests/sidebar.rs` (`THC_UPDATE_GOLDENS=1` regenerates).
 - **Fixtures:** `scripts/seed-sample.sh [--conflict] <vault>` seeds sample data. `--conflict` also
   runs `scripts/fixture-conflict.sh`, which builds the daemon spec's conflict states: a text
   conflict, a rejected move cycle and an agent reminder. Never point either script at a real vault.

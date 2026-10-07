@@ -100,6 +100,10 @@ fn f_width(app: &App) -> u16 {
 }
 
 pub(crate) fn split_width(app: &App, total: u16) -> Option<u16> {
+    // The detail pane (and the Journal's calendar) give way to the sidebar (sidebar.md §6.2).
+    if app.sidebar_col.is_some() && crate::sidebar::policy::DETAIL_YIELDS {
+        return None;
+    }
     if total < SPLIT_AT || !app.show_detail {
         return None;
     }
@@ -161,6 +165,8 @@ pub enum Click {
     FooterBox(String),
     /// A generated footer hint: run that action (keymap.rs), not a replayed key.
     Action(&'static str),
+    /// A sidebar panel's header part (by its place in the stack), or its `↓ N more` row.
+    Panel(usize, crate::sidebar_ui::Part),
 }
 
 /// A clickable span on screen, recorded while drawing.
@@ -182,6 +188,8 @@ pub struct RenderOutput {
     /// for its hit-testing.
     pub doc_view: Option<(u16, u16, u16, u16)>,
     pub image_places: Vec<crate::images::Place>,
+    /// Each doc panel's view on screen, for the engine's hit-testing (sidebar_ui.rs).
+    pub panel_views: Vec<(crate::sidebar::PanelKey, Rect)>,
     pub list_height: usize,
     pub doc_scrollbar: Option<(u16, u16, usize, u16, u16)>,
     pub list_scrollbar: Option<(u16, u16, usize, u16, u16)>,
@@ -309,9 +317,15 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
     let banner = if app.conflicts.is_empty() { 0 } else { 1 };
     let drawer = if matches!(app.overlay, Some(Overlay::Capture { .. })) { 3 } else { 0 };
     let [header, rule, banner_r, content, drawer_r, bar] = normal_areas(app, area);
-    let split = split_width(app, area.width);
+    // The sidebar's column (sidebar.md §6.1): the main area is a screen W − S − 2 wide, then a
+    // blank column and the divider.
+    let col = app.sidebar_col;
+    let main_w = col.map_or(area.width, |s| area.width.saturating_sub(s + 2));
+    let full = content;
+    let content = Rect { width: main_w, ..content };
+    let split = split_width(app, main_w);
     let tab = draw_header(render, f, app, header);
-    draw_rule(f, app, rule, tab, split);
+    draw_rule(f, app, rule, tab, split.or(col.map(|s| area.width - s - 1)));
     if banner > 0 {
         draw_banner(f, app, banner_r);
     }
@@ -319,7 +333,7 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
         Some(lw) => {
             let list = Rect { width: lw, ..content };
             let sep = Rect { x: content.x + lw, width: 1, ..content };
-            let detail = Rect { x: content.x + lw + 2, width: area.width.saturating_sub(lw + 2), ..content };
+            let detail = Rect { x: content.x + lw + 2, width: main_w.saturating_sub(lw + 2), ..content };
             let lines: Vec<Line> = (0..sep.height).map(|_| Line::styled(th.glyphs().vsep, th.s(Token::Line))).collect();
             f.render_widget(Paragraph::new(lines), sep);
             if app.doc.is_some() { draw_document(render, f, app, list) } else { draw_content(render, f, app, list) }
@@ -327,6 +341,10 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
         }
         None if app.doc.is_some() => draw_document(render, f, app, content),
         None => draw_content(render, f, app, content),
+    }
+    if let Some(s) = col {
+        let side = Rect { x: area.width - s, width: s, ..full };
+        crate::sidebar_ui::draw(render, f, app, side, Some(Rect { x: area.width - s - 1, width: 1, ..full }));
     }
     if drawer > 0 {
         draw_drawer(render, f, app, drawer_r);
@@ -919,11 +937,21 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
 
     // In a document, the keys footer (tui-editor.md §4.5): where you are, that saving is
     // automatic, and the few keys you need now. `?` leads with the same keys and words.
-    if let (Some(d), true) = (app.doc.as_ref(), app.overlay.is_none()) {
+    // With the keyboard in a doc panel, the bar is that panel's (sidebar.md §5.2):
+    // `¶ health · aside 1 of 2 · autosaved`.
+    let panel = (app.ui.focus == crate::app::Focus::Sidebar).then(|| app.ui.sidebar.active_key()).flatten().and_then(|k| {
+        let d = app.panel_doc(&k)?;
+        let i = app.ui.sidebar.position(&k)? + 1;
+        Some((d, app.panel_name(&k).to_lowercase(), format!("aside {i} of {}", app.ui.sidebar.open.len())))
+    });
+    let main_doc = app.doc.as_ref().map(|d| {
         let what = match &d.target {
             crate::editor::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
             crate::editor::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
+        (d, what, String::new())
+    });
+    if let (Some((d, what, aside)), true) = (panel.or(main_doc), app.overlay.is_none()) {
         let failed = d.blocks().iter().any(|l| l.save_error.is_some());
         let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.ui.now_ms.saturating_sub(t) >= 3000));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
@@ -960,7 +988,8 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
                 left.push(sep());
             }
             if level >= 1 {
-                left.push(Span::styled(format!("{words} word{}", if words == 1 { "" } else { "s" }), th.s(Token::Muted)));
+                let words = if aside.is_empty() { format!("{words} word{}", if words == 1 { "" } else { "s" }) } else { aside.clone() };
+                left.push(Span::styled(words, th.s(Token::Muted)));
                 left.push(sep());
             }
             if level >= 1 || !ok {
@@ -4276,18 +4305,26 @@ fn update_frame(app: &mut App, area: Rect) {
 }
 
 fn prepare_frame(app: &mut App, area: Rect) {
-    app.screen_width = area.width;
+    app.sidebar_col = if area.width < 60 || area.height < 24 { None } else { crate::sidebar_ui::column(app, area.width) };
+    // Every breakpoint reads the main area's width (sidebar.md §6.2).
+    app.screen_width = app.sidebar_col.map_or(area.width, |s| area.width.saturating_sub(s + 2));
     crate::derived::prepare(app);
     app.derived.doc = None;
     app.derived.list = None;
+    app.derived.sidebar = None;
     if area.width < 60 || area.height < 24 {
         return;
+    }
+    if let Some(s) = app.sidebar_col {
+        let c = normal_areas(app, area)[3];
+        crate::sidebar_ui::prepare(app, Rect { x: area.width - s, width: s, ..c });
     }
     let content = if app.focus_mode && app.doc.is_some() {
         focus_areas(app, area)[1]
     } else {
         let content = normal_areas(app, area)[3];
-        match split_width(app, area.width) {
+        let content = Rect { width: app.screen_width, ..content };
+        match split_width(app, app.screen_width) {
             Some(width) => Rect { width, ..content },
             None => content,
         }

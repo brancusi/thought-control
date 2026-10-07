@@ -50,7 +50,171 @@ pub(crate) enum Effect {
     SetMouse { on: bool },
     /// `$EDITOR` on a note.
     SpawnEditor { target: String },
+    /// A panel joined the stack (or came back): its document or list is the runtime's to load.
+    SidebarLoad { key: crate::sidebar::PanelKey },
+    /// A panel left the stack: its view (and its document, when no other view holds it) goes.
+    SidebarDrop { key: crate::sidebar::PanelKey },
+    /// The stack changed: keep it in the vault's cache (sidebar.md §11).
+    SidebarPersist,
+    /// A panel closed to make room for another (the bar names both, by their titles).
+    SidebarEvicted { gone: crate::sidebar::PanelKey, opened: crate::sidebar::PanelKey, by: Option<String> },
 }
+
+/// A change to the sidebar's stack, focus or width (sidebar.md §2–§6). The runtime commits a
+/// panel's typing before it asks to close or leave it.
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) enum SidebarOp {
+    /// Open a panel (§2): `focus` moves the keyboard to it (the finder, the palette, the
+    /// drawer); `by` names an agent that opened it.
+    Open { panel: crate::sidebar::Panel, focus: bool, by: Option<String> },
+    Close { key: crate::sidebar::PanelKey },
+    CloseUnpinned,
+    Reopen,
+    Pin { key: crate::sidebar::PanelKey },
+    Fold { key: crate::sidebar::PanelKey },
+    Move { key: crate::sidebar::PanelKey, delta: isize },
+    MoveTo { key: crate::sidebar::PanelKey, at: usize },
+    /// The keyboard to a panel (None: back to the main view).
+    Focus { key: Option<crate::sidebar::PanelKey> },
+    /// The active panel moves to the next (1) or previous (-1) one.
+    Step { delta: isize },
+    /// ⌥\: hide or show.
+    ToggleShown,
+    /// ⌥= ⌥- ⌥0 and the divider: a width, from the current one at screen width `screen`.
+    Width { change: WidthChange, screen: u16 },
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum WidthChange {
+    Wider,
+    Narrower,
+    Auto,
+    Set(u16),
+}
+
+/// The sidebar's pure update: the stack's rules (sidebar.rs) on the state, what to load,
+/// drop and keep as effects, and what the bar says.
+pub(crate) fn sidebar(ui: &mut crate::ui_state::UiState, op: SidebarOp) -> Vec<Effect> {
+    use crate::app::Focus;
+    use crate::sidebar::{Opened, policy};
+    let now = ui.now_ms;
+    let mut fx = Vec::new();
+    match op {
+        SidebarOp::Open { mut panel, focus, by } => {
+            let key = panel.key();
+            panel.opened_by = by.clone();
+            let was_focus = ui.focus;
+            match ui.sidebar.open(panel, now) {
+                Opened::Full => {
+                    ui.info(format!("{} panels pinned · unpin one to open another", policy::MAX_PANELS));
+                    return fx;
+                }
+                Opened::New { evicted } => {
+                    fx.push(Effect::SidebarLoad { key: key.clone() });
+                    if let Some(gone) = evicted {
+                        fx.push(Effect::SidebarDrop { key: gone.key() });
+                        fx.push(Effect::SidebarEvicted { gone: gone.key(), opened: key.clone(), by: by.clone() });
+                    }
+                }
+                Opened::Moved => fx.push(Effect::SidebarLoad { key: key.clone() }),
+            }
+            ui.sidebar.shown = true;
+            if focus && (by.is_none() || policy::AGENTS_MOVE_FOCUS) {
+                ui.focus = Focus::Sidebar;
+            } else {
+                // Keyboard focus stays where it was (§2 rule 1, §10.4).
+                ui.focus = if was_focus == Focus::Sidebar && !ui.sidebar.open.is_empty() { Focus::Sidebar } else if was_focus == Focus::Sidebar { Focus::List } else { was_focus };
+            }
+        }
+        SidebarOp::Close { key } => {
+            if ui.sidebar.close(&key).is_some() {
+                fx.push(Effect::SidebarDrop { key });
+            }
+        }
+        SidebarOp::CloseUnpinned => {
+            for key in ui.sidebar.close_unpinned() {
+                fx.push(Effect::SidebarDrop { key });
+            }
+        }
+        SidebarOp::Reopen => match ui.sidebar.reopen(now) {
+            Some((_, Opened::Full)) => ui.info(format!("{} panels pinned · unpin one to open another", policy::MAX_PANELS)),
+            Some((key, opened)) => {
+                fx.push(Effect::SidebarLoad { key });
+                if let Opened::New { evicted: Some(gone) } = opened {
+                    fx.push(Effect::SidebarDrop { key: gone.key() });
+                }
+                ui.sidebar.shown = true;
+            }
+            None => ui.info("nothing closed to reopen"),
+        },
+        SidebarOp::Pin { key } => {
+            if let Some(p) = ui.sidebar.get_mut(&key) {
+                p.opened_by = None;
+            }
+            if let Some(on) = ui.sidebar.toggle_pin(&key) {
+                ui.info(if on { "pinned · ⌥P unpins" } else { "unpinned" });
+            }
+        }
+        SidebarOp::Fold { key } => {
+            if let Some(p) = ui.sidebar.get_mut(&key) {
+                p.opened_by = None;
+            }
+            ui.sidebar.toggle_fold(&key);
+            ui.sidebar.focused = Some(key);
+        }
+        SidebarOp::Move { key, delta } => {
+            ui.sidebar.move_within(&key, delta);
+        }
+        SidebarOp::MoveTo { key, at } => {
+            ui.sidebar.move_to(&key, at);
+        }
+        SidebarOp::Focus { key: Some(key) } => {
+            if ui.sidebar.get(&key).is_some() {
+                if let Some(p) = ui.sidebar.get_mut(&key) {
+                    p.opened_by = None;
+                    p.folded = false;
+                }
+                ui.sidebar.focused = Some(key);
+                ui.sidebar.shown = true;
+                ui.focus = Focus::Sidebar;
+            }
+        }
+        SidebarOp::Focus { key: None } => {
+            if ui.focus == Focus::Sidebar {
+                ui.focus = Focus::List;
+            }
+        }
+        SidebarOp::Step { delta } => {
+            ui.sidebar.step_focus(delta);
+        }
+        SidebarOp::ToggleShown => {
+            if ui.sidebar.open.is_empty() {
+                ui.info("nothing beside you · ⇧-click a link or ⌥O");
+                return fx;
+            }
+            ui.sidebar.shown = !ui.sidebar.shown;
+            if !ui.sidebar.shown && ui.focus == Focus::Sidebar {
+                ui.focus = Focus::List;
+            }
+        }
+        SidebarOp::Width { change, screen } => {
+            let cur = crate::sidebar::column_width(ui.sidebar.width, screen);
+            ui.sidebar.width = match change {
+                WidthChange::Wider => Some(cur + policy::WIDTH_STEP),
+                WidthChange::Narrower => Some(cur.saturating_sub(policy::WIDTH_STEP)),
+                WidthChange::Auto => None,
+                WidthChange::Set(w) => Some(w),
+            }
+            .map(|w| w.clamp(policy::SET_MIN_W, screen.saturating_sub(policy::MAIN_MIN_W).max(policy::SET_MIN_W)));
+        }
+    }
+    if ui.sidebar.open.is_empty() && ui.focus == Focus::Sidebar {
+        ui.focus = Focus::List;
+    }
+    fx.push(Effect::SidebarPersist);
+    fx
+}
+
 
 /// What a navigation action needs to know besides the state: derived rows and facts the
 /// runtime holds. Never the store.

@@ -301,6 +301,13 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     if app.prompt.is_some() {
         return;
     }
+    if let Some(crate::ui::Click::Panel(i, part)) = at.clone().filter(|_| matches!(m.kind, K::Down(_))) {
+        crate::sidebar_app::header_click(app, i, part, clicks, m.kind == K::Down(MouseButton::Middle));
+        return;
+    }
+    if crate::sidebar_app::mouse(app, m, clicks) {
+        return;
+    }
     if left_down {
         use crate::ui::Click;
         match at {
@@ -438,6 +445,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 return;
             }
             Some(Click::Text) => return,
+            Some(Click::Panel(..)) => return,
             Some(Click::Menu(_) | Click::Caret { .. } | Click::Box | Click::Link) | None => {}
         }
     }
@@ -520,6 +528,10 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
     // A prefix in progress (`p`, `S`, `g`) takes the next key first.
     if !app.pending_keys.is_empty() && app.overlay.is_none() && app.prompt.is_none() {
         crate::keymap::dispatch(app, &k);
+        return;
+    }
+    // The sidebar has the keyboard (sidebar.md §5.2).
+    if crate::sidebar_app::key(app, k) {
         return;
     }
     // A document (a journal day, an open page): always Write (writing.md §3).

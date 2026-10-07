@@ -96,6 +96,12 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `q` | back | `back` | can_back |
 | `q` `⌃C` `⌃Q` | quit | `quit` |  |
 | `⌃L` |  | `redraw` |  |
+| `⌥S` | sidebar | `sidebar.focus` | sidebar_has_panels |
+| `⌥⇧T` | reopen | `sidebar.reopen` | sidebar_closed_any |
+| `⌥\` | hide · show | `sidebar.toggle` | sidebar_has_panels |
+| `⌥=` | width | `sidebar.wider` | sidebar_shown |
+| `⌥-` | width | `sidebar.narrower` | sidebar_shown |
+| `⌥0` | width | `sidebar.width_auto` | sidebar_shown |
 
 ### `leader`
 
@@ -146,6 +152,18 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `space q` | quit | `quit` |  |
 | `space ?` | every key | `help.all` |  |
 | `space a` | about · what's new | `about` |  |
+| `space w w` | focus | `sidebar.focus` |  |
+| `space w o` | aside | `sidebar.open_aside` |  |
+| `space w x` | close | `sidebar.close` |  |
+| `space w X` | close all | `sidebar.close_all` |  |
+| `space w p` | pin | `sidebar.pin` |  |
+| `space w c` | fold | `sidebar.fold` |  |
+| `space w m` | to main | `sidebar.to_main` |  |
+| `space w h` | hide · show | `sidebar.toggle` |  |
+| `space w r` | reopen | `sidebar.reopen` |  |
+| `space w =` | wider | `sidebar.wider` |  |
+| `space w -` | narrower | `sidebar.narrower` |  |
+| `space w 0` | auto width | `sidebar.width_auto` |  |
 
 ### `list`
 
@@ -193,6 +211,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `Y` | copy full id | `node.copy_full_id` | has_node |
 | `space` | leader | `leader` |  |
 | `a` | add | `capture.here` |  |
+| `⌥O` `⇧Enter` `o` | aside | `sidebar.open_aside` |  |
 | `A` | inbox | `capture.inbox` |  |
 
 ### `today`
@@ -295,6 +314,13 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌃O` `⌥Enter` | open | `doc.open` |  |
 | `⌃P` `⌥[` | day | `doc.day_prev` |  |
 | `⌃N` `⌥]` | day | `doc.day_next` |  |
+| `⌥O` | aside | `sidebar.open_aside` | has_target |
+| `⌥S` | sidebar | `sidebar.focus` | sidebar_has_panels |
+| `⌥⇧T` | reopen | `sidebar.reopen` | sidebar_closed_any |
+| `⌥\` | hide · show | `sidebar.toggle` | sidebar_has_panels |
+| `⌥=` | width | `sidebar.wider` | sidebar_shown |
+| `⌥-` | width | `sidebar.narrower` | sidebar_shown |
+| `⌥0` | width | `sidebar.width_auto` | sidebar_shown |
 | `Esc` | done | `doc.done` |  |
 | `⌘Z` `⌃Z` | undo | `doc.undo` |  |
 | `⇧⌘Z` `⌘Y` `⌘R` `⌃Y` `⌃R` `⌃⇧Z` | redo | `doc.redo` |  |
@@ -342,6 +368,28 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌥⌫` `⌃⌫` `⌃W` | delete word | `edit.delete_word` |  |
 | `⌘⌫` `⌃U` | delete to line start | `edit.kill_to_start` |  |
 | `⌃K` | kill line | `edit.kill_to_end` |  |
+
+### `sidebar`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `⌥S` | main | `sidebar.focus` |  |
+| `Esc` | main | `sidebar.back` |  |
+| `⌥J` | panel | `sidebar.next` |  |
+| `⌥K` | panel | `sidebar.prev` |  |
+| `⌥C` | fold | `sidebar.fold` |  |
+| `⌥W` | close | `sidebar.close` |  |
+| `⌥M` | to main | `sidebar.to_main` | panel_is_doc |
+| `⌥P` | pin · unpin | `sidebar.pin` |  |
+| `⌥⇧K` | move | `sidebar.move_up` |  |
+| `⌥⇧J` | move | `sidebar.move_down` |  |
+| `⌥⇧T` | reopen | `sidebar.reopen` | sidebar_closed_any |
+| `⌥\` | hide · show | `sidebar.toggle` |  |
+| `⌥=` | width | `sidebar.wider` | sidebar_shown |
+| `⌥-` | width | `sidebar.narrower` | sidebar_shown |
+| `⌥0` | width | `sidebar.width_auto` | sidebar_shown |
+| `⌃W` | next pane | `pane.next` |  |
+| `F1` | keys | `help.context` |  |
 
 ### `link`
 
