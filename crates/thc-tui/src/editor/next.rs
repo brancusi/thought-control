@@ -446,8 +446,9 @@ impl Next {
             prev = Some(id);
             run = true;
         }
-        self.undoable = false;
+        let undoable = std::mem::take(&mut self.undoable);
         self.external(changes);
+        let inserted = !steps.is_empty();
         for (after, blocks) in steps {
             cn::update(&mut self.st, Msg::InsertBlocks { after, blocks });
         }
@@ -467,10 +468,17 @@ impl Next {
                 gaps.push(ExtChange::SetGap { id: b.id, gap: l.gap });
             }
         }
-        // From the end back, so each range is still where it was.
-        replace.sort_by(|a, b| b.0.cmp(&a.0));
-        let changes = replace.into_iter().map(|(from, to, text)| ExtChange::Replace { from, to, text }).chain(gaps).collect();
-        self.external(changes);
+        if undoable && !replace.is_empty() {
+            // The host's own change (recovered text): one undo step, with the lines it put in.
+            replace.sort_by_key(|r| r.0);
+            cn::update(&mut self.st, Msg::Edit { changes: replace, join: inserted });
+            self.external(gaps);
+        } else {
+            // From the end back, so each range is still where it was.
+            replace.sort_by(|a, b| b.0.cmp(&a.0));
+            let changes = replace.into_iter().map(|(from, to, text)| ExtChange::Replace { from, to, text }).chain(gaps).collect();
+            self.external(changes);
+        }
         self.sync(&HashMap::new());
         true
     }
@@ -479,6 +487,37 @@ impl Next {
         if !changes.is_empty() {
             cn::update(&mut self.st, Msg::External { changes });
         }
+    }
+
+    /// A copy across notes with each note's fields (due, priority, …) after its first line, as
+    /// the vault writes them: the engine's Markdown of the same range, the fields added. It
+    /// stays the register's (a paste of it is a paste of what was copied).
+    pub(super) fn with_fields(&mut self, text: String) -> String {
+        let fields: HashMap<u64, String> = self.lines.iter().filter(|l| !l.fields.is_empty()).filter_map(|l| Some((l.mark?, l.fields.clone()))).collect();
+        if fields.is_empty() || text.is_empty() {
+            return text;
+        }
+        let Some(o) = self.st.doc.blocks() else { return text };
+        let rope = self.st.doc.text.slice(..);
+        let r = self.st.view.selection.primary();
+        let (i0, i1) = (o.index_at(rope, r.from()), o.index_at(rope, r.to()));
+        if i0 == i1 {
+            return text;
+        }
+        // The range the engine wrote: the selection, or the whole blocks it covers.
+        let mut ranges = vec![(r.from(), r.to())];
+        for k in [i1, i1.saturating_sub(1)] {
+            if k >= i0 {
+                ranges.push((o.blocks[i0].content_start(), o.blocks[k].end));
+            }
+        }
+        use cn::outline::markdown::{to_markdown, to_markdown_with};
+        let Some(&(from, to)) = ranges.iter().find(|&&(a, b)| to_markdown(&self.st, &o, a, b) == text) else { return text };
+        let md = to_markdown_with(&self.st, &o, from, to, &|id| fields.get(&id.0).cloned());
+        if md != text {
+            self.st.doc.clipboard.external = Some(md.clone());
+        }
+        md
     }
 
     /// Up and down follow thc's text column (`width_of` a line at its depth).
@@ -726,6 +765,26 @@ mod tests {
 
     const W: fn(&Line) -> usize = |_| 72;
 
+    /// A copy across notes carries each note's fields, on both engines (as the vault writes
+    /// them), and pasting it back over the same selection changes nothing.
+    #[test]
+    fn a_copy_across_notes_keeps_their_fields() {
+        crate::editor::on_both_engines(copy_keeps_fields);
+    }
+
+    fn copy_keeps_fields() {
+        let mut a = blk("a", 0, "task", "Book the venue");
+        a.status = Some("todo".into());
+        a.due = Some("2026-10-09".into());
+        let mut b = blk("b", 1, "bullet", "ask about parking");
+        b.priority = Some("high".into());
+        let c = blk("c", 0, "para", "After");
+        let mut d = Doc::new(Target::Journal { date: today() }, Some("root".into()), &[a, b, c], today());
+        d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 1, byte: "ask about parking".len() });
+        let text = d.copy_text();
+        assert_eq!(text, "- [ ] Book the venue due:2026-10-09\n  - ask about parking !high", "[{:?}]", d.engine());
+    }
+
     #[test]
     fn a_change_from_elsewhere_stays_when_local_edits_are_undone() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "para", "beta"), blk("c", 0, "para", "gamma")]);
@@ -825,6 +884,22 @@ mod tests {
         assert_eq!(texts(&d), ["alpha", ""], "undo takes back the typing, not the parse");
     }
 
+    /// Recovered lines (crash recovery): changed text and lines put back are one undo step.
+    #[test]
+    fn recovered_text_is_one_undo_step() {
+        let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "bullet", "beta")]);
+        d.begin_undo_step();
+        assert!(d.set_shape("a", 0, Kind::Para, None, "alpha, typed before the crash"));
+        d.insert_block(2, crate::editor::NewBlock { id: None, depth: 1, kind: Kind::Task, status: Some("todo".into()), text: "a lost task".into() });
+        assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
+        same(&mut d);
+        d.apply(EditCmd::Undo, &W);
+        assert_eq!(texts(&d), ["alpha", "beta"], "one undo takes the recovery back");
+        same(&mut d);
+        d.apply(EditCmd::Redo, &W);
+        assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
+    }
+
     #[test]
     fn an_attachment_goes_in_as_one_undo_step() {
         let mut d = open(&[blk("a", 0, "para", "alpha")]);
@@ -838,16 +913,29 @@ mod tests {
         assert_eq!(texts(&d), ["alpha"], "{:?}", texts(&d));
     }
 
-    /// The rows the document draws are the engine's (motion uses the same). They cover the
-    /// text, never pass the column and never cut a character. They can break a column earlier
-    /// than the old wrap: a word that would fill a row exactly goes to the next one.
+    /// The rows the document draws are the engine's (motion uses the same), and they are the
+    /// old wrap's: words move whole, a word that fills the row keeps its space at the row's
+    /// end (the next row starts with the next word), and only a word longer than a row breaks.
     #[test]
     fn rows_follow_the_engines_wrap() {
-        let texts = ["one two three four five six seven eight nine ten eleven", "a\nb", "", "trailing\n", "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字", "👨\u{200d}👩\u{200d}👧 family 👨\u{200d}👩\u{200d}👧 again and again and again", &"x".repeat(50)];
+        let texts = [
+            "one two three four five six seven eight nine ten eleven",
+            "a\nb",
+            "",
+            "trailing\n",
+            "漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字漢字",
+            "👨\u{200d}👩\u{200d}👧 family 👨\u{200d}👩\u{200d}👧 again and again and again",
+            &"x".repeat(50),
+            "The quick brown fox jumps over the lazy dog and keeps running through the long grass until dusk.",
+            "aaaa bbbbbbbbbbbbbbb cc",
+            "aaaa bbbbbbbbbbbbbbbb cc",
+            "0123456789012345678 01234567890123456789 x",
+            "a 🙂🙂🙂🙂🙂🙂🙂🙂🙂🙂 b 字字字字字 🇯🇵🇯🇵 e\u{301}e\u{301}",
+        ];
         let blocks: Vec<Block> = texts.iter().enumerate().map(|(i, t)| blk(&format!("n{i}"), 0, "para", t)).collect();
         let mut d = open(&blocks);
         let mut wraps = super::super::doc::Wraps::default();
-        for w in [20, 24, 33] {
+        for w in [20, 24, 33, 40] {
             for (i, t) in texts.iter().enumerate() {
                 let rows = d.next_mut().rows_of(i, w, &mut wraps);
                 let old = crate::text::wrap(t, w);
@@ -860,9 +948,7 @@ mod tests {
                     at = b;
                 }
                 assert_eq!(at, t.len(), "{t:?} at {w}: {rows:?}");
-                if !t.contains(' ') {
-                    assert_eq!(rows, old, "{t:?} at {w}: no word breaks, the same rows");
-                }
+                assert_eq!(rows, old, "{t:?} at {w}: the old wrap's rows");
             }
         }
     }
