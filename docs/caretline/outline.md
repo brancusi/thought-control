@@ -168,8 +168,8 @@ blank row between them read back as one.
 ## In Rust
 
 ```rust
-use caretline_next::outline::markdown;
-use caretline_next::{update, Effect, MarkId, Msg, OutlineConfig, Viewport};
+use caretline::outline::markdown;
+use caretline::{update, Effect, MarkId, Msg, OutlineConfig, Viewport};
 
 let mut s = markdown::load("- [ ] Pay rent\n- Buy milk\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
 let fx = update(&mut s, Msg::TaskCycle);                  // the caret is on "Pay rent"
@@ -283,9 +283,9 @@ fields from the frame's row info:
 | `view::render(doc, view)` | The frame of any view of a document |
 
 ```rust
-use caretline_next::outline::markdown;
-use caretline_next::view::{hit, Hit, RowInfo};
-use caretline_next::{view, OutlineConfig, OutlineLayout, Viewport};
+use caretline::outline::markdown;
+use caretline::view::{hit, Hit, RowInfo};
+use caretline::{view, OutlineConfig, OutlineLayout, Viewport};
 
 let mut s = markdown::load("- [ ] Pay rent\n- Buy milk\n", None, Viewport { width: 40, height: 4 }, OutlineConfig::default());
 s.view.layout = Some(OutlineLayout::default());

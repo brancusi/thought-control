@@ -14,22 +14,26 @@ files, the clipboard and the clock.
 
 ### Add the dependency
 
-caretline-next isn't on crates.io yet. Use git or a path:
+caretline is on [crates.io](https://crates.io/crates/caretline): `cargo add caretline`, or
 
 ```toml
 [dependencies]
-caretline-next = { git = "https://github.com/brancusi/thought-control" }
-# caretline-next = { path = "../thought-control/crates/caretline-next" }
+caretline = "0.1"
 ```
 
-Pin a `rev = "…"` for reproducible builds. The crate has no terminal dependency, so it works
+Its library is `caretline::`. Inside this repository the crate is still named
+`caretline-next` until the older engine is removed; the published crate is the same code. For
+something on `main` that is newer than the latest release, use a git dependency on
+`caretline-next` and import it as `caretline_next::`.
+
+The crate has no terminal dependency, so it works
 under any renderer.
 
 ### Your event loop
 
 You own the loop. Each turn:
 
-1. Turn your input into a `Msg`. For keys, convert to `caretline_next::Key` and call
+1. Turn your input into a `Msg`. For keys, convert to `caretline::Key` and call
    `keymap`; for paste, resize and mouse events, build the message directly.
 2. Send `Msg::Tick { now_ms }` with the wall clock, so typing groups into undo steps.
 3. Call `update` and perform the effects it returns.
@@ -52,7 +56,7 @@ selects and undoes; `Ctrl-Q` twice quits and prints the text.
 
 ```toml
 [dependencies]
-caretline-next = { git = "https://github.com/brancusi/thought-control" }
+caretline = "0.1"
 ratatui = "0.30"
 crossterm = "0.29"
 ```
@@ -60,8 +64,8 @@ crossterm = "0.29"
 ```rust
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use caretline_next::view::Role;
-use caretline_next::{keymap, update, view, Effect, Key, KeyCode, Mods, Msg, State, Viewport};
+use caretline::view::Role;
+use caretline::{keymap, update, view, Effect, Key, KeyCode, Mods, Msg, State, Viewport};
 use crossterm::event::{self, Event, KeyEventKind, KeyModifiers};
 use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
@@ -176,7 +180,7 @@ several panels, keep several states. Route input to the focused one and give eac
 area.
 
 ```rust
-use caretline_next::{update, Effect, Msg, State, Viewport};
+use caretline::{update, Effect, Msg, State, Viewport};
 use ratatui::layout::{Constraint, Layout, Rect};
 
 /// One editor per panel. Each has its own text, selection, undo history and viewport.
@@ -303,13 +307,13 @@ written from Python
 
 | Code | License |
 |---|---|
-| `caretline-next`, except `src/helix/` | MIT |
-| `caretline-next/src/helix/` (vendored from Helix) | MPL-2.0, per file |
+| `caretline` (`caretline-next` here), except `src/helix/` | MIT |
+| its `src/helix/` (vendored from Helix) | MPL-2.0, per file |
 | `caretline-app` | MIT |
 
 MPL-2.0 is a **file-level** copyleft. In practice, for an embedder:
 
-- **Your own code can use any license**, open or closed. Linking caretline-next into your
+- **Your own code can use any license**, open or closed. Linking caretline into your
   program doesn't change your files' license.
 - **The vendored Helix files stay MPL-2.0.** If you distribute a program that contains them,
   you must make the source of those files available, including any changes you make to them,

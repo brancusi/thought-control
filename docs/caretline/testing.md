@@ -180,8 +180,8 @@ was appended to by several sessions has one `state` line per session; split at t
   trimmed trace and assert on its replay:
 
 ```rust
-use caretline_next::trace::replay_trace;
-use caretline_next::view;
+use caretline::trace::replay_trace;
+use caretline::view;
 
 #[test]
 fn recorded_session_replays_to_the_saved_frame() {

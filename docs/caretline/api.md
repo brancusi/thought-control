@@ -1,6 +1,6 @@
 # Rust API
 
-The `caretline-next` crate, by task. Every snippet here compiles against the crate on `main`.
+The `caretline` crate, by task. Every snippet here compiles against the crate on `main`.
 The complete program at the end is also in the repo as
 [`examples/basic.rs`](../../crates/caretline-next/examples/basic.rs):
 
@@ -10,14 +10,21 @@ cargo run -p caretline-next --example basic
 
 ## Add the dependency
 
-caretline-next isn't on crates.io yet. Use a git or path dependency:
+caretline is on [crates.io](https://crates.io/crates/caretline):
+
+```sh
+cargo add caretline
+```
 
 ```toml
 [dependencies]
-caretline-next = { git = "https://github.com/brancusi/thought-control" }
-# or, in a checkout:
-# caretline-next = { path = "../thought-control/crates/caretline-next" }
+caretline = "0.1"
 ```
+
+Its library is `caretline::`. Inside this repository the crate is still named
+`caretline-next` (and imported as `caretline_next::`) until the older engine is removed; the
+published crate is the same code. A few things on `main` are newer than the latest release;
+for those, use a git dependency (`caretline-next = { git = "https://github.com/brancusi/thought-control" }`).
 
 Its dependencies are ropey, smallvec, smartstring, the unicode crates, serde, serde_json and
 log. There's no terminal crate and no ratatui.
@@ -26,26 +33,26 @@ log. There's no terminal crate and no ratatui.
 
 | Item | Where | Use it to |
 |---|---|---|
-| `State`, `Config`, `Viewport`, `Scroll` | `caretline_next` | Hold and configure the editor: one document and one view |
-| `Document`, `View`, `ViewConfig`, `Follow`, `ExternalUndo` | `caretline_next` | A document and its views, separately: see [Several views](#several-views-of-one-document) |
-| `update_doc` | `caretline_next` | Apply a message through one of several views |
-| `ExtChange` | `caretline_next` | A change from elsewhere, for `Msg::External`: see [messages.md](messages.md#changes-from-elsewhere) |
-| `Msg`, `Dir`, `By`, `Effect` | `caretline_next` | Say what happened; get work back |
-| `update`, `replay` | `caretline_next` | Apply one message; fold many |
-| `update::selection_text` | `caretline_next::update` | Get the selected text, as a copy would |
-| `view`, `Frame` | `caretline_next` | Render to cells |
-| `view::{render, hit, Cell, Role, RowInfo, Hit, display_width}` | `caretline_next::view` | Render any view; read cells and rows; style them by meaning; hit-test a cell |
-| `OutlineLayout`, `views::hidden_lines` | `caretline_next` | The [outline layout](outline.md#the-outline-layout) and folds |
-| `keymap`, `Key`, `KeyCode`, `Mods` | `caretline_next` | Map keys to messages |
-| `parse_keys`, `script_to_msgs`, `keymap::ScriptItem` | `caretline_next` | Use the `--keys` notation |
-| `trace::{TraceLine, parse_msgs, replay_trace, replay_trace_views}` | `caretline_next::trace` | Record and replay sessions (with their views) |
-| `layout::{Layout, LineFormat, RowPos, text_format, ensure_caret_visible}` | `caretline_next::layout` | Lower-level layout queries |
-| `helix::*` | `caretline_next::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
-| `Session`, `protocol::*` | `caretline_next` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
-| `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline_next` | Block identity that survives edits: see [Block marks](#block-marks) |
-| `marks::{Clipboard, ClipMark, MarkDelta, Fixup, is_line_start}`, `update::mark_only_edit` | `caretline_next::marks`, `::update` | The register with carried marks, the per-revision deltas, a host's undoable mark edit |
-| `OutlineConfig`, `Outline`, `BlockInfo`, `Kind`, `NewBlock`, `outline::{markdown, derive, content, Hang}` | `caretline_next`, `::outline` | Outline documents: blocks, lists and tasks over the same buffer. See [outline.md](outline.md#in-rust) |
-| `outline_keymap`, `keymap_for`, `script_to_msgs_for` | `caretline_next` | The outline's keys |
+| `State`, `Config`, `Viewport`, `Scroll` | `caretline` | Hold and configure the editor: one document and one view |
+| `Document`, `View`, `ViewConfig`, `Follow`, `ExternalUndo` | `caretline` | A document and its views, separately: see [Several views](#several-views-of-one-document) |
+| `update_doc` | `caretline` | Apply a message through one of several views |
+| `ExtChange` | `caretline` | A change from elsewhere, for `Msg::External`: see [messages.md](messages.md#changes-from-elsewhere) |
+| `Msg`, `Dir`, `By`, `Effect` | `caretline` | Say what happened; get work back |
+| `update`, `replay` | `caretline` | Apply one message; fold many |
+| `update::selection_text` | `caretline::update` | Get the selected text, as a copy would |
+| `view`, `Frame` | `caretline` | Render to cells |
+| `view::{render, hit, Cell, Role, RowInfo, Hit, display_width}` | `caretline::view` | Render any view; read cells and rows; style them by meaning; hit-test a cell |
+| `OutlineLayout`, `views::hidden_lines` | `caretline` | The [outline layout](outline.md#the-outline-layout) and folds |
+| `keymap`, `Key`, `KeyCode`, `Mods` | `caretline` | Map keys to messages |
+| `parse_keys`, `script_to_msgs`, `keymap::ScriptItem` | `caretline` | Use the `--keys` notation |
+| `trace::{TraceLine, parse_msgs, replay_trace, replay_trace_views}` | `caretline::trace` | Record and replay sessions (with their views) |
+| `layout::{Layout, LineFormat, RowPos, text_format, ensure_caret_visible}` | `caretline::layout` | Lower-level layout queries |
+| `helix::*` | `caretline::helix` | Helix's `Selection`, `Range`, `Transaction`, `History`, `Rope`, … |
+| `Session`, `protocol::*` | `caretline` | A state with a rev and a trace, and the [protocol](protocol.md) in process: see [Session](#session) |
+| `Marks`, `Mark`, `MarkId`, `BlockAttrs` | `caretline` | Block identity that survives edits: see [Block marks](#block-marks) |
+| `marks::{Clipboard, ClipMark, MarkDelta, Fixup, is_line_start}`, `update::mark_only_edit` | `caretline::marks`, `::update` | The register with carried marks, the per-revision deltas, a host's undoable mark edit |
+| `OutlineConfig`, `Outline`, `BlockInfo`, `Kind`, `NewBlock`, `outline::{markdown, derive, content, Hang}` | `caretline`, `::outline` | Outline documents: blocks, lists and tasks over the same buffer. See [outline.md](outline.md#in-rust) |
+| `outline_keymap`, `keymap_for`, `script_to_msgs_for` | `caretline` | The outline's keys |
 
 ## Create a state
 
@@ -53,7 +60,7 @@ From text, with an optional path that `save` writes to, and a viewport in cells 
 is the status bar):
 
 ```rust
-use caretline_next::{State, Viewport};
+use caretline::{State, Viewport};
 
 let state = State::new("# Notes\n", Some("notes.md".into()), Viewport { width: 80, height: 24 });
 assert_eq!(state.caret(), 0);
@@ -64,7 +71,7 @@ From a file. A file that doesn't exist yet is an empty, clean document. The line
 (LF or CRLF) is detected from the text:
 
 ```rust
-use caretline_next::{State, Viewport};
+use caretline::{State, Viewport};
 
 fn open(path: &str) -> std::io::Result<State> {
     let text = match std::fs::read_to_string(path) {
@@ -79,7 +86,7 @@ fn open(path: &str) -> std::io::Result<State> {
 Change the config directly. It's plain data:
 
 ```rust
-use caretline_next::{State, Viewport};
+use caretline::{State, Viewport};
 
 let mut state = State::new("a\tb", None, Viewport { width: 80, height: 24 });
 state.doc.config.tab_width = 2;
@@ -92,7 +99,7 @@ state.view.config.status_bar = false; // every row shows text; no status bar
 `update` applies one message and returns the effects:
 
 ```rust
-use caretline_next::{update, By, Dir, Msg, State, Viewport};
+use caretline::{update, By, Dir, Msg, State, Viewport};
 
 let mut state = State::new("hello world", None, Viewport { width: 40, height: 5 });
 update(&mut state, Msg::Move { dir: Dir::Forward, by: By::Word, extend: false });
@@ -103,7 +110,7 @@ assert_eq!(state.doc.text.to_string(), "hello, world");
 `replay` folds a list and drops the effects:
 
 ```rust
-use caretline_next::{replay, Msg, State, Viewport};
+use caretline::{replay, Msg, State, Viewport};
 
 let mut state = State::new("", None, Viewport { width: 40, height: 5 });
 replay(&mut state, [Msg::InsertText { text: "ab".into() }, Msg::DeleteBackward]);
@@ -114,7 +121,7 @@ Keys go through the pure keymap. `script_to_msgs` takes the `--keys` notation
 ([messages.md](messages.md#key-scripts)) and counts `<wait:MS>` from the time you give it:
 
 ```rust
-use caretline_next::{keymap, replay, script_to_msgs, Key, KeyCode, Mods, State, Viewport};
+use caretline::{keymap, replay, script_to_msgs, Key, KeyCode, Mods, State, Viewport};
 
 let mut state = State::new("hello", None, Viewport { width: 40, height: 5 });
 // One key:
@@ -136,8 +143,8 @@ Positions are **char indices** into the rope (Unicode scalar values, not bytes).
 position `update` produces is on a grapheme boundary.
 
 ```rust
-use caretline_next::update::selection_text;
-use caretline_next::{replay, script_to_msgs, State, Viewport};
+use caretline::update::selection_text;
+use caretline::{replay, script_to_msgs, State, Viewport};
 
 let mut state = State::new("one\ntwo three", None, Viewport { width: 40, height: 5 });
 replay(&mut state, script_to_msgs("<down><s-a-right>", 0).unwrap());
@@ -166,8 +173,8 @@ Replace `state.view.selection` with a Helix `Selection`, then call `sanitize` to
 grapheme boundaries and the text's length:
 
 ```rust
-use caretline_next::helix::{Range, Selection, SmallVec};
-use caretline_next::{update, Msg, State, Viewport};
+use caretline::helix::{Range, Selection, SmallVec};
+use caretline::{update, Msg, State, Viewport};
 
 let mut state = State::new("a-b-c", None, Viewport { width: 40, height: 5 });
 // Two carets, after "a" and after "b". The second is primary.
@@ -186,8 +193,8 @@ screen. Each cell has a grapheme `symbol` and a `role`. A wide grapheme takes tw
 second has an empty symbol.
 
 ```rust
-use caretline_next::view::Role;
-use caretline_next::{view, State, Viewport};
+use caretline::view::Role;
+use caretline::{view, State, Viewport};
 
 let state = State::new("hi 漢字", None, Viewport { width: 12, height: 2 });
 let frame = view(&state);
@@ -221,7 +228,7 @@ row)` says what a cell means for a click.
 | `Quit` | Close the editor | nothing |
 
 ```rust
-use caretline_next::{update, Effect, Msg, State};
+use caretline::{update, Effect, Msg, State};
 
 fn dispatch(state: &mut State, msg: Msg) -> bool {
     let mut queue = vec![msg];
@@ -257,12 +264,12 @@ with `update_doc`. An edit through one view maps every other view's selection; u
 document's; a read-only view is refused edits.
 
 ```rust
-use caretline_next::view::render;
-use caretline_next::{update_doc, Effect, ExtChange, Msg, State, View, Viewport};
+use caretline::view::render;
+use caretline::{update_doc, Effect, ExtChange, Msg, State, View, Viewport};
 
 let mut doc = State::new("one\ntwo\n", None, Viewport { width: 40, height: 5 }).doc;
 let mut views = [View::new(Viewport { width: 40, height: 5 }), View::new(Viewport { width: 20, height: 3 }).read_only(true)];
-views[1].selection = caretline_next::helix::Selection::point(4);    // on "two"
+views[1].selection = caretline::helix::Selection::point(4);    // on "two"
 update_doc(&mut doc, &mut views, 0, Msg::InsertText { text: "zero\n".into() });
 assert_eq!(views[1].caret(), 9);                                    // still on "two"
 assert_eq!(update_doc(&mut doc, &mut views, 1, Msg::DeleteBackward), vec![Effect::Refused]);
@@ -281,8 +288,8 @@ document.
 ## Serialize and replay
 
 ```rust
-use caretline_next::trace::{parse_msgs, replay_trace, TraceLine};
-use caretline_next::{update, State, Viewport};
+use caretline::trace::{parse_msgs, replay_trace, TraceLine};
+use caretline::{update, State, Viewport};
 
 let start = State::new("", None, Viewport { width: 40, height: 5 });
 
@@ -313,13 +320,13 @@ Deserializing goes through `state::StateInput`, where every field is optional, s
 state works:
 
 ```rust
-use caretline_next::State;
+use caretline::State;
 
 let s = State::from_json(r#"{"text":"hello\n","viewport":{"width":40,"height":10}}"#).unwrap();
 assert!(!s.doc.dirty && s.doc.history.len() == 1); // clean, with a fresh history
 ```
 
-Undo grouping constants live in `caretline_next::state`: `RUN_GAP_MS` (1500), `RUN_MAX_CHARS`
+Undo grouping constants live in `caretline::state`: `RUN_GAP_MS` (1500), `RUN_MAX_CHARS`
 (256) and `RUN_WORD_BREAK_CHARS` (128). See
 [architecture.md](architecture.md#undo-grouping-worked-through).
 
@@ -331,7 +338,7 @@ undo history, when you load a document; use `update::mark_only_edit` for a chang
 that should be one undo step.
 
 ```rust
-use caretline_next::{update, BlockAttrs, Msg, State, Viewport};
+use caretline::{update, BlockAttrs, Msg, State, Viewport};
 
 let mut s = State::new("Groceries\nmilk\n", None, Viewport { width: 40, height: 5 });
 let list = s.doc.marks.mint(0);                        // MarkId(0) on line 0
@@ -340,7 +347,7 @@ s.doc.marks.set_attrs(milk, BlockAttrs { gap: Some(false) });
 
 update(&mut s, Msg::InsertText { text: "Weekly ".into() });  // at the start of line 0
 assert_eq!(s.doc.marks.pos(list), Some(0));                      // still line 0
-update(&mut s, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
+update(&mut s, Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::DocEnd, extend: false });
 update(&mut s, Msg::Undo);                                   // the marks come back exactly
 assert_eq!(s.doc.marks.pos(milk), Some(s.doc.text.line_to_char(1)));
 ```
@@ -361,8 +368,8 @@ turns an existing state into one. `state.blocks()` gives the derived blocks, eac
 mark id. `save` writes Markdown back.
 
 ```rust
-use caretline_next::outline::markdown;
-use caretline_next::{update, By, Dir, Msg, OutlineConfig, Viewport};
+use caretline::outline::markdown;
+use caretline::{update, By, Dir, Msg, OutlineConfig, Viewport};
 
 let mut s = markdown::load("- [ ] Pay rent\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
 update(&mut s, Msg::Move { dir: Dir::Forward, by: By::LineEnd, extend: false });
@@ -404,7 +411,7 @@ face of the [state protocol](protocol.md).
 subscriber receives for a change.
 
 ```rust
-use caretline_next::{Session, State, Viewport};
+use caretline::{Session, State, Viewport};
 
 let mut s = Session::new(State::new("", None, Viewport { width: 30, height: 4 }));
 let (msgs, effects) = s.keys("hi<c-s>").unwrap();
@@ -422,9 +429,9 @@ state, drives it with messages and keys, handles effects, renders, round-trips t
 through JSON and replays the trace.
 
 ```rust
-use caretline_next::trace::{replay_trace, TraceLine};
-use caretline_next::update::selection_text;
-use caretline_next::{script_to_msgs, update, view, By, Dir, Effect, Msg, State, Viewport};
+use caretline::trace::{replay_trace, TraceLine};
+use caretline::update::selection_text;
+use caretline::{script_to_msgs, update, view, By, Dir, Effect, Msg, State, Viewport};
 
 fn main() {
     // 1. A state: the text, an optional file path (where `save` writes) and a viewport.

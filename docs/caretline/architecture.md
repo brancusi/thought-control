@@ -15,7 +15,7 @@ pieces, why they're pure, and how that makes every session reproducible.
 | Keymap | `keymap(&Key) -> Option<Msg>` | A key to a message. Pure, and separate from `update` |
 
 ```rust
-use caretline_next::{keymap, update, view, Key, KeyCode, State, Viewport};
+use caretline::{keymap, update, view, Key, KeyCode, State, Viewport};
 
 let mut state = State::new("hi", None, Viewport { width: 20, height: 3 });
 let msg = keymap(&Key::plain(KeyCode::End)).unwrap();     // Move { forward, line_end }
@@ -75,11 +75,11 @@ selection and goal column, scroll, viewport, folds, status line, follow policy, 
 whether it may edit.
 
 ```rust
-use caretline_next::{update_doc, Msg, State, View, Viewport};
+use caretline::{update_doc, Msg, State, View, Viewport};
 
 let mut doc = State::new("hello world", None, Viewport { width: 40, height: 5 }).doc;
 let mut views = [View::new(Viewport { width: 40, height: 5 }), View::new(Viewport { width: 20, height: 3 })];
-views[1].selection = caretline_next::helix::Selection::point(6); // before "world"
+views[1].selection = caretline::helix::Selection::point(6); // before "world"
 update_doc(&mut doc, &mut views, 0, Msg::InsertText { text: "say ".into() });
 assert_eq!(doc.text.to_string(), "say hello world");
 assert_eq!(views[1].caret(), 10); // still before "world"
@@ -212,7 +212,7 @@ before a word, instead of all at once. The cap also keeps every edit's cost boun
 a revision recomposes its changes, which costs time linear in the run's length.
 
 ```rust
-use caretline_next::{update, Msg, State, Viewport};
+use caretline::{update, Msg, State, Viewport};
 
 let mut s = State::new("", None, Viewport { width: 40, height: 3 });
 for (now, text) in [(0, "one"), (500, " two"), (3000, " three")] {
@@ -242,7 +242,7 @@ revision makes the document clean again.
 A trace is JSON Lines. The first line is `{"state": …}`, and every later line is
 `{"msg": …}`. The interactive runtime records every message it applies, including the
 clock ticks and the save results its effects produced. So
-`caretline_next::trace::replay_trace` reproduces the session exactly:
+`caretline::trace::replay_trace` reproduces the session exactly:
 
 ```text
 {"state": {"text": "Selections have an anchor …", "selection": …, "history": …}}
