@@ -38,7 +38,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 | State protocol (`serve`, `--listen`, `send`) | Yes | Drive a headless engine or a live editor over JSON lines. See [protocol.md](protocol.md) |
 | Syntax highlighting, search, multiple buffers | Not yet | |
 | Keys that add cursors | Not yet | |
-| Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and multiple views not yet |
+| Markdown structure (lists, tasks, blocks) | Yes, in outline documents | Block identity that survives edits, list and task rules, Markdown in and out. See [outline.md](outline.md). Folds and several views per document included |
 
 ## The layers
 
@@ -67,13 +67,14 @@ This repository has two editor engines. They are not the same thing.
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
 | [`caretline`](../../crates/caretline) | The older engine: a block editor for Markdown (paragraphs, list items, tasks, folds, several views on one document) | thought-central's TUI (`thc-tui`) |
 
-caretline-next is meant to replace the older engine once the TUI adopts it. The TUI still
-runs on the older `caretline` crate by default. With `THC_EDITOR=next` it opens each page or
-journal day as one caretline-next [outline document](outline.md) instead, behind the same
-editor API (`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each block's
-mark, changes from the vault arrive as `external` changes, and saving makes the same block
-operations as before. The binary named
-`caretline` comes from `caretline-app`, which uses caretline-next, not from the crate named
+caretline-next is meant to replace the older engine once the TUI adopts it. caretline-next
+now has a block model ([outline documents](outline.md)), folds and multiple views per
+document. The TUI still runs on the older `caretline` crate by default. With
+`THC_EDITOR=next` it opens each page or journal day as one caretline-next outline document
+instead, behind the same editor API (`crates/thc-tui/src/editor`): thc's per-note save state
+is keyed by each block's mark, changes from the vault arrive as `external` changes, and saving
+makes the same block operations as before. The binary named `caretline` comes from
+`caretline-app`, which uses caretline-next, not from the crate named
 `caretline`.
 
 ## Where to go next
@@ -88,6 +89,7 @@ operations as before. The binary named
 | Drive it over JSON lines | [protocol.md](protocol.md) |
 | Put it inside your own app | [embedding.md](embedding.md) |
 | Write or debug a test | [testing.md](testing.md) |
+| Know how fast it is, and its limits | [performance.md](performance.md) |
 
 ## License
 

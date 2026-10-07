@@ -116,11 +116,12 @@ impl Frame {
     /// [`Frame::put`] for a document char, clipped at `limit`.
     #[allow(clippy::too_many_arguments)]
     fn put_at(&mut self, x: usize, y: usize, symbol: &str, w: usize, role: Role, char_idx: Option<u32>, limit: usize) {
+        // The row stride is the frame's width; `limit` only clips where this grapheme may go.
+        let row = y * self.width as usize;
         let width = (self.width as usize).min(limit);
         if y >= self.height as usize || x >= width {
             return;
         }
-        let row = y * width;
         if w == 0 {
             return;
         }
