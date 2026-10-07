@@ -1237,6 +1237,11 @@ impl App {
         }
         self.restore_cursor_from(was_from);
         self.sync_doc();
+        // The sidebar's panels: loaded, live (sidebar.md §4.3, §11). Not from inside one.
+        if self.in_panel.is_none() {
+            self.ensure_panels();
+            self.patch_panels();
+        }
         Ok(())
     }
 

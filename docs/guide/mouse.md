@@ -11,12 +11,26 @@ so you can mix them freely.
 | **Drag** | Select across lines and notes. `⌃C` copies the selection as Markdown |
 | **Double-click** | Select a word |
 | **Triple-click** | Select the whole note (a paragraph or a list item) |
-| **⇧-click** | Extend the selection to here |
+| **⇧-click** | Extend the selection to here. On a link's title: open that page beside, in the sidebar |
 | **Click a `[ ]`** | Mark it done. Click again to reopen it. (A click never turns a task back into text; `⌃T` does that) |
 | **Click a date** on the right (`due fri`) | Change it. Type a new date, then Enter |
 | **Click a link** | Goes there, saving first. **Esc** comes back. To edit the link instead, click its `[[` or `]]`, **⌥-click** the title, or arrow into it (then `⌃O` goes there). Hovering a link underlines it |
 | **Click a day** in the strip under the date, or in the Focus month | Go to that day |
 | **Click the `≠` mark** | Compare the two versions of a note |
+
+## The sidebar
+
+| Do | Gets you |
+|---|---|
+| **Click** in a panel's text | The keyboard goes to that panel, the cursor where you clicked |
+| **Click a link** in a panel | Follows it in the main view (the panel stays) |
+| **Click** a panel's `▾` or title | Fold or unfold it. **Double-click** the title: open it in the main view |
+| **Click `↗`** | Open it in the main view, where its cursor is |
+| **Click `×`**, or middle-click the header | Close it (`⌥⇧T` reopens it) |
+| **Click `pinned`** | Unpin it |
+| **Click `↓ 9 more`** | Focus that panel (it gets the room) |
+| **Wheel** over a panel | Scroll it, without moving its cursor |
+| **Click** the main view | The keyboard goes back there |
 
 ## Scrolling
 

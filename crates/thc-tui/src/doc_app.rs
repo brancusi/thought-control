@@ -291,8 +291,6 @@ impl App {
             self.patch_doc();
             self.load_footer();
             self.build_rail();
-            self.ensure_panels();
-            self.patch_panels();
             return;
         }
         // Arriving from a view (no document open) or leaving to one: the rail's order is
@@ -320,8 +318,6 @@ impl App {
             self.doc_parked = true;
         }
         self.build_rail();
-        self.ensure_panels();
-        self.patch_panels();
     }
 
     /// Whether the rail shows beside the open document (navigation.md §3): 120 columns or more,

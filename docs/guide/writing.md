@@ -54,6 +54,37 @@ it.
 | `⌃Q` | Quit (everything is already saved) |
 | `F1` | All keys |
 
+## Pages beside the page
+
+`⇧`-click a `[[link]]` (or put the cursor in it and press `⌥O`) and the page opens in the
+**sidebar**, on the right, instead of replacing what you're writing. Open more and they stack,
+newest on top; opening one that's already there moves it back to the top. A plain click still
+follows the link in the main view, from a panel too.
+
+A panel is an editor, not a preview: the same page open in the main view and in a panel is one
+page, so typing in either shows in both at once, and `⌃Z` undoes it from either. Changes from an
+agent or another device show in panels as they happen.
+
+| Key | Does |
+|---|---|
+| `⌥O` | Open the link under the cursor (or the selected row's page or day) beside |
+| `⌥S` | Move the keyboard to the sidebar and back |
+| `Esc` | In the sidebar: back to the main view (the panel stays) |
+| `⌥J` / `⌥K` | Next / previous panel |
+| `⌥C` | Fold or unfold the panel |
+| `⌥W` | Close the panel (`⌥⇧T` reopens it, cursor and all) |
+| `⌥M` | Open the panel's page in the main view, where its cursor is |
+| `⌥P` | Pin the panel: pinned panels stay on top and aren't closed to make room |
+| `⌥⇧K` / `⌥⇧J` | Move the panel up / down |
+| `⌥\` | Hide or show the sidebar |
+| `⌥=` / `⌥-` / `⌥0` | Wider / narrower / automatic width |
+| `Space w` | The same, from the leader: `w w` focus, `w o` aside, `w x` close, `w X` close all, … |
+
+The sidebar is a column from 120 columns wide (a third of the screen, 40 to 64 columns); the
+detail pane and the Journal's calendar give way to it while it shows. It holds up to 8 panels.
+Each vault keeps its own stack, and it's there again when you come back. `⌥` keys need
+"Option as Meta" in Terminal.app and iTerm2.
+
 ## Saving, undo and other devices
 
 - **Saving is automatic:** when you leave a note, after a short pause, and when you leave or
