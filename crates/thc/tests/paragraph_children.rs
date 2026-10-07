@@ -38,7 +38,7 @@ impl V {
         v["items"][0].clone()
     }
 
-    fn snap(&self, _tag: &str, keys: &str) -> String {
+    fn snap(&self, keys: &str) -> String {
         let o = self
             .cmd()
             .env("THC_TUI_SNAPSHOT", "100x24")
@@ -63,31 +63,27 @@ fn column(frame: &str, text: &str) -> usize {
     line[..line.find(text).unwrap()].chars().count()
 }
 
-fn tab_under_a_paragraph_saves_a_child_in(engine: &str) {
-    let v = V::new(engine);
-    v.snap(engine, "Para line<cr>first subtask<tab><esc>");
-    let para = v.node("Para line");
-    let child = v.node("first subtask");
-    assert_eq!(child["parent"], para["id"], "[{engine}] the line is the paragraph's child: {child}");
-    assert_eq!(para["text"], "Para line", "[{engine}] the paragraph keeps only its own line");
-    // Reopened: still nested, drawn one level in.
-    let f = v.snap(engine, "");
-    assert_eq!(column(&f, "first subtask"), column(&f, "Para line") + 4, "[{engine}] {f}");
-    // Shift-Tab takes it back to the top level.
-    v.snap(engine, "<up><s-tab><esc>");
-    let child = v.node("first subtask");
-    assert_eq!(child["parent"], para["parent"], "[{engine}] back beside the paragraph: {child}");
-}
-
 #[test]
 fn tab_under_a_paragraph_saves_a_child() {
-    tab_under_a_paragraph_saves_a_child_in("tab");
+    let v = V::new("tab");
+    v.snap("Para line<cr>first subtask<tab><esc>");
+    let para = v.node("Para line");
+    let child = v.node("first subtask");
+    assert_eq!(child["parent"], para["id"], "the line is the paragraph's child: {child}");
+    assert_eq!(para["text"], "Para line", "the paragraph keeps only its own line");
+    // Reopened: still nested, drawn one level in.
+    let f = v.snap("");
+    assert_eq!(column(&f, "first subtask"), column(&f, "Para line") + 4, "{f}");
+    // Shift-Tab takes it back to the top level.
+    v.snap("<up><s-tab><esc>");
+    let child = v.node("first subtask");
+    assert_eq!(child["parent"], para["parent"], "back beside the paragraph: {child}");
 }
 
 #[test]
 fn the_markdown_export_indents_a_paragraphs_children() {
     let v = V::new("export");
-    v.snap("next", "Para line<cr>first subtask<tab><cr><cr>[ ] a task under it<esc>");
+    v.snap("Para line<cr>first subtask<tab><cr><cr>[ ] a task under it<esc>");
     v.cli(&["export"]);
     let dir = v.root.join("vault/export");
     let md = walk(&dir).into_iter().map(|p| std::fs::read_to_string(p).unwrap()).find(|s| s.contains("Para line")).expect("the day exported");

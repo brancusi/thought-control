@@ -1,32 +1,33 @@
-//! The engine behind the seam: caretline.
+//! The engine: caretline.
 //!
 //! A page or a day is one caretline outline document: one text line per row, each block
-//! bounded by a mark (docs/caretline/structure.md). thc's [`Line`]s are a mirror of its blocks,
-//! one per block in order, each tied to its block by `Line::mark`. A line keeps thc's save
-//! state (node id, base, what was saved, the meta); its shape and text are the block's,
-//! re-read after every engine step (`sync`).
+//! bounded by a mark (docs/caretline/structure.md). The engine owns the text, the shape of
+//! every block, the selection, folds, undo and the rules that edit them. thc keeps one thing
+//! beside it: a [`Line`] per block, tied to the block by `Line::mark`, holding what the
+//! engine can't know: the vault node id, the save state (base revision, what was saved, where)
+//! and the meta. A line's shape and text are a read-only copy of its block's, re-read after
+//! every engine step (`sync`), so the save diff and drawing read plain strings
+//! (docs/caretline/embedding.md, "What thc keeps beside the engine").
 //!
-//! The host (saving, refreshes from the vault, recovery) changes the mirror as it changes the
-//! lines. Before the engine's next step those changes go in as one
-//! `Msg::External` (`flush`): changes from elsewhere stay out of the undo history, and the
-//! history is transformed over them, so a later undo takes back only local edits. Lines the
-//! host puts in after `begin_undo_step` go in as one undoable `Msg::InsertBlocks` instead.
+//! The host (saving, refreshes from the vault, recovery) changes the lines; those changes go
+//! into the engine as one `Msg::External` before anything reads the engine again (`flush`):
+//! changes from elsewhere stay out of the undo history, and the history is transformed over
+//! them, so a later undo takes back only local edits. Lines the host puts in inside an
+//! undo step (`Doc::undo_step`) go in as one undoable `Msg::InsertBlocks` instead.
 //!
-//! The caret is the host's `View` (a line index and a byte), mirrored both ways: pushed into
-//! the engine's selection when the host moves it, pulled back after each step.
-//!
-//! Node ids for new marks come from an [`IdPool`]. Saving stays thc's: `Doc::plan_save` reads
-//! the mirror and makes the same `BlockOp`s.
+//! Node ids for new blocks come from an [`IdPool`]. Saving stays thc's: `Doc::plan_save`
+//! reads the lines and makes `BlockOp`s.
 
-use super::doc::{Doc, HostView, Line, Pos, copy_saved_state, new_id};
+use super::doc::{Doc, Line, copy_saved_state, new_id};
+use super::BlockPos;
 use super::tasks;
-use super::{EditCmd, Motion, Outcome};
+use super::Outcome;
 use caretline as cn;
 use cn::helix::Selection;
 use cn::layout::{Layout, RowPos};
 use cn::marks::Mark;
 use cn::outline::{BlockInfo, Hang, NewBlock, OutlineConfig};
-use cn::{MarkAttrs, By, Dir, Effect, ExtChange, MarkId, Msg, OutlineLayout, Viewport};
+use cn::{Category, Effect, ExtChange, MarkAttrs, MarkId, Msg, OutlineLayout, Viewport};
 use std::collections::{HashMap, HashSet};
 use thc_core::outline::Kind;
 
@@ -55,8 +56,8 @@ impl IdPool {
     }
 }
 
-/// An open page or day in the engine, with thc's lines mirrored.
-pub(crate) struct Next {
+/// An open page or day in the engine, with thc's lines beside its blocks.
+pub(crate) struct Engine {
     st: cn::State,
     /// One line per block, in order (see the module docs).
     pub(super) lines: Vec<Line>,
@@ -65,14 +66,10 @@ pub(crate) struct Next {
     /// Lines whose blocks went, by mark: an undo (or a paste of what was cut) can bring the
     /// mark back, and the line with it.
     graveyard: HashMap<u64, Line>,
-    /// The host changed the mirror since the engine last saw it.
+    /// The host changed the lines since the engine last saw them.
     dirty: bool,
-    /// Lines the host puts in next are one undo step.
+    /// The host's pending changes are one undo step (`Doc::undo_step`).
     undoable: bool,
-    /// The host's caret, anchor and folds as last given to (or taken from) the engine.
-    synced: Option<(Pos, Option<Pos>, Vec<String>)>,
-    /// The host changed the mirror, so the host's caret is the one to keep.
-    force_push: bool,
     host_rev: u64,
     /// When the last unsaved edit was (ms, the document's clock).
     pub(super) changed_at: Option<u64>,
@@ -99,30 +96,9 @@ fn thc_kind(b: &BlockInfo) -> Kind {
     }
 }
 
-fn status_char(_: &OutlineConfig, status: Option<&str>) -> char {
-    tasks::status_char(status)
-}
-
-/// `12. ` or `12) ` at the start: a numbered item keeps its number as text.
-fn numbered(text: &str) -> bool {
-    let n = text.chars().take_while(|c| c.is_ascii_digit()).count();
-    n > 0 && n <= 9 && (text[n..].starts_with(". ") || text[n..].starts_with(") "))
-}
-
-/// A line as buffer text: indentation and list marker, then its text (soft breaks as lines).
-fn block_text(l: &Line, cfg: &OutlineConfig) -> String {
-    let indent = " ".repeat(cfg.indent as usize * l.depth);
-    let marker = match l.kind() {
-        Kind::Task => format!("- [{}] ", status_char(cfg, l.status.as_deref())),
-        Kind::Bullet if numbered(&l.text) => String::new(),
-        Kind::Bullet => "- ".to_string(),
-        Kind::Para => String::new(),
-    };
-    format!("{indent}{marker}{}", l.text)
-}
-
 /// The chars of a block's first line before thc's text: indentation and a list or task marker.
-/// A number, heading or quote marker is thc's text.
+/// A number, heading or quote marker is thc's text (as it is the content of the engine's
+/// `NewBlock` and `ExtChange::SetShape`).
 fn list_len(b: &BlockInfo) -> usize {
     match (b.kind, b.hang) {
         (cn::Kind::Bullet, Hang::Bullet) => b.prefix_len,
@@ -131,46 +107,24 @@ fn list_len(b: &BlockInfo) -> usize {
 }
 
 /// A line as a block to insert.
-fn new_block(l: &Line, mark: Option<MarkId>, cfg: &OutlineConfig) -> NewBlock {
+fn new_block(l: &Line, mark: Option<MarkId>) -> NewBlock {
     let (kind, tag) = match l.kind() {
-        Kind::Task => (cn::Kind::Bullet, Some(status_char(cfg, l.status.as_deref()))),
+        Kind::Task => (cn::Kind::Bullet, Some(tasks::status_char(l.status.as_deref()))),
         Kind::Bullet => (cn::Kind::Bullet, None),
         Kind::Para => (cn::Kind::Para, None),
     };
     NewBlock { depth: l.depth as u16, kind, tag, text: l.text.clone(), gap: l.gap, mark }
 }
 
-/// The blank row before a line by default (the engine's rule, over thc's lines): a paragraph
-/// keeps one on either side (a `##` or `###` heading only above it), list items stay tight.
-fn default_gap(a: Option<&Line>, b: &Line) -> bool {
-    let Some(a) = a else { return false };
-    let para = |l: &Line| l.kind() == Kind::Para;
-    let heading = |l: &Line| {
-        let n = l.text.chars().take_while(|&c| c == '#').count();
-        ((1..=3).contains(&n) && l.text[n..].starts_with(' ')).then_some(n)
-    };
-    let after = para(a) && !matches!(heading(a), Some(2 | 3));
-    let before = para(b) && heading(b).is_some();
-    after || before || (para(b) && !para(a))
+/// A line as buffer text, as the engine writes a block: indentation, marker, text.
+fn block_text(l: &Line) -> String {
+    new_block(l, None).to_lines(cfg())
 }
 
-/// Messages that leave this text: kept once, for `Outcome::Nothing`.
-fn intern(s: String) -> &'static str {
-    static SEEN: std::sync::OnceLock<std::sync::Mutex<HashSet<&'static str>>> = std::sync::OnceLock::new();
-    let mut seen = SEEN.get_or_init(Default::default).lock().unwrap_or_else(|e| e.into_inner());
-    if let Some(s) = seen.get(s.as_str()) {
-        return s;
-    }
-    let s: &'static str = Box::leak(s.into_boxed_str());
-    seen.insert(s);
-    s
-}
-
-impl Next {
+impl Engine {
     /// A document from thc's lines (their save state kept): the text, a mark per line, then
     /// the engine's own reading of it.
-    pub(super) fn load(mut lines: Vec<Line>) -> Next {
-        let cfg = cfg();
+    pub(super) fn load(mut lines: Vec<Line>) -> Engine {
         let mut text = String::new();
         let mut starts = Vec::with_capacity(lines.len());
         let mut chars = 0usize;
@@ -180,14 +134,14 @@ impl Next {
                 chars += 1;
             }
             starts.push(chars);
-            let t = block_text(l, &cfg);
+            let t = block_text(l);
             chars += t.chars().count();
             text.push_str(&t);
         }
         let mut st = cn::State::new(&text, None, Viewport { width: 4000, height: 50 });
         st.view.config.status_bar = false;
         st.view.layout = Some(OutlineLayout::default());
-        st.doc.outline = Some(cfg.clone());
+        st.doc.outline = Some(cfg().clone());
         st.doc.set_host(tasks::host());
         let marks = lines.iter_mut().zip(starts).enumerate().map(|(i, (l, pos))| {
             l.mark = Some(i as u64);
@@ -196,15 +150,13 @@ impl Next {
         let _ = st.doc.marks.insert_all(marks.collect());
         st.outline_changed();
         let source: HashMap<u64, Line> = lines.iter().filter_map(|l| Some((l.mark?, l.clone()))).collect();
-        let mut n = Next {
+        let mut n = Engine {
             st,
             lines,
             deleted: Vec::new(),
             graveyard: HashMap::new(),
             dirty: false,
             undoable: false,
-            synced: None,
-            force_push: false,
             host_rev: 0,
             changed_at: None,
             now_ms: 0,
@@ -237,8 +189,8 @@ impl Next {
         self.st.doc.rev.wrapping_add(self.host_rev)
     }
 
-    /// The mirror, for the host to change; the engine takes the changes in before its next
-    /// step.
+    /// The lines, for the host to change; the engine takes the changes in at `settle` (or the
+    /// end of the undo step).
     pub(super) fn lines_mut(&mut self) -> &mut Vec<Line> {
         self.dirty = true;
         self.host_rev = self.host_rev.wrapping_add(1);
@@ -258,55 +210,7 @@ impl Next {
         self.pool.len()
     }
 
-    #[allow(dead_code)]
-    /// The document as data: the engine's state (text, marks, history), thc's lines and what's
-    /// pending. The host's changes are taken in first.
-    pub(super) fn to_value(&mut self) -> serde_json::Value {
-        self.flush();
-        let mut graveyard: Vec<(&u64, &Line)> = self.graveyard.iter().collect();
-        graveyard.sort_by_key(|(m, _)| **m);
-        serde_json::json!({
-            "state": serde_json::from_str::<serde_json::Value>(&self.st.to_json()).expect("the engine's state is JSON"),
-            "lines": self.lines,
-            "deleted": self.deleted,
-            "graveyard": graveyard,
-            "pool": self.pool.0,
-            "changed_at": self.changed_at,
-            "now_ms": self.now_ms,
-        })
-    }
-
-    #[allow(dead_code)]
-    pub(super) fn from_value(v: serde_json::Value) -> Result<Next, String> {
-        let field = |k: &str| v.get(k).cloned().ok_or_else(|| format!("no {k}"));
-        let mut st = cn::State::from_json(&field("state")?.to_string()).map_err(|e| e.to_string())?;
-        st.doc.set_host(tasks::host());
-        let lines: Vec<Line> = serde_json::from_value(field("lines")?).map_err(|e| e.to_string())?;
-        let deleted: Vec<String> = serde_json::from_value(field("deleted")?).map_err(|e| e.to_string())?;
-        let graveyard: Vec<(u64, Line)> = serde_json::from_value(field("graveyard")?).map_err(|e| e.to_string())?;
-        let pool: Vec<String> = serde_json::from_value(field("pool")?).map_err(|e| e.to_string())?;
-        let mut n = Next {
-            st,
-            lines,
-            deleted,
-            graveyard: graveyard.into_iter().collect(),
-            dirty: false,
-            undoable: false,
-            synced: None,
-            force_push: true,
-            host_rev: 0,
-            changed_at: serde_json::from_value(field("changed_at")?).map_err(|e| e.to_string())?,
-            now_ms: serde_json::from_value(field("now_ms")?).map_err(|e| e.to_string())?,
-            pool: IdPool(pool),
-            row_layouts: Vec::new(),
-        };
-        // The engine's view is laid out by the host each step; the mirror is the engine's.
-        n.st.doc.touch_all();
-        n.sync(&HashMap::new());
-        Ok(n)
-    }
-
-    /// The mirror, for fields the engine never reads (save state, meta): nothing to take in.
+    /// The lines, for fields the engine never reads (save state, meta): nothing to take in.
     pub(super) fn lines_state_mut(&mut self) -> &mut Vec<Line> {
         self.host_rev = self.host_rev.wrapping_add(1);
         &mut self.lines
@@ -333,37 +237,78 @@ impl Next {
         self.changed_at = None;
     }
 
-    pub(super) fn take_host_changes(&mut self) {
-        self.flush();
-    }
-
     pub(super) fn undo_depth(&self) -> usize {
         self.st.doc.history.current_revision()
     }
 
+    /// Whether a blank row comes before line `i`: the engine's block, its gap as set or its
+    /// kind's default.
     pub(super) fn effective_gap(&self, i: usize) -> bool {
-        let l = &self.lines[i];
-        match l.gap {
-            Some(g) if i > 0 => g,
-            _ => default_gap(i.checked_sub(1).map(|p| &self.lines[p]), l),
+        debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
+        let o = self.st.doc.blocks().expect("an outline document");
+        o.blocks.get(i).is_some_and(|b| b.gap)
+    }
+
+    /// Anything is folded (in the engine's view).
+    pub(super) fn has_folds(&self) -> bool {
+        !self.st.view.folds.is_empty()
+    }
+
+    /// Line `i`'s children are folded away (in the engine's view).
+    pub(super) fn is_folded(&self, i: usize) -> bool {
+        self.lines.get(i).and_then(|l| l.mark).is_some_and(|m| self.st.view.folds.contains(&MarkId(m)))
+    }
+
+    /// Fold line `i`'s children away. Test-only (no key folds yet).
+    #[cfg(test)]
+    pub(super) fn fold(&mut self, i: usize) {
+        self.flush();
+        if let Some(m) = self.lines[i].mark {
+            self.st.view.folds.insert(MarkId(m));
         }
     }
 
-    #[cfg(test)]
-    pub(super) fn default_gap(&self, i: usize) -> bool {
-        default_gap(i.checked_sub(1).map(|p| &self.lines[p]), &self.lines[i])
-    }
-
-    /// The lines the host puts in next are one undo step.
+    /// The host's pending changes become one undo step, taken in when it ends.
     pub(super) fn begin_undo_step(&mut self) {
         self.flush();
         self.undoable = true;
     }
 
-    /// One message through the main view: the host's changes and caret in first, then the
-    /// mirror and the caret back out.
-    pub(super) fn run(&mut self, view: &mut HostView, last_saved: &HashMap<String, Line>, msg: Msg) -> Vec<Effect> {
-        self.prepare(view);
+    /// The undo step's changes into the engine, as one step.
+    pub(super) fn end_undo_step(&mut self) {
+        self.flush();
+        self.undoable = false;
+    }
+
+    /// The host's changes into the engine, unless an undo step is still collecting them.
+    pub(super) fn settle(&mut self) {
+        if !self.undoable {
+            self.flush();
+        }
+    }
+
+    /// The selection, as (anchor, caret); the anchor is None when nothing is selected.
+    pub(super) fn selection(&self) -> (Option<BlockPos>, BlockPos) {
+        debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
+        let r = self.st.view.selection.primary();
+        let head = self.pos_of(r.head);
+        ((r.anchor != r.head).then(|| self.pos_of(r.anchor)), head)
+    }
+
+    /// Select from `anchor` (None: nothing selected) to the caret at `head`; up and down forget
+    /// their column.
+    pub(super) fn select(&mut self, anchor: Option<BlockPos>, head: BlockPos) {
+        self.flush();
+        let h = self.char_of(head);
+        let a = anchor.map_or(h, |a| self.char_of(a));
+        self.st.view.selection = Selection::single(a, h);
+        // Out of markers and atomic blocks, as every engine step leaves it.
+        self.st.outline_changed();
+    }
+
+    /// One message through the engine: the host's changes in first, then the lines re-read.
+    pub(super) fn run(&mut self, last_saved: &HashMap<String, Line>, msg: Msg) -> Vec<Effect> {
+        self.flush();
         cn::update(&mut self.st, Msg::Tick { now_ms: self.now_ms });
         let rev = self.st.doc.rev;
         let fx = cn::update(&mut self.st, msg);
@@ -371,43 +316,12 @@ impl Next {
             self.changed_at = Some(self.now_ms);
         }
         self.sync(last_saved);
-        self.pull_view(view);
         fx
-    }
-
-    /// The host's changes and caret into the engine.
-    fn prepare(&mut self, view: &HostView) {
-        self.flush();
-        let mut folds: Vec<String> = view.folds.iter().cloned().collect();
-        folds.sort();
-        let now = (view.caret, view.anchor, folds);
-        if !self.force_push && self.synced.as_ref() == Some(&now) {
-            return;
-        }
-        self.force_push = false;
-        let head = self.char_of(view.caret);
-        let anchor = view.anchor.map_or(head, |a| self.char_of(a));
-        self.st.view.selection = Selection::single(anchor, head);
-        self.st.view.folds = self.lines.iter().filter(|l| now.2.contains(&l.id)).filter_map(|l| l.mark.map(MarkId)).collect();
-        // Out of markers and folds, as every engine step leaves it.
-        self.st.outline_changed();
-        self.synced = Some(now);
-    }
-
-    /// The engine's caret into the host's view.
-    fn pull_view(&mut self, view: &mut HostView) {
-        let r = self.st.view.selection.primary();
-        view.caret = self.pos_of(r.head);
-        view.anchor = (r.anchor != r.head).then(|| self.pos_of(r.anchor));
-        view.goal = None;
-        let mut folds: Vec<String> = view.folds.iter().cloned().collect();
-        folds.sort();
-        self.synced = Some((view.caret, view.anchor, folds));
     }
 
     /// A host position (line, byte in its text) as a char in the engine's text: never inside a
     /// marker.
-    pub(super) fn char_of(&self, p: Pos) -> usize {
+    pub(super) fn char_of(&self, p: BlockPos) -> usize {
         let o = self.st.doc.blocks().expect("an outline document");
         let b = &o.blocks[p.line.min(o.blocks.len() - 1)];
         let rope = &self.st.doc.text;
@@ -418,22 +332,21 @@ impl Next {
     }
 
     /// An engine char as a host position.
-    fn pos_of(&self, c: usize) -> Pos {
+    fn pos_of(&self, c: usize) -> BlockPos {
         let o = self.st.doc.blocks().expect("an outline document");
         let rope = &self.st.doc.text;
         let i = o.index_at(rope.slice(..), c);
         let b = &o.blocks[i];
         let cs = b.start + list_len(b);
         let c = c.clamp(cs, b.end.max(cs));
-        Pos { line: i, byte: rope.char_to_byte(c) - rope.char_to_byte(cs) }
+        BlockPos { line: i, byte: rope.char_to_byte(c) - rope.char_to_byte(cs) }
     }
 
-    /// The mirror from the engine's blocks: each block's line found by its mark (its save
+    /// The lines from the engine's blocks: each block's line found by its mark (its save
     /// state kept), its shape and text re-read. A block whose mark is new gets a new line; one
     /// whose mark came back gets its line back (`revive`). Saved lines whose blocks went are
     /// deleted by the next save.
     fn sync(&mut self, last_saved: &HashMap<String, Line>) {
-        let cfg = cfg();
         let touched = self.st.doc.take_touched();
         let o = self.st.doc.blocks().expect("an outline document");
         let rope = self.st.doc.text.clone();
@@ -446,7 +359,7 @@ impl Next {
             };
             for (i, (l, b)) in self.lines.iter_mut().zip(&o.blocks).enumerate() {
                 if (from..=to).contains(&i) {
-                    read_block(l, b, &rope, &cfg);
+                    read_block(l, b, &rope);
                 } else {
                     l.gap = b.attrs.gap;
                 }
@@ -476,7 +389,7 @@ impl Next {
                 },
             };
             l.mark = Some(b.id.0);
-            read_block(&mut l, b, &rope, &cfg);
+            read_block(&mut l, b, &rope);
             lines.push(l);
         }
         for (m, l) in old {
@@ -488,15 +401,13 @@ impl Next {
         self.lines = lines;
     }
 
-    /// The host's changes to the mirror into the engine (see the module docs). True: there
+    /// The host's changes to the lines into the engine (see the module docs). True: there
     /// were some.
-    fn flush(&mut self) -> bool {
+    pub(super) fn flush(&mut self) -> bool {
         if !self.dirty {
             return false;
         }
         self.dirty = false;
-        self.force_push = true;
-        let cfg = cfg();
         let o = self.st.doc.blocks().expect("an outline document");
         let live: HashSet<u64> = o.blocks.iter().map(|b| b.id.0).collect();
         let mut seen = HashSet::new();
@@ -522,7 +433,7 @@ impl Next {
             }
             let id = MarkId(next);
             next += 1;
-            let nb = new_block(l, Some(id), &cfg);
+            let nb = new_block(l, Some(id));
             if self.undoable {
                 match steps.last_mut() {
                     Some(s) if run => s.1.push(nb),
@@ -549,7 +460,7 @@ impl Next {
         let mut gaps = Vec::new();
         for l in &self.lines {
             let Some(b) = l.mark.and_then(|m| at.get(&m)).map(|&i| &o.blocks[i]) else { continue };
-            let want = block_text(l, &cfg);
+            let want = block_text(l);
             if rope.slice(b.start..b.end) != want.as_str() {
                 replace.push((b.start, b.end, want));
             }
@@ -576,6 +487,12 @@ impl Next {
         if !changes.is_empty() {
             cn::update(&mut self.st, Msg::External { changes });
         }
+    }
+
+    /// `text` is what the engine last copied or cut (its register).
+    pub(super) fn is_register(&self, text: &str) -> bool {
+        let c = &self.st.doc.clipboard;
+        !c.is_empty() && (c.text == text || c.external.as_deref() == Some(text))
     }
 
     /// A copy across notes with each note's fields (due, priority, …) after its first line, as
@@ -609,17 +526,19 @@ impl Next {
         md
     }
 
-    /// Up and down follow thc's text column (`width_of` a line at its depth).
-    fn set_geometry(&mut self, width_of: &dyn Fn(&Line) -> usize) {
+    /// Up and down follow thc's text column (`width_of` a line at its depth); a page is `page`
+    /// rows.
+    fn set_geometry(&mut self, width_of: &dyn Fn(&Line) -> usize, page: usize) {
         let at = |d: usize| width_of(&Line::new(d, Kind::Para, "")).min(u16::MAX as usize) as u16;
         let g = OutlineLayout { column: at(0), min_column: at(64), ..OutlineLayout::default() };
         if self.st.view.layout.as_ref() != Some(&g) {
             self.st.view.layout = Some(g);
         }
+        self.st.view.viewport.height = page.clamp(1, u16::MAX as usize) as u16;
     }
 
     /// The rows line `i` wraps into at `w` columns, as byte ranges of its text (the first from
-    /// 0, its marker included, as the old wrap gives them): the engine's own wrap.
+    /// 0, its marker included): the engine's own wrap.
     pub(super) fn rows_of(&mut self, i: usize, w: usize, wraps: &mut super::doc::Wraps) -> Vec<(usize, usize)> {
         self.flush();
         use std::hash::{Hash, Hasher};
@@ -631,7 +550,7 @@ impl Next {
         }
         // What the block's text is made of (`block_text`), without building it.
         let mut h = super::doc::content_hasher();
-        ("next", &l.text, l.depth, l.kind(), l.status.as_deref()).hash(&mut h);
+        (&l.text, l.depth, l.kind(), l.status.as_deref()).hash(&mut h);
         let key = (h.finish(), w);
         if let Some(r) = wraps.get(&key) {
             return r.clone();
@@ -692,7 +611,7 @@ impl Next {
 }
 
 /// A line's shape and text from its block.
-fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope, _: &OutlineConfig) {
+fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope) {
     let kind = thc_kind(b);
     let was = l.kind();
     if kind == Kind::Task {
@@ -730,105 +649,63 @@ fn revive(l: &mut Line, deleted: &mut Vec<String>, last_saved: &HashMap<String, 
     }
 }
 
-// ---- the seam's commands -----------------------------------------------------------------
+// ---- commands -----------------------------------------------------------------------------------
 
 impl Doc {
-    fn next_mut(&mut self) -> &mut Next {
-        &mut self.engine
-    }
-
-    /// An editing or motion command, as caretline messages.
-    pub(super) fn next_apply(&mut self, cmd: EditCmd, width_of: &dyn Fn(&Line) -> usize) -> Outcome {
-        self.next_mut().set_geometry(width_of);
-        let mv = |dir, by, extend| Msg::Move { dir, by, extend };
-        let (f, b) = (Dir::Forward, Dir::Backward);
-        let msgs: Vec<Msg> = match cmd {
-            EditCmd::Newline => vec![Msg::InsertNewline],
-            EditCmd::SoftBreak => vec![Msg::SoftBreak],
-            EditCmd::Backspace => vec![Msg::DeleteBackward],
-            EditCmd::Delete => vec![Msg::DeleteForward],
-            EditCmd::DeleteWordBack => vec![Msg::DeleteWordBackward],
-            EditCmd::KillToEnd => vec![Msg::KillLine],
-            EditCmd::KillToStart => vec![Msg::DeleteToLineStart],
-            EditCmd::Indent => vec![Msg::Indent],
-            EditCmd::Outdent => vec![Msg::Outdent],
-            EditCmd::TaskCycle => vec![Msg::Command { name: tasks::TASK_CYCLE.into(), args: serde_json::Value::Null }],
-            EditCmd::MoveLine(n) => (0..n.unsigned_abs()).map(|_| Msg::MoveBlock { dir: if n < 0 { b } else { f } }).collect(),
-            EditCmd::SelectAll => vec![Msg::SelectAll],
-            EditCmd::Undo => vec![Msg::Undo],
-            EditCmd::Redo => vec![Msg::Redo],
-            EditCmd::Move { motion, select } => match motion {
-                Motion::Left => vec![mv(b, By::Grapheme, select)],
-                Motion::Right => vec![mv(f, By::Grapheme, select)],
-                Motion::Up => vec![mv(b, By::VisualLine, select)],
-                Motion::Down => vec![mv(f, By::VisualLine, select)],
-                Motion::Page(n) => {
-                    // A page is the view's height: this many rows.
-                    self.next_mut().st.view.viewport.height = n.unsigned_abs().clamp(1, u16::MAX as usize) as u16;
-                    vec![mv(if n < 0 { b } else { f }, By::Page, select)]
-                }
-                Motion::WordLeft => vec![mv(b, By::Word, select)],
-                Motion::WordRight => vec![mv(f, By::Word, select)],
-                Motion::Home => vec![mv(b, By::LineStart, select)],
-                Motion::End => vec![mv(f, By::LineEnd, select)],
-                Motion::DocStart => vec![mv(b, By::DocStart, select)],
-                Motion::DocEnd => vec![mv(f, By::DocEnd, select)],
-                Motion::NoteUp => vec![mv(b, By::Block, select)],
-                Motion::NoteDown => vec![mv(f, By::Block, select)],
-            },
+    /// A command at the caret, by its id: one of caretline's catalog (`move.left`,
+    /// `select.word_right`, `structure.indent`, `history.undo`, see `caretline::commands`) or
+    /// one of thc's host commands (`thc.task_cycle`). `width_of` is thc's text column for a
+    /// line (up and down follow it); `page` is how many rows a page moves.
+    pub fn run_command(&mut self, id: &str, width_of: &dyn Fn(&Line) -> usize, page: usize) -> Outcome {
+        let msg = if id.starts_with("thc.") {
+            Msg::Command { name: id.into(), args: serde_json::Value::Null }
+        } else {
+            match cn::command_msg(id, None) {
+                Some(m) => m,
+                None => return Outcome::Nothing(format!("{id} isn't a command")),
+            }
         };
-        let rev = self.next_mut().st.doc.rev;
-        let mut fx = Vec::new();
-        for m in msgs {
-            fx.extend(self.next_run(m));
-        }
-        let changed = self.next_mut().st.doc.rev != rev;
+        self.engine.set_geometry(width_of, page);
+        let rev = self.engine.st.doc.rev;
+        let fx = self.run(msg);
+        let changed = self.engine.st.doc.rev != rev;
+        let history = matches!(id, "history.undo" | "history.redo");
         if fx.iter().any(|e| matches!(e, Effect::Host { name, .. } if name == tasks::COMPLETED)) {
             return Outcome::Completed;
         }
-        if changed && matches!(cmd, EditCmd::Undo | EditCmd::Redo) {
-            return Outcome::Restored;
-        }
         if changed {
-            return Outcome::Done;
+            return if history { Outcome::Restored } else { Outcome::Done };
         }
-        match cmd {
-            EditCmd::Undo => return Outcome::Nothing("nothing to undo"),
-            EditCmd::Redo => return Outcome::Nothing("nothing to redo"),
-            _ => {}
+        if history {
+            return Outcome::Nothing(if id == "history.undo" { "nothing to undo" } else { "nothing to redo" }.into());
         }
+        // A motion that can't go further says nothing.
+        let quiet = cn::commands::command(id).is_some_and(|c| matches!(c.category, Category::Move | Category::Select));
         match fx.into_iter().rev().find_map(|e| if let Effect::Notice { text } = e { Some(text) } else { None }) {
-            Some(why) if !matches!(cmd, EditCmd::Move { .. } | EditCmd::SelectAll) => Outcome::Nothing(intern(why)),
+            Some(why) if !quiet => Outcome::Nothing(why),
             _ => Outcome::Done,
         }
     }
 
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
     /// How many notes, and how many images were left out.
-    pub(super) fn next_paste(&mut self, text: &str, plain: bool) -> (usize, usize) {
+    pub(super) fn paste_blocks(&mut self, text: &str, plain: bool) -> (usize, usize) {
         let (blocks, images) = cn::outline::markdown::parse_markdown(text, plain, cfg());
         let text = Some(text.to_string());
-        self.next_run(if plain { Msg::PastePlain { text } } else { Msg::Paste { text } });
+        self.run(if plain { Msg::PastePlain { text } } else { Msg::Paste { text } });
         (blocks.len(), images)
     }
 
-    /// `text` is what the engine last copied or cut (its register).
-    pub(super) fn next_is_register(&mut self, text: &str) -> bool {
-        let c = &self.next_mut().st.doc.clipboard;
-        !c.is_empty() && (c.text == text || c.external.as_deref() == Some(text))
-    }
-
     /// Where `p` (a host position) is in the engine's text, the host's changes taken in.
-    pub(super) fn next_char_of(&mut self, p: Pos) -> usize {
-        let n = self.next_mut();
-        n.flush();
-        n.char_of(p)
+    pub(super) fn char_of(&mut self, p: BlockPos) -> usize {
+        self.engine.flush();
+        self.engine.char_of(p)
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::super::{BlockPos, Doc, EditCmd, Target};
+    use super::super::{BlockPos, Doc, Target};
     use super::*;
     use thc_core::outline::{Block, BlockOp};
 
@@ -848,12 +725,11 @@ mod tests {
         d.blocks().iter().map(|l| l.text.clone()).collect()
     }
 
-    /// The engine's text and the mirror agree, line for line.
+    /// The engine's text and the lines agree, line for line.
     fn same(d: &mut Doc) {
-        let n = d.next_mut();
-        n.flush();
-        let want: Vec<String> = n.lines.iter().map(|l| block_text(l, &cfg())).collect();
-        assert_eq!(n.st.doc.text.to_string(), want.join("\n"));
+        d.engine.flush();
+        let want: Vec<String> = d.engine.lines.iter().map(block_text).collect();
+        assert_eq!(d.engine.st.doc.text.to_string(), want.join("\n"));
     }
 
     const W: fn(&Line) -> usize = |_| 72;
@@ -887,10 +763,10 @@ mod tests {
         assert!(!p.reopen);
         assert_eq!(texts(&d), ["alpha!", "gamma (theirs)"]);
         assert_eq!(d.caret(), BlockPos { line: 0, byte: 6 }, "the caret stays where it was");
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["alpha", "gamma (theirs)"], "undo takes back only the local edit");
         same(&mut d);
-        d.apply(EditCmd::Redo, &W);
+        d.run_command("history.redo", &W, 20);
         assert_eq!(texts(&d), ["alpha!", "gamma (theirs)"]);
         assert!(d.plan_save(true).ops.iter().all(|o| !matches!(o, BlockOp::Delete { .. })), "a note deleted elsewhere isn't deleted again");
     }
@@ -907,7 +783,7 @@ mod tests {
         assert_eq!(texts(&d), ["one", "two", "three!"]);
         assert_eq!(d.blocks()[1].id, "b");
         assert_eq!(d.caret(), BlockPos { line: 2, byte: 6 });
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["one", "two", "three"]);
         same(&mut d);
     }
@@ -923,9 +799,9 @@ mod tests {
     fn new_notes_get_ids_and_are_created_in_place() {
         let mut d = open(&[blk("a", 0, "bullet", "one")]);
         d.set_caret(BlockPos { line: 0, byte: 3 });
-        d.apply(EditCmd::Newline, &W);
+        d.run_command("edit.newline", &W, 20);
         d.insert("two");
-        d.apply(EditCmd::Indent, &W);
+        d.run_command("structure.indent", &W, 20);
         let id = d.blocks()[1].id.clone();
         assert!(d.blocks()[1].is_new && id != "a");
         let plan = d.plan_save(true);
@@ -936,14 +812,14 @@ mod tests {
     fn a_joined_note_undone_before_its_delete_is_saved_keeps_its_id() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "para", "beta")]);
         d.set_caret(BlockPos { line: 1, byte: 0 });
-        d.apply(EditCmd::Backspace, &W);
+        d.run_command("edit.backspace", &W, 20);
         assert_eq!(texts(&d), ["alpha\nbeta"]);
-        assert_eq!(d.next_mut().deleted, ["b"]);
-        d.apply(EditCmd::Undo, &W);
+        assert_eq!(d.engine.deleted, ["b"]);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["alpha", "beta"]);
         assert_eq!(d.blocks()[1].id, "b");
         assert!(!d.blocks()[1].is_new);
-        assert!(d.next_mut().deleted.is_empty());
+        assert!(d.engine.deleted.is_empty());
         assert!(d.plan_save(true).ops.is_empty());
     }
 
@@ -951,10 +827,10 @@ mod tests {
     fn a_joined_note_undone_after_its_delete_landed_is_new() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "para", "beta")]);
         d.set_caret(BlockPos { line: 1, byte: 0 });
-        d.apply(EditCmd::Backspace, &W);
+        d.run_command("edit.backspace", &W, 20);
         let plan = d.plan_save(true);
         assert!(plan.ops.iter().any(|o| matches!(o, BlockOp::Delete { id, .. } if id == "b")));
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_ne!(d.blocks()[1].id, "b");
         assert!(d.blocks()[1].is_new);
     }
@@ -973,69 +849,24 @@ mod tests {
         d.apply_results(&[r], &plan.afters, &plan.parsed, &plan.sent, today());
         assert_eq!(texts(&d), ["alpha", "call"]);
         same(&mut d);
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["alpha", ""], "undo takes back the typing, not the parse");
-    }
-
-    /// The document is data: serialized mid-session and read back, it is the same document,
-    /// and the same edits after it do the same things (text, ids, caret, undo, what saves).
-    #[test]
-    fn a_document_survives_json_and_edits_the_same_after() {
-        let blocks = [blk("a", 0, "para", "alpha beta"), blk("b", 0, "bullet", "one"), blk("c", 1, "task", "two"), blk("d", 0, "para", "gamma")];
-        let mut d = open(&blocks);
-        d.tick(1_000);
-        d.fill_ids((0..64).map(|i| format!("id{i:010}")).collect());
-        let script: Vec<Result<EditCmd, &str>> = vec![
-            Ok(EditCmd::Move { motion: crate::editor::Motion::End, select: false }),
-            Err(" and more"),
-            Ok(EditCmd::Newline),
-            Err("new note"),
-            Ok(EditCmd::Indent),
-            Ok(EditCmd::Move { motion: crate::editor::Motion::Down, select: false }),
-            Ok(EditCmd::TaskCycle),
-            Ok(EditCmd::Backspace),
-            Ok(EditCmd::Undo),
-            Err("x"),
-            Ok(EditCmd::MoveLine(-1)),
-            Ok(EditCmd::Undo),
-            Ok(EditCmd::Redo),
-        ];
-        let run = |d: &mut Doc, step: &Result<EditCmd, &str>| match step {
-            Ok(c) => {
-                d.apply(*c, &W);
-            }
-            Err(t) => d.insert(t),
-        };
-        let mid = 5;
-        for s in &script[..mid] {
-            run(&mut d, s);
-        }
-        let json = d.to_json().expect("next documents are data");
-        let mut e = Doc::from_json(&json).expect("reads back");
-        assert_eq!(e.to_json().unwrap(), json, "the same document");
-        let shape = |d: &Doc| -> Vec<(String, usize, Kind, Option<String>, String, bool)> { d.blocks().iter().map(|l| (l.id.clone(), l.depth, l.kind(), l.status.clone(), l.text.clone(), l.is_new)).collect() };
-        for (k, s) in script[mid..].iter().enumerate() {
-            run(&mut d, s);
-            run(&mut e, s);
-            assert_eq!(shape(&d), shape(&e), "step {k} {s:?}");
-            assert_eq!(d.caret(), e.caret(), "step {k} {s:?}");
-        }
-        assert_eq!(format!("{:?}", d.plan_save(true).ops), format!("{:?}", e.plan_save(true).ops));
     }
 
     /// Recovered lines (crash recovery): changed text and lines put back are one undo step.
     #[test]
     fn recovered_text_is_one_undo_step() {
         let mut d = open(&[blk("a", 0, "para", "alpha"), blk("b", 0, "bullet", "beta")]);
-        d.begin_undo_step();
-        assert!(d.set_shape("a", 0, Kind::Para, None, "alpha, typed before the crash"));
-        d.insert_block(2, crate::editor::NewBlock { id: None, depth: 1, kind: Kind::Task, status: Some("todo".into()), text: "a lost task".into() });
+        d.undo_step(|d| {
+            assert!(d.set_shape("a", 0, Kind::Para, None, "alpha, typed before the crash"));
+            d.insert_block(2, crate::editor::NewBlock { id: None, depth: 1, kind: Kind::Task, status: Some("todo".into()), text: "a lost task".into() });
+        });
         assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
         same(&mut d);
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["alpha", "beta"], "one undo takes the recovery back");
         same(&mut d);
-        d.apply(EditCmd::Redo, &W);
+        d.run_command("history.redo", &W, 20);
         assert_eq!(texts(&d), ["alpha, typed before the crash", "beta", "a lost task"]);
     }
 
@@ -1048,12 +879,12 @@ mod tests {
         assert_eq!(d.blocks()[1].id, ids[0]);
         assert_eq!(d.caret().line, 2);
         same(&mut d);
-        d.apply(EditCmd::Undo, &W);
+        d.run_command("history.undo", &W, 20);
         assert_eq!(texts(&d), ["alpha"], "{:?}", texts(&d));
     }
 
     /// The rows the document draws are the engine's (motion uses the same), and they are the
-    /// old wrap's: words move whole, a word that fills the row keeps its space at the row's
+    /// ones thc's chrome wraps by (`text::wrap`): words move whole, a word that fills the row keeps its space at the row's
     /// end (the next row starts with the next word), and only a word longer than a row breaks.
     #[test]
     fn rows_follow_the_engines_wrap() {
@@ -1076,7 +907,7 @@ mod tests {
         let mut wraps = super::super::doc::Wraps::default();
         for w in [20, 24, 33, 40] {
             for (i, t) in texts.iter().enumerate() {
-                let rows = d.next_mut().rows_of(i, w, &mut wraps);
+                let rows = d.engine.rows_of(i, w, &mut wraps);
                 let old = crate::text::wrap(t, w);
                 assert_eq!(rows.len() >= old.len(), true, "{t:?} at {w}: {rows:?} vs {old:?}");
                 let mut at = 0;
@@ -1087,7 +918,7 @@ mod tests {
                     at = b;
                 }
                 assert_eq!(at, t.len(), "{t:?} at {w}: {rows:?}");
-                assert_eq!(rows, old, "{t:?} at {w}: the old wrap's rows");
+                assert_eq!(rows, old, "{t:?} at {w}: text::wrap's rows");
             }
         }
     }

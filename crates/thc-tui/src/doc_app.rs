@@ -941,10 +941,7 @@ impl App {
         let name = path.file_name().map(|n| n.to_string_lossy().to_string()).unwrap_or_else(|| "file".into());
         let caption = std::path::Path::new(&name).file_stem().and_then(|s| s.to_str()).unwrap_or("file").replace(['-', '_'], " ");
         if let Some(id) = self.attach_bytes(&data, &name, &caption, "⌃Z keep the path") {
-            let depth = self.doc.as_mut().map_or(0, |d| {
-                d.take_host_changes();
-                d.undo_depth()
-            });
+            let depth = self.doc.as_ref().map_or(0, |d| d.undo_depth());
             self.last_drop = Some((id, raw.to_string(), depth));
         }
     }

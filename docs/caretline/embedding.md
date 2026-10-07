@@ -233,8 +233,9 @@ Draw each panel with `draw_editor(f, rects[i], &panels.editors[i])` from the exa
   the text from `ClipboardSet` yourself and paste it with `Paste { text: Some(..) }`, as
   above.
 - **Saving and undo are per state.** Give each state its own `path`.
-- **Two panels on the same document** aren't supported: each state owns its text. Edits in
-  one don't reach another.
+- **Two panels on the same document** are one `Document` with a `View` each, driven with
+  `update_doc`: an edit in one maps the other's selection, and undo is the document's. See
+  [api.md](api.md#several-views-of-one-document).
 - **Persist the layout** by saving each state with `to_json`. Reopening restores the text,
   the caret, the scroll and the undo history.
 
@@ -354,7 +355,7 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
         selection: Some(ctx.mapped_selection(&changes)),
         changes,
         keep_gaps: true,
-        effects: if done { vec![("completed".into(), json!({ "id": b.id.0 }))] } else { vec![] },
+        effects: if done { vec![("thc.completed".into(), json!({ "id": b.id.0 }))] } else { vec![] },
         ..Edit::default()
     })
 }
@@ -362,7 +363,7 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
 
 thc's real one also applies to every selected block, splits a multi-line paragraph into tasks
 (minting marks with `MarkOp::Mint`) and joins them back. It is one undo step, it replays, and
-its `completed` effect tells thc to save at once.
+its `thc.completed` effect tells thc to save at once.
 
 **3. The box, as a decoration.** thc's decorator draws `[ ]` or `[x]` in the hang with a role
 per status (`"thc.task.done"`) and the id `"box"`; a click whose `hit` is
@@ -374,6 +375,27 @@ per status (`"thc.task.done"`) and the id `"box"`; a click whose `hit` is
 **5. The rest stays in thc.** Due dates, priorities and the vault: thc keeps them per block in its
 own map keyed by `MarkId`, sends changes from the vault as `Msg::External`, and draws its own
 surface. caretline never learns the word "task".
+
+**6. What thc keeps beside the engine, and why.** caretline owns the text, every block's shape,
+the selection, folds, undo and the editing rules; thc reads all of them from the engine and
+keeps no copy of the caret or the history. Beside each block it keeps one `Line`, tied to the
+block's mark, for what only thc knows:
+
+- **The vault node id.** A block is a node in thc's vault, and its id must outlive what a mark
+  doesn't: a block cut and pasted back, a join undone after the delete was saved (then it's a
+  new node under a new id), a page reopened. The `Line` holds it; lines whose marks go wait in
+  a graveyard so an undo that brings the mark back brings the node back.
+- **The save state.** The revision an edit is based on, the text, kind, parent and place as
+  last saved, a save in flight, a conflict. thc's save is a diff of the lines against that
+  state, sent to the vault as one transaction of block ops.
+- **A read-only copy of the block's shape and text,** re-read after every engine step, so the
+  save diff and the drawing compare plain strings without walking the rope.
+
+thc changes lines only for changes from elsewhere (a refresh from the vault, a save's parsed
+tokens, recovered text); each goes into the engine at once as `Msg::External` (or, for
+recovered text, one undoable step), so the engine is the only place the document lives.
+New blocks get node ids from an id pool the runtime fills before input: `update` stays pure
+(no clock, no randomness), so a session replays to the same ids.
 
 ## As a process
 

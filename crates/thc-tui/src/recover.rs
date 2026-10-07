@@ -101,7 +101,10 @@ pub fn take(cache: &Path, target: &Target) -> Option<Recovery> {
 /// Put recovered lines back: a note still here takes its recovered text; a new line goes after
 /// the line it followed (or at the end). One undo step. Returns how many lines came back.
 pub fn apply(d: &mut Doc, rec: &Recovery) -> usize {
-    d.begin_undo_step();
+    d.undo_step(|d| put_back(d, rec))
+}
+
+fn put_back(d: &mut Doc, rec: &Recovery) -> usize {
     let mut n = 0;
     for r in &rec.lines {
         if d.blocks().iter().any(|l| l.id == r.id) {

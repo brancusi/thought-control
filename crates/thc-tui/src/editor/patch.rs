@@ -34,8 +34,15 @@ impl Doc {
     /// lines here (`outline::render_ids`); `all` is the whole document as the vault has it
     /// (`outline::render_for_editor`), when it could be read. Lines you aren't on and haven't
     /// edited update in place; lines gone from the vault leave; notes new to it come in at their
-    /// place. The caret never moves off its line (tui-editor.md §9).
+    /// place. The caret never moves off its line (tui-editor.md §9): the engine maps it through
+    /// the changes, as it maps it through any change from elsewhere.
     pub fn patch(&mut self, blocks: Vec<Block>, gone: Vec<String>, all: Option<&[Block]>, root: &str, today: chrono::NaiveDate) -> Patched {
+        let p = self.take_in(blocks, gone, all, root, today);
+        self.engine.settle();
+        p
+    }
+
+    fn take_in(&mut self, blocks: Vec<Block>, gone: Vec<String>, all: Option<&[Block]>, root: &str, today: chrono::NaiveDate) -> Patched {
         let mut out = Patched::default();
         let caret_id = self.line().id.clone();
         for b in blocks {
@@ -73,9 +80,6 @@ impl Doc {
             }
             if let Some(i) = self.lines().iter().position(|l| l.id == id && !l.edited()) {
                 self.lines_mut().remove(i);
-                if self.view.caret.line > i {
-                    self.view.caret.line -= 1;
-                }
             }
         }
         // Notes new to this document (made by another device or an agent): in at their place
@@ -87,7 +91,6 @@ impl Doc {
             // the next save move a line back where it was here, undoing the other device's move.
             {
                 let prev_sib = prev_siblings(all, root);
-                let caret_id = self.line().id.clone();
                 let mut reshaped = false;
                 for l in self.lines_mut().iter_mut().filter(|l| !l.is_new) {
                     let Some(b) = all.iter().find(|b| b.id == l.id) else { continue };
@@ -115,9 +118,6 @@ impl Doc {
                 let prev = all[..i].iter().rev().find(|p| have.contains(&p.id)).map(|p| p.id.clone());
                 let at = prev.and_then(|p| self.lines().iter().position(|l| l.id == p)).map_or(0, |x| x + 1);
                 self.lines_mut().insert(at, Line::from_block(b, today));
-                if at <= self.view.caret.line {
-                    self.view.caret.line += 1;
-                }
                 have.insert(b.id.clone());
             }
             // Each saved line's neighbour as the vault has it now (or the next save moves lines

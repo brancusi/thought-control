@@ -94,7 +94,7 @@ fn random_msg(rng: &mut StdRng, doc: &Document) -> Msg {
     }
 }
 
-/// The old engine's two-view check, ported: random edits through either view keep both
+/// Two views of one document: random edits through either view keep both
 /// views valid, and undo from the other view goes back to an earlier state of the one
 /// document (typing runs undo as one step, so maybe further than one edit).
 #[test]

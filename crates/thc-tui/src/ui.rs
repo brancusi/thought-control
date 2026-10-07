@@ -4321,7 +4321,7 @@ mod render_tests {
     fn state(app: &App) -> String {
         format!("{:?}", (
             app.view, app.cursor, app.scroll, &app.selected, app.screen_width,
-            app.doc.as_ref().map(|d| (d.blocks().to_vec(), d.caret(), d.anchor(), d.goal(), d.scroll)),
+            app.doc.as_ref().map(|d| (d.blocks().to_vec(), d.caret(), d.anchor(), d.scroll)),
             &app.collapsed, &app.scope_override, app.focus_mode, app.show_detail,
         ))
     }

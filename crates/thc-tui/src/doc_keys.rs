@@ -1,7 +1,7 @@
 //! Keys inside a document (tui-editor.md §2, §4): Write by default, Esc to Navigate.
 
 use crate::app::App;
-use crate::editor::{BlockPos, EditCmd, Line, Motion, Outcome, Target};
+use crate::editor::{BlockPos, Line, Outcome, Target};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use thc_core::outline::Kind;
@@ -229,10 +229,10 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
             app.set_focus_mode(on);
         }
         "clip.paste_system" => app.paste_system(),
-        // Editing and motion: the editor's commands, applied to the document.
-        other if command_for(other, shift, page as isize).is_some() => {
-            let cmd = command_for(other, shift, page as isize).unwrap();
-            match d.apply(cmd, width_of) {
+        // Editing and motion: caretline's commands (and thc's ⌃T), run on the document.
+        other if crate::editing_keys::command_for(other, shift).is_some() => {
+            let cmd = crate::editing_keys::command_for(other, shift).unwrap();
+            match d.run_command(cmd, width_of, page) {
                 Outcome::Done => {}
                 Outcome::Nothing(why) => app.info(why),
                 Outcome::Completed => app.save_doc(true),
@@ -456,42 +456,4 @@ fn dropped_file(text: &str) -> Option<std::path::PathBuf> {
     let unescaped = t.replace("\\ ", " ");
     let p = std::path::PathBuf::from(unescaped.strip_prefix("file://").unwrap_or(&unescaped));
     (p.is_absolute() && p.is_file()).then_some(p)
-}
-
-/// The keymap's write actions that are editor commands (editing and motion).
-fn command_for(action: &str, shift: bool, page: isize) -> Option<EditCmd> {
-    use EditCmd as C;
-    let mv = |motion| Some(C::Move { motion, select: shift });
-    match action {
-        "line.newline" => Some(C::Newline),
-        "line.soft_break" => Some(C::SoftBreak),
-        "line.indent" => Some(C::Indent),
-        "line.outdent" => Some(C::Outdent),
-        "line.move_up" => Some(C::MoveLine(-1)),
-        "line.move_down" => Some(C::MoveLine(1)),
-        "doc.task_cycle" => Some(C::TaskCycle),
-        "doc.undo" => Some(C::Undo),
-        "doc.redo" => Some(C::Redo),
-        "select.all" => Some(C::SelectAll),
-        "edit.backspace" => Some(C::Backspace),
-        "edit.delete_word" => Some(C::DeleteWordBack),
-        "edit.delete_forward" => Some(C::Delete),
-        "edit.kill_to_end" => Some(C::KillToEnd),
-        "edit.kill_to_start" => Some(C::KillToStart),
-        "move.left" => mv(Motion::Left),
-        "move.right" => mv(Motion::Right),
-        "move.word_left" => mv(Motion::WordLeft),
-        "move.word_right" => mv(Motion::WordRight),
-        "move.up" => mv(Motion::Up),
-        "move.down" => mv(Motion::Down),
-        "move.para_up" => mv(Motion::NoteUp),
-        "move.para_down" => mv(Motion::NoteDown),
-        "move.page_up" => mv(Motion::Page(-page)),
-        "move.page_down" => mv(Motion::Page(page)),
-        "move.home" => mv(Motion::Home),
-        "move.end" => mv(Motion::End),
-        "move.doc_start" => mv(Motion::DocStart),
-        "move.doc_end" => mv(Motion::DocEnd),
-        _ => None,
-    }
 }
