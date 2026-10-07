@@ -36,6 +36,19 @@ pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
 
 use thc_core::outline::Kind;
 
+/// The editor's clock: milliseconds on one process-wide scale. The model keeps times in it
+/// (when a save started, until when a meta flashes, the last edit) and never reads a clock:
+/// the runtime turns an `Instant` into ms here and hands it in ([`Doc::tick`]).
+pub fn ms(t: std::time::Instant) -> u64 {
+    static EPOCH: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+    // An hour back, so a time a little before the first call still counts forward.
+    let epoch = *EPOCH.get_or_init(|| {
+        let now = std::time::Instant::now();
+        now.checked_sub(std::time::Duration::from_secs(3600)).unwrap_or(now)
+    });
+    t.saturating_duration_since(epoch).as_millis() as u64
+}
+
 /// Which engine edits a document: the old block engine (the default) or caretline-next
 /// (`THC_EDITOR=next`), chosen when the document opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -557,7 +570,8 @@ impl Doc {
     /// The last edit is at least `after` old and hasn't been idle-saved: true once, then it
     /// counts as committed.
     pub fn idle_elapsed(&mut self, after: std::time::Duration) -> bool {
-        if !self.engine.changed_at().is_some_and(|t| t.elapsed() >= after) {
+        let now = self.now_ms;
+        if !self.engine.changed_since(now).is_some_and(|age| age >= after.as_millis() as u64) {
             return false;
         }
         self.engine.mark_committed();
@@ -574,8 +588,8 @@ impl Doc {
         }
     }
 
-    /// The notes in `ids` are being saved since `since` (None: not any more).
-    pub fn mark_saving(&mut self, ids: &[String], since: Option<std::time::Instant>) {
+    /// The notes in `ids` are being saved since `since` (ms, [`ms`]; None: not any more).
+    pub fn mark_saving(&mut self, ids: &[String], since: Option<u64>) {
         for l in self.lines_state_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
             l.saving_since = since;
         }

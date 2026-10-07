@@ -177,6 +177,7 @@ fn caret_at(buf: &str, col: u16) -> usize {
 }
 
 pub fn handle_mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8) {
+    app.clock_tick();
     let moved = m.kind == ratatui::crossterm::event::MouseEventKind::Moved;
     handle_mouse_inner(app, m, clicks);
     if !moved {
@@ -503,6 +504,7 @@ fn edit_key(app: &mut App, k: KeyEvent) {
 
 /// A key, then the history recorder (history.rs): where it left you is a step if it's new.
 pub fn handle_key(app: &mut App, k: KeyEvent) {
+    app.clock_tick();
     let tab = matches!(k.code, KeyCode::Tab | KeyCode::BackTab) && app.overlay.is_none();
     let view = app.view;
     handle_key_inner(app, k);

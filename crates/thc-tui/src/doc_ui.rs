@@ -696,7 +696,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             Span::styled("≠ ", th.s(Token::Conflict))
         } else if l.remote_text.is_some() {
             Span::styled("◆ ", th.s(Token::Agent))
-        } else if l.save_error.is_some() || l.saving_since.is_some_and(|t| app.derived.age(t).as_secs() >= 3) {
+        } else if l.save_error.is_some() || l.saving_since.is_some_and(|t| crate::editor::ms(app.derived.now).saturating_sub(t) >= 3000) {
             Span::styled("◌ ", th.s(Token::Muted))
         } else if r.first && d.is_folded(&l.id) {
             Span::styled("▸ ", th.s(Token::Muted))
@@ -903,7 +903,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                         x += sw + 3;
                     }
                 }
-                let flashing = l.flash_until.is_some_and(|t| t > app.derived.now);
+                let flashing = l.flash_until.is_some_and(|t| t > crate::editor::ms(app.derived.now));
                 let st = if l.conflict {
                     th.s(Token::Conflict)
                 } else if flashing {
