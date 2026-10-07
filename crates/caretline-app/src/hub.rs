@@ -13,8 +13,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::thread;
 
-use caretline_next::protocol::{event_line, Change, Control, Executor, Subscription};
-use caretline_next::Session;
+use caretline::protocol::{event_line, Change, Control, Executor, Subscription};
+use caretline::Session;
 
 pub type ClientId = u64;
 
@@ -201,7 +201,7 @@ impl Listening {
             "pid": pid,
             "socket": self.path,
             "file": file,
-            "proto": caretline_next::protocol::PROTO,
+            "proto": caretline::protocol::PROTO,
             "started_ms": crate::runtime::now_ms(),
         });
         std::fs::write(&path, info.to_string() + "\n")?;

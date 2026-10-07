@@ -1,6 +1,6 @@
 [package]
 name = "caretline-app"
-description = "caretline: a terminal text editor on the caretline-next engine, with state snapshots and exact replay"
+description = "caretline: a terminal text editor on the caretline engine, with state snapshots and exact replay"
 version = "0.1.0"
 edition.workspace = true
 license = "MIT"
@@ -11,7 +11,7 @@ name = "caretline"
 path = "src/main.rs"
 
 [dependencies]
-caretline-next = { path = "../caretline-next" }
+caretline = { path = "../caretline" }
 ratatui = "0.30"
 crossterm = "0.29"
 serde_json = { workspace = true }

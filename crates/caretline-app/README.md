@@ -1,7 +1,7 @@
 # caretline
 
 A terminal text editor for plain text and Markdown, built on the
-[`caretline-next`](../caretline-next/README.md) engine. Every state can be saved as JSON,
+[`caretline`](../caretline/README.md) engine. Every state can be saved as JSON,
 reopened exactly, and every session replayed message by message.
 
 ```sh
@@ -149,7 +149,7 @@ caretline bench                                  # throughput and latency
 ```
 
 Pushed messages' effects (saves, the clipboard, quit) are returned to the client, not
-performed, unless the request asks. The library side is `caretline_next::Session`. See
+performed, unless the request asks. The library side is `caretline::Session`. See
 [docs/caretline/protocol.md](../../docs/caretline/protocol.md) for every operation, with examples.
 
 ## Fixtures

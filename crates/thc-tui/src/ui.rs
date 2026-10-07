@@ -4326,7 +4326,7 @@ mod render_tests {
     /// On both editor engines.
     #[test]
     fn immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation() {
-        crate::editor::on_both_engines(immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation_on);
+        immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation_on();
     }
 
     fn immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation_on() {
@@ -4394,7 +4394,7 @@ mod render_tests {
     /// On both editor engines.
     #[test]
     fn preparation_never_follows_scroll_until_the_viewport_message_is_updated() {
-        crate::editor::on_both_engines(preparation_never_follows_scroll_until_the_viewport_message_is_updated_on);
+        preparation_never_follows_scroll_until_the_viewport_message_is_updated_on();
     }
 
     fn preparation_never_follows_scroll_until_the_viewport_message_is_updated_on() {
@@ -4416,7 +4416,7 @@ mod render_tests {
     /// On both editor engines.
     #[test]
     fn changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges() {
-        crate::editor::on_both_engines(changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges_on);
+        changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges_on();
     }
 
     fn changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges_on() {
@@ -4461,7 +4461,7 @@ mod render_tests {
     /// On both editor engines.
     #[test]
     fn attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files() {
-        crate::editor::on_both_engines(attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files_on);
+        attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files_on();
     }
 
     fn attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files_on() {

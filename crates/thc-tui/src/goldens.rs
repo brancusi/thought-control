@@ -568,45 +568,45 @@ fn paragraph_children() {
     done();
 }
 
-/// Every test here, once per engine (the old block engine, then caretline-next).
-mod both_engines {
+/// Every test here.
+mod run {
     #[test]
     fn paragraph_children() {
-        crate::editor::on_both_engines(super::paragraph_children);
+        super::paragraph_children();
     }
 
     #[test]
     fn e1_to_e14_selection_collapse() {
-        crate::editor::on_both_engines(super::e1_to_e14_selection_collapse);
+        super::e1_to_e14_selection_collapse();
     }
 
     #[test]
     fn e15_to_e24_edits_with_a_selection() {
-        crate::editor::on_both_engines(super::e15_to_e24_edits_with_a_selection);
+        super::e15_to_e24_edits_with_a_selection();
     }
 
     #[test]
     fn e25_to_e32_word_and_line_deletes() {
-        crate::editor::on_both_engines(super::e25_to_e32_word_and_line_deletes);
+        super::e25_to_e32_word_and_line_deletes();
     }
 
     #[test]
     fn e33_to_e43_the_clipboard() {
-        crate::editor::on_both_engines(super::e33_to_e43_the_clipboard);
+        super::e33_to_e43_the_clipboard();
     }
 
     #[test]
     fn e38_e39_e40_paste() {
-        crate::editor::on_both_engines(super::e38_e39_e40_paste);
+        super::e38_e39_e40_paste();
     }
 
     #[test]
     fn editing_invariants_hold_on_random_documents() {
-        crate::editor::on_both_engines(super::editing_invariants_hold_on_random_documents);
+        super::editing_invariants_hold_on_random_documents();
     }
 
     #[test]
     fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
-        crate::editor::on_both_engines(super::e70_to_e81_kind_changes_per_line_and_nothing_moves);
+        super::e70_to_e81_kind_changes_per_line_and_nothing_moves();
     }
 }

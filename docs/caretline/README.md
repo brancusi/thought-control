@@ -1,7 +1,7 @@
 # caretline
 
 caretline is a text-editing engine and a terminal text editor. The engine (the
-[`caretline`](https://crates.io/crates/caretline) crate, `caretline-next` in this repo) puts Helix's editing model (a rope,
+[`caretline`](https://crates.io/crates/caretline) crate) puts Helix's editing model (a rope,
 multi-range selections, transactions, an undo tree, grapheme-correct motion and soft wrap)
 inside a strict Elm architecture. The whole editor is one serializable `State`. Every input
 is a `Msg`. A pure `update` function applies a message and returns `Effect`s for the
@@ -46,7 +46,7 @@ $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 flowchart TB
     rope["ropey: the text as a rope"]
     helix["Helix model (vendored, MPL-2.0)<br/>Selection · Transaction · History · graphemes · DocumentFormatter"]
-    elm["caretline-next<br/>State · Msg · update → Effects · view → Frame · keymap"]
+    elm["caretline<br/>State · Msg · update → Effects · view → Frame · keymap"]
     rope --> helix --> elm
     elm --> tty["Interactive terminal<br/><code>caretline FILE</code>"]
     elm --> cli["Headless CLI<br/><code>--keys --msgs --snapshot --replay</code>"]
@@ -60,21 +60,18 @@ files and the clipboard.
 ## The crates
 
 caretline is published on crates.io as [`caretline`](https://crates.io/crates/caretline)
-(`cargo add caretline`, imported as `caretline::`). In this repository its crate is still
-named `caretline-next`, until the older engine below is removed.
+(`cargo add caretline`, imported as `caretline::`).
 
 | Crate in this repo | What it is | Used by |
 |---|---|---|
-| [`caretline-next`](../../crates/caretline-next) | caretline: plain text on Helix's model, in the Elm architecture. Published as `caretline`. **This documentation is about it.** | `caretline-app`, and `thc-tui` with `THC_EDITOR=next` |
+| [`caretline`](../../crates/caretline) | caretline: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app`, `thc-tui` |
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
-| [`crates/caretline`](../../crates/caretline) | An older block editor, internal to thought-central's TUI and going away. Not the published crate | `thc-tui` (by default, for now) |
 
-caretline now has a block model ([outline documents](outline.md)), folds and multiple views
-per document, and is replacing the older engine in thc's TUI: with `THC_EDITOR=next` the TUI
-opens each page or journal day as one caretline outline document, behind the same editor API
-(`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each block's mark,
-changes from the vault arrive as `external` changes, and saving makes the same block
-operations as before.
+caretline has a block model ([outline documents](outline.md)), folds and multiple views per
+document. thc's TUI opens each page or journal day as one caretline outline document, behind
+its editor API (`crates/thc-tui/src/editor`): thc's per-note save state is keyed by each
+block's mark, changes from the vault arrive as `external` changes, and saving makes block
+operations for the vault.
 
 ## Where to go next
 
@@ -92,7 +89,7 @@ operations as before.
 
 ## License
 
-caretline (`caretline-next` here) is MIT, except `src/helix/`, which is vendored from
+caretline is MIT, except `src/helix/`, which is vendored from
 [Helix](https://github.com/helix-editor/helix) and stays under the Mozilla Public License 2.0
 file by file. `caretline-app` is MIT. See [embedding.md](embedding.md#licensing) for what
 that means for you.

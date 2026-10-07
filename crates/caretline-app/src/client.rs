@@ -5,7 +5,7 @@ use std::net::Shutdown;
 use std::os::unix::net::UnixStream;
 use std::path::PathBuf;
 
-use caretline_next::trace::parse_msgs;
+use caretline::trace::parse_msgs;
 use clap::Parser;
 use serde_json::{json, Value};
 

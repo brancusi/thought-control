@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Builds the caretline engine (crates/caretline-next) to WebAssembly for the playground and
+# Builds the caretline engine (crates/caretline) to WebAssembly for the playground and
 # copies it to public/wasm/. Needs the wasm32-unknown-unknown target:
 #   rustup target add wasm32-unknown-unknown
 set -euo pipefail

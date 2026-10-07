@@ -6,7 +6,7 @@ nests, `Ctrl-T` cycles a task, `Alt-↑`/`Alt-↓` move an item with its childre
 every block a stable identity, so a host can keep its own data per block (a database row, a
 due date) while the text is edited, undone and redone.
 
-The outline layer lives in [`src/outline`](../../crates/caretline-next/src/outline) and is
+The outline layer lives in [`src/outline`](../../crates/caretline/src/outline) and is
 on when `state.doc.outline` is set. Without it the document is plain text and nothing here
 applies.
 
