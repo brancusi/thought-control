@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 
-use crate::msg::{By, Dir, Msg};
+use crate::msg::Msg;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
@@ -54,140 +54,25 @@ impl Key {
     }
 }
 
-fn mv(dir: Dir, by: By, extend: bool) -> Option<Msg> {
-    Some(Msg::Move { dir, by, extend })
-}
-
-/// Maps a key to a message. Pure; unknown keys map to `None`.
+/// Maps a key to a message: a lookup in the default keymap ([`crate::commands::default_keymap`]),
+/// and a printable key without Ctrl, Alt or ⌘ types itself. Pure; unknown keys map to `None`.
 ///
 /// macOS text-field keys come first, with Ctrl twins for terminals that don't forward Cmd
-/// (see the README for the table).
+/// (see docs/caretline/keys.md for the table).
 pub fn keymap(key: &Key) -> Option<Msg> {
-    let m = key.mods;
-    let shift = m.shift;
-    use Dir::{Backward as B, Forward as F};
-    match key.code {
-        KeyCode::Char(c) => {
-            let lower = c.to_ascii_lowercase();
-            let shift = shift || c.is_ascii_uppercase();
-            if m.cmd || m.ctrl {
-                // Command-only bindings first, then those shared with Ctrl.
-                match (lower, m.cmd) {
-                    ('a', true) => return Some(Msg::SelectAll),
-                    ('a', false) => return mv(B, By::LineStart, shift),
-                    ('e', false) => return mv(F, By::LineEnd, shift),
-                    ('w', false) => return Some(Msg::DeleteWordBackward),
-                    ('u', false) => return Some(Msg::DeleteToLineStart),
-                    ('k', false) => return Some(Msg::KillLine),
-                    ('h', false) => return Some(Msg::DeleteBackward),
-                    _ => {}
-                }
-                return match lower {
-                    'z' if shift => Some(Msg::Redo),
-                    'z' => Some(Msg::Undo),
-                    'y' | 'r' => Some(Msg::Redo),
-                    'c' => Some(Msg::Copy),
-                    'x' => Some(Msg::Cut),
-                    'v' => Some(Msg::Paste { text: None }),
-                    's' => Some(Msg::Save),
-                    'q' => Some(Msg::Quit),
-                    _ => None,
-                };
-            }
-            if m.alt {
-                return match lower {
-                    'b' => mv(B, By::Word, shift),
-                    'f' => mv(F, By::Word, shift),
-                    'd' => Some(Msg::DeleteWordForward),
-                    'a' => Some(Msg::SelectAll),
-                    _ => None,
-                };
-            }
-            let c = if m.shift { c.to_uppercase().next().unwrap_or(c) } else { c };
-            Some(Msg::InsertText {
-                text: c.to_string(),
-            })
-        }
-        KeyCode::Enter => Some(Msg::InsertNewline),
-        KeyCode::Tab => Some(Msg::InsertText { text: "\t".into() }),
-        KeyCode::BackTab => None,
-        KeyCode::Esc => Some(Msg::Collapse),
-        KeyCode::Backspace => Some(if m.cmd {
-            Msg::DeleteToLineStart
-        } else if m.alt || m.ctrl {
-            Msg::DeleteWordBackward
-        } else {
-            Msg::DeleteBackward
-        }),
-        KeyCode::Delete => Some(if m.cmd {
-            Msg::DeleteToLineEnd
-        } else if m.alt || m.ctrl {
-            Msg::DeleteWordForward
-        } else {
-            Msg::DeleteForward
-        }),
-        KeyCode::Left if m.cmd => mv(B, By::LineStart, shift),
-        KeyCode::Right if m.cmd => mv(F, By::LineEnd, shift),
-        KeyCode::Left if m.alt || m.ctrl => mv(B, By::Word, shift),
-        KeyCode::Right if m.alt || m.ctrl => mv(F, By::Word, shift),
-        KeyCode::Left => mv(B, By::Grapheme, shift),
-        KeyCode::Right => mv(F, By::Grapheme, shift),
-        KeyCode::Up if m.cmd => mv(B, By::DocStart, shift),
-        KeyCode::Down if m.cmd => mv(F, By::DocEnd, shift),
-        KeyCode::Up if m.alt || m.ctrl => None,
-        KeyCode::Down if m.alt || m.ctrl => None,
-        KeyCode::Up => mv(B, By::VisualLine, shift),
-        KeyCode::Down => mv(F, By::VisualLine, shift),
-        KeyCode::Home if m.ctrl || m.cmd => mv(B, By::DocStart, shift),
-        KeyCode::End if m.ctrl || m.cmd => mv(F, By::DocEnd, shift),
-        KeyCode::Home => mv(B, By::LineStart, shift),
-        KeyCode::End => mv(F, By::LineEnd, shift),
-        KeyCode::PageUp => mv(B, By::Page, shift),
-        KeyCode::PageDown => mv(F, By::Page, shift),
-    }
+    crate::commands::lookup(false, key)
 }
 
-/// The keymap of an outline document: the plain [`keymap`] with the outline's keys on top.
-///
-/// | Key | Msg |
-/// |---|---|
-/// | `Tab` / `Shift-Tab` | `indent` / `outdent` |
-/// | `Shift-Enter`, `Ctrl-J` | `soft_break` |
-/// | `Alt-↑` / `Alt-↓` | `move_block` |
-/// | `Ctrl-↑` / `Ctrl-↓` | `move` by `block` (Shift extends) |
-/// | `Alt-V` | `paste_plain` |
+/// The keymap of an outline document: the plain [`keymap`] with the outline's keys on top
+/// (`Tab`/`Shift-Tab` indent and outdent, `Shift-Enter`/`Ctrl-J` a soft break, `Alt-↑/↓` move
+/// a block, `Ctrl-↑/↓` step by block, `Alt-V` paste plain).
 pub fn outline_keymap(key: &Key) -> Option<Msg> {
-    let m = key.mods;
-    use Dir::{Backward as B, Forward as F};
-    match key.code {
-        KeyCode::Tab if !(m.ctrl || m.alt || m.cmd) => {
-            return Some(if m.shift { Msg::Outdent } else { Msg::Indent });
-        }
-        KeyCode::BackTab => return Some(Msg::Outdent),
-        KeyCode::Enter if m.shift && !(m.ctrl || m.alt || m.cmd) => return Some(Msg::SoftBreak),
-        KeyCode::Char(c) if m.ctrl && !m.cmd && !m.alt => match c.to_ascii_lowercase() {
-            'j' => return Some(Msg::SoftBreak),
-            _ => {}
-        },
-        KeyCode::Char(c) if m.alt && !m.ctrl && !m.cmd && c.eq_ignore_ascii_case(&'v') => {
-            return Some(Msg::PastePlain { text: None });
-        }
-        KeyCode::Up if m.alt && !m.cmd => return Some(Msg::MoveBlock { dir: B }),
-        KeyCode::Down if m.alt && !m.cmd => return Some(Msg::MoveBlock { dir: F }),
-        KeyCode::Up if m.ctrl && !m.cmd => return mv(B, By::Block, m.shift),
-        KeyCode::Down if m.ctrl && !m.cmd => return mv(F, By::Block, m.shift),
-        _ => {}
-    }
-    keymap(key)
+    crate::commands::lookup(true, key)
 }
 
 /// [`outline_keymap`] for an outline document, else [`keymap`].
 pub fn keymap_for(outline: bool, key: &Key) -> Option<Msg> {
-    if outline {
-        outline_keymap(key)
-    } else {
-        keymap(key)
-    }
+    crate::commands::lookup(outline, key)
 }
 
 /// One step of a key script.

@@ -20,6 +20,7 @@
 //! exactly ([`trace`]). [`Session`] keeps one (state, revision, trace) and [`protocol`]
 //! answers JSON requests against it.
 
+pub mod commands;
 pub mod diff;
 pub mod helix;
 pub mod host;
@@ -37,6 +38,7 @@ pub mod view;
 pub mod views;
 pub mod external;
 
+pub use commands::{command_msg, commands, default_keymap, Binding, Category, CommandInfo, Platform};
 pub use host::{Ctx, Deco, Decoration, Edit, Host, MarkOp};
 pub use marks::{MarkAttrs, Mark, MarkId, Marks};
 pub use outline::{BlockInfo, Kind, NewBlock, Outline, OutlineConfig};
