@@ -101,6 +101,20 @@ struct Args {
     /// (older segments are dropped first). The --trace file keeps everything.
     #[arg(long, value_name = "LINES", default_value_t = caretline_next::session::DEFAULT_TRACE_LIMIT)]
     trace_limit: usize,
+
+    /// Interactive: repaint at most this many times a second, coalescing the changes in
+    /// between (0: repaint after every batch of input).
+    #[arg(long, value_name = "FPS", default_value_t = 120)]
+    max_fps: u32,
+
+    /// Interactive: start with a frame clock of this many frames per second (a `frame`
+    /// message each frame; see docs/caretline/messages.md). Off by default.
+    #[arg(long, value_name = "FPS")]
+    frame_clock: Option<u16>,
+
+    /// Interactive: on exit, print repaint statistics to stderr.
+    #[arg(long)]
+    stats: bool,
 }
 
 /// `caretline serve`: a headless engine speaking the state protocol.
@@ -310,6 +324,9 @@ fn run() -> Result<(), String> {
                 listen,
                 file: args.file.as_deref(),
                 trace_limit: args.trace_limit,
+                max_fps: args.max_fps,
+                frame_clock: args.frame_clock.unwrap_or(0),
+                stats: args.stats,
             },
         );
     }

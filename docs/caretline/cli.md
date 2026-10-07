@@ -31,6 +31,9 @@ cargo run -p caretline-app -- notes.md                # or run it from the check
 | `caretline --outline FILE` | Edit FILE as an [outline](outline.md): lists, tasks and blocks with their own keys, Markdown in and out (also for `--new-state` and `serve`) |
 | `caretline --layout FILE` | As `--outline`, with the [outline layout](outline.md#the-outline-layout): markers in a hang with plain glyphs, a column per depth (also for `serve`) |
 | `… --no-status-bar` | Hide the status bar (`config.status_bar = false`): every row shows text |
+| `… --max-fps FPS` | Editor: repaint at most this many times a second, coalescing changes in between (default 120; `0` repaints after every batch of input). See [performance.md](performance.md#how-the-live-editor-paints) |
+| `… --frame-clock FPS` | Editor: start with a frame clock (a `frame` message FPS times a second). Off by default |
+| `… --stats` | Editor: print the repaint count and mean repaint time on exit |
 | `… --trace-limit LINES` | Editor and `serve`: bound the in-memory trace `trace.get` serves (default 100,000 lines; see [protocol.md](protocol.md#traces)) |
 
 A run is **headless** when any of `--snapshot`, `--dump-state`, `--msgs`, `--keys` or
@@ -258,6 +261,29 @@ $ caretline --state crates/caretline-app/fixtures/no-wrap-table.state.json --key
 ```
 
 The status bar's `N sel` counts Unicode scalar values, while `line:col` counts graphemes.
+
+## Animate a live editor
+
+`crates/caretline-app/examples/scenes.rs` pushes six ASCII scenes (donut, cube, tunnel, plasma,
+fire, warp) into a running editor with the [`frame`](protocol.md#frames) op, paced against
+absolute deadlines, and reports the frames per second it achieved:
+
+```sh
+caretline notes.md --listen                               # in one terminal
+cargo run --release -p caretline-app --example scenes     # in another
+cargo run --release -p caretline-app --example scenes -- --fps 120 --scene donut,plasma --seconds 5
+```
+
+| Flag | Does |
+|---|---|
+| `--fps 60,120,0` | Target rates to play each scene at (`0` is unthrottled). Default `60,120,0` |
+| `--seconds S` | How long each scene plays at each rate (default 3) |
+| `--scene NAMES` | Some of `donut,cube,tunnel,plasma,fire,warp` (default all) |
+| `--socket PATH` | The editor's socket (default: the newest live editor) |
+| `--frames N`, `--size WxH`, `--spin-ms MS` | Frames precomputed per scene (180), the scene size (the editor's text area), how long before a deadline to stop sleeping and spin (1 ms) |
+
+For 120 fps on screen, the terminal must paint that fast too: in WezTerm set
+`config.max_fps = 120`, on a 120 Hz display.
 
 ## Errors
 

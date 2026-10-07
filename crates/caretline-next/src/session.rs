@@ -325,6 +325,46 @@ impl Session {
         self.rev
     }
 
+    /// Shows `text` as the whole document, with `highlights` (char ranges, drawn in the
+    /// selection's colour) and no undo history: one frame of an animation, a demo or a
+    /// mirror. Cheaper than [`Session::set_state`]: the view keeps its size, scroll position,
+    /// config and status (`status` replaces the status when given), the document keeps its
+    /// path and config, and the history starts fresh and clean. The primary caret is at
+    /// `caret` when given, else at the end of the first highlight (a caret at 0 without
+    /// highlights). Recorded like a replacement: a new trace segment. Returns the new rev.
+    pub fn push_frame(&mut self, text: &str, highlights: &[(usize, usize)], caret: Option<usize>, status: Option<String>) -> u64 {
+        use crate::helix::{Range, Selection};
+        let old = &self.state;
+        let mut doc = crate::state::Document::new(text, old.doc.path.clone());
+        doc.config = crate::state::Config { line_ending: doc.config.line_ending, ..old.doc.config.clone() };
+        doc.now_ms = old.doc.now_ms;
+        let mut view = crate::state::View::new(old.view.viewport);
+        view.config = old.view.config.clone();
+        view.scroll = old.view.scroll;
+        view.focused = old.view.focused;
+        view.read_only = old.view.read_only;
+        view.frame_clock = old.view.frame_clock;
+        view.status = status.or_else(|| old.view.status.clone());
+        let mut ranges: Vec<Range> = Vec::with_capacity(highlights.len() + 1);
+        if let Some(c) = caret {
+            ranges.push(Range::point(c));
+        }
+        ranges.extend(highlights.iter().map(|&(a, b)| Range::new(a, b)));
+        if !ranges.is_empty() {
+            view.selection = Selection::new(ranges.into(), 0);
+        }
+        view.fit(&doc);
+        self.rev += 1;
+        self.state = State::from_parts(doc, view);
+        for (_, v) in &mut self.views {
+            v.fit(&self.state.doc);
+        }
+        self.push_state_lines();
+        self.segment = self.trace.len() - 1 - self.views.len();
+        self.trim();
+        self.rev
+    }
+
     /// Renders view `id` at `width`x`height` (its own size when absent) without changing the
     /// session.
     pub fn render_view(&self, id: u32, size: Option<(u16, u16)>) -> Option<Frame> {

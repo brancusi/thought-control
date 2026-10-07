@@ -24,6 +24,7 @@ pub const OPS: &[&str] = &[
     "state.get",
     "state.set",
     "history.get",
+    "frame",
     "msgs",
     "keys",
     "render",
@@ -147,6 +148,18 @@ struct Request {
     /// own; others come from view.open).
     #[serde(default)]
     view: Option<u32>,
+    /// frame: the whole text to show.
+    #[serde(default)]
+    text: Option<String>,
+    /// frame: char ranges to draw in the selection's colour, `[start, end]`.
+    #[serde(default)]
+    highlights: Vec<(usize, usize)>,
+    /// frame: where the primary caret goes.
+    #[serde(default)]
+    caret: Option<usize>,
+    /// frame: the status bar's message.
+    #[serde(default)]
+    status: Option<String>,
     /// view.open: the new view (every field optional; a copy of view 0's when absent).
     #[serde(default)]
     open: Option<View>,
@@ -404,6 +417,16 @@ impl Session {
                 check_rev(self.rev())?;
                 let state = req.state.ok_or_else(|| err("bad_request", "state.set needs a state"))?;
                 let rev = self.set_state(state);
+                Ok(Handled {
+                    response: to_line(id, serde_json::json!({ "rev": rev })),
+                    change: Some(Change { rev, msgs: Vec::new(), state_set: true, view: None }),
+                    control: None,
+                })
+            }
+            "frame" => {
+                check_rev(self.rev())?;
+                let text = req.text.ok_or_else(|| err("bad_request", "frame needs a text"))?;
+                let rev = self.push_frame(&text, &req.highlights, req.caret, req.status);
                 Ok(Handled {
                     response: to_line(id, serde_json::json!({ "rev": rev })),
                     change: Some(Change { rev, msgs: Vec::new(), state_set: true, view: None }),

@@ -88,6 +88,8 @@ the last row to the end, as in a macOS text field.
 | `Resize { width, height }` | `{"msg":"resize","width":80,"height":24}` | Sets the viewport (clamped to at least 1 × 1) |
 | `Tick { now_ms }` | `{"msg":"tick","now_ms":1000}` | Reports the time. Undo grouping uses it |
 | `ShowStatus { text }` | `{"msg":"show_status","text":"hi"}` | Shows a one-line message in the status bar (the first line of `text`) |
+| `Frame { now_ms }` | `{"msg":"frame","now_ms":1008}` | A display frame from the runtime's frame clock. Advances the clock as `tick` does; animation state advances from it |
+| `FrameClock { fps }` | `{"msg":"frame_clock","fps":120}` | Asks the runtime for a frame clock: a `frame` message `fps` times a second (`0` turns it off). Stored in the view as `frame_clock` |
 
 ### Outline documents
 
@@ -153,7 +155,7 @@ takes it too.
 A change that names a missing block is skipped with a `notice` effect. See
 [architecture.md](architecture.md#changes-from-elsewhere) for the history transform.
 
-`tick`, `resize`, `saved`, `save_failed`, `show_status` and `external` are **passive**. They
+`tick`, `frame`, `frame_clock`, `resize`, `saved`, `save_failed`, `show_status` and `external` are **passive**. They
 don't clear the status message, don't end a typing run and don't disarm a pending quit.
 
 ## Effects
