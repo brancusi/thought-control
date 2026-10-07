@@ -1,5 +1,7 @@
-//! Pure presentation updates. Fields exposes only presentation values, so this
-//! reducer cannot reach a Vault, terminal, channel, clock, or filesystem.
+//! Pure presentation updates. Fields exposes only presentation values and the open document
+//! (whose model reads no clock and mints no ids), so this reducer cannot reach a Vault,
+//! terminal, channel, clock, or filesystem. Editing commands run here; saving, minting node ids
+//! and re-reading the vault come back as effects.
 //! This is the first P3 migration; legacy input/persistence paths remain outside it.
 use crate::{
     app::{Toast, ToastKind},
@@ -19,6 +21,14 @@ pub(crate) enum Msg {
     ClipboardResult { result: Result<(), String>, notice: String, at: u64 },
     RemapKeys,
     KeysEdited { result: Result<String, String>, at: u64 },
+    /// The runtime's clock for the open document, before it hands it input. The document
+    /// asks for the node ids its next edits need (`Effect::MintIds`).
+    DocClock { now_ms: u64 },
+    /// Node ids the runtime minted for the open document.
+    IdsMinted { ids: Vec<String> },
+    /// An editing command on the open document: a caretline command id (`move.left`,
+    /// `history.undo`) or thc's host command (`thc.task_cycle`).
+    Editor { command: String, at: u64 },
 }
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
@@ -29,6 +39,11 @@ pub(crate) enum Effect {
     Reload,
     /// Save the open document's typing.
     SaveDoc,
+    /// Mint `n` node ids for the open document (`Msg::IdsMinted` brings them back).
+    MintIds { n: usize },
+    /// Re-read the open document from the vault (an undo or redo restored lines that may have
+    /// changed elsewhere meanwhile).
+    Reopen,
     Quit,
     SetMouse { on: bool },
     /// `$EDITOR` on a note.
@@ -249,6 +264,8 @@ pub(crate) struct Fields<'a> {
     pub cursor: usize,
     pub scroll: &'a mut usize,
     pub toast: &'a mut Option<Toast>,
+    /// The open document, if any.
+    pub doc: Option<&'a mut crate::editor::Doc>,
 }
 /// The initial list position also tells derivation which row heights are needed.
 /// The complete follow policy runs in update; preparation never assigns scroll.
@@ -293,6 +310,33 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
         Msg::PageIdsPersisted { result: _ } => {}
         Msg::Copy { text, notice } => return vec![Effect::WriteClipboard { text, notice }],
         Msg::RemapKeys => return vec![Effect::EditKeys],
+        Msg::DocClock { now_ms } => {
+            let Some(d) = state.doc else { return vec![] };
+            d.tick(now_ms);
+            let n = d.ids_wanted();
+            if n > 0 {
+                return vec![Effect::MintIds { n }];
+            }
+        }
+        Msg::IdsMinted { ids } => {
+            if let Some(d) = state.doc {
+                d.fill_ids(ids);
+            }
+        }
+        Msg::Editor { command, at } => {
+            use crate::editor::Outcome;
+            let Some(d) = state.doc else { return vec![] };
+            return match d.run_command(&command) {
+                Outcome::Done => vec![],
+                Outcome::Nothing(why) => {
+                    *state.toast = Some(Toast { kind: ToastKind::Info, parts: vec![(why, Token::Muted)], at });
+                    vec![]
+                }
+                // A task completed: save at once.
+                Outcome::Completed => vec![Effect::SaveDoc],
+                Outcome::Restored => vec![Effect::Reopen],
+            };
+        }
         Msg::KeysEdited { result, at } => {
             let (kind, token, text) = match result {
                 Ok(text) => (ToastKind::Info, Token::Muted, text),
@@ -316,7 +360,7 @@ mod tests {
     use super::*;
 
     fn apply(scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
-        update(Fields { page_ids: None, cursor: 4, scroll, toast }, msg)
+        update(Fields { page_ids: None, cursor: 4, scroll, toast, doc: None }, msg)
     }
 
     #[test]
@@ -330,9 +374,9 @@ mod tests {
             previous_section: false,
             heights: vec![1, 1, 4, 1, 2],
         });
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast }, message.clone());
+        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message.clone());
         assert_eq!(scroll, 3);
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast }, message);
+        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message);
         assert_eq!(scroll, 3);
     }
 
@@ -343,13 +387,13 @@ mod tests {
         let mut toast = None;
         let at = 1_000;
         let effects = update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast },
+            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
             Msg::TogglePageIds { at },
         );
         assert!(page_ids);
         assert_eq!(effects, vec![Effect::WritePageIds { visible: true }]);
         update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast },
+            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
             Msg::PageIdsPersisted { result: Err("cache unavailable".into()) },
         );
         assert!(page_ids);
@@ -387,6 +431,56 @@ mod tests {
             Msg::ClipboardResult { result: Err("clipboard refused".into()), notice: "unused".into(), at },
         );
         assert_eq!(toast.unwrap().kind, ToastKind::Error);
+    }
+}
+
+#[cfg(test)]
+mod editor_tests {
+    use super::*;
+    use crate::editor::{Doc, Target};
+
+    fn doc(texts: &[&str]) -> Doc {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+        let blocks: Vec<thc_core::outline::Block> = texts
+            .iter()
+            .enumerate()
+            .map(|(i, t)| serde_json::from_value(serde_json::json!({"id": format!("n{i}"), "parent": null, "depth": 0, "kind": "para", "text": t, "text_rev": "r"})).unwrap())
+            .collect();
+        Doc::new(Target::Journal { date: today }, Some("root".into()), &blocks, today)
+    }
+
+    fn send(d: &mut Doc, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
+        let mut scroll = 0;
+        update(Fields { page_ids: None, cursor: 0, scroll: &mut scroll, toast, doc: Some(d) }, msg)
+    }
+
+    /// The model mints no ids: the clock asks for them, the runtime mints, the ids come back.
+    #[test]
+    fn the_clock_asks_for_ids_and_minted_ids_fill_the_pool() {
+        let mut d = doc(&["alpha"]);
+        let mut toast = None;
+        let n = match send(&mut d, &mut toast, Msg::DocClock { now_ms: 1_000 }).as_slice() {
+            [Effect::MintIds { n }] => *n,
+            other => panic!("{other:?}"),
+        };
+        send(&mut d, &mut toast, Msg::IdsMinted { ids: (0..n).map(|i| format!("id{i:010}")).collect() });
+        assert!(send(&mut d, &mut toast, Msg::DocClock { now_ms: 2_000 }).is_empty(), "the pool is full");
+    }
+
+    /// Commands run on the document; a completed task saves, an undo re-reads the vault, and a
+    /// command that does nothing says why.
+    #[test]
+    fn editor_commands_come_back_as_effects() {
+        let mut d = doc(&["call the bank"]);
+        let mut toast = None;
+        let cmd = |c: &str| Msg::Editor { command: c.into(), at: 5 };
+        assert_eq!(send(&mut d, &mut toast, cmd("history.undo")), vec![]);
+        assert_eq!(toast.take().map(|t| (t.parts, t.at)), Some((vec![("nothing to undo".into(), Token::Muted)], 5)));
+        assert_eq!(send(&mut d, &mut toast, cmd(crate::editor::TASK_CYCLE)), vec![]);
+        assert_eq!(send(&mut d, &mut toast, cmd(crate::editor::TASK_CYCLE)), vec![Effect::SaveDoc], "done saves at once");
+        assert_eq!(send(&mut d, &mut toast, cmd("history.undo")), vec![Effect::Reopen]);
+        assert_eq!(send(&mut d, &mut toast, cmd("move.right")), vec![]);
+        assert!(toast.is_none());
     }
 }
 

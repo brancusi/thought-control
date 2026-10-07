@@ -1,7 +1,7 @@
 //! Keys inside a document (tui-editor.md §2, §4): Write by default, Esc to Navigate.
 
 use crate::app::App;
-use crate::editor::{BlockPos, Outcome, Target};
+use crate::editor::{BlockPos, Target};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 use thc_core::outline::Kind;
@@ -221,13 +221,8 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
         "clip.paste_system" => app.paste_system(),
         // Editing and motion: caretline's commands (and thc's ⌃T), run on the document.
         other if crate::editing_keys::command_for(other, shift).is_some() => {
-            let cmd = crate::editing_keys::command_for(other, shift).unwrap();
-            match d.run_command(cmd) {
-                Outcome::Done => {}
-                Outcome::Nothing(why) => app.info(why),
-                Outcome::Completed => app.save_doc(true),
-                Outcome::Restored => app.patch_doc(),
-            }
+            let command = crate::editing_keys::command_for(other, shift).unwrap().to_string();
+            crate::runtime_effects::dispatch(app, crate::update::Msg::Editor { command, at: app.ui.now_ms });
         }
         // The views, help, the palette, quit, today: global actions bound in write; save first.
         other => {

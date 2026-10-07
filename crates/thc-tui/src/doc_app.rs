@@ -674,15 +674,9 @@ impl App {
     /// The editor's clock is the UI's logical clock (UiState::now_ms, moved by ticks), so a
     /// trace replays the same typing runs, undo steps and idle saves.
     pub fn clock_tick(&mut self) {
-        let now = self.ui.now_ms;
-        if let Some(d) = self.doc.as_mut() {
-            d.tick(now);
-            // Node ids for what the next edits make: minted here, never by the model.
-            let n = d.ids_wanted();
-            if n > 0 {
-                d.fill_ids((0..n).map(|_| thc_core::id::new_id()).collect());
-            }
-        }
+        // The document's clock; node ids for what the next edits make come back as an effect
+        // (the model mints none).
+        crate::runtime_effects::dispatch(self, crate::update::Msg::DocClock { now_ms: self.ui.now_ms });
     }
 
     /// The runtime's idle step for the open document: the clock, saves that came back, and the
