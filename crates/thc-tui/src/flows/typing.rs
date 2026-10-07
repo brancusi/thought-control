@@ -352,7 +352,6 @@ fn a_link_hint_on_another_line_holds_still_while_typing() {
 }
 
 #[test]
-#[ignore = "4z7zh"]
 fn a_click_near_the_top_or_bottom_never_scrolls() {
     // On a long page, scrolled into the middle: a click on the first or last text row places
     // the caret there and the text stays where it is under the mouse.
