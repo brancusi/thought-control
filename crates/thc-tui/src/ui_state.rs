@@ -288,6 +288,16 @@ impl UiState {
         self.today = self.local_time().date();
     }
 
+    /// Whether the clock moving to `now_ms` changes what's on screen: a toast or a flash to
+    /// expire, a which-key delay, a near-miss notice, or a new minute for the bar's clock.
+    pub fn wants_clock(&self, now_ms: u64) -> bool {
+        now_ms / 60_000 != self.now_ms / 60_000
+            || self.toast.is_some()
+            || !self.flashes.is_empty()
+            || !self.pending_keys.is_empty()
+            || self.near_miss.is_some()
+    }
+
     /// The state as JSON.
     pub fn to_json(&self) -> serde_json::Value {
         serde_json::to_value(self).expect("UiState serializes")

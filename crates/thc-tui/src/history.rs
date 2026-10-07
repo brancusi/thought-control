@@ -48,7 +48,7 @@ pub struct History {
     pub entries: Vec<Place>,
     pub pos: usize,
     /// The last step came from Tab / ⇧Tab cycling: the next one replaces it (§7.1).
-    #[serde(skip)]
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub tab_run: bool,
 }
 

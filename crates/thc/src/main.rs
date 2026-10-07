@@ -34,6 +34,7 @@ mod instructions;
 mod setup;
 mod bootstrap;
 mod update;
+mod ui_cmd;
 
 use anyhow::{Context, Result, anyhow};
 
@@ -133,7 +134,7 @@ fn report(e: &anyhow::Error, json: bool) -> i32 {
     code
 }
 
-fn parse_actor(s: Option<&str>) -> Actor {
+pub(crate) fn parse_actor(s: Option<&str>) -> Actor {
     match s.map(str::trim).filter(|s| !s.is_empty()) {
         None | Some("human") => Actor { kind: "human".into(), name: None },
         Some(s) => match s.split_once(':') {
@@ -447,7 +448,7 @@ fn run(mut cli: Cli, mut reg: Option<(&'static registry::Spec, clap::ArgMatches)
         let spec = &reads::TODAY;
         reg = Some((spec, (spec.command)().get_matches_from(["today"])));
     }
-    let cmd = cli.cmd.take().or(reg.as_ref().map(|_| Cmd::Registered)).unwrap_or(Cmd::Tui { focus: None, review: false, log: false });
+    let cmd = cli.cmd.take().or(reg.as_ref().map(|_| Cmd::Registered)).unwrap_or(Cmd::Tui { focus: None, review: false, log: false, trace: None });
     // `acme/k7q2m` (vaults.md §1): an id in another vault runs the command there, as
     // `--vault acme` would. Only commands whose arguments are ids (never text to capture).
     let mut vault_flag = cli.vault.clone();
@@ -502,16 +503,19 @@ fn run(mut cli: Cli, mut reg: Option<(&'static registry::Spec, clap::ArgMatches)
         Cmd::J { date, focus, no_focus } => {
             let cfg = thc_core::tui_config::TuiConfig::load();
             let mode = if focus { "focus" } else if no_focus { "normal" } else if cfg.journal == thc_core::tui_config::Mode::Focus { "focus" } else { "normal" };
-            (Cmd::Tui { focus: None, review: false, log: false }, Some(format!("journal:{}|{mode}", date.as_deref().unwrap_or("today"))))
+            (Cmd::Tui { focus: None, review: false, log: false, trace: None }, Some(format!("journal:{}|{mode}", date.as_deref().unwrap_or("today"))))
         }
         Cmd::P { page, focus, no_focus } => {
             let cfg = thc_core::tui_config::TuiConfig::load();
             let mode = if focus { "focus" } else if no_focus { "normal" } else if cfg.pages == thc_core::tui_config::Mode::Focus { "focus" } else { "normal" };
-            (Cmd::Tui { focus: None, review: false, log: false }, Some(format!("page:{page}|{mode}")))
+            (Cmd::Tui { focus: None, review: false, log: false, trace: None }, Some(format!("page:{page}|{mode}")))
         }
         c => (c, None),
     };
-    if let Cmd::Tui { focus, review, log } = &cmd {
+    if let Cmd::Tui { focus, review, log, trace } = &cmd {
+        if let Some(t) = trace {
+            thc_tui::set_trace_file(t.clone());
+        }
         // WezTerm's key module, if it was set up: current with this thc's keys (thc's own file,
         // the same content every time, so a snapshot may refresh it too).
         let _ = wezterm::refresh_module();

@@ -16,6 +16,8 @@ mod clock_snapshot;
 mod input_snapshot;
 mod update;
 pub mod ui_state;
+mod session;
+mod script;
 mod runtime_effects;
 mod data_snapshot;
 mod node_row;
@@ -30,6 +32,8 @@ mod text;
 pub mod history;
 #[cfg(test)]
 mod fuzz;
+#[cfg(test)]
+mod session_tests;
 #[cfg(test)]
 mod goldens;
 #[cfg(test)]
@@ -73,6 +77,17 @@ pub fn keys_markdown() -> String {
 
 pub fn keys_conflicts() -> Vec<String> {
     keymap::conflicts()
+}
+
+/// `thc tui --trace FILE`: record the session's UI trace there (also THC_TUI_TRACE_FILE).
+static TRACE_FILE: std::sync::OnceLock<std::path::PathBuf> = std::sync::OnceLock::new();
+
+pub fn set_trace_file(path: std::path::PathBuf) {
+    let _ = TRACE_FILE.set(path);
+}
+
+fn trace_file() -> Option<std::path::PathBuf> {
+    TRACE_FILE.get().cloned().or_else(|| std::env::var_os("THC_TUI_TRACE_FILE").map(Into::into))
 }
 
 pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()> {
@@ -146,7 +161,16 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
         app.notice(format!("unsaved lines from a crash wait in {where_} · open it to get them back"));
     }
     tmux_escape_note(&mut app);
-    let result = event_loop(&mut terminal, &mut app);
+    let size = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
+    let mut session = session::Session::new(app, size);
+    // `thc tui --trace FILE`: every message, from this state on, to replay later.
+    if let Some(path) = trace_file() {
+        if let Err(e) = session.trace_to(&path) {
+            session.app.error(format!("can't write the trace: {e}"));
+        }
+    }
+    let result = event_loop(&mut terminal, &mut session);
+    let mut app = session.app;
     let _ = terminal.backend_mut().cursor_bar(false);
     if kitty {
         pop_keys();
@@ -364,89 +388,6 @@ fn tmux_escape_note(app: &mut App) {
     }
 }
 
-/// A snapshot's mouse token, dispatched as the event loop would (clicks counted explicitly).
-fn mouse_token(app: &mut App, t: &str) -> bool {
-    use event::{KeyModifiers, MouseButton as B, MouseEvent, MouseEventKind as K};
-    let ev = |kind: K, x: u16, y: u16, modifiers: KeyModifiers| MouseEvent { kind, column: x, row: y, modifiers };
-    let xy = |s: &str| -> Option<(u16, u16)> {
-        let (x, y) = s.split_once(',')?;
-        Some((x.trim().parse().ok()?, y.trim().parse().ok()?))
-    };
-    let Some((name, arg)) = t.split_once(':') else { return false };
-    // With capture off the terminal sends nothing: the token is swallowed.
-    if !app.tui_prefs.mouse && matches!(name, "click" | "dclick" | "tclick" | "sclick" | "cclick" | "aclick" | "mclick" | "drag" | "wheel" | "hover") {
-        return true;
-    }
-    let press = |app: &mut App, button: B, x: u16, y: u16, mods: KeyModifiers, clicks: u8| {
-        input::handle_mouse(app, ev(K::Down(button), x, y, mods), clicks);
-        input::handle_mouse(app, ev(K::Up(button), x, y, mods), clicks);
-    };
-    match name {
-        "click" | "dclick" | "tclick" | "sclick" | "cclick" | "aclick" | "mclick" => {
-            let Some((x, y)) = xy(arg) else { return false };
-            let (button, mods, n) = match name {
-                "dclick" => (B::Left, KeyModifiers::NONE, 2),
-                "tclick" => (B::Left, KeyModifiers::NONE, 3),
-                "sclick" => (B::Left, KeyModifiers::SHIFT, 1),
-                "cclick" => (B::Left, KeyModifiers::CONTROL, 1),
-                "aclick" => (B::Left, KeyModifiers::ALT, 1),
-                "mclick" => (B::Middle, KeyModifiers::NONE, 1),
-                _ => (B::Left, KeyModifiers::NONE, 1),
-            };
-            if n > 1 {
-                for k in 1..n {
-                    press(app, button, x, y, mods, k);
-                }
-            }
-            press(app, button, x, y, mods, n);
-            true
-        }
-        "drag" => {
-            let v: Vec<u16> = arg.split(',').filter_map(|p| p.trim().parse().ok()).collect();
-            let [x1, y1, x2, y2] = v[..] else { return false };
-            input::handle_mouse(app, ev(K::Down(B::Left), x1, y1, KeyModifiers::NONE), 1);
-            let steps = x1.abs_diff(x2).max(y1.abs_diff(y2)).max(1);
-            for i in 1..=steps {
-                let f = |a: u16, b: u16| (a as i32 + (b as i32 - a as i32) * i as i32 / steps as i32) as u16;
-                input::handle_mouse(app, ev(K::Drag(B::Left), f(x1, x2), f(y1, y2), KeyModifiers::NONE), 1);
-            }
-            input::handle_mouse(app, ev(K::Up(B::Left), x2, y2, KeyModifiers::NONE), 1);
-            true
-        }
-        "wheel" => {
-            let (spec, at) = arg.split_once('@').map_or((arg, None), |(a, b)| (a, xy(b)));
-            let (dir, n) = spec.split_once(':').map_or((spec, 1), |(d, n)| (d, n.parse().unwrap_or(1)));
-            let kind = if dir == "up" { K::ScrollUp } else { K::ScrollDown };
-            let (x, y) = at.unwrap_or((app.screen_width / 2, 10));
-            for _ in 0..n {
-                input::handle_mouse(app, ev(kind, x, y, KeyModifiers::NONE), 1);
-            }
-            true
-        }
-        "hover" => {
-            let Some((x, y)) = xy(arg) else { return false };
-            input::handle_mouse(app, ev(K::Moved, x, y, KeyModifiers::NONE), 1);
-            true
-        }
-        _ => false,
-    }
-}
-
-/// Double and triple clicks, detected here (SGR reports single presses): another left press
-/// within 400 ms on the same cell ±1 counts up, to 3 (mouse.md §8).
-fn count_clicks(app: &mut App, m: &event::MouseEvent) -> u8 {
-    use event::{MouseButton, MouseEventKind};
-    if m.kind != MouseEventKind::Down(MouseButton::Left) {
-        return 1;
-    }
-    let n = match app.last_click {
-        Some((at, x, y, n)) if app.ui.now_ms.saturating_sub(at) < 400 && x.abs_diff(m.column) <= 1 && y.abs_diff(m.row) <= 1 => (n % 3) + 1,
-        _ => 1,
-    };
-    app.ui.last_click = Some((app.ui.now_ms, m.column, m.row, n));
-    n
-}
-
 /// The document's inline images (attachments.md §3), drawn after the frame over the rows the
 /// layout reserved. Only when what's on screen changed: old images are cleared first (a full
 /// redraw for the iTerm2 protocol, a delete for kitty's), and an overlay hides them.
@@ -479,11 +420,12 @@ fn wants_bar(app: &App) -> bool {
         || matches!(app.overlay, Some(app::Overlay::Palette { .. } | app::Overlay::Finder { .. } | app::Overlay::Move { .. } | app::Overlay::Capture { .. }))
 }
 
-fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> Result<()> {
+fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut session::Session) -> Result<()> {
+    use session::Msg;
     let mut last_poll = Instant::now();
     let mut last_keys_poll = Instant::now();
     let mut keys_watch = keys_edit::Watch::default();
-    keys_watch.changed(&app.vault.paths.vault);
+    keys_watch.changed(&session.app.vault.paths.vault);
     // THC_TUI_TRACE=1: per-frame timings (key read → frame written), for the budgets in
     // tui-editor.md §10. Written to the cache dir as tui-trace.log; p50/p99 on exit.
     let trace = std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1");
@@ -493,6 +435,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
         // The terminal went away: save and leave before drawing into it (a draw would fail
         // first and lose the line being typed).
         if HANGUP.load(std::sync::atomic::Ordering::SeqCst) {
+            let app = &mut session.app;
             app.save_doc(true);
             app.remember_caret();
             app.drain_saves(true);
@@ -500,16 +443,22 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
             app.history.save(&app.vault.paths.cache);
             return Ok(());
         }
-        if let Some(path) = app.switch_to.take() {
-            switch_vault(app, &path);
+        if let Some(path) = session.app.switch_to.take() {
+            switch_vault(&mut session.app, &path);
+            session.checkpoint();
         }
         if last_keys_poll.elapsed() >= Duration::from_millis(500) {
             last_keys_poll = Instant::now();
-            if keys_watch.changed(&app.vault.paths.vault) {
-                reload_keys(app);
+            if keys_watch.changed(&session.app.vault.paths.vault) {
+                reload_keys(&mut session.app);
             }
         }
-        runtime_effects::tick(app);
+        // Time-dependent things on screen (a toast, a flash, the which-key delay, the bar's
+        // minute) need the clock to move while nothing is typed.
+        if session.app.ui.wants_clock(runtime_effects::wall_clock().0) {
+            session.tick_wall();
+        }
+        let app = &mut session.app;
         app.drain_update();
         // What a crash now would lose, for the panic hook (recover.rs).
         recover::note(app);
@@ -594,7 +543,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
             r => r?,
         };
         if ready {
-            runtime_effects::tick(app);
+            session.tick_wall();
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {
                 first = false;
@@ -602,36 +551,41 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
                 if trace && key_at.is_none() && matches!(ev, Event::Key(_) | Event::Paste(_)) {
                     key_at = Some(Instant::now());
                 }
-                match ev {
+                let msg = match ev {
                     Event::Key(k) if k.kind == KeyEventKind::Press => {
-                        input::handle_key(app, k);
-                        // Keys arrive in batches: keep the crash snapshot current per key.
-                        recover::note(app);
                         // Tests of the hard deadline: a loop that never comes back (THC_TEST only).
                         if k.code == ratatui::crossterm::event::KeyCode::Char('!') && std::env::var_os("THC_TEST").is_some() && std::env::var_os("THC_TEST_WEDGE").is_some() {
                             loop {
                                 std::thread::sleep(Duration::from_secs(60));
                             }
                         }
+                        Some(Msg::Key { key: script::key_token(&k) })
                     }
-                    Event::Paste(text) if app.doc.is_some() => crate::doc_keys::paste(app, &text),
-                    Event::Mouse(m) => {
-                        let clicks = count_clicks(app, &m);
-                        input::handle_mouse(app, m, clicks);
+                    Event::Paste(text) => Some(Msg::Paste { text }),
+                    Event::Mouse(m) => session::mouse_msg(&m).map(|mouse| Msg::Mouse { mouse }),
+                    Event::FocusLost => Some(Msg::Focus { gained: false }),
+                    Event::FocusGained => Some(Msg::Focus { gained: true }),
+                    Event::Resize(w, h) => Some(Msg::Resize { w, h }),
+                    _ => None,
+                };
+                let resize = matches!(msg, Some(Msg::Resize { .. }));
+                if let Some(msg) = msg {
+                    if let Err(e) = session.apply(msg) {
+                        session.app.error(e);
                     }
-                    Event::FocusLost => app.save_doc(true),
-                    Event::FocusGained => app.check_installed(true),
-                    Event::Resize(..) => {
-                        app.render = ui::RenderOutput::default();
-                        break; // redraw before dispatching input against geometry from the old size
-                    }
-                    _ => {}
+                    // Keys arrive in batches: keep the crash snapshot current per key.
+                    recover::note(&session.app);
                 }
+                if resize {
+                    break; // redraw before dispatching input against geometry from the old size
+                }
+                let app = &session.app;
                 if app.quit || app.reexec || app.editor_request.is_some() {
                     break;
                 }
             }
         }
+        let app = &mut session.app;
         app.doc_tick();
         app.drain_live();
         app.check_installed(false);
@@ -648,7 +602,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) -> 
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = |q: f64| samples[((samples.len() as f64 - 1.0) * q) as usize];
         let line = format!("{} keys · p50 {:.2} ms · p99 {:.2} ms · max {:.2} ms\n", samples.len(), p(0.5), p(0.99), p(1.0));
-        let path = app.vault.paths.cache.join("tui-trace.log");
+        let path = session.app.vault.paths.cache.join("tui-trace.log");
         let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
         eprintln!("thc tui trace: {}", line.trim());
     }
@@ -864,10 +818,56 @@ fn apply_start(app: &mut App, start: Option<&str>) {
     }
 }
 
+/// A headless session on `vault` as `thc tui` would open it (no terminal; nothing reaches the
+/// clipboard or launches anything).
+fn headless(vault: Vault, size: (u16, u16)) -> Result<session::Session> {
+    SNAPSHOT.with(|s| s.set(true));
+    let mut app = App::new(vault)?;
+    app.daemon_live = thc_core::proto::Client::connect(app.vault.daemon_paths()).is_some();
+    apply_start(&mut app, None);
+    about::on_start(&mut app);
+    Ok(session::Session::new(app, size))
+}
+
+/// `thc ui render --state FILE`: the frame a state draws, without a terminal or a running TUI.
+/// `state` may be partial (missing fields take their defaults). Formats: text, ansi, html,
+/// cells (JSON rows).
+pub fn ui_render(vault: Vault, state: Option<&serde_json::Value>, size: (u16, u16), format: &str) -> Result<String> {
+    let mut s = headless(vault, size)?;
+    if let Some(state) = state {
+        s.restore(state).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
+    render_out(&mut s, format)
+}
+
+fn render_out(s: &mut session::Session, format: &str) -> Result<String> {
+    let (w, h) = s.size;
+    let r = s.render(w, h, format).map_err(|e| anyhow::anyhow!("{e}"))?;
+    Ok(match (r.frame, r.rows) {
+        (Some(f), _) => f,
+        (None, Some(rows)) => serde_json::to_string(&serde_json::json!({"w": w, "h": h, "cursor": r.cursor, "rows": rows}))? + "\n",
+        _ => String::new(),
+    })
+}
+
+/// `thc ui replay FILE`: a recorded UI trace (`thc tui --trace`, `trace.get`) replayed on
+/// `vault`: the last frame, or every line's frame with `every`. With `THC_NOW` pinned the
+/// output is the same on every run.
+pub fn ui_replay(vault: Vault, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>> {
+    let mut s = headless(vault, size.unwrap_or((100, 30)))?;
+    session::replay(&mut s, trace, size, format, every).map_err(|e| anyhow::anyhow!("{e}"))
+}
+
+/// `thc ui state --default`: the state a fresh TUI on this vault starts with.
+pub fn ui_default_state(vault: Vault) -> Result<serde_json::Value> {
+    let mut s = headless(vault, (100, 30))?;
+    Ok(s.state().to_json())
+}
+
 pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option<&str>, start: Option<&str>) -> Result<String> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
-    use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyEventState, KeyModifiers};
+    use session::{Msg, Session};
     SNAPSHOT.with(|s| s.set(true));
     let started = Instant::now();
     let mut app = if start.is_some() { App::new_deferred(vault)? } else { App::new(vault)? };
@@ -883,119 +883,52 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
         app.update_state = app::UpdateState::Downloading { version: "0.8.1".into() };
         app.reexec = true;
     }
+    let mut session = Session::new(app, (width, height));
+    // `thc ui render --state FILE`: start from a state.
+    if let Some(path) = std::env::var_os("THC_TUI_STATE") {
+        let text = if path == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&path)? };
+        let v: serde_json::Value = serde_json::from_str(&text).map_err(|e| anyhow::anyhow!("the state isn't JSON: {e}"))?;
+        // `thc ui state --json` prints {rev, state}: take its state.
+        let v = v.get("state").filter(|s| s.is_object() && v.get("rev").is_some()).cloned().unwrap_or(v);
+        session.restore(&v).map_err(|e| anyhow::anyhow!("{e}"))?;
+    }
     let mut term = Terminal::new(quiet::Snap { inner: TestBackend::new(width, height), visible: false })?;
-    term.draw(|f| ui::draw_app(f, &mut app))?;
+    term.draw(|f| ui::draw_app(f, &mut session.app))?;
     // THC_TUI_TRACE=1: the first frame, from opening the vault (the open budget, §10).
     if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2") {
         eprintln!("thc tui trace: first frame {:.1} ms", started.elapsed().as_secs_f64() * 1000.0);
     }
-    let mut rest = keys;
+    if let Some(path) = trace_file() {
+        session.trace_to(&path)?;
+    }
+    let groups = script::parse_grouped(keys, true).map_err(|e| anyhow::anyhow!("THC_TUI_KEYS: {e}"))?;
     let mut key_ms: Vec<f64> = Vec::new();
-    while !rest.is_empty() {
-        // A paste token's text may hold `>`: it ends at a `>` followed by `<` or the end.
-        let token_end = |r: &str| -> Option<usize> {
-            if r.starts_with("paste:") {
-                let b = r.as_bytes();
-                (0..b.len()).find(|&i| b[i] == b'>' && (i + 1 == b.len() || b[i + 1] == b'<'))
-            } else {
-                r.find('>')
-            }
-        };
-        let (code, mods, used) = if let Some(end) = rest.strip_prefix('<').and_then(token_end) {
-            let tok = &rest[1..end + 1];
-            let (code, mods) = match tok {
-                "cr" => (KeyCode::Enter, KeyModifiers::NONE),
-                "f1" => (KeyCode::F(1), KeyModifiers::NONE),
-                "esc" => (KeyCode::Esc, KeyModifiers::NONE),
-                "tab" => (KeyCode::Tab, KeyModifiers::NONE),
-                "space" => (KeyCode::Char(' '), KeyModifiers::NONE),
-                "bs" => (KeyCode::Backspace, KeyModifiers::NONE),
-                "up" => (KeyCode::Up, KeyModifiers::NONE),
-                "down" => (KeyCode::Down, KeyModifiers::NONE),
-                "left" => (KeyCode::Left, KeyModifiers::NONE),
-                "right" => (KeyCode::Right, KeyModifiers::NONE),
-                "s-tab" => (KeyCode::BackTab, KeyModifiers::SHIFT),
-                "s-left" => (KeyCode::Left, KeyModifiers::SHIFT),
-                "s-right" => (KeyCode::Right, KeyModifiers::SHIFT),
-                "s-up" => (KeyCode::Up, KeyModifiers::SHIFT),
-                "s-down" => (KeyCode::Down, KeyModifiers::SHIFT),
-                "m-up" => (KeyCode::Up, KeyModifiers::ALT),
-                "m-down" => (KeyCode::Down, KeyModifiers::ALT),
-                "m-left" => (KeyCode::Left, KeyModifiers::ALT),
-                "m-right" => (KeyCode::Right, KeyModifiers::ALT),
-                "s-cr" => (KeyCode::Enter, KeyModifiers::SHIFT),
-                "pgdn" => (KeyCode::PageDown, KeyModifiers::NONE),
-                "pgup" => (KeyCode::PageUp, KeyModifiers::NONE),
-                "home" => (KeyCode::Home, KeyModifiers::NONE),
-                "end" => (KeyCode::End, KeyModifiers::NONE),
-                "del" => (KeyCode::Delete, KeyModifiers::NONE),
-                t if t.starts_with("paste:") => {
-                    // A bracketed paste; `\n` in the token is a line break.
-                    let text = t["paste:".len()..].replace("\\n", "\n");
-                    let t0 = Instant::now();
-                    crate::doc_keys::paste(&mut app, &text);
-                    // THC_TUI_TRACE=1: a paste's time, its save included (the paste budget).
-                    if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2") {
-                        app.drain_saves(true);
-                        term.draw(|f| ui::draw_app(f, &mut app))?;
-                        eprintln!("thc tui trace: paste {} lines {:.1} ms", text.lines().count(), t0.elapsed().as_secs_f64() * 1000.0);
-                    }
-                    (KeyCode::Null, KeyModifiers::NONE)
-                }
-                t if t.starts_with("remote:") => {
-                    // Fixture: another device changes a line's text (ID:TEXT), then the poll sees it.
-                    if let Some((id, text)) = t["remote:".len()..].split_once(':') {
-                        remote_write(&app, id, text)?;
-                        let _ = app.poll_external();
-                    }
-                    (KeyCode::Null, KeyModifiers::NONE)
-                }
-                // The mouse (mouse.md §9): <click:x,y> <dclick:x,y> <tclick:x,y> <sclick:x,y>
-                // <cclick:x,y> <mclick:x,y> <drag:x1,y1,x2,y2> <wheel:up|down[:n][@x,y]> <hover:x,y>.
-                t if mouse_token(&mut app, t) => (KeyCode::Null, KeyModifiers::NONE),
-                t if t.starts_with("m-") => (KeyCode::Char(t.chars().nth(2).unwrap_or(' ')), KeyModifiers::ALT),
-                "alert" => {
-                    // Fixture: the first pending alert fires as if the daemon pushed it.
-                    app.simulate_alert();
-                    (KeyCode::Null, KeyModifiers::NONE)
-                }
-                t if t.starts_with("agent:") => {
-                    // Fixture: an agent (on its own device) adds a node to today's journal,
-                    // then the TUI polls the log exactly as it does live.
-                    agent_write(&app, &t["agent:".len()..])?;
-                    let _ = app.poll_external();
-                    (KeyCode::Null, KeyModifiers::NONE)
-                }
-                "c-cr" => (KeyCode::Enter, KeyModifiers::CONTROL),
-                "c-up" => (KeyCode::Up, KeyModifiers::CONTROL),
-                "c-down" => (KeyCode::Down, KeyModifiers::CONTROL),
-                "c-left" => (KeyCode::Left, KeyModifiers::CONTROL),
-                "c-m-left" => (KeyCode::Left, KeyModifiers::CONTROL | KeyModifiers::ALT),
-                "c-m-right" => (KeyCode::Right, KeyModifiers::CONTROL | KeyModifiers::ALT),
-                "d-up" => (KeyCode::Up, KeyModifiers::SUPER),
-                "d-down" => (KeyCode::Down, KeyModifiers::SUPER),
-                "c-right" => (KeyCode::Right, KeyModifiers::CONTROL),
-                "c-home" => (KeyCode::Home, KeyModifiers::CONTROL),
-                "c-end" => (KeyCode::End, KeyModifiers::CONTROL),
-                // ⌘ (super), as the kitty protocol delivers it.
-                t if t.starts_with("d-") => (KeyCode::Char(t.chars().nth(2).unwrap_or(' ')), KeyModifiers::SUPER),
-                t if t.starts_with("c-") => (KeyCode::Char(t.chars().nth(2).unwrap_or(' ')), KeyModifiers::CONTROL),
-                _ => (KeyCode::Null, KeyModifiers::NONE),
-            };
-            (code, mods, end + 2)
-        } else {
-            let c = rest.chars().next().unwrap();
-            (KeyCode::Char(c), KeyModifiers::NONE, c.len_utf8())
-        };
+    for group in groups {
         let t0 = Instant::now();
-        runtime_effects::tick(&mut app);
-        if code != KeyCode::Null {
-            input::handle_key(&mut app, KeyEvent { code, modifiers: mods, kind: KeyEventKind::Press, state: KeyEventState::NONE });
+        session.tick_wall();
+        let mut key = None;
+        let mut paste = None;
+        for msg in group {
+            match &msg {
+                Msg::Key { key: k } => key = Some(k.clone()),
+                Msg::Paste { text } => paste = Some(text.lines().count()),
+                _ => {}
+            }
+            if let Err(e) = session.apply(msg) {
+                session.app.error(e);
+            }
+        }
+        let app = &mut session.app;
+        // THC_TUI_TRACE=1: a paste's time, its save included (the paste budget).
+        if let Some(lines) = paste.filter(|_| std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2")) {
+            app.drain_saves(true);
+            term.draw(|f| ui::draw_app(f, app))?;
+            eprintln!("thc tui trace: paste {lines} lines {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
         }
         if let Some(id) = app.editor_request.take() {
             // Tests of the view editor run their own (non-interactive) $VISUAL.
             if id.starts_with("@view:") && std::env::var_os("THC_TUI_SNAPSHOT_EDITOR").is_some() {
-                match run_editor(&mut app, &id) {
+                match run_editor(app, &id) {
                     Ok(Some(msg)) => app.info(msg),
                     Ok(None) => app.info("no changes"),
                     Err(e) => app.error(format!("{e:#}")),
@@ -1007,7 +940,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
         }
         if let Some(path) = app.switch_to.take() {
             let t = Instant::now();
-            switch_vault(&mut app, &path);
+            switch_vault(app, &path);
             if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
                 eprintln!("switch: {:.1} ms", t.elapsed().as_secs_f64() * 1e3);
             }
@@ -1016,18 +949,17 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
             app.tui_prefs.mouse = on;
             app.info(if on { "mouse on · :mouse off for your terminal's own selection" } else { "mouse off · :mouse on to click again" });
         }
-        term.draw(|f| ui::draw_app(f, &mut app))?;
+        term.draw(|f| ui::draw_app(f, app))?;
         let ms_key = t0.elapsed().as_secs_f64() * 1000.0;
         app.after_frame();
-        if code != KeyCode::Null {
-            let ms = ms_key;
-            key_ms.push(ms);
+        if let Some(k) = key {
+            key_ms.push(ms_key);
             if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
-                eprintln!("{ms:8.2} ms  {code:?} {mods:?}");
+                eprintln!("{ms_key:8.2} ms  {k}");
             }
         }
-        rest = &rest[used..];
     }
+    let app = &mut session.app;
     // A snapshot asked to keep caret memory leaves it as quitting does (tests of reopening).
     if std::env::var_os("THC_TUI_SNAPSHOT_CARETS").is_some() {
         app.remember_caret();
@@ -1036,7 +968,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
     if std::env::var_os("THC_TUI_SNAPSHOT_DAEMON").is_some() {
         app.save_doc(true);
         app.drain_saves(true);
-        term.draw(|f| ui::draw_app(f, &mut app))?;
+        term.draw(|f| ui::draw_app(f, app))?;
     }
     // THC_TUI_TRACE=1: each replayed key's handle + frame time, to stderr (the §10 budgets).
     if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2") && !key_ms.is_empty() {
@@ -1047,7 +979,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
     }
     // A save waits for the frame after a key (as live): draw once more after it, so a snapshot
     // shows what a person sees a moment later (a line just left has its tokens folded).
-    term.draw(|f| ui::draw_app(f, &mut app))?;
+    term.draw(|f| ui::draw_app(f, app))?;
     let mut buf = term.backend().inner.buffer().clone();
     // THC_TUI_SNAPSHOT_CURSOR=1: the terminal cursor's cell drawn as `▮` (caret placement tests).
     if std::env::var("THC_TUI_SNAPSHOT_CURSOR").is_ok_and(|v| v == "1") {
@@ -1057,32 +989,21 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
             buf[(p.x, p.y)].set_symbol("▮");
         }
     }
+    // THC_TUI_STATE_OUT=FILE: the state the frame was drawn from (`thc ui state --default`).
+    if let Some(path) = std::env::var_os("THC_TUI_STATE_OUT") {
+        let json = serde_json::to_string_pretty(&session.state().to_json())?;
+        std::fs::write(path, json + "\n")?;
+    }
     let format = std::env::var("THC_TUI_SNAPSHOT_FORMAT").unwrap_or_default();
     match format.as_str() {
         "ansi" => return Ok(snapshot_fmt::ansi(&buf)),
-        "html" => return Ok(snapshot_fmt::html(&buf, &app.theme)),
+        "html" => return Ok(snapshot_fmt::html(&buf, &session.app.theme)),
         _ => {}
     }
-    let mut out = String::new();
-    for y in 0..buf.area.height {
-        let mut line = String::new();
-        let mut skip = 0;
-        for x in 0..buf.area.width {
-            if skip > 0 {
-                skip -= 1;
-                continue;
-            }
-            let sym = buf[(x, y)].symbol();
-            skip = unicode_width::UnicodeWidthStr::width(sym).saturating_sub(1);
-            line.push_str(sym);
-        }
-        out.push_str(line.trim_end());
-        out.push('\n');
-    }
-    Ok(out)
+    Ok(session::frame_text(&buf))
 }
 
-fn agent_write(app: &App, text: &str) -> Result<()> {
+pub(crate) fn agent_write(app: &App, text: &str) -> Result<()> {
     use thc_core::event::Actor;
     let mut paths = app.vault.paths.clone();
     paths.cache = paths.cache.join("fixture-agent");
@@ -1099,7 +1020,7 @@ fn agent_write(app: &App, text: &str) -> Result<()> {
 }
 
 /// Snapshot fixture: a text change to a node from another device (`<remote:ID:TEXT>`).
-fn remote_write(app: &App, id_prefix: &str, text: &str) -> Result<()> {
+pub(crate) fn remote_write(app: &App, id_prefix: &str, text: &str) -> Result<()> {
     use thc_core::builder::TxBuilder;
     use thc_core::event::Actor;
     let mut paths = app.vault.paths.clone();
