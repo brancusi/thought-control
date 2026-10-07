@@ -428,6 +428,15 @@ impl Doc {
         }
     }
 
+    /// The engine's text (tests: the mirror against it).
+    #[cfg(test)]
+    pub fn engine_text(&self) -> Option<String> {
+        match &self.engine {
+            Engine::Next(n) => Some(n.text()),
+            Engine::Old(_) => None,
+        }
+    }
+
     /// The document's words (its own lines), remembered for the revision.
     pub fn word_count(&self) -> usize {
         let rev = self.revision();
@@ -1011,7 +1020,12 @@ impl Doc {
             }
             (t, st)
         };
+        // One save can carry several ops for a note (a move, then its text): each result has the
+        // note as that op left it, so only its last result speaks for it. (An earlier one put
+        // back the text from before the edit, and the next save sent it: typing lost, fuzz.)
+        let last: HashMap<&str, usize> = results.iter().map(|r| (r.id.as_str(), r.index)).collect();
         for r in results {
+            let latest = last.get(r.id.as_str()) == Some(&r.index);
             let Some(i) = self.engine.lines().iter().position(|l| l.id == r.id) else {
                 // Made by this save, gone from the buffer since: the vault has it now, so it goes.
                 if r.state == "ok" && sent.created.contains(&r.id) && !self.engine.deleted().contains(&r.id) {
@@ -1022,6 +1036,8 @@ impl Doc {
             let l = &mut self.engine.lines_mut()[i];
             l.saving_since = None;
             match r.state {
+                // Only the note's last result: it has every op of this save applied.
+                "ok" if !latest => {}
                 "ok" => {
                     let Some(b) = &r.block else { continue };
                     l.save_error = None;

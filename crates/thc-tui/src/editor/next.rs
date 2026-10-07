@@ -255,6 +255,11 @@ impl Next {
         &mut self.pool
     }
 
+    #[cfg(test)]
+    pub(super) fn text(&self) -> String {
+        self.st.doc.text.to_string()
+    }
+
     pub(super) fn pool_len(&self) -> usize {
         self.pool.len()
     }
