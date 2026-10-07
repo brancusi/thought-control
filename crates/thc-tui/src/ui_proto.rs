@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 /// The protocol version `hello` reports. Within a version, results only gain fields.
 pub const PROTO: u32 = 1;
 
-pub const OPS: &[&str] = &["hello", "state.get", "state.set", "patch", "msgs", "keys", "render", "subscribe", "unsubscribe", "trace.get", "trace.checkpoint"];
+pub const OPS: &[&str] = &["hello", "state.get", "state.set", "patch", "msgs", "keys", "render", "subscribe", "unsubscribe", "trace.get", "trace.checkpoint", "aside", "aside.ls"];
 
 /// What a subscriber receives with each change.
 #[derive(Clone, Debug, Default, PartialEq)]
@@ -91,6 +91,15 @@ struct Request {
     with_msgs: Option<bool>,
     #[serde(default)]
     with_state: bool,
+    /// `aside`: what to open beside (sidebar.md §10.3), and how.
+    #[serde(default)]
+    target: Option<String>,
+    #[serde(default)]
+    pin: bool,
+    #[serde(default)]
+    fold: bool,
+    #[serde(default)]
+    close: bool,
 }
 
 struct ProtoError {
@@ -213,6 +222,26 @@ fn run(session: &mut Session, req: Request, host: &Host) -> Result<Handled, Prot
             }
             Ok(Handled { response: ok_line(id, result), change: Some(Change { rev: session.rev, msgs: applied, state_set }), control: None })
         }
+        "aside" => {
+            check_rev(session.rev)?;
+            let target = req.target.clone().ok_or_else(|| err("bad_request", "aside needs a target"))?;
+            // Resolved first, so a bad target says which kind of bad (exit 3, 5 or 6).
+            if !req.close {
+                if let Err(e) = session.app.resolve_aside(&target) {
+                    return Err(aside_err(e));
+                }
+            }
+            let msg = Msg::Aside { target, pin: req.pin, fold: req.fold, close: req.close, actor: req.actor.clone() };
+            let applied = apply(session, vec![msg], host, false).map_err(|e| ProtoError { kind: if e.message.contains("isn't beside you") { "not_found" } else { e.kind }, message: e.message })?;
+            let key = session.app.ui.sidebar.focused.clone();
+            let opened = session.app.ui.sidebar.open.first().map(|p| p.key());
+            Ok(Handled {
+                response: ok_line(id, json!({"rev": session.rev, "panel": opened, "focused": key, "focus": session.app.ui.focus, "sidebar": session.app.aside_ls()})),
+                change: Some(Change { rev: session.rev, msgs: applied, state_set: true }),
+                control: None,
+            })
+        }
+        "aside.ls" => reply(ok_line(id, json!({"rev": session.rev, "sidebar": session.app.aside_ls()}))),
         "render" => {
             let (w, h) = (req.w.unwrap_or(session.size.0), req.h.unwrap_or(session.size.1));
             let format = req.format.unwrap_or_else(|| "text".into());
@@ -242,6 +271,16 @@ fn run(session: &mut Session, req: Request, host: &Host) -> Result<Handled, Prot
         }
         other => Err(err("unknown_op", format!("unknown op {other:?} · hello lists them"))),
     }
+}
+
+fn aside_err(e: crate::sidebar_app::AsideError) -> ProtoError {
+    use crate::sidebar_app::AsideError;
+    let kind = match &e {
+        AsideError::NotFound(_) => "not_found",
+        AsideError::Ambiguous(..) => "ambiguous",
+        AsideError::Invalid(_) => "invalid",
+    };
+    ProtoError { kind, message: e.message() }
 }
 
 /// Applies messages, a tick to the wall clock first when the host keeps time. The messages as

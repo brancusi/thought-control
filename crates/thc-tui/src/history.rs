@@ -34,6 +34,9 @@ pub struct Place {
     pub label: String,
     #[serde(default)]
     pub ms: i64,
+    /// An agent changed the sidebar's stack here (sidebar.md §10.4): ⌘[ takes it back.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub agent: Option<crate::sidebar::AgentChange>,
 }
 
 impl Place {
@@ -115,7 +118,17 @@ impl App {
             scroll: self.doc.as_ref().map_or(self.scroll, |d| d.scroll()),
             label,
             ms: self.ui.now_ms as i64,
+            agent: None,
         }
+    }
+
+    /// An agent's change to the stack is its own history step (sidebar.md §10.4).
+    pub fn history_agent_step(&mut self, change: crate::sidebar::AgentChange) {
+        let mut p = self.place();
+        p.agent = Some(change);
+        self.history.push(p);
+        self.history.tab_run = false;
+        self.history.save(&self.vault.paths.cache);
     }
 
     /// After every input: the same place updates its entry, another place is a step.
@@ -125,7 +138,9 @@ impl App {
         let h = &mut self.history;
         match h.entries.get_mut(h.pos) {
             Some(cur) if cur.same(&p) => {
+                let agent = cur.agent.take();
                 *cur = p;
+                cur.agent = agent;
                 return;
             }
             Some(_) if via_tab && h.tab_run => {
@@ -159,6 +174,13 @@ impl App {
     /// ⌘[ (-1) and ⌘] (+1). A place that's gone is skipped, said once in the bar.
     pub fn history_go(&mut self, delta: isize) {
         self.history_tick(false);
+        // Back over an agent's change to the sidebar: it's taken back, and nothing else.
+        if delta < 0 {
+            let pos = self.history.pos;
+            if let Some(change) = self.history.entries.get_mut(pos).and_then(|e| e.agent.take()) {
+                self.undo_agent_change(change);
+            }
+        }
         let mut skipped = false;
         loop {
             let target = self.history.pos as isize + delta;

@@ -228,6 +228,21 @@ impl Doc {
         h.finish()
     }
 
+    /// How many rows the document lays out to, counting no further than `cap` (cheap for a
+    /// long document when only a few rows matter).
+    pub fn rows_capped(&self, cap: usize) -> usize {
+        let st = self.engine.state();
+        let layout = Layout::of(&st.doc, &st.view);
+        let start = RowPos { line: layout.visible_at_or_after(0).unwrap_or(0), row: 0 };
+        (layout.rows_between(start, layout.end(), cap).max(0) as usize + 1).min(cap)
+    }
+
+    /// Where the view starts, as the engine keeps it (line, row): no layout.
+    pub fn scroll_anchor(&self) -> (usize, usize) {
+        let s = &self.engine.state().view.scroll;
+        (s.line, s.row)
+    }
+
     /// The first row on screen, as a row of the whole document.
     pub fn scroll(&self) -> usize {
         self.scroll_rows().1

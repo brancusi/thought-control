@@ -387,3 +387,63 @@ fn a_live_sessions_trace_replays_to_its_screen() {
     assert_eq!(replay(&r.0, &t, "90x30"), live, "both segments replay");
     drop(tui);
 }
+
+/// The sidebar's agent verb (sidebar.md §10, S21–S23): `thc ui aside` opens beside the person
+/// without moving their keyboard, says so, and ⌘[ takes it back; an agent's patch can't move
+/// focus or close a pinned panel; the stack round-trips through a headless render.
+#[test]
+fn an_agent_opens_a_page_beside_the_person() {
+    let r = vault("aside");
+    let page: serde_json::Value = serde_json::from_str(&ok(thc(&r.0).args(["page", "new", "Reading List", "--json"]))).unwrap();
+    let id = page["nodes"][0]["id"].as_str().unwrap().to_string();
+    ok(thc(&r.0).args(["add", "--under", &id, "Atomic Habits: finished"]));
+    let tmp = r.0.join("tmp");
+    std::fs::create_dir_all(&tmp).unwrap();
+    let _tui = Pty::spawn(&r.0, &tmp);
+    wait_for("the TUI to advertise itself", || sessions(&r.0, &tmp) == 1);
+    let claude = |args: &[&str]| -> std::process::Output { ui(&r.0, &tmp).args(args).env("THC_ACTOR", "claude").output().unwrap() };
+
+    // S21: on top, marked, a toast; the keyboard doesn't move; ⌘[ closes it.
+    let o = claude(&["aside", "Reading List"]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let frame = ok(ui(&r.0, &tmp).args(["render", "140x40"]));
+    assert!(frame.contains("▾ ¶ Reading List") && frame.contains("◆ claude"), "{frame}");
+    assert!(frame.contains("claude opened ¶ Reading List beside you"), "{frame}");
+    let state: serde_json::Value = serde_json::from_str(&ok(ui(&r.0, &tmp).args(["state", "--raw"]))).unwrap();
+    assert_eq!(state["focus"], "list", "{state}");
+    assert_eq!(state["sidebar"]["open"][0]["opened_by"], "claude");
+    let ls: serde_json::Value = serde_json::from_str(&ok(ui(&r.0, &tmp).args(["--json", "aside", "--ls"]))).unwrap();
+    assert_eq!(ls["open"][0]["title"], "Reading List", "{ls}");
+    ok(ui(&r.0, &tmp).args(["send", "keys", "<c-m-left>"]));
+    let frame = ok(ui(&r.0, &tmp).args(["render", "140x40"]));
+    assert!(!frame.contains("¶ Reading List  "), "⌘[ closed it: {frame}");
+    let state: serde_json::Value = serde_json::from_str(&ok(ui(&r.0, &tmp).args(["state", "--raw"]))).unwrap();
+    assert!(state["sidebar"]["open"].as_array().unwrap().is_empty(), "{state}");
+
+    // Exit codes: no such page 3; a bad query 6.
+    assert_eq!(claude(&["aside", "No such page"]).status.code(), Some(3));
+    assert_eq!(claude(&["aside", "status:opn"]).status.code(), Some(6));
+
+    // S22: the person pins it; an agent's focus patch makes it active, focus stays; closing a
+    // pinned panel by patch or aside is refused (exit 6).
+    assert!(claude(&["aside", "Reading List"]).status.success());
+    ok(ui(&r.0, &tmp).args(["send", "keys", "<m-s><m-p><esc>"]));
+    let o = claude(&["patch", r#"{"focus":"sidebar"}"#]);
+    assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+    let state: serde_json::Value = serde_json::from_str(&ok(ui(&r.0, &tmp).args(["state", "--raw"]))).unwrap();
+    assert_eq!(state["focus"], "list", "{state}");
+    assert_eq!(state["sidebar"]["open"][0]["pinned"], true, "{state}");
+    let o = claude(&["patch", r#"{"sidebar":{"open":[]}}"#]);
+    assert_eq!(o.status.code(), Some(6), "{}", String::from_utf8_lossy(&o.stderr));
+    let o = claude(&["aside", "--close", "Reading List"]);
+    assert_eq!(o.status.code(), Some(6), "{}", String::from_utf8_lossy(&o.stderr));
+
+    // S23: the stack, read and rendered headlessly, draws the same sidebar.
+    let st = ok(ui(&r.0, &tmp).args(["state", "--raw"]));
+    let file = r.0.join("stack.json");
+    std::fs::write(&file, &st).unwrap();
+    let live = ok(ui(&r.0, &tmp).args(["render", "140x40"]));
+    let headless = ok(thc(&r.0).args(["ui", "render", "140x40", "--state"]).arg(&file).env_remove("THC_NOW"));
+    let side = |f: &str| f.lines().skip(2).take(10).map(|l| l.chars().skip(93).collect::<String>()).collect::<Vec<_>>();
+    assert_eq!(side(&live), side(&headless), "live:\n{live}\nheadless:\n{headless}");
+}

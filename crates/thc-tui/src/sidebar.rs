@@ -257,6 +257,35 @@ impl Default for SidebarState {
     }
 }
 
+/// What an agent did to the stack (§10.4), so ⌘[ can take back exactly that: close what it
+/// opened, bring back what it closed, unfold what it folded.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct AgentChange {
+    pub actor: String,
+    pub opened: Vec<PanelKey>,
+    pub closed: Vec<Panel>,
+    pub folded: Vec<PanelKey>,
+}
+
+impl AgentChange {
+    /// The change from stack `a` to stack `b`.
+    pub fn between(actor: &str, a: &SidebarState, b: &SidebarState) -> AgentChange {
+        let keys_a: Vec<PanelKey> = a.open.iter().map(Panel::key).collect();
+        let keys_b: Vec<PanelKey> = b.open.iter().map(Panel::key).collect();
+        AgentChange {
+            actor: actor.to_string(),
+            opened: keys_b.iter().filter(|k| !keys_a.contains(k)).cloned().collect(),
+            closed: a.open.iter().filter(|p| !keys_b.contains(&p.key())).cloned().collect(),
+            folded: b.open.iter().filter(|p| p.folded && a.get(&p.key()).is_some_and(|q| !q.folded)).map(Panel::key).collect(),
+        }
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.opened.is_empty() && self.closed.is_empty() && self.folded.is_empty()
+    }
+}
+
 /// What opening a panel did (§2).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Opened {

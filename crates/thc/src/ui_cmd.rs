@@ -58,6 +58,30 @@ enum UiCmd {
         #[command(flatten)]
         target: Target,
     },
+    /// Put a page, day, list or query beside the person in a running TUI (the sidebar): a page
+    /// id or "title", today, fri, 2026-10-06, @view, "#tag" or "<query>". The panel opens on top,
+    /// marked as yours; their keyboard stays where it is; ⌘[ takes it back.
+    Aside {
+        /// What to open (or, with --close, which panel to close).
+        target: Option<String>,
+        /// Pin it (pinned panels stay on top and aren't closed to make room).
+        #[arg(long)]
+        pin: bool,
+        /// Open it folded (its header only).
+        #[arg(long)]
+        fold: bool,
+        /// Close a panel you opened (never a pinned one).
+        #[arg(long)]
+        close: bool,
+        /// The stack, with titles and counts.
+        #[arg(long)]
+        ls: bool,
+        /// Only if the TUI's rev is still N (else exit 4).
+        #[arg(long, value_name = "N")]
+        if_rev: Option<u64>,
+        #[command(flatten)]
+        target_tui: Target,
+    },
     /// Send requests: `keys SCRIPT`, `msgs FILE|-|JSON`, `render [WxH] [FORMAT]`, `state.get
     /// [no-history]`, `subscribe [WxH [FORMAT]] [state]`, `trace.get [all|since REV]`,
     /// `trace.checkpoint`, `hello`, or a raw JSON request. None: JSON requests from stdin.
@@ -245,6 +269,30 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             Ok(())
         }
         UiCmd::Send { words, raw, apply_effects, target } => send(cli, paths, &target, words, raw, apply_effects),
+        UiCmd::Aside { target, pin, fold, close, ls, if_rev, target_tui } => {
+            if ls {
+                let r = request(paths, &target_tui, &json!({"op": "aside.ls"}))?;
+                return print_aside(cli, &r["sidebar"]);
+            }
+            may_control(cli)?;
+            // The global --if-match names the same guard here: the TUI's rev.
+            let if_rev = if_rev.or(cli.if_match.as_deref().and_then(|s| s.parse().ok()));
+            let Some(target) = target else { return Err(usage("thc ui aside <page | day | @view | #tag | query> (or --ls)")) };
+            let mut req = json!({"op": "aside", "target": target, "pin": pin, "fold": fold, "close": close});
+            control_fields(cli, &mut req, if_rev);
+            let r = request(paths, &target_tui, &req)?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+            } else {
+                let title = r["sidebar"]["open"].as_array().and_then(|o| o.first()).and_then(|p| p["title"].as_str()).unwrap_or("").to_string();
+                if close {
+                    println!("closed · rev {}", r["rev"]);
+                } else {
+                    println!("beside: {title} · rev {}", r["rev"]);
+                }
+            }
+            Ok(())
+        }
     }
 }
 
@@ -263,6 +311,31 @@ fn may_control(cli: &Cli) -> Result<()> {
             config: Some(policy.source.clone()),
         }
         .into());
+    }
+    Ok(())
+}
+
+/// `thc ui aside --ls`: the stack, top to bottom.
+fn print_aside(cli: &Cli, sb: &Value) -> Result<()> {
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(sb)?);
+        return Ok(());
+    }
+    let open = sb["open"].as_array().cloned().unwrap_or_default();
+    if open.is_empty() {
+        println!("nothing beside the person");
+    }
+    for p in open {
+        let mut tags = Vec::new();
+        for (f, w) in [("pinned", "pinned"), ("folded", "folded")] {
+            if p[f].as_bool() == Some(true) {
+                tags.push(w.to_string());
+            }
+        }
+        if let Some(by) = p["opened_by"].as_str() {
+            tags.push(format!("opened by {by}"));
+        }
+        println!("{:<6} {}{}", p["kind"].as_str().unwrap_or(""), p["title"].as_str().unwrap_or(""), if tags.is_empty() { String::new() } else { format!("  ({})", tags.join(", ")) });
     }
     Ok(())
 }
@@ -347,6 +420,8 @@ fn result(r: Value) -> Result<Value> {
         return Err(match kind {
             "stale" => thc_core::error::ThcError::Stale { message: msg, hint: "re-read with thc ui state, then decide".into(), node: String::new(), rev: None, changed: vec![] }.into(),
             "invalid" | "bad_keys" => invalid(msg),
+            "not_found" => thc_core::error::not_found(msg),
+            "ambiguous" => thc_core::error::ThcError::Ambiguous { prefix: msg.split('"').nth(1).unwrap_or("").to_string(), candidates: msg.split(" · ").nth(1).map(|c| c.split(", ").map(str::to_string).collect()).unwrap_or_default() }.into(),
             "trimmed" => thc_core::error::not_found(msg),
             _ => usage(format!("{kind}: {msg}")),
         });
