@@ -512,6 +512,10 @@ impl Session {
     /// it at the same point. What the step changed in the state is left for the next `external`
     /// message, as before: the step's line carries its data, the patch its look.
     pub fn runtime(&mut self, msg: Msg) {
+        // Nothing waits for this frame (most keys): nothing to run or record, and no state read.
+        if matches!(msg, Msg::Frame) && !self.app.doc_save_after_frame {
+            return;
+        }
         // Anything still unrecorded is recorded first, apart from the step.
         self.sync_external();
         let did = match &msg {
