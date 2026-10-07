@@ -417,6 +417,12 @@ pub struct Glyphs {
     pub rule_heavy: &'static str,
     pub vsep: &'static str,
     pub tee: &'static str,
+    /// The sidebar (sidebar.md §14.2): close, open in main, a list panel, back, more below.
+    pub close: &'static str,
+    pub open_main: &'static str,
+    pub query: &'static str,
+    pub back: &'static str,
+    pub more: &'static str,
 }
 
 pub static UNICODE: Glyphs = Glyphs {
@@ -446,6 +452,11 @@ pub static UNICODE: Glyphs = Glyphs {
     rule_heavy: "━",
     vsep: "│",
     tee: "┬",
+    close: "×",
+    open_main: "↗",
+    query: "≡",
+    back: "‹",
+    more: "↓",
 };
 
 pub static ASCII: Glyphs = Glyphs {
@@ -475,6 +486,11 @@ pub static ASCII: Glyphs = Glyphs {
     rule_heavy: "=",
     vsep: "|",
     tee: "+",
+    close: "x",
+    open_main: "^",
+    query: "=",
+    back: "<",
+    more: "v",
 };
 
 #[cfg(test)]

@@ -141,6 +141,101 @@ impl Doc {
 
 }
 
+// ---- views (sidebar.md §7.1) ------------------------------------------------------------------
+
+/// A view of a document: the main view is [`MAIN_VIEW`], each sidebar panel has its own id.
+pub type ViewId = u32;
+/// The main view's id.
+pub const MAIN_VIEW: ViewId = 0;
+
+impl Doc {
+    /// The view the caret, the selection, the layout and every command read and act through.
+    pub fn current_view(&self) -> ViewId {
+        self.engine.current_view()
+    }
+
+    /// The document's views, by id.
+    pub fn views(&self) -> Vec<ViewId> {
+        self.engine.view_ids()
+    }
+
+    pub fn has_view(&self, id: ViewId) -> bool {
+        self.engine.view_ids().contains(&id)
+    }
+
+    /// A new view `id`: laid out like the current one, its caret at the start of the first
+    /// note, at the top, parked (sidebar.md §9). Nothing when it has one.
+    pub fn add_view(&mut self, id: ViewId) {
+        self.engine.add_view(id);
+    }
+
+    /// Act through view `id` from now on. False: the document has no such view.
+    pub fn use_view(&mut self, id: ViewId) -> bool {
+        self.engine.use_view(id)
+    }
+
+    /// Drop view `id` (another becomes current when it was). False: it's the last view.
+    pub fn remove_view(&mut self, id: ViewId) -> bool {
+        self.engine.remove_view(id)
+    }
+
+    /// The current view takes id `id`: a document moving from the main view to a panel, or
+    /// back. False: another view has that id.
+    pub fn rename_view(&mut self, id: ViewId) -> bool {
+        self.engine.rename_view(id)
+    }
+
+    /// Run `f` through view `id`, then go back to the view that was current. None: no such
+    /// view.
+    pub fn with_view<R>(&mut self, id: ViewId, f: impl FnOnce(&mut Doc) -> R) -> Option<R> {
+        let was = self.current_view();
+        if !self.use_view(id) {
+            return None;
+        }
+        let r = f(self);
+        self.use_view(was);
+        Some(r)
+    }
+
+    /// Each view's place (caret anchor and first row on screen), to rebuild them on a document
+    /// read again from the vault ([`Doc::adopt_views`]).
+    pub fn view_places(&mut self) -> (ViewId, Vec<(ViewId, Anchor, usize)>) {
+        let was = self.current_view();
+        let mut out = Vec::new();
+        for id in self.views() {
+            if let Some(p) = self.with_view(id, |d| (d.caret_anchor(), d.scroll())) {
+                out.push((id, p.0, p.1));
+            }
+        }
+        (was, out)
+    }
+
+    /// The views a document had before it was read again: each one back at its place, the
+    /// same one current. (A new document has only [`MAIN_VIEW`].)
+    pub fn adopt_views(&mut self, current: ViewId, places: &[(ViewId, Anchor, usize)]) {
+        if places.is_empty() {
+            return;
+        }
+        let first = self.current_view();
+        for (id, _, _) in places {
+            self.add_view(*id);
+        }
+        if !places.iter().any(|(id, _, _)| *id == first) {
+            let other = places[0].0;
+            self.use_view(other);
+            self.remove_view(first);
+        }
+        for (id, a, scroll) in places {
+            self.with_view(*id, |d| {
+                if d.set_caret_anchor(a) {
+                    d.set_scroll(*scroll, false);
+                }
+            });
+        }
+        self.use_view(current);
+    }
+}
+
 // ---- the caret and the selection ----------------------------------------------------------------
 
 impl Doc {

@@ -15,6 +15,9 @@ mod detail_snapshot;
 mod clock_snapshot;
 mod input_snapshot;
 mod update;
+mod sidebar;
+mod sidebar_app;
+mod sidebar_ui;
 pub mod ui_state;
 mod session;
 mod ui_proto;
@@ -196,7 +199,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
     if app.tui_prefs.mouse {
         mouse_off();
     }
-    app.save_doc(true);
+    app.save_everything();
     if caret.is_some() {
         use std::io::Write;
         let mut out = std::io::stdout();
@@ -215,7 +218,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
 /// vault's settings, keys and colour (vaults.md §8). The session's own state (the terminal, the
 /// mouse, the kitty flags) carries over; a snapshot switches into a scratch copy, as it started.
 pub(crate) fn switch_vault(app: &mut App, path: &std::path::Path) {
-    app.save_doc(true);
+    app.save_everything();
     app.remember_caret();
     // Where we were is the last word before the new session reads the history.
     app.history_tick(false);
@@ -454,7 +457,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         // first and lose the line being typed).
         if HANGUP.load(std::sync::atomic::Ordering::SeqCst) {
             let app = &mut session.app;
-            app.save_doc(true);
+            app.save_everything();
             app.remember_caret();
             app.drain_saves(true);
             app.history_tick(false);
@@ -504,7 +507,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             app.quit = true;
         }
         if app.quit || app.reexec {
-            app.save_doc(true);
+            app.save_everything();
             app.remember_caret();
             app.drain_saves(true);
             app.history_tick(false);
@@ -1033,7 +1036,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
     }
     // Snapshots that save through the daemon (tests): everything lands before the frame is read.
     if std::env::var_os("THC_TUI_SNAPSHOT_DAEMON").is_some() {
-        app.save_doc(true);
+        app.save_everything();
         app.drain_saves(true);
         term.draw(|f| ui::draw_app(f, app))?;
     }

@@ -331,6 +331,16 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 return true;
             }
             let Some((line, byte, hang)) = crate::doc_ui::hit(app, m.column, m.row) else { return false };
+            // ⇧-click on a link's title opens it beside (sidebar.md §2, §12).
+            if shift && clicks == 1 && button == MouseButton::Left {
+                let text = app.doc.as_ref().unwrap().blocks()[line].text.clone();
+                if crate::doc_app::on_link_title(&text, byte) {
+                    if let Some(title) = crate::doc_app::link_at(&text, byte) {
+                        app.open_aside_link(&title);
+                        return true;
+                    }
+                }
+            }
             app.doc_parked = false;
             app.doc.as_mut().unwrap().follow_caret();
             app.link_open = false;

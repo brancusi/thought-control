@@ -85,6 +85,11 @@ impl Saver {
         Saver { tx, rx, pending: 0, waiting: None, manual: false, patch: false }
     }
 
+    /// A save out, or one waiting to go: its result belongs to the document it came from.
+    pub(crate) fn busy_now(&self) -> bool {
+        self.pending > 0 || self.waiting.is_some()
+    }
+
     /// A save out, or one waiting for it.
     #[cfg(test)]
     pub(crate) fn busy(&self) -> bool {
@@ -286,6 +291,8 @@ impl App {
             self.patch_doc();
             self.load_footer();
             self.build_rail();
+            self.ensure_panels();
+            self.patch_panels();
             return;
         }
         // Arriving from a view (no document open) or leaving to one: the rail's order is
@@ -301,7 +308,10 @@ impl App {
                 self.drain_saves(true);
             }
             self.remember_caret();
-            self.doc = None;
+            if let Some(d) = self.doc.take() {
+                // A panel showing the same page keeps the document (sidebar.md §7.1).
+                self.park_main_doc(d);
+            }
         }
         if let Some(t) = want {
             self.open_doc(t);
@@ -310,6 +320,8 @@ impl App {
             self.doc_parked = true;
         }
         self.build_rail();
+        self.ensure_panels();
+        self.patch_panels();
     }
 
     /// Whether the rail shows beside the open document (navigation.md §3): 120 columns or more,
@@ -429,10 +441,15 @@ impl App {
     }
 
     fn reopen_keeping_unsaved(&mut self) {
-        let Some(d) = self.doc.take() else { return };
+        let Some(mut d) = self.doc.take() else { return };
         let mine = crate::recover::unsaved(&d);
         let caret = d.caret_anchor();
+        // Every view of it (the main view, panels) comes back at its place.
+        let (current, places) = d.view_places();
         self.open_doc(d.target.clone());
+        if let Some(nd) = self.doc.as_mut() {
+            nd.adopt_views(current, &places);
+        }
         if let (Some(rec), Some(nd)) = (mine, self.doc.as_mut()) {
             crate::recover::apply(nd, &rec);
         }
@@ -450,6 +467,22 @@ impl App {
         self.recent_docs.retain(|t| !same(t, &target));
         self.recent_docs.insert(0, target.clone());
         self.recent_docs.truncate(8);
+        // A panel shows this page already: one document, a main view added (sidebar.md §7.1).
+        if self.in_panel.is_none() {
+            if let Some(mut d) = self.adopt_panel_doc(&target) {
+                if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
+                    if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, false) {
+                        d.set_scroll(scroll.min(i), false);
+                    }
+                }
+                self.doc_line_id = Some(d.caret_block().id.clone());
+                self.doc = Some(d);
+                self.doc_write = true;
+                self.doc_first_ever = false;
+                self.load_footer();
+                return;
+            }
+        }
         let s = &self.vault.store;
         let root = match &target {
             Target::Journal { date } => s.journal_node(&date.format("%Y-%m-%d").to_string()).ok().flatten(),
@@ -686,6 +719,13 @@ impl App {
     pub fn doc_tick(&mut self) -> bool {
         self.clock_tick();
         self.drain_saves(false);
+        let main = self.idle_step();
+        let panels = self.panels_idle();
+        main || panels
+    }
+
+    /// The open document's idle point: true when it passed (see `doc_tick`).
+    pub(crate) fn idle_step(&mut self) -> bool {
         let Some(d) = self.doc.as_mut() else { return false };
         if !d.idle_elapsed(Duration::from_millis(1500)) {
             return false;
@@ -752,8 +792,9 @@ impl App {
     /// What waits for the frame after a key: the save of a line just left. True when it ran
     /// (the session records that as a `frame` message, so a replay saves there too).
     pub fn after_frame(&mut self) -> bool {
+        let panels = if self.in_panel.is_none() { self.panels_after_frame() } else { false };
         if !std::mem::take(&mut self.doc_save_after_frame) {
-            return false;
+            return panels;
         }
         self.save_doc(false);
         // A line left with a shape change held for it: take it up now.
@@ -992,6 +1033,14 @@ impl App {
         }
         let Some(d) = self.doc.as_ref() else { return };
         let l = d.caret_block();
+        // In a panel, a link is followed in the main view (sidebar.md §12).
+        if self.in_panel.is_some() && crate::sidebar::policy::PANEL_CLICK_FOLLOWS_IN_MAIN && crate::doc_ui::image_line(&l.text).is_none() && !l.conflict {
+            match link_at(&l.text, d.caret().byte) {
+                Some(title) => self.panel_defer.push(crate::sidebar_app::Deferred::Follow(title)),
+                None => self.panel_defer.push(crate::sidebar_app::Deferred::Action("finder.open".into())),
+            }
+            return;
+        }
         // An attachment's line opens its file (attachments.md §3).
         if let Some((_, path)) = crate::doc_ui::image_line(&l.text) {
             return self.open_attachment(&path);

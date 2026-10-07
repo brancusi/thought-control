@@ -128,13 +128,13 @@ pub fn is_code(l: &Line) -> bool {
 }
 
 /// What a line looks like: its hang and text style (§3.2).
-struct Form {
-    hang: String,
-    hang_style: Style,
-    text_style: Style,
+pub(crate) struct Form {
+    pub hang: String,
+    pub hang_style: Style,
+    pub text_style: Style,
 }
 
-fn form(app: &App, l: &Line) -> Form {
+pub(crate) fn form(app: &App, l: &Line) -> Form {
     let th = app.theme;
     let dim = th.s(Token::Muted).add_modifier(Modifier::DIM);
     let mut f = Form { hang: String::new(), hang_style: th.s(Token::Muted), text_style: th.s(Token::Text) };
@@ -1024,7 +1024,10 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             let cy = body.y + row;
             // Under help, the leader's panel or any overlay the caret would show through it
             // An overlay that takes text places its own.
-            if crate::ui::caret_allowed(app) {
+            if app.ui.focus == crate::app::Focus::Sidebar {
+                // The keyboard is in a panel: this view keeps its caret as a cell (sidebar.md §5.1).
+                crate::sidebar_ui::unfocused_caret(f, &app.theme, cx, cy);
+            } else if crate::ui::caret_allowed(app) {
                 f.set_cursor_position((cx, cy));
             }
             if app.link_open {

@@ -44,7 +44,7 @@ impl Doc {
 
     fn take_in(&mut self, blocks: Vec<Block>, gone: Vec<String>, all: Option<&[Block]>, root: &str, today: chrono::NaiveDate) -> Patched {
         let mut out = Patched::default();
-        let caret_id = self.line().id.clone();
+        let caret_id = if self.hold_caret_line { self.line().id.clone() } else { String::new() };
         for b in blocks {
             let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == b.id) else { continue };
             l.take_fields(&b, today);

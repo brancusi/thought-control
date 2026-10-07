@@ -320,8 +320,11 @@ impl Toast {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Focus {
+    /// The main view (a list or a document).
     List,
     Detail,
+    /// A sidebar panel: `sidebar.focused` names it (sidebar.md §5.1).
+    Sidebar,
 }
 
 /// Accumulated by one reload, then published alongside its rows. Render reads ordinary
@@ -441,6 +444,21 @@ pub struct App {
     pub derived: crate::derived::Derived,
     pub live_rx: Option<std::sync::mpsc::Receiver<crate::live::LiveMsg>>,
     pub daemon_live: bool,
+    /// The sidebar's doc panels at runtime: each one's view and, when the main view isn't on
+    /// the same page, its document (sidebar_app.rs).
+    pub panels: HashMap<crate::sidebar::PanelKey, crate::sidebar_app::PanelRt>,
+    /// The next view id a panel gets (the main view is 0).
+    pub next_vid: u32,
+    /// A panel's key is running as the open document (sidebar_app.rs `with_panel`).
+    pub in_panel: Option<crate::sidebar::PanelKey>,
+    /// What a key in a panel asked of the main view, run after it.
+    pub panel_defer: Vec<crate::sidebar_app::Deferred>,
+    /// The panels were checked once (deleted pages dropped at launch).
+    pub sidebar_checked: bool,
+    /// The panel a press started in: its drag and release go there too.
+    pub panel_pointer: Option<crate::sidebar::PanelKey>,
+    /// The sidebar's column width this frame (None: no column), set before drawing.
+    pub sidebar_col: Option<u16>,
 }
 
 impl std::ops::Deref for App {
@@ -656,6 +674,7 @@ impl App {
             let real = vault.origin.as_ref().map_or(&vault.paths.vault, |o| &o.vault);
             (reg.name_for(real), reg.vaults.is_empty() || reg.is_home(real))
         };
+        let vault_name_for_sidebar = vault_name.clone();
         let ui = crate::ui_state::UiState {
             vault_name: vault_name,
             return_vault: None,
@@ -724,6 +743,7 @@ impl App {
             doc_origin: None,
             offline_toast_shown: false,
             alert_toast_node: None,
+            sidebar: crate::sidebar_app::load_sidebar(&vault_cache, &vault_name_for_sidebar),
             ..Default::default()
         };
         let mut ui = ui;
@@ -794,6 +814,13 @@ impl App {
             derived: crate::derived::Derived::new(),
             live_rx: None,
             daemon_live: false,
+            panels: HashMap::new(),
+            next_vid: 1,
+            in_panel: None,
+            panel_defer: Vec::new(),
+            sidebar_checked: false,
+            panel_pointer: None,
+            sidebar_col: None,
         };
         app.load_page_ids();
         if !deferred {
@@ -813,7 +840,7 @@ impl App {
     /// The open document is waiting on time: unsaved typing (an idle save comes 1.5 s after
     /// the last key), a save in flight (◌ after 3 s), or a settling flash.
     pub fn doc_wants_clock(&self) -> bool {
-        self.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.edited() || l.saving_since.is_some() || l.flash_until.is_some()))
+        self.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.edited() || l.saving_since.is_some() || l.flash_until.is_some())) || self.panels_want_clock()
     }
 
     /// `:focus [writer | +month -footer | save | off]` (tui-editor.md §8.4). Bare, it opens the
