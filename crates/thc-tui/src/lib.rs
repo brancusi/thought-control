@@ -468,6 +468,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 s.readvertise(&session.app.ui.vault_name, &real);
             }
         }
+        // What changed outside messages (the daemon, a poll, an idle save) is recorded first.
+        session.sync_external();
         // Protocol requests that arrived while the last frame was drawn.
         if let Some(s) = server.as_mut() {
             s.pump(session);
@@ -584,6 +586,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             s.pump(session);
         }
         if ready {
+            session.sync_external();
             session.tick_wall();
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {
