@@ -1,0 +1,24 @@
+ [*] sidebar~mple  Today  Inbox 2  Tasks  Pages  Journal  Search  Log 1
+------------------------------------------------=========-----------------------
+ < J Wed 07 Oct   beside it: 1 panel
+>- P Health                                                                ^  x
+     · Dr. Patel, 555-0100, office on 4th St
+   [ ] Schedule annual physical                                      due oct 17
+   [ ] Refill prescription                            oct 15 · !med · ↻ monthly
+   + linked from 1
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ aside 1 of 1 - autosaved   ⌥S main  ⌥J ⌥K panel  ⌥C fold  ⌥W close  ⌥M to main

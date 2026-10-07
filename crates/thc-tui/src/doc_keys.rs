@@ -160,6 +160,10 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
             app.leave_doc();
         }
         "doc.open" => app.doc_open(),
+        // In a day panel: that panel goes to the day before or after (sidebar.md §8.1).
+        "doc.day_prev" | "doc.day_next" if app.in_panel.is_some() => {
+            app.panel_defer.push(crate::sidebar_app::Deferred::Action(if action == "doc.day_prev" { "sidebar.day_prev" } else { "sidebar.day_next" }.into()));
+        }
         "doc.day_prev" | "doc.day_next" => match d.target {
             Target::Journal { .. } => {
                 app.save_doc(true);

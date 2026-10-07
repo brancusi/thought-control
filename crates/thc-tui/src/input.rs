@@ -347,6 +347,17 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 key(app, code, mods);
                 return;
             }
+            // ⇧-click a day or a page row (the strip, the rail, a crumb): beside (sidebar.md §2).
+            Some(Click::Day(d)) if m.modifiers.contains(KeyModifiers::SHIFT) => {
+                let key = crate::sidebar::PanelKey::day(&app.ui.vault_name, &d.format("%Y-%m-%d").to_string());
+                app.open_aside(key, false);
+                return;
+            }
+            Some(Click::Node(id)) if m.modifiers.contains(KeyModifiers::SHIFT) && app.vault.store.node(&id).ok().flatten().is_some_and(|n| n.parent.is_none() && n.title.is_some()) => {
+                let key = crate::sidebar::PanelKey::page(&app.ui.vault_name, &id);
+                app.open_aside(key, false);
+                return;
+            }
             Some(Click::Day(d)) => {
                 app.save_doc(true);
                 app.doc_origin = None;
@@ -777,6 +788,9 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
                     InputResult::Submit => {
                         // `view add <name>` / `view save <name>` save the current Tasks filter.
                         let buf = input.buf.trim().to_string();
+                        if crate::sidebar_app::palette(app, &buf) {
+                            return;
+                        }
                         if buf == "focus" || buf.starts_with("focus ") {
                             app.focus_command(&buf["focus".len()..]);
                             return;

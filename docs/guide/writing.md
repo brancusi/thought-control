@@ -78,10 +78,16 @@ agent or another device show in panels as they happen.
 | `⌥⇧K` / `⌥⇧J` | Move the panel up / down |
 | `⌥\` | Hide or show the sidebar |
 | `⌥=` / `⌥-` / `⌥0` | Wider / narrower / automatic width |
+| `⌃P` / `⌃N` | In a day panel: the day before / after, in the same panel |
 | `Space w` | The same, from the leader: `w w` focus, `w o` aside, `w x` close, `w X` close all, … |
+| `:aside …` | Open a page by title, a day (`today`, `fri`, `2026-10-06`) beside. `:aside today` follows the date at midnight |
 
-The sidebar is a column from 120 columns wide (a third of the screen, 40 to 64 columns); the
-detail pane and the Journal's calendar give way to it while it shows. It holds up to 8 panels.
+The sidebar is a column from 120 columns wide (a third of the screen, 40 to 64 columns; drag
+the divider to change it, double-click it for automatic); the detail pane and the Journal's
+calendar give way to it while it shows. Narrower, it's a drawer over the right of the screen
+(90 to 119 columns) or takes the whole screen (under 90), while the keyboard is in it: `Esc`
+closes it and keeps the panels. Drag a panel's header to reorder; dropped among the pinned
+panels, it's pinned too. It holds up to 8 panels.
 Each vault keeps its own stack, and it's there again when you come back. `⌥` keys need
 "Option as Meta" in Terminal.app and iTerm2.
 
