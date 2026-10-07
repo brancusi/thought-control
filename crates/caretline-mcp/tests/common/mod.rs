@@ -1,5 +1,5 @@
 //! Shared test helpers: the caretline binary, a live editor on a pseudo-terminal (borrowed
-//! from caretline-app's tests/live.rs), and a minimal MCP client over the server's stdio.
+//! from caretline-cli's tests/live.rs), and a minimal MCP client over the server's stdio.
 #![allow(dead_code)]
 
 use std::io::{BufRead, BufReader, Read, Write};
@@ -153,7 +153,7 @@ pub fn caretline() -> PathBuf {
     BUILD.call_once(|| {
         let cargo = std::env::var("CARGO").unwrap_or_else(|_| "cargo".into());
         let mut c = Command::new(cargo);
-        c.args(["build", "-q", "-p", "caretline-app", "--bin", "caretline"]).current_dir(env!("CARGO_MANIFEST_DIR"));
+        c.args(["build", "-q", "-p", "caretline-cli", "--bin", "caretline"]).current_dir(env!("CARGO_MANIFEST_DIR"));
         if mcp.parent().and_then(|p| p.file_name()).is_some_and(|n| n == "release") {
             c.arg("--release");
         }

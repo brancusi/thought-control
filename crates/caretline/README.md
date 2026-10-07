@@ -9,7 +9,7 @@ terminal I/O and no ratatui.
 `Session` wraps a state with a revision counter and the trace of everything applied, and
 answers the [state protocol](../../docs/caretline/protocol.md) in process (`Session::handle`).
 
-The terminal front end is [`caretline-app`](../caretline-app/README.md). Try it in one line:
+The terminal front end is [`caretline-cli`](../caretline-app/README.md). Try it in one line:
 
 ```sh
 curl -fsSL https://caretline.app/install.sh | sh && caretline demo

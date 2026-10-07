@@ -1,7 +1,7 @@
 # caretline
 
 A terminal text editor for plain text and Markdown, built on the
-[`caretline`](../caretline/README.md) engine. Every state can be saved as JSON,
+[`caretline`](https://github.com/brancusi/thought-control/blob/main/crates/caretline/README.md) engine. Every state can be saved as JSON,
 reopened exactly, and every session replayed message by message.
 
 ## Try it in one line
@@ -14,18 +14,18 @@ A prebuilt binary for macOS or Linux, checked against its sha256 and installed t
 `~/.local/bin`, then a guided tour that teaches by doing. Two more demos:
 `caretline demo scenes` (ASCII animations running inside the editor) and `caretline demo agent`
 (a scripted agent co-editing beside you over the editor's socket). With Rust instead:
-`cargo install --git https://github.com/brancusi/thought-control caretline-app`.
-See the [Quickstart](../../docs/caretline/quickstart.md).
+`cargo install caretline-cli`.
+See the [Quickstart](https://github.com/brancusi/thought-control/blob/main/docs/caretline/quickstart.md).
 
 From a checkout:
 
 ```sh
-cargo run -p caretline-app -- notes.md         # or, installed: caretline notes.md
+cargo run -p caretline-cli -- notes.md         # or, installed: caretline notes.md
 cargo install --locked --path crates/caretline-app
 ```
 
-Full documentation: [the `caretline` command](../../docs/caretline/cli.md), and
-[docs/caretline](../../docs/caretline/README.md) for the engine, its API and embedding.
+Full documentation: [the `caretline` command](https://github.com/brancusi/thought-control/blob/main/docs/caretline/cli.md), and
+[docs/caretline](https://github.com/brancusi/thought-control/blob/main/docs/caretline/README.md) for the engine, its API and embedding.
 
 ## How it works
 
@@ -165,7 +165,7 @@ caretline bench                                  # throughput and latency
 
 Pushed messages' effects (saves, the clipboard, quit) are returned to the client, not
 performed, unless the request asks. The library side is `caretline::Session`. See
-[docs/caretline/protocol.md](../../docs/caretline/protocol.md) for every operation, with examples.
+[docs/caretline/protocol.md](https://github.com/brancusi/thought-control/blob/main/docs/caretline/protocol.md) for every operation, with examples.
 
 ## Fixtures
 

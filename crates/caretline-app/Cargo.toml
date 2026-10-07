@@ -1,17 +1,21 @@
 [package]
-name = "caretline-app"
+name = "caretline-cli"
 description = "caretline: a terminal text editor on the caretline engine, with state snapshots and exact replay"
 version = "0.2.1"
 edition.workspace = true
 license = "MIT"
 repository.workspace = true
+homepage = "https://caretline.app"
+readme = "README.md"
+keywords = ["editor", "text-editor", "terminal", "replay", "collaboration"]
+categories = ["text-editors", "command-line-utilities"]
 
 [[bin]]
 name = "caretline"
 path = "src/main.rs"
 
 [dependencies]
-caretline = { path = "../caretline" }
+caretline = { path = "../caretline", version = "0.2.1" }
 ratatui = "0.30"
 crossterm = "0.29"
 serde_json = { workspace = true }
