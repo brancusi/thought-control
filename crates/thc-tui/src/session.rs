@@ -908,12 +908,21 @@ pub type Open<'a> = dyn FnMut(Option<&Frontier>) -> Result<Session, String> + 'a
 /// line's `_log` (what other writers added that the line ran on) goes into the vault before the
 /// line runs, and the runtime's own steps (`idle`, `poll`) run where they ran live.
 pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>, String> {
+    let frames = replay_where(open, trace, size, format, &|_| every)?;
+    Ok(frames.into_iter().map(|(_, f)| f).collect())
+}
+
+/// [`replay`], drawing the frame after the lines `want` names (by their index among the
+/// trace's non-blank lines), or else only the last: each frame with its line's index.
+pub fn replay_where(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &str, want: &dyn Fn(usize) -> bool) -> Result<Vec<(usize, String)>, String> {
     let mut frames = Vec::new();
     let mut session: Option<Session> = None;
-    let draw = |s: &mut Session, frames: &mut Vec<String>| -> Result<(), String> {
+    let mut n = 0;
+    let mut any = false;
+    let draw = |s: &mut Session, frames: &mut Vec<(usize, String)>, at: usize| -> Result<(), String> {
         let (w, h) = size.unwrap_or(s.size);
         let r = s.render(w, h, format)?;
-        frames.push(r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default()));
+        frames.push((at, r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default())));
         Ok(())
     };
     for (i, line) in trace.lines().enumerate() {
@@ -951,15 +960,17 @@ pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &s
             s.apply(msg).map_err(at)?;
             s.drop_effects();
         }
-        if every {
-            draw(session.as_mut().expect("opened"), &mut frames)?;
+        if want(n) {
+            any = true;
+            draw(session.as_mut().expect("opened"), &mut frames, n)?;
         }
+        n += 1;
     }
-    if !every {
+    if !any {
         if session.is_none() {
             session = Some(open(None)?);
         }
-        draw(session.as_mut().expect("opened"), &mut frames)?;
+        draw(session.as_mut().expect("opened"), &mut frames, n.saturating_sub(1))?;
     }
     Ok(frames)
 }

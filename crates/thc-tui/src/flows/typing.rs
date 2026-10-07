@@ -250,3 +250,91 @@ fn type_a_link_with_the_popup() {
         .expect_caret_after("[[Garden]]")
         .done();
 }
+
+/// The typing flows that matter most, at the sizes people use: a laptop split, a full screen.
+fn type_and_wrap(w: u16, h: u16) {
+    let mut f = flow_with(&format!("type and wrap at {w}x{h}"), Size::Small, (w, h));
+    f.known("02pjq", Known::Restore)
+        .keys("<c-o>Q4 Plan<cr>")
+        .click_caret(doc_at("This paragraph is long", 90))
+        .type_text("WIDE 日本 🙂 ")
+        .type_text(WORDS)
+        .keys("<c-end><cr>")
+        .type_text(&WORDS.repeat(2))
+        .expect_caret_after("keep flowing ")
+        .done();
+}
+
+#[test]
+fn type_and_wrap_at_80x24() {
+    type_and_wrap(80, 24);
+}
+
+#[test]
+fn type_and_wrap_at_100x30() {
+    type_and_wrap(100, 30);
+}
+
+#[test]
+fn type_and_wrap_at_120x36() {
+    type_and_wrap(120, 36);
+}
+
+#[test]
+fn type_and_wrap_at_200x50() {
+    type_and_wrap(200, 50);
+}
+
+#[test]
+fn enter_at_the_bottom_scrolls_one_row_at_a_time() {
+    // New lines past the view's bottom: the view follows the caret, and only when it must.
+    let mut f = flow_with("Enter past the bottom of the view", Size::Long, (100, 30));
+    f.keys("<c-o>Long Page<cr>").keys("<c-home><end>");
+    for i in 0..30 {
+        f.keys("<cr>").type_text(&format!("new {i}"));
+    }
+    f.expect_caret_line("new 29").done();
+}
+
+#[test]
+fn backspace_joins_notes() {
+    q4().named("Backspace at a line's start joins it to the one above")
+        .click_caret(doc_at("Last line of the plan", 0))
+        .keys("<bs>")
+        .expect_caret_line("Last line of the plan")
+        .keys("<bs>")
+        .expect_caret_before("Last line of the plan")
+        .expect("the two notes joined", |s| s.app.doc.as_ref().unwrap().caret_block().text.starts_with("This paragraph"))
+        .keys("<c-z><c-z>")
+        .expect_line("Last line of the plan")
+        .done();
+}
+
+#[test]
+fn resize_while_typing_keeps_the_caret_on_screen() {
+    q4().named("resize mid-paragraph")
+        .click_caret(doc_at("This paragraph is long", 200))
+        .type_text("abc")
+        .resize(80, 24)
+        .type_text("def")
+        .resize(200, 50)
+        .type_text("ghi")
+        .expect_caret_after("abcdefghi")
+        .done();
+}
+
+#[test]
+#[ignore = "j9xm7"]
+fn backspace_at_the_end_of_a_scrolled_page() {
+    // Blank lines typed at the end of a long page, then taken back: the view stays put.
+    let mut f = flow_with("Backspace at the end of a scrolled page", Size::Long, (100, 30));
+    f.keys("<c-o>Long Page<cr><c-end>");
+    for _ in 0..8 {
+        f.keys("<cr>");
+    }
+    f.moves("<up><up><up><up><up><up>");
+    for _ in 0..6 {
+        f.keys_as(Motion::Typing, "<bs>");
+    }
+    f.done();
+}

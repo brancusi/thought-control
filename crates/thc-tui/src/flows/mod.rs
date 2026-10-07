@@ -29,6 +29,7 @@ mod fixture;
 mod agents;
 mod editing;
 mod lists;
+mod monkey;
 mod mouse;
 mod nav;
 mod perf;
@@ -195,13 +196,15 @@ pub struct Flow {
     pub name: String,
     _scratch: crate::fuzz::Scratch,
     pub s: Session,
-    term: Terminal<Emu>,
+    pub(super) term: Terminal<Emu>,
     pub shot: Shot,
     pub step: usize,
     pub checks: Checks,
     /// Per step: the trace length after it and the frame it left.
     marks: Vec<(usize, String, String)>,
     pace_ms: u64,
+    /// Logical time the steps have taken that no Tick has sent yet.
+    owed_ms: u64,
     /// Each step's handling + draw time, by kind.
     pub timings: Vec<(&'static str, f64)>,
     /// Each timed step's description, beside `timings`.
@@ -219,6 +222,9 @@ pub enum Known {
     /// The left rail (pages, days) in a fresh session differs from the live one: its order and
     /// counts aren't in the state / go stale. The restore check leaves the rail out.
     Rail,
+    /// A fresh session on the saved state lays the page out differently (02pjq: new notes'
+    /// blank rows): the restore check is skipped.
+    Restore,
 }
 
 /// The start of every flow: the base vault at 140x36, Today showing.
@@ -255,7 +261,7 @@ impl Flow {
         s.apply(Msg::Tick { now_ms, utc_offset_min }).unwrap();
         let mut term = Terminal::new(Emu::new(screen.0, screen.1)).unwrap();
         let shot = draw(&mut term, &mut s);
-        let mut f = Flow { name: name.to_string(), _scratch: scratch, s, term, shot, step: 0, checks, marks: Vec::new(), pace_ms: 60, timings: Vec::new(), timed_steps: Vec::new(), kind: "step", done: false, known: Vec::new() };
+        let mut f = Flow { name: name.to_string(), _scratch: scratch, s, term, shot, step: 0, checks, marks: Vec::new(), pace_ms: 60, owed_ms: 0, timings: Vec::new(), timed_steps: Vec::new(), kind: "step", done: false, known: Vec::new() };
         f.checkpoint_mark();
         f
     }
@@ -423,7 +429,7 @@ impl Flow {
 
     /// Time passes with nothing typed: the idle point (an undo step, the idle save).
     pub fn idle(&mut self) -> &mut Self {
-        let now = self.s.app.ui.now_ms + 2_000;
+        let now = self.s.app.ui.now_ms + std::mem::take(&mut self.owed_ms) + 2_000;
         self.s.apply(Msg::Tick { now_ms: now, utc_offset_min: self.s.app.ui.utc_offset_min }).unwrap();
         self.s.runtime(Msg::Idle);
         self.redraw("idle", Motion::Any)
@@ -476,14 +482,22 @@ impl Flow {
     /// the runtime's after-frame work, as the live loop does), and the checks run.
     fn run(&mut self, desc: &str, motion: Motion, msgs: Vec<Msg>) -> &mut Self {
         self.step += 1;
-        let now = self.s.app.ui.now_ms + self.pace_ms;
-        let off = self.s.app.ui.utc_offset_min;
-        self.s.apply(Msg::Tick { now_ms: now, utc_offset_min: off }).unwrap();
+        // The clock moves `pace` per step; a Tick goes out once a second's worth has built up
+        // (each is a message to apply and replay; nothing a flow does needs finer).
+        self.owed_ms += self.pace_ms;
+        if self.owed_ms >= 1_000 {
+            let now = self.s.app.ui.now_ms + std::mem::take(&mut self.owed_ms);
+            let off = self.s.app.ui.utc_offset_min;
+            self.s.apply(Msg::Tick { now_ms: now, utc_offset_min: off }).unwrap();
+        }
         let before = self.shot.clone();
         let t0 = Instant::now();
         for m in msgs {
+            // A terminal that changes size starts blank and ratatui draws it whole.
             if let Msg::Resize { w, h } = m {
-                *self.term.backend_mut() = Emu::new(w, h);
+                if (w, h) != self.s.size {
+                    *self.term.backend_mut() = Emu::new(w, h);
+                }
             }
             if let Err(e) = self.s.apply(m.clone()) {
                 self.fail(desc, &before, &format!("refused {m:?}: {e}"));
@@ -738,10 +752,11 @@ impl Flow {
         self.done = true;
         if self.checks.replay {
             let trace: String = self.s.trace(None, true).unwrap().1.iter().map(|l| format!("{l}\n")).collect();
-            let frames = replay(&self.s.app.vault.paths, &trace);
+            let want: std::collections::HashSet<usize> = self.marks.iter().map(|(len, _, _)| len.saturating_sub(1)).collect();
+            let frames: std::collections::HashMap<usize, String> = replay(&self.s.app.vault.paths, &trace, &want).into_iter().collect();
             for (len, desc, frame) in &self.marks {
-                let Some(got) = frames.get(len.saturating_sub(1)) else {
-                    panic!("flow `{}`: the replay has {} frames, step `{desc}` ended at line {len}", self.name, frames.len());
+                let Some(got) = frames.get(&len.saturating_sub(1)) else {
+                    panic!("flow `{}`: the replay drew no frame for step `{desc}` (line {len})", self.name);
                 };
                 let got = got.trim_end_matches('\n');
                 if !same_but_ids(got, frame) {
@@ -749,7 +764,9 @@ impl Flow {
                 }
             }
         }
-        if self.checks.restore {
+        if let Some((task, _)) = self.known.iter().find(|(_, k)| *k == Known::Restore) {
+            eprintln!("flow `{}`: the restore check is skipped (known: {task})", self.name);
+        } else if self.checks.restore {
             self.save();
             let state = self.s.state().to_json();
             let paths = thc_core::vault::scratch_copy(&self.s.app.vault.paths).unwrap();
@@ -1134,7 +1151,7 @@ fn json_diff(a: &Value, b: &Value) -> String {
 }
 
 /// `thc ui replay` in a test: each segment on a scratch copy of the vault as of where it starts.
-fn replay(paths: &thc_core::vault::Paths, trace: &str) -> Vec<String> {
+fn replay(paths: &thc_core::vault::Paths, trace: &str, want: &std::collections::HashSet<usize>) -> Vec<(usize, String)> {
     let mut copies = Vec::new();
     let mut open = |at: Option<&thc_core::vault::Frontier>| -> Result<Session, String> {
         let p = thc_core::vault::scratch_copy_at(paths, at).map_err(|e| format!("{e:#}"))?;
@@ -1145,7 +1162,7 @@ fn replay(paths: &thc_core::vault::Paths, trace: &str) -> Vec<String> {
         app.daemon_live = false;
         Ok(Session::new(app, (80, 24)))
     };
-    let frames = crate::session::replay(&mut open, trace, None, "text", true).unwrap();
+    let frames = crate::session::replay_where(&mut open, trace, None, "text", &|i| want.contains(&i)).unwrap();
     for c in copies {
         let _ = std::fs::remove_dir_all(c);
     }

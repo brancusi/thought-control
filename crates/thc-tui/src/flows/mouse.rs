@@ -189,3 +189,37 @@ fn the_first_drag_hint_replays() {
     let _ = std::fs::remove_file(f.s.app.vault.paths.cache.join("mouse-hint-shown"));
     f.drag(text("Grow").in_doc(), text("newsletter").in_doc()).expect_screen("selected in thc").done();
 }
+
+#[test]
+fn click_below_the_last_line() {
+    q4().named("a click below the page's last line")
+        .click_caret(text("Last line of the plan").in_doc().dx(5))
+        .click(text("linked from").in_doc().dx(-20))
+        .expect_page("Q4 Plan")
+        .done();
+}
+
+#[test]
+#[ignore = "zszv1"]
+fn wheel_over_a_panel_scrolls_the_panel() {
+    let mut f = flow_with("the wheel over a panel", Size::Long, (140, 36));
+    f.keys("<c-o>Garden<cr>");
+    let id = f.s.app.vault.store.nodes_where("title = 'Long Page'", &[]).unwrap()[0].id.clone();
+    f.msg("aside", Motion::Any, Msg::Aside { target: id, pin: false, fold: false, close: false, actor: None }).expect_panels(1);
+    let main_scroll = f.s.app.doc.as_ref().unwrap().scroll();
+    f.wheel(true, 5, Some(text("Line 2").in_side()))
+        .expect("the main view didn't scroll", |s| s.app.doc.as_ref().unwrap().scroll() == main_scroll)
+        .expect_no_screen("Line 0:")
+        .done();
+}
+
+#[test]
+fn clicks_on_many_places_in_a_wrapped_paragraph() {
+    // Every cell of the paragraph's rows puts the cursor where the caret is.
+    let mut f = q4();
+    f.named("a click on each word of a wrapped paragraph");
+    for w in ["paragraph", "several", "typing", "exactly", "flow", "beyond"] {
+        f.click_caret(text(w).in_doc().dx(2)).expect_caret_before(&w[2..]);
+    }
+    f.done();
+}

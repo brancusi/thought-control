@@ -238,3 +238,40 @@ fn an_agent_opens_a_panel_while_you_type() {
         .expect_caret_line("Last line of the plan half done")
         .done();
 }
+
+#[test]
+fn shift_click_a_link_inside_a_panel() {
+    with_garden_beside()
+        .named("⇧click a link inside a panel stacks another")
+        .shift_click(text("Q4 Plan").in_side())
+        .expect_panels(2)
+        .expect_page("Q4 Plan")
+        .done();
+}
+
+#[test]
+fn a_click_on_a_link_in_a_panel_follows_it_in_the_panel_or_main() {
+    with_garden_beside()
+        .named("a click on a link in a panel")
+        .click(text("Q4 Plan").in_side())
+        .expect("a page shows", |s| s.app.doc.is_some())
+        .done();
+}
+
+#[test]
+fn type_in_a_panel_then_back_to_main_keeps_both_carets() {
+    with_garden_beside()
+        .named("both carets kept across ⌥S")
+        .click_caret(doc_at("Grow the newsletter", 5))
+        .click(text("fence").in_side())
+        .type_text("X")
+        .keys("<m-s>")
+        .expect_focus(Focus::List)
+        .expect_caret_before("the newsletter")
+        .type_text("Y")
+        .expect_caret_line("Grow Ythe newsletter")
+        .keys("<m-s>")
+        .type_text("Z")
+        .expect_at(text("Compost by the XZfence").in_side())
+        .done();
+}

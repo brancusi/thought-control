@@ -163,3 +163,51 @@ fn perf_wheel_and_page_keys() {
     }
     held(over);
 }
+
+/// Where a keystroke's time goes on a 5,000-line page, at its top and its end: the frame's
+/// preparation alone, the key's handling, caretline's insert (with thc's line sync), the whole
+/// `apply` (handling + layout following the caret) and the draw.
+#[test]
+#[ignore = "diagnostic: cargo test --release -p thc-tui flows::perf::diag_split -- --ignored --nocapture"]
+fn diag_split() {
+    for at in ["<c-home>", "<c-end>"] {
+        let (mut f, _) = page(Size::Huge);
+        f.keys(at);
+        let mut prep = Vec::new();
+        for _ in 0..50 {
+            let t = Instant::now();
+            crate::ui::follow_frame(&mut f.s.app, ratatui::layout::Rect::new(0, 0, 140, 40));
+            prep.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        let (mut hk, mut ins) = (Vec::new(), Vec::new());
+        for c in "abcdefghij".repeat(5).chars() {
+            let t = Instant::now();
+            crate::input::handle_key(&mut f.s.app, crate::script::key_event(&c.to_string()).unwrap());
+            hk.push(t.elapsed().as_secs_f64() * 1e3);
+            let t = Instant::now();
+            f.s.app.doc.as_mut().unwrap().insert("x");
+            ins.push(t.elapsed().as_secs_f64() * 1e3);
+        }
+        let (mut a, mut d) = (Vec::new(), Vec::new());
+        for c in "the quick brown fox jumps over the lazy dog ".repeat(4).chars() {
+            let t0 = Instant::now();
+            f.s.apply(Msg::Key { key: c.to_string() }).unwrap();
+            let t1 = Instant::now();
+            let _ = draw(&mut f.term, &mut f.s);
+            a.push((t1 - t0).as_secs_f64() * 1e3);
+            d.push(t1.elapsed().as_secs_f64() * 1e3);
+            f.s.runtime(Msg::Frame);
+        }
+        eprintln!(
+            "{at}: prepare {:.2} · handle_key {:.2} · Doc::insert {:.2} · apply {:.2} (p99 {:.2}) · draw {:.2} (p99 {:.2})  [p50 ms]",
+            pct(&prep).0,
+            pct(&hk).0,
+            pct(&ins).0,
+            pct(&a).0,
+            pct(&a).1,
+            pct(&d).0,
+            pct(&d).1
+        );
+        f.done();
+    }
+}
