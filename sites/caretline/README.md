@@ -18,7 +18,7 @@ npx wrangler deploy --config ./wrangler.jsonc   # from this directory, after bui
 - **The ASCII scenes** (warp, torus, cube, tunnel, plasma, fire) are `public/js/field.js`: a
   pure function of time per scene, drawn two-tone on a canvas. Lit cells are the selection
   colour with the glyph knocked out, the way caretline draws a selection.
-- **The playground** is the real engine: `crates/caretline-next` built for
+- **The playground** is the real engine: `crates/caretline` built for
   `wasm32-unknown-unknown` by `wasm/` (a C-ABI wrapper around `Session::handle`) into
   `public/wasm/caretline.wasm`, driven by `public/js/engine.js` over the state protocol.
   Rebuild after engine changes: `npm run wasm` (needs `rustup target add wasm32-unknown-unknown`).

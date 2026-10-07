@@ -1,590 +1,719 @@
-//! The editing goldens (editing.md), run against caretline's Doc and View: the same tables
-//! thc-tui runs against its own document (crates/thc-tui/src/goldens.rs), so the engine and
-//! thc agree rule for rule before thc moves onto it (engine-extraction.md §1a).
+//! Behaviour goldens: a starting text and selection, keys or messages, and the exact
+//! expected text, selection and (where it matters) frame.
 //!
-//! Notation (editing.md §0): `▮` the caret; `⟦…⟧` a selection with `▮` at the caret's end;
-//! ` ‖ ` between notes; `⏎` a soft break; `- `, `- [ ] `, `- [x] ` markers, two spaces per depth.
+//! The baseline is a macOS text field. Cases are grouped by area; the plain-text cases of
+//! the editing behaviour contract are numbered `e01`… in the order of that contract.
 
-use caretline::buffer::BlockLine;
-use caretline::doc::{Doc, Rect, View};
-use caretline::{Block, Command, Kind, Motion, Pos};
-use std::sync::atomic::{AtomicU64, Ordering};
+mod common;
 
-static NEXT: AtomicU64 = AtomicU64::new(1);
+use caretline::{Effect, Msg};
+use common::*;
 
-#[derive(Clone, Debug, PartialEq)]
-struct Line {
-    b: Block<u64>,
-    is_new: bool,
-}
-impl std::ops::Deref for Line {
-    type Target = Block<u64>;
-    fn deref(&self) -> &Block<u64> {
-        &self.b
-    }
-}
-impl std::ops::DerefMut for Line {
-    fn deref_mut(&mut self) -> &mut Block<u64> {
-        &mut self.b
-    }
-}
-impl BlockLine for Line {
-    type Id = u64;
-    fn fresh(depth: usize, kind: Kind, text: &str) -> Self {
-        Line { b: Block::new(NEXT.fetch_add(1, Ordering::Relaxed), depth, kind, text), is_new: true }
-    }
-    fn is_new(&self) -> bool {
-        self.is_new
-    }
-    fn keep_host_state(&mut self, _: &Self) {}
-    fn revive(&mut self) {
-        self.is_new = true;
-    }
-}
+// ---------------------------------------------------------------------------------------
+// Selection collapse: a motion without Shift collapses a selection instead of moving from
+// the caret; with Shift the anchor stays and the caret moves.
 
-/// One document and the one view the keys go through.
-struct D {
-    doc: Doc<Line>,
-    v: View<u64>,
-}
-
-const W: fn(&Line) -> usize = |_| 72;
-
-impl D {
-    fn new(lines: Vec<Line>, caret: Pos, anchor: Option<Pos>) -> D {
-        let mut v = View::new(Rect { x: 0, y: 0, width: 80, height: 40 });
-        v.caret = caret;
-        v.anchor = anchor;
-        D { doc: Doc::new(lines), v }
-    }
-    fn lines(&self) -> &[Line] {
-        self.doc.lines()
-    }
-    fn caret(&self) -> Pos {
-        self.v.caret
-    }
-    fn selection(&self) -> Option<(Pos, Pos)> {
-        let a = self.v.anchor?;
-        let c = self.v.caret;
-        (a != c).then(|| if a < c { (a, c) } else { (c, a) })
-    }
-    fn apply(&mut self, c: Command) {
-        let _ = self.doc.apply(&mut self.v, c, &W);
-    }
-    fn insert(&mut self, s: &str) {
-        let _ = self.doc.insert(&mut self.v, s);
-    }
-}
-
-/// A document from the notation, with its caret and anchor.
-fn parse(src: &str) -> (Vec<Line>, Pos, Option<Pos>) {
-    let mut lines = Vec::new();
-    let (mut caret, mut sel_open, mut sel_close) = (None, None, None);
-    for (i, raw) in src.split(" ‖ ").enumerate() {
-        let spaces = raw.len() - raw.trim_start_matches(' ').len();
-        let mut t = &raw[spaces..];
-        let (mut kind, mut status, depth) = (Kind::Para, None, spaces / 2);
-        if let Some(r) = t.strip_prefix("- [ ] ") {
-            (kind, status, t) = (Kind::Task, Some("todo"), r);
-        } else if let Some(r) = t.strip_prefix("- [x] ") {
-            (kind, status, t) = (Kind::Task, Some("done"), r);
-        } else if let Some(r) = t.strip_prefix("[ ] ") {
-            (kind, status, t) = (Kind::Task, Some("todo"), r);
-        } else if let Some(r) = t.strip_prefix("- ") {
-            (kind, t) = (Kind::Bullet, r);
-        }
-        let mut text = String::new();
-        for c in t.chars() {
-            match c {
-                '▮' => caret = Some(Pos { line: i, byte: text.len() }),
-                '⟦' => sel_open = Some(Pos { line: i, byte: text.len() }),
-                '⟧' => sel_close = Some(Pos { line: i, byte: text.len() }),
-                '⏎' => text.push('\n'),
-                c => text.push(c),
-            }
-        }
-        let mut l = Line::fresh(if kind == Kind::Para { 0 } else { depth }, kind, &text);
-        l.status = status.map(str::to_string);
-        l.is_new = false;
-        lines.push(l);
-    }
-    let caret = caret.expect("a ▮");
-    let anchor = match (sel_open, sel_close) {
-        (Some(a), Some(b)) => Some(if caret == a { b } else { a }),
-        _ => None,
-    };
-    (lines, caret, anchor)
-}
-
-/// The document back in the notation.
-fn render(d: &D) -> String {
-    let sel = d.selection();
-    let mut out = Vec::new();
-    for (i, l) in d.lines().iter().enumerate() {
-        let marker = match (l.kind, l.status.as_deref()) {
-            (Kind::Task, Some("done")) => "- [x] ",
-            (Kind::Task, _) => "- [ ] ",
-            (Kind::Bullet, _) => "- ",
-            _ => "",
-        };
-        let mut s = format!("{}{marker}", "  ".repeat(if l.kind == Kind::Para { 0 } else { l.depth }));
-        let mark = |b: usize| -> String {
-            let p = Pos { line: i, byte: b };
-            let mut m = String::new();
-            if let Some((a, e)) = sel {
-                if p == a {
-                    m.push('⟦');
-                }
-                if p == d.caret() {
-                    m.push('▮');
-                }
-                if p == e {
-                    m.push('⟧');
-                }
-                return m;
-            }
-            if p == d.caret() {
-                m.push('▮');
-            }
-            m
-        };
-        for (b, c) in l.text.char_indices() {
-            s.push_str(&mark(b));
-            s.push(if c == '\n' { '⏎' } else { c });
-        }
-        s.push_str(&mark(l.text.len()));
-        out.push(s);
-    }
-    out.join(" ‖ ")
-}
-
-/// Run keys against a document; the clipboard is a string.
-fn run(before: &str, keys: &[&str], clip: &mut String) -> D {
-    let (lines, caret, anchor) = parse(before);
-    let mut d = D::new(lines, caret, anchor);
-    for k in keys {
-        let mv = |m| Command::Move { motion: m, select: false };
-        let sh = |m| Command::Move { motion: m, select: true };
-        let cmd = match *k {
-            "←" => Some(mv(Motion::Left)),
-            "→" => Some(mv(Motion::Right)),
-            "↑" => Some(mv(Motion::Up)),
-            "↓" => Some(mv(Motion::Down)),
-            "⌥←" => Some(mv(Motion::WordLeft)),
-            "⌥→" => Some(mv(Motion::WordRight)),
-            "⇧←" => Some(sh(Motion::Left)),
-            "⇧→" => Some(sh(Motion::Right)),
-            "⌫" => Some(Command::Backspace),
-            "Del" => Some(Command::Delete),
-            "⌥⌫" => Some(Command::DeleteWordBack),
-            "⌘⌫" => Some(Command::KillToStart),
-            "⌃K" => Some(Command::KillToEnd),
-            "Enter" => Some(Command::Newline),
-            "Tab" => Some(Command::Indent),
-            "⌃T" => Some(Command::TaskCycle),
-            "⌘A" => Some(Command::SelectAll),
-            "⌘Z" => Some(Command::Undo),
-            "⇧⌘Z" => Some(Command::Redo),
-            _ => None,
-        };
-        if let Some(c) = cmd {
-            d.apply(c);
-            continue;
-        }
-        match *k {
-            "⌘C" => {
-                let t = d.doc.copy(&d.v);
-                if !t.is_empty() {
-                    *clip = t;
-                }
-            }
-            "⌘X" => {
-                let (t, _) = d.doc.cut(&mut d.v).unwrap();
-                if !t.is_empty() {
-                    *clip = t;
-                }
-            }
-            "⌘V" => {
-                let t = clip.clone();
-                d.doc.paste(&mut d.v, &t, false).unwrap();
-            }
-            "Esc" => d.v.anchor = None,
-            t if t.starts_with("type ") => d.insert(&t["type ".len()..]),
-            other => panic!("unknown key {other}"),
-        }
-    }
-    d
-}
-
-thread_local! {
-    static FAILS: std::cell::RefCell<Vec<String>> = const { std::cell::RefCell::new(Vec::new()) };
-}
-
-fn check(id: &str, before: &str, keys: &[&str], after: &str) {
-    check_clip_opt(id, before, keys, after, None);
-}
-
-fn check_clip(id: &str, before: &str, keys: &[&str], after: &str, want_clip: &str) {
-    check_clip_opt(id, before, keys, after, Some(want_clip));
-}
-
-fn check_clip_opt(id: &str, before: &str, keys: &[&str], after: &str, want_clip: Option<&str>) {
-    let mut clip = String::new();
-    let d = run(before, keys, &mut clip);
-    let got = render(&d);
-    if got != after {
-        FAILS.with(|f| f.borrow_mut().push(format!("{id}: {before} · {keys:?}\n   want {after}\n   got  {got}")));
-    }
-    if let Some(w) = want_clip {
-        if clip != w {
-            FAILS.with(|f| f.borrow_mut().push(format!("{id}: clip want {w:?} got {clip:?}")));
-        }
-    }
-}
-
-fn done() {
-    let fails = FAILS.with(|f| std::mem::take(&mut *f.borrow_mut()));
-    assert!(fails.is_empty(), "\n{}", fails.join("\n"));
+#[test]
+fn e01_left_collapses_to_start() {
+    golden("Hello ⟦wor▮⟧ld", "<left>", "Hello ▮world");
 }
 
 #[test]
-fn e1_to_e14_selection_collapse() {
-    check("E1", "Hello ⟦wor▮⟧ld", &["←"], "Hello ▮world");
-    check("E2", "Hello ⟦wor▮⟧ld", &["→"], "Hello wor▮ld");
-    check("E3", "Hello ⟦▮wor⟧ld", &["→"], "Hello wor▮ld");
-    check("E4", "Hello ⟦wor▮⟧ld", &["⇧←"], "Hello ⟦wo▮⟧rld");
-    check("E5", "Hello ⟦wor▮⟧ld", &["⇧→"], "Hello ⟦worl▮⟧d");
-    check("E6", "ab ⟦▮c⟧ d", &["⇧→"], "ab c▮ d");
-    check("E7", "First note ‖ Sec⟦ond no▮⟧te", &["←"], "First note ‖ Sec▮ond note");
-    check("E8", "Line one ‖ Line ⟦two and▮⟧ more", &["↑"], "Line ▮one ‖ Line two and more");
-    check("E9", "Line ⟦one▮⟧ ‖ Line two", &["↓"], "Line one ‖ Line two▮");
-    check("E10", "one two ⟦thr▮⟧ee", &["⌥←"], "one ▮two three");
-    check("E11", "one ⟦tw▮⟧o three", &["⌥→"], "one two▮ three");
-    check("E12", "ab ⟦cd▮⟧ ef", &["Esc"], "ab cd▮ ef");
-    done();
+fn e02_right_collapses_to_end() {
+    golden("Hello ⟦wor▮⟧ld", "<right>", "Hello wor▮ld");
 }
 
 #[test]
-fn e15_to_e24_edits_with_a_selection() {
-    check("E15", "Hello ⟦wor▮⟧ld", &["type X"], "Hello X▮ld");
-    check("E16", "Hello ⟦wor▮⟧ld", &["⌫"], "Hello ▮ld");
-    check("E17", "Hello ⟦wor▮⟧ld", &["Del"], "Hello ▮ld");
-    check("E18", "one ⟦two thr▮⟧ee", &["⌥⌫"], "one ▮ee");
-    check("E19", "One ⟦two ‖ three fo▮⟧ur", &["type X"], "One X▮ur");
-    check("E20", "A⟦a ‖ Bb ‖ C▮⟧c", &["⌫"], "A▮c");
-    check("E21", "ab⟦cd▮⟧ef", &["Enter"], "ab⏎▮ef");
-    check("E22", "- o⟦ne ‖ - tw▮⟧o", &["Tab"], "- o⟦ne ‖   - tw▮⟧o");
-    check("E23", "o⟦ne ‖ tw▮⟧o", &["⌃T"], "- [ ] o⟦ne ‖ - [ ] tw▮⟧o");
-    check("E24", "Hello ⟦wor▮⟧ld", &["type X", "type Y", "⌘Z"], "Hello ⟦wor▮⟧ld");
-    done();
+fn e03_collapse_ignores_which_end_the_caret_is_at() {
+    golden("Hello ⟦▮wor⟧ld", "<right>", "Hello wor▮ld");
+    golden("Hello ⟦▮wor⟧ld", "<left>", "Hello ▮world");
 }
 
 #[test]
-fn e25_to_e32_word_and_line_deletes() {
-    check("E25", "one two thr▮ee", &["⌥⌫"], "one two ▮ee");
-    check("E26", "one two ▮three", &["⌥⌫"], "one ▮three");
-    // "Joins like ⌫": ⌫ at a paragraph's start joins with a line break (writing.md §1).
-    check("E27", "First ‖ ▮Second", &["⌥⌫"], "First⏎▮Second");
-    check("E29", "one two thr▮ee", &["⌘⌫"], "▮ee");
-    check("E30", "one ▮two⏎three", &["⌃K"], "one ▮⏎three");
-    check("E31", "one▮⏎three", &["⌃K"], "one▮three");
-    done();
+fn e04_shift_left_shrinks_from_the_caret() {
+    golden("Hello ⟦wor▮⟧ld", "<s-left>", "Hello ⟦wo▮⟧rld");
 }
 
 #[test]
-fn e33_to_e43_the_clipboard() {
-    check_clip("E33", "Hello ⟦wor▮⟧ld", &["⌘C"], "Hello ⟦wor▮⟧ld", "wor");
-    check_clip("E34", "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam", &["⌘C"], "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam", "milk\n- [ ] Call ");
-    check_clip("E35", "⟦One ‖ - [x] Two▮⟧", &["⌘C"], "⟦One ‖ - [x] Two▮⟧", "One\n\n- [x] Two");
-    // From the very end of a note: the copy starts with the boundary (the empty end, then the
-    // paragraph's blank line), so pasting it back over the same selection changes nothing (EI8).
-    check_clip("E35b", "Plan the trip⟦ ‖ - [ ] Book the flat▮⟧", &["⌘C"], "Plan the trip⟦ ‖ - [ ] Book the flat▮⟧", "\n\n- [ ] Book the flat");
-    check_clip("E36", "Hello wor▮ld", &["⌘C"], "Hello wor▮ld", "");
-    check_clip("E37", "Hello ⟦wor▮⟧ld", &["⌘X"], "Hello ▮ld", "wor");
-    check_clip("E37b", "Hello ⟦wor▮⟧ld", &["⌘X", "⌘Z"], "Hello ⟦wor▮⟧ld", "wor");
-    check("E41", "ab ‖ cd▮", &["⌘A"], "⟦ab ‖ cd▮⟧");
-    check("E41b", "ab ‖ cd▮", &["⌘A", "←"], "▮ab ‖ cd");
-    check("E42", "⟦ab ‖ cd▮⟧", &["⌫"], "▮");
-    check("E42b", "⟦ab ‖ cd▮⟧", &["⌫", "⌘Z"], "⟦ab ‖ cd▮⟧");
-    check("E43", "Hello X▮ld", &["⇧⌘Z"], "Hello X▮ld");
-    done();
+fn e05_shift_right_grows_from_the_caret() {
+    golden("Hello ⟦wor▮⟧ld", "<s-right>", "Hello ⟦worl▮⟧d");
 }
 
 #[test]
-fn e38_e39_e40_paste() {
-    let mut clip = "X".to_string();
-    let d = run("Hello ⟦wor▮⟧ld", &["⌘V"], &mut clip);
-    assert_eq!(render(&d), "Hello X▮ld", "E38");
-    let mut clip = "- a\n- b".to_string();
-    let d = run("▮", &["⌘V"], &mut clip);
-    assert_eq!(render(&d), "- a ‖ - b▮", "E39");
-}
-
-
-// ---- §7b: kind changes per line, and nothing moves -----------------------------------------
-
-/// Split on both boundaries: the segments and whether a blank line comes before each.
-fn segments(src: &str) -> Vec<(String, bool)> {
-    let mut out = vec![];
-    let mut rest = src;
-    let mut gap = false;
-    loop {
-        let a = rest.find(" ‖ ");
-        let b = rest.find(" ¦ ");
-        let (at, sep_gap, len) = match (a, b) {
-            (Some(x), Some(y)) if x < y => (x, true, " ‖ ".len()),
-            (Some(_), Some(y)) => (y, false, " ¦ ".len()),
-            (Some(x), None) => (x, true, " ‖ ".len()),
-            (None, Some(y)) => (y, false, " ¦ ".len()),
-            (None, None) => break,
-        };
-        out.push((rest[..at].to_string(), gap));
-        gap = sep_gap;
-        rest = &rest[at + len..];
-    }
-    out.push((rest.to_string(), gap));
-    out
-}
-
-fn run_g(before: &str, keys: &[&str]) -> D {
-    let segs = segments(before);
-    let joined = segs.iter().map(|(s, _)| s.as_str()).collect::<Vec<_>>().join(" ‖ ");
-    let mut clip = String::new();
-    let mut d = run(&joined, &[], &mut clip);
-    for (i, (_, gap)) in segs.iter().enumerate().skip(1) {
-        let def = d.doc.default_gap(i);
-        if def != *gap {
-            d.doc.set_gap(i, Some(*gap));
-        }
-    }
-    for k in keys {
-        let c = match *k {
-            "⌃T" => Command::TaskCycle,
-            "⌘Z" => Command::Undo,
-            "Tab" => Command::Indent,
-            "⌫" => Command::Backspace,
-            other => panic!("unknown key {other}"),
-        };
-        d.apply(c);
-    }
-    d
-}
-
-fn render_g(d: &D) -> String {
-    let plain = render(d);
-    let parts: Vec<&str> = plain.split(" ‖ ").collect();
-    let mut out = String::new();
-    for (i, p) in parts.iter().enumerate() {
-        if i > 0 {
-            out.push_str(if d.doc.effective_gap(i) { " ‖ " } else { " ¦ " });
-        }
-        let ind = p.len() - p.trim_start_matches(' ').len();
-        let body = &p[ind..];
-        let body = body.strip_prefix("- [ ] ").map(|r| format!("[ ] {r}")).or_else(|| body.strip_prefix("- [x] ").map(|r| format!("[x] {r}"))).unwrap_or_else(|| body.to_string());
-        out.push_str(&" ".repeat(ind));
-        out.push_str(&body);
-    }
-    out
-}
-
-fn check_g(id: &str, before: &str, keys: &[&str], after: &str) -> D {
-    let d = run_g(before, keys);
-    let got = render_g(&d);
-    if got != after {
-        FAILS.with(|f| f.borrow_mut().push(format!("{id}: {before} · {keys:?}\n   want {after}\n   got  {got}")));
-    }
-    d
+fn e06_caret_back_on_anchor_means_no_selection() {
+    golden("ab ⟦▮c⟧ d", "<s-right>", "ab c▮ d");
 }
 
 #[test]
-fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
-    // E70: a line inside a paragraph: three notes, adjacent, the first keeps the id.
-    let src70 = "First line⏎sec▮ond line⏎third line";
-    check_g("E70", src70, &["⌃T"], "First line ¦ [ ] sec▮ond line ¦ third line");
-    let mut d70 = run_g(src70, &[]);
-    let id0 = d70.lines()[0].id;
-    d70.apply(Command::TaskCycle);
-    assert_eq!(d70.lines()[0].id, id0, "E70: the first piece keeps the id");
-    assert!(d70.lines()[1].is_new && d70.lines()[2].is_new, "E70: the other pieces are new notes");
-    // E71: the first line: the task keeps the id.
-    let mut d71 = run_g("fir▮st⏎second", &[]);
-    let id = d71.lines()[0].id;
-    d71.apply(Command::TaskCycle);
-    assert_eq!(render_g(&d71), "[ ] fir▮st ¦ second", "E71");
-    assert_eq!(d71.lines()[0].id, id, "E71: the task keeps the id");
-    // E72: each selected line its own task.
-    check_g("E72", "a⏎⟦b⏎c▮⟧⏎d", &["⌃T"], "a ¦ [ ] ⟦b ¦ [ ] c▮⟧ ¦ d");
-    // E73: a list item with a soft break is one item.
-    check_g("E73", "- item one⏎more of it▮", &["⌃T"], "[ ] item one⏎more of it▮");
-    // E74: a reported case: the gap stays.
-    check_g("E74", "[ ] Buy milk ‖ Call ▮the bank", &["⌃T"], "[ ] Buy milk ‖ [ ] Call ▮the bank");
-    // E75: B to text: no gap appears.
-    check_g("E75", "[ ] A ¦ [ ] B▮", &["⌃T", "⌃T"], "[ ] A ¦ B▮");
-    // E76: to text after a paragraph with a gap: two notes, never joined.
-    check_g("E76", "Para one ‖ [ ] Ta▮sk", &["⌃T", "⌃T"], "Para one ‖ Ta▮sk");
-    // E77: Tab keeps the gap.
-    check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ‖   [ ] B▮");
-    // E78: undo puts the paragraph back, with its id and the caret.
-    let mut d78 = run_g(src70, &[]);
-    let id = d78.lines()[0].id;
-    d78.apply(Command::TaskCycle);
-    d78.apply(Command::Undo);
-    assert_eq!(render_g(&d78), src70, "E78");
-    assert_eq!(d78.lines()[0].id, id, "E78: the id");
-    // E79: deleting the marker: a paragraph, no gap added.
-    check_g("E79", "[ ] ▮A ¦ [ ] B", &["⌫", "⌫", "⌫", "⌫"], "▮A ¦ [ ] B");
-    // E81: back to text joins the neighbours it touches: the reverse of E70.
-    let mut d81 = run_g(src70, &[]);
-    let id = d81.lines()[0].id;
-    d81.apply(Command::TaskCycle);
-    d81.apply(Command::TaskCycle);
-    d81.apply(Command::TaskCycle);
-    assert_eq!(render_g(&d81), "First line⏎sec▮ond line⏎third line", "E81");
-    assert_eq!(d81.lines()[0].id, id, "E81: the upper note's id");
-    done();
-}
-
-// ---- invariants (editing.md §10) over random documents, through a View ------------------------
-
-struct Rng(u64);
-impl Rng {
-    fn next(&mut self) -> u64 {
-        self.0 ^= self.0 >> 12;
-        self.0 ^= self.0 << 25;
-        self.0 ^= self.0 >> 27;
-        self.0.wrapping_mul(0x2545F4914F6CDD1D)
-    }
-    fn below(&mut self, n: usize) -> usize {
-        (self.next() % n.max(1) as u64) as usize
-    }
-}
-
-const WORDS: &[&str] = &["one", "two", "日本", "é", "👨‍👩‍👧", "x.", "longer", "a"];
-
-fn random_doc(r: &mut Rng) -> D {
-    use unicode_segmentation::UnicodeSegmentation;
-    let mut lines: Vec<Line> = (0..1 + r.below(5))
-        .map(|_| {
-            let kind = [Kind::Para, Kind::Bullet, Kind::Task][r.below(3)];
-            let text: Vec<&str> = (0..r.below(5)).map(|_| WORDS[r.below(WORDS.len())]).collect();
-            let mut l = Line::fresh(if kind == Kind::Para { 0 } else { r.below(2) }, kind, &text.join(if r.below(4) == 0 { "\n" } else { " " }));
-            l.is_new = false;
-            l
-        })
-        .collect();
-    lines[0].depth = 0;
-    let pos = |r: &mut Rng, lines: &[Line]| {
-        let line = r.below(lines.len());
-        let t = &lines[line].text;
-        let bounds: Vec<usize> = t.grapheme_indices(true).map(|(i, _)| i).chain(std::iter::once(t.len())).collect();
-        Pos { line, byte: bounds[r.below(bounds.len())] }
-    };
-    let caret = pos(r, &lines);
-    let anchor = (r.below(2) == 0).then(|| pos(r, &lines));
-    D::new(lines, caret, anchor)
-}
-
-type State = (Vec<(usize, Kind, Option<String>, String)>, Pos, Option<(Pos, Pos)>);
-
-fn state(d: &D) -> State {
-    (d.lines().iter().map(|l| (l.depth, l.kind, l.status.clone(), l.text.clone())).collect(), d.caret(), d.selection())
-}
-
-fn texts(d: &D) -> Vec<String> {
-    d.lines().iter().map(|l| l.text.clone()).collect()
+fn e07_collapse_never_jumps_rows() {
+    golden("First line\nSec⟦ond li▮⟧ne", "<left>", "First line\nSec▮ond line");
 }
 
 #[test]
-fn editing_invariants_hold_through_a_view() {
-    let mut r = Rng(0xD1B54A32D192ED03);
-    let motions = [Motion::Left, Motion::Right, Motion::Up, Motion::Down, Motion::WordLeft, Motion::WordRight, Motion::Home, Motion::End, Motion::DocStart, Motion::DocEnd];
-    for case in 0..400 {
-        // EI1: a motion without ⇧ leaves no selection. EI2: with ⇧ the anchor never moves.
-        let mut d = random_doc(&mut r);
-        let m = motions[r.below(motions.len())];
-        d.apply(Command::Move { motion: m, select: false });
-        assert!(d.selection().is_none(), "EI1 case {case}: {m:?}: {}", render(&d));
-        let mut d = random_doc(&mut r);
-        let before_anchor = d.v.anchor.unwrap_or(d.v.caret);
-        d.apply(Command::Move { motion: m, select: true });
-        assert_eq!(d.v.anchor.unwrap_or(before_anchor), before_anchor, "EI2 case {case}: {m:?}");
-        // EI4: copy changes nothing.
-        let mut d = random_doc(&mut r);
-        let s0 = state(&d);
-        let _ = d.doc.copy(&d.v);
-        assert_eq!(state(&d), s0, "EI4 case {case}");
-        // EI7: with a selection, every delete gives the same document.
-        let d0 = random_doc(&mut r);
-        if let Some((s, e)) = d0.selection() {
-            let src = render(&d0);
-            let results: Vec<Vec<String>> = [Command::Backspace, Command::Delete, Command::DeleteWordBack, Command::KillToEnd, Command::KillToStart]
-                .iter()
-                .map(|c| {
-                    let (lines, caret, anchor) = parse(&src);
-                    let mut d = D::new(lines, caret, anchor);
-                    d.apply(*c);
-                    texts(&d)
-                })
-                .collect();
-            for (i, t) in results.iter().enumerate() {
-                assert_eq!(t, &results[0], "EI7 case {case}: delete #{i} differs from ⌫: {src}");
-            }
-            // EI6: typing over it is before[..start] + c + before[end..].
-            let (lines, caret, anchor) = parse(&src);
-            let mut d = D::new(lines, caret, anchor);
-            let want = format!("{}c{}", &d0.lines()[s.line].text[..s.byte], &d0.lines()[e.line].text[e.byte..]);
-            d.insert("c");
-            assert_eq!(d.lines()[s.line].text, want, "EI6 case {case}: {src}");
-        }
-        // EI5: N edits then N undos is the start again: text, caret and selection.
-        let mut d = random_doc(&mut r);
-        let start = state(&d);
-        let n = 1 + r.below(6);
-        for _ in 0..n {
-            match r.below(6) {
-                0 => d.insert("z"),
-                1 => d.apply(Command::Backspace),
-                2 => d.apply(Command::Newline),
-                3 => d.apply(Command::Delete),
-                4 => d.apply(Command::DeleteWordBack),
-                _ => d.insert("yy"),
-            }
-        }
-        for _ in 0..n {
-            d.apply(Command::Undo);
-        }
-        assert_eq!(state(&d).0, start.0, "EI5 case {case}: text");
-        assert_eq!((state(&d).1, state(&d).2), (start.1, start.2), "EI5 case {case}: caret and selection");
-        // EI12: ⌘A then ⌫ leaves one empty note, and ⌘Z restores everything.
-        let mut d = random_doc(&mut r);
-        let start = state(&d);
-        d.apply(Command::SelectAll);
-        let selected = state(&d);
-        d.apply(Command::Backspace);
-        assert!(d.lines().len() == 1 && d.lines()[0].text.is_empty(), "EI12 case {case}: {}", render(&d));
-        d.apply(Command::Undo);
-        assert_eq!(state(&d).0, start.0, "EI12 case {case}");
-        assert_eq!(state(&d), selected, "EI12 case {case}: and the selection");
-        // EI13 (document side): a kind change never changes another block's blank line.
-        // EI14: and its undo restores every gap.
-        let mut d = random_doc(&mut r);
-        d.v.anchor = None;
-        let gaps0 = d.doc.gaps();
-        let me = d.lines()[d.caret().line].id;
-        let ids0: Vec<u64> = d.lines().iter().map(|l| l.id).collect();
-        let c = [Command::TaskCycle, Command::Indent, Command::Outdent][r.below(3)];
-        d.apply(c);
-        let gaps1 = d.doc.gaps();
-        for id in &ids0 {
-            if *id == me {
-                continue;
-            }
-            if let (Some(a), Some(b)) = (gaps0.get(id), gaps1.get(id)) {
-                // (A block the change joined into another isn't there to compare.)
-                assert_eq!(a, b, "EI13 case {case}: {c:?} moved block {id}: {}", render(&d));
-            }
-        }
-        d.apply(Command::Undo);
-        assert_eq!(d.doc.gaps(), gaps0, "EI14 case {case}: {c:?} then undo");
+fn e08_up_with_selection_starts_from_its_start() {
+    golden("Line one\nLine ⟦two and▮⟧ more", "<up>", "Line ▮one\nLine two and more");
+}
+
+#[test]
+fn e09_down_with_selection_starts_from_its_end() {
+    golden("Line ⟦one▮⟧\nLine two", "<down>", "Line one\nLine two▮");
+}
+
+#[test]
+fn e10_word_left_with_selection_starts_from_its_start() {
+    golden("one two ⟦thr▮⟧ee", "<a-left>", "one ▮two three");
+}
+
+#[test]
+fn e11_word_right_with_selection_starts_from_its_end() {
+    golden("one ⟦tw▮⟧o three", "<a-right>", "one two▮ three");
+}
+
+#[test]
+fn e12_escape_collapses_to_the_caret() {
+    golden("ab ⟦cd▮⟧ ef", "<esc>", "ab cd▮ ef");
+    golden("ab ⟦▮cd⟧ ef", "<esc>", "ab ▮cd ef");
+}
+
+#[test]
+fn e13_shift_click_keeps_the_anchor() {
+    let mut s = state("Hello ⟦wor▮⟧ld");
+    send(&mut s, [Msg::Click { col: 8, row: 0, extend: true }]);
+    assert_eq!(show(&s), "Hello ⟦wo▮⟧rld");
+}
+
+#[test]
+fn e14_click_places_the_caret() {
+    let mut s = state("⟦Hello▮⟧ world");
+    send(&mut s, [Msg::Click { col: 9, row: 0, extend: false }]);
+    assert_eq!(show(&s), "Hello wor▮ld");
+}
+
+#[test]
+fn collapse_rules_for_line_and_document_keys() {
+    golden("ab ⟦cd▮⟧ ef\ngh", "<home>", "▮ab cd ef\ngh");
+    golden("ab ⟦▮cd⟧ ef\ngh", "<end>", "ab cd ef▮\ngh");
+    golden("ab ⟦cd▮⟧ ef\ngh", "<d-down>", "ab cd ef\ngh▮");
+    golden("ab ⟦cd▮⟧ ef\ngh", "<d-up>", "▮ab cd ef\ngh");
+}
+
+// ---------------------------------------------------------------------------------------
+// Edits with a selection
+
+#[test]
+fn e15_typing_replaces_the_selection() {
+    golden("Hello ⟦wor▮⟧ld", "X", "Hello X▮ld");
+}
+
+#[test]
+fn e16_backspace_deletes_only_the_selection() {
+    golden("Hello ⟦wor▮⟧ld", "<bs>", "Hello ▮ld");
+}
+
+#[test]
+fn e17_delete_deletes_only_the_selection() {
+    golden("Hello ⟦wor▮⟧ld", "<del>", "Hello ▮ld");
+}
+
+#[test]
+fn e18_word_and_line_deletes_never_extend_a_selection() {
+    golden("one ⟦two thr▮⟧ee", "<a-bs>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<a-del>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<d-bs>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<d-del>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<c-k>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<c-w>", "one ▮ee");
+    golden("one ⟦two thr▮⟧ee", "<c-u>", "one ▮ee");
+}
+
+#[test]
+fn e19_typing_over_a_multi_line_selection() {
+    golden("One ⟦two\nthree fo▮⟧ur", "X", "One X▮ur");
+}
+
+#[test]
+fn e20_backspace_over_whole_lines() {
+    golden("A⟦a\nBb\nC▮⟧c", "<bs>", "A▮c");
+}
+
+#[test]
+fn e21_enter_replaces_the_selection_with_a_line_break() {
+    golden("ab⟦cd▮⟧ef", "<cr>", "ab\n▮ef");
+}
+
+#[test]
+fn e24_one_undo_restores_text_and_selection_after_typing_over_it() {
+    golden("Hello ⟦wor▮⟧ld", "XY<c-z>", "Hello ⟦wor▮⟧ld");
+    golden("Hello ⟦▮wor⟧ld", "XY<d-z>", "Hello ⟦▮wor⟧ld");
+}
+
+// ---------------------------------------------------------------------------------------
+// Word and line deletes without a selection
+
+#[test]
+fn e25_word_delete_back_inside_a_word() {
+    golden("one two thr▮ee", "<a-bs>", "one two ▮ee");
+}
+
+#[test]
+fn e26_word_delete_back_skips_spaces_first() {
+    golden("one two ▮three", "<a-bs>", "one ▮three");
+    golden("one two ▮three", "<c-w>", "one ▮three");
+}
+
+#[test]
+fn e27_word_delete_back_at_a_line_start_joins_like_backspace() {
+    golden("First\n▮Second", "<a-bs>", "First▮Second");
+    golden("First▮\nSecond", "<a-del>", "First▮Second");
+}
+
+#[test]
+fn e28_word_delete_forward() {
+    golden("one ▮two three", "<a-del>", "one ▮ three");
+    golden("one ▮two three", "<a-d>", "one ▮ three");
+}
+
+#[test]
+fn e29_delete_to_row_start() {
+    golden("one two thr▮ee", "<d-bs>", "▮ee");
+    golden("one two thr▮ee", "<c-u>", "▮ee");
+    // At a row start it deletes the previous character (the line break).
+    golden("one\n▮two", "<d-bs>", "one▮two");
+}
+
+#[test]
+fn e30_kill_to_the_line_end() {
+    golden("one ▮two\nthree", "<c-k>", "one ▮\nthree");
+}
+
+#[test]
+fn e31_kill_at_the_line_end_removes_the_break() {
+    golden("one▮\nthree", "<c-k>", "one▮three");
+}
+
+#[test]
+fn e32_delete_to_row_end() {
+    golden("one ▮two", "<d-del>", "one ▮");
+}
+
+// ---------------------------------------------------------------------------------------
+// The clipboard
+
+#[test]
+fn e33_copy_changes_nothing_but_the_clipboard() {
+    let mut s = state("Hello ⟦wor▮⟧ld");
+    let before = s.clone();
+    let fx = keys(&mut s, "<d-c>");
+    assert_eq!(fx, vec![Effect::ClipboardSet { text: "wor".into() }]);
+    assert_eq!(s.doc.clipboard, "wor");
+    assert_eq!(show(&s), "Hello ⟦wor▮⟧ld");
+    assert_eq!(s.doc.history, before.doc.history);
+    assert_eq!(s.doc.dirty, before.doc.dirty);
+    // The Ctrl twin does the same.
+    let mut t = before.clone();
+    assert_eq!(keys(&mut t, "<c-c>"), fx);
+}
+
+#[test]
+fn e36_copy_with_nothing_selected_copies_nothing() {
+    let mut s = state("Hello wor▮ld");
+    s.doc.clipboard = "kept".into();
+    let fx = keys(&mut s, "<c-c>");
+    assert!(fx.is_empty());
+    assert_eq!(s.doc.clipboard, "kept");
+    assert_eq!(s.view.status.as_deref(), Some("nothing selected"));
+    assert_eq!(show(&s), "Hello wor▮ld");
+}
+
+#[test]
+fn e37_cut_is_one_undo_step() {
+    let mut s = state("Hello ⟦wor▮⟧ld");
+    let fx = keys(&mut s, "<c-x>");
+    assert_eq!(fx, vec![Effect::ClipboardSet { text: "wor".into() }]);
+    assert_eq!(show(&s), "Hello ▮ld");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "Hello ⟦wor▮⟧ld");
+}
+
+#[test]
+fn e38_paste_replaces_the_selection() {
+    let mut s = state("Hello ⟦wor▮⟧ld");
+    s.doc.clipboard = "X".into();
+    keys(&mut s, "<c-v>");
+    assert_eq!(show(&s), "Hello X▮ld");
+}
+
+#[test]
+fn e39_multi_line_paste_is_one_step() {
+    let mut s = state("▮");
+    send(&mut s, [Msg::Paste { text: Some("- a\n- b".into()) }]);
+    assert_eq!(show(&s), "- a\n- b▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "▮");
+}
+
+#[test]
+fn e40_cut_then_paste_in_place_is_the_identity() {
+    let mut s = state("One ⟦two\nth▮⟧ree");
+    keys(&mut s, "<c-x><c-v>");
+    assert_eq!(show(&s), "One two\nth▮ree");
+}
+
+#[test]
+fn e41_select_all_then_left() {
+    let mut s = state("ab\ncd▮");
+    keys(&mut s, "<d-a>");
+    assert_eq!(show(&s), "⟦ab\ncd▮⟧");
+    keys(&mut s, "<d-a>");
+    assert_eq!(show(&s), "⟦ab\ncd▮⟧", "a second select-all changes nothing");
+    keys(&mut s, "<left>");
+    assert_eq!(show(&s), "▮ab\ncd");
+    // Alt-A is the twin for terminals that don't forward Cmd.
+    keys(&mut s, "<a-a>");
+    assert_eq!(show(&s), "⟦ab\ncd▮⟧");
+}
+
+#[test]
+fn e42_select_all_delete_then_undo() {
+    let mut s = state("ab\ncd▮");
+    keys(&mut s, "<d-a><bs>");
+    assert_eq!(show(&s), "▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "⟦ab\ncd▮⟧");
+}
+
+#[test]
+fn e43_redo_with_nothing_to_redo() {
+    let mut s = state("Hello ⟦wor▮⟧ld");
+    keys(&mut s, "X");
+    keys(&mut s, "<c-s-z>");
+    assert_eq!(show(&s), "Hello X▮ld");
+    assert_eq!(s.view.status.as_deref(), Some("nothing to redo"));
+    keys(&mut s, "<c-z>");
+    assert_eq!(s.view.status, None);
+    keys(&mut s, "<c-y>");
+    assert_eq!(show(&s), "Hello X▮ld");
+}
+
+// ---------------------------------------------------------------------------------------
+// Undo grouping
+
+#[test]
+fn typing_within_the_gap_is_one_step_and_a_pause_starts_another() {
+    let mut s = state("▮");
+    keys(&mut s, "ab<wait:1000>cd<wait:1600>ef");
+    assert_eq!(show(&s), "abcdef▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "abcd▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "▮");
+    keys(&mut s, "<c-s-z>");
+    assert_eq!(show(&s), "abcd▮");
+    keys(&mut s, "<c-s-z>");
+    assert_eq!(show(&s), "abcdef▮");
+}
+
+#[test]
+fn a_motion_ends_a_typing_run() {
+    let mut s = state("▮");
+    keys(&mut s, "ab<left>c");
+    assert_eq!(show(&s), "ac▮b");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "a▮b");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "▮");
+}
+
+#[test]
+fn every_command_is_its_own_step() {
+    let mut s = state("one two three▮");
+    keys(&mut s, "<a-bs><a-bs>");
+    assert_eq!(show(&s), "one ▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "one two ▮");
+}
+
+#[test]
+fn held_backspace_is_one_step() {
+    let mut s = state("abcdef▮");
+    keys(&mut s, "<bs><bs><bs>");
+    assert_eq!(show(&s), "abc▮");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "abcdef▮");
+}
+
+#[test]
+fn undo_and_redo_restore_exact_text_and_selection() {
+    let mut s = state("alpha ⟦▮beta⟧ gamma");
+    keys(&mut s, "<a-del>");
+    assert_eq!(show(&s), "alpha ▮ gamma");
+    keys(&mut s, "<right><wait:2000>X");
+    assert_eq!(show(&s), "alpha  X▮gamma");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "alpha  ▮gamma");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "alpha ⟦▮beta⟧ gamma");
+    keys(&mut s, "<c-z>");
+    assert_eq!(s.view.status.as_deref(), Some("nothing to undo"));
+    keys(&mut s, "<c-y>");
+    assert_eq!(show(&s), "alpha ▮ gamma");
+    keys(&mut s, "<c-y>");
+    assert_eq!(show(&s), "alpha  X▮gamma");
+}
+
+#[test]
+fn saving_marks_clean_and_editing_marks_dirty() {
+    let mut s = state("ab▮");
+    assert!(!s.doc.dirty);
+    keys(&mut s, "c");
+    assert!(s.doc.dirty);
+    let fx = keys(&mut s, "<c-s>");
+    assert_eq!(
+        fx,
+        vec![Effect::WriteFile { path: "test.md".into(), text: "abc".into() }]
+    );
+    send(&mut s, [Msg::Saved]);
+    assert!(!s.doc.dirty);
+    // Typing straight after a save starts a new step, so the save point stays exact.
+    keys(&mut s, "d");
+    assert!(s.doc.dirty);
+    keys(&mut s, "<c-z>");
+    assert!(!s.doc.dirty);
+    assert_eq!(show(&s), "abc▮");
+}
+
+#[test]
+fn quitting_with_unsaved_changes_asks_twice() {
+    let mut s = state("ab▮");
+    assert_eq!(keys(&mut s, "<c-q>"), vec![Effect::Quit]);
+    keys(&mut s, "c");
+    assert!(keys(&mut s, "<c-q>").is_empty());
+    assert!(s.view.status.is_some());
+    assert_eq!(keys(&mut s, "<c-q>"), vec![Effect::Quit]);
+}
+
+// ---------------------------------------------------------------------------------------
+// Basic editing
+
+#[test]
+fn enter_in_mid_line_splits_it() {
+    golden("hel▮lo", "<cr>", "hel\n▮lo");
+}
+
+#[test]
+fn backspace_and_delete_join_lines() {
+    golden("hel\n▮lo", "<bs>", "hel▮lo");
+    golden("hel▮\nlo", "<del>", "hel▮lo");
+}
+
+#[test]
+fn edges_of_the_document_are_safe() {
+    golden("▮abc", "<bs><left><up><home><a-left>", "▮abc");
+    golden("abc▮", "<del><right><down><end><a-right>", "abc▮");
+}
+
+#[test]
+fn up_on_the_first_row_goes_to_the_start_and_down_on_the_last_to_the_end() {
+    golden("ab▮c\ndef", "<up>", "▮abc\ndef");
+    golden("abc\nd▮ef", "<down>", "abc\ndef▮");
+}
+
+#[test]
+fn crlf_documents_stay_crlf() {
+    let mut s = state("a▮\r\nb");
+    keys(&mut s, "<cr>");
+    assert_eq!(s.doc.text.to_string(), "a\r\n\r\nb");
+    // A CRLF is one grapheme: one backspace removes both characters.
+    keys(&mut s, "<bs>");
+    assert_eq!(s.doc.text.to_string(), "a\r\nb");
+    send(&mut s, [Msg::Paste { text: Some("x\ny".into()) }]);
+    assert_eq!(s.doc.text.to_string(), "ax\r\ny\r\nb");
+}
+
+#[test]
+fn shift_motions_build_selections() {
+    golden("one ▮two three", "<s-a-right>", "one ⟦two▮⟧ three");
+    golden("one two▮ three", "<s-a-left><s-a-left>", "⟦▮one two⟧ three");
+    golden("one ▮two\nthree", "<s-down>", "one ⟦two\nthre▮⟧e");
+    golden("one ▮two", "<s-end>", "one ⟦two▮⟧");
+    golden("one ▮two", "<s-home>", "⟦▮one ⟧two");
+}
+
+#[test]
+fn tab_inserts_a_tab_and_renders_to_the_stop() {
+    let mut s = state_wh("a▮b", 20, 3);
+    keys(&mut s, "<tab>");
+    assert_eq!(show(&s), "a\t▮b");
+    assert_eq!(frame(&s).lines().next().unwrap(), "a   b");
+    assert_eq!(cursor(&s), Some((4, 0)));
+}
+
+// ---------------------------------------------------------------------------------------
+// Word motion
+
+#[test]
+fn word_motion_moves_by_words_skipping_spaces_and_punctuation() {
+    golden("▮Hello, wide world!", "<a-right>", "Hello▮, wide world!");
+    golden("▮Hello, wide world!", "<a-right><a-right>", "Hello, wide▮ world!");
+    golden("▮Hello, wide world!", "<a-right><a-right><a-right><a-right>", "Hello, wide world!▮");
+    golden("Hello, wide world!▮", "<a-left>", "Hello, wide ▮world!");
+    golden("Hello, wide world!▮", "<a-left><a-left><a-left>", "▮Hello, wide world!");
+    golden("snake_case wo▮rd", "<a-left><a-left>", "▮snake_case word");
+    // Emacs twins.
+    golden("one ▮two", "<a-f>", "one two▮");
+    golden("one two▮", "<a-b>", "one ▮two");
+    // Ctrl-arrows move by word too.
+    golden("one ▮two", "<c-right>", "one two▮");
+}
+
+#[test]
+fn word_motion_crosses_lines() {
+    golden("one▮\ntwo", "<a-right>", "one\ntwo▮");
+    golden("one\n▮two", "<a-left>", "▮one\ntwo");
+}
+
+// ---------------------------------------------------------------------------------------
+// Unicode: emoji, combining marks, wide characters
+
+#[test]
+fn emoji_with_a_modifier_is_one_step() {
+    golden("a▮👍🏽b", "<right>", "a👍🏽▮b");
+    golden("a👍🏽▮b", "<left>", "a▮👍🏽b");
+    golden("a👍🏽▮b", "<bs>", "a▮b");
+    golden("a▮👍🏽b", "<del>", "a▮b");
+    golden("a▮👍🏽b", "<s-right>", "a⟦👍🏽▮⟧b");
+}
+
+#[test]
+fn zwj_family_emoji_is_one_grapheme() {
+    golden("▮👨‍👩‍👧x", "<right>", "👨‍👩‍👧▮x");
+    golden("👨‍👩‍👧▮x", "<bs>", "▮x");
+}
+
+#[test]
+fn combining_accents_move_with_their_base() {
+    golden("cafe\u{301}▮ ok", "<left>", "caf▮e\u{301} ok");
+    golden("caf▮e\u{301} ok", "<right>", "cafe\u{301}▮ ok");
+    golden("cafe\u{301}▮ ok", "<bs>", "caf▮ ok");
+    // The accented letter is part of the word.
+    golden("▮cafe\u{301} ok", "<a-right>", "cafe\u{301}▮ ok");
+}
+
+#[test]
+fn wide_characters_take_two_columns() {
+    let s = state_wh("漢字ab▮c", 20, 3);
+    assert_eq!(frame(&s).lines().next().unwrap(), "漢字abc");
+    assert_eq!(cursor(&s), Some((6, 0)));
+    // Vertical motion keeps the visual column across wide characters.
+    golden("漢字▮abc\nabcdef", "<down>", "漢字abc\nabcd▮ef");
+    golden("漢字abc\nab▮cdef", "<up>", "漢▮字abc\nabcdef");
+    golden("漢字abc\nabc▮def", "<up>", "漢▮字abc\nabcdef");
+}
+
+#[test]
+fn emoji_and_cjk_render_with_the_caret_on_the_right_cell() {
+    let mut s = state_wh("▮", 20, 3);
+    send(&mut s, [Msg::InsertText { text: "a👍🏽漢e\u{301}".into() }]);
+    assert_eq!(frame(&s).lines().next().unwrap(), "a👍🏽漢e\u{301}");
+    // a(1) + emoji(2) + wide(2) + accented e(1).
+    assert_eq!(cursor(&s), Some((6, 0)));
+}
+
+#[test]
+fn a_keycap_emoji_takes_two_cells() {
+    // `1️⃣` starts with an ASCII digit but is an emoji (2 cells), as terminals draw it.
+    let mut s = state_wh("▮", 20, 3);
+    send(&mut s, [Msg::InsertText { text: "a1\u{fe0f}\u{20e3}b".into() }]);
+    assert_eq!(cursor(&s), Some((4, 0)));
+    golden("a▮1\u{fe0f}\u{20e3}b", "<right>", "a1\u{fe0f}\u{20e3}▮b");
+}
+
+// ---------------------------------------------------------------------------------------
+// Soft wrap: visual rows, the goal column, Home and End
+
+/// Three lines; at width 20 the first and last wrap:
+/// row 0 `aaaa bbbb cccc dddd ` · row 1 `eeee ffff gggg` · row 2 `xy` ·
+/// row 3 `hhhh iiii jjjj kkkk ` · row 4 `llll`.
+const WRAPPED: &str = "aaaa bbbb cccc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll";
+
+fn wrapped(at: &str) -> caretline::State {
+    // `at` is WRAPPED with a caret mark in it.
+    state_wh(at, 20, 7)
+}
+
+#[test]
+fn wrapped_paragraph_frame() {
+    let s = wrapped(&format!("▮{WRAPPED}"));
+    assert_eq!(
+        frame(&s),
+        "aaaa bbbb cccc dddd\neeee ffff gggg\nxy\nhhhh iiii jjjj kkkk\nllll\n\n test.md        1:1\n"
+    );
+    assert_eq!(cursor(&s), Some((0, 0)));
+}
+
+#[test]
+fn arrows_across_wrapped_rows_keep_the_goal_column() {
+    let mut s = wrapped("aaaa bbbb cc▮cc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    keys(&mut s, "<down>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gg▮gg\nxy\nhhhh iiii jjjj kkkk llll");
+    assert_eq!(cursor(&s), Some((12, 1)));
+    keys(&mut s, "<down>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg\nxy▮\nhhhh iiii jjjj kkkk llll");
+    keys(&mut s, "<down>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg\nxy\nhhhh iiii jj▮jj kkkk llll");
+    keys(&mut s, "<down>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll▮");
+    keys(&mut s, "<up><up><up>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gg▮gg\nxy\nhhhh iiii jjjj kkkk llll");
+    // A horizontal move resets the goal column.
+    keys(&mut s, "<left><down><down>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg\nxy\nhhhh iiii j▮jjj kkkk llll");
+}
+
+#[test]
+fn logical_line_motion_ignores_wrapping() {
+    let mut s = wrapped("aaaa bbbb cc▮cc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    send(
+        &mut s,
+        [Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::Line, extend: false }],
+    );
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg\nxy▮\nhhhh iiii jjjj kkkk llll");
+}
+
+#[test]
+fn home_and_end_work_on_visual_rows() {
+    // On the second row of the wrapped line.
+    let mut s = wrapped("aaaa bbbb cccc dddd eeee ff▮ff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    keys(&mut s, "<home>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd ▮eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    assert_eq!(cursor(&s), Some((0, 1)));
+    keys(&mut s, "<end>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd eeee ffff gggg▮\nxy\nhhhh iiii jjjj kkkk llll");
+    // On the first row, End stops where the row wraps (before the wrapping space), so the
+    // caret stays on that row.
+    let mut s = wrapped("aaaa bb▮bb cccc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    keys(&mut s, "<end>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd▮ eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    assert_eq!(cursor(&s), Some((19, 0)));
+    keys(&mut s, "<home>");
+    assert_eq!(show(&s), "▮aaaa bbbb cccc dddd eeee ffff gggg\nxy\nhhhh iiii jjjj kkkk llll");
+    // The Cmd and Ctrl twins.
+    keys(&mut s, "<d-right>");
+    assert_eq!(cursor(&s), Some((19, 0)));
+    keys(&mut s, "<c-a>");
+    assert_eq!(cursor(&s), Some((0, 0)));
+    keys(&mut s, "<c-e>");
+    assert_eq!(cursor(&s), Some((19, 0)));
+}
+
+#[test]
+fn delete_to_row_start_on_a_wrapped_row() {
+    let mut s = wrapped("aaaa bbbb cccc dddd eeee ff▮ff gggg\nxy");
+    keys(&mut s, "<d-bs>");
+    assert_eq!(show(&s), "aaaa bbbb cccc dddd ▮ff gggg\nxy");
+}
+
+#[test]
+fn wrapped_continuation_rows_keep_the_indent() {
+    let s = state_wh("▮  - item one two three four five six", 20, 4);
+    assert_eq!(frame(&s), "  - item one two\n  three four five\n  six\n test.md        1:1\n");
+}
+
+#[test]
+fn narrow_viewports_turn_wrapping_off_and_scroll_sideways() {
+    let mut s = state_wh("▮abcdefghijklmnop", 8, 2);
+    assert_eq!(frame(&s).lines().next().unwrap(), "abcdefgh");
+    keys(&mut s, "<end>");
+    assert_eq!(frame(&s).lines().next().unwrap(), "jklmnop");
+    assert_eq!(cursor(&s), Some((7, 0)));
+}
+
+// ---------------------------------------------------------------------------------------
+// Paste
+
+#[test]
+fn paste_of_multi_line_text_at_the_caret() {
+    let mut s = state("x▮y");
+    send(&mut s, [Msg::Paste { text: Some("one\ntwo\nthree".into()) }]);
+    assert_eq!(show(&s), "xone\ntwo\nthree▮y");
+    keys(&mut s, "<c-z>");
+    assert_eq!(show(&s), "x▮y");
+    keys(&mut s, "<c-y>");
+    assert_eq!(show(&s), "xone\ntwo\nthree▮y");
+}
+
+#[test]
+fn paste_normalizes_line_endings() {
+    let mut s = state("▮");
+    send(&mut s, [Msg::Paste { text: Some("a\r\nb\rc".into()) }]);
+    assert_eq!(show(&s), "a\nb\nc▮");
+}
+
+// ---------------------------------------------------------------------------------------
+// Scrolling and pages
+
+fn numbered(n: usize) -> String {
+    (1..=n).map(|i| format!("line {i}")).collect::<Vec<_>>().join("\n")
+}
+
+#[test]
+fn page_down_moves_a_screenful_and_keeps_the_column() {
+    let mut s = state_wh(&format!("line▮ 1\n{}", &numbered(60)["line 1\n".len()..]), 20, 11);
+    keys(&mut s, "<pgdn>");
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 10);
+    assert_eq!(cursor(&s).map(|c| c.0), Some(4));
+    keys(&mut s, "<pgdn><pgup>");
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 10);
+    keys(&mut s, "<pgup><pgup>");
+    assert_eq!(s.caret(), 0);
+}
+
+#[test]
+fn the_view_follows_the_caret_with_a_margin() {
+    let mut s = state_wh(&format!("▮{}", numbered(40)), 20, 11);
+    for _ in 0..9 {
+        keys(&mut s, "<down>");
     }
+    // Ten text rows, a two-row margin: line 10 sits on row 7, so the view scrolled by 2.
+    assert_eq!(s.view.scroll.line, 2);
+    assert_eq!(cursor(&s), Some((0, 7)));
+    keys(&mut s, "<d-down>");
+    assert_eq!(frame(&s).lines().nth(9).unwrap(), "line 40");
+    keys(&mut s, "<d-up>");
+    assert_eq!(s.view.scroll.line, 0);
+}
+
+#[test]
+fn wheel_scrolling_drags_the_caret_along() {
+    let mut s = state_wh(&format!("▮{}", numbered(40)), 20, 11);
+    send(&mut s, [Msg::Scroll { rows: 5 }]);
+    assert_eq!(s.view.scroll.line, 5);
+    // The caret moved down to stay two rows inside the view.
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 7);
+    send(&mut s, [Msg::Scroll { rows: 100 }]);
+    assert_eq!(s.view.scroll.line, 30, "stops with the last line at the bottom");
+}
+
+#[test]
+fn clicking_below_the_text_goes_to_the_end() {
+    let mut s = state_wh("ab\n▮cd", 20, 10);
+    send(&mut s, [Msg::Click { col: 1, row: 8, extend: false }]);
+    assert_eq!(show(&s), "ab\ncd▮");
+    send(&mut s, [Msg::Click { col: 15, row: 0, extend: false }]);
+    assert_eq!(show(&s), "ab▮\ncd");
+}
+
+// ---------------------------------------------------------------------------------------
+// Status bar
+
+#[test]
+fn status_bar_shows_name_dirty_marker_and_position() {
+    let mut s = state_wh("ab\nc▮d", 30, 3);
+    assert_eq!(frame(&s).lines().nth(2).unwrap(), " test.md                  2:2");
+    keys(&mut s, "x");
+    assert_eq!(frame(&s).lines().nth(2).unwrap(), " test.md [+]              2:3");
+    keys(&mut s, "<s-left><s-left>");
+    assert_eq!(frame(&s).lines().nth(2).unwrap(), " test.md [+]       2 sel  2:1");
+    keys(&mut s, "<c-c>");
+    assert_eq!(frame(&s).lines().nth(2).unwrap(), " test.md [+]  copi 2 sel  2:1");
 }

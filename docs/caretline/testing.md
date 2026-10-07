@@ -7,21 +7,21 @@ keys or messages, and the expected result. No terminal, no timing, no mocks.
 
 | File | What it checks |
 |---|---|
-| [`caretline-next/tests/goldens.rs`](../../crates/caretline-next/tests/goldens.rs) | Behaviour goldens: text and selection before, keys, text and selection after (and frames where it matters). The baseline is a macOS text field |
-| [`caretline-next/tests/rehydrate.rs`](../../crates/caretline-next/tests/rehydrate.rs) | A state survives JSON exactly; a recorded session replays to the live result |
-| [`caretline-next/tests/fuzz.rs`](../../crates/caretline-next/tests/fuzz.rs) | Property tests: seeded random documents and messages, with invariants checked after every step |
-| [`caretline-next/tests/marks.rs`](../../crates/caretline-next/tests/marks.rs) | Block marks: each mapping rule, undo and redo restoring marks exactly, cut and paste keeping ids, serialization; random sessions with marks at line starts and unique ids after every step, every undo restoring the marks |
-| [`caretline-next/tests/outline.rs`](../../crates/caretline-next/tests/outline.rs) | Outline goldens in block notation (` ‖ ` blocks with a blank row between, ` ¦ ` without, `⏎` a soft break), with block ids: Enter, Backspace and Delete at block edges, Tab, the task cycle, moves, atomic images, copy and paste, blank rows, host messages and effects |
-| [`caretline-next/tests/outline_fuzz.rs`](../../crates/caretline-next/tests/outline_fuzz.rs) | Outline properties over random outlines and messages: blocks and marks agree, ids unique, no caret in a marker or an image, undo and redo exact (marks included), kind changes move no other block, cut and paste in place keeps ids, Markdown files round-trip. `CARETLINE_OUTLINE_SEEDS` runs more seeds |
-| [`caretline-next/tests/keymap.rs`](../../crates/caretline-next/tests/keymap.rs) | Key bindings and the key-script parser |
-| [`caretline-next/tests/common/mod.rs`](../../crates/caretline-next/tests/common/mod.rs) | Shared helpers: caret notation, `golden`, `keys`, `send`, `frame`, random generators |
-| `caretline-next/src/helix/**` | Helix's own unit tests, vendored with the code |
+| [`caretline/tests/goldens.rs`](../../crates/caretline/tests/goldens.rs) | Behaviour goldens: text and selection before, keys, text and selection after (and frames where it matters). The baseline is a macOS text field |
+| [`caretline/tests/rehydrate.rs`](../../crates/caretline/tests/rehydrate.rs) | A state survives JSON exactly; a recorded session replays to the live result |
+| [`caretline/tests/fuzz.rs`](../../crates/caretline/tests/fuzz.rs) | Property tests: seeded random documents and messages, with invariants checked after every step |
+| [`caretline/tests/marks.rs`](../../crates/caretline/tests/marks.rs) | Block marks: each mapping rule, undo and redo restoring marks exactly, cut and paste keeping ids, serialization; random sessions with marks at line starts and unique ids after every step, every undo restoring the marks |
+| [`caretline/tests/outline.rs`](../../crates/caretline/tests/outline.rs) | Outline goldens in block notation (` ‖ ` blocks with a blank row between, ` ¦ ` without, `⏎` a soft break), with block ids: Enter, Backspace and Delete at block edges, Tab, the task cycle, moves, atomic images, copy and paste, blank rows, host messages and effects |
+| [`caretline/tests/outline_fuzz.rs`](../../crates/caretline/tests/outline_fuzz.rs) | Outline properties over random outlines and messages: blocks and marks agree, ids unique, no caret in a marker or an image, undo and redo exact (marks included), kind changes move no other block, cut and paste in place keeps ids, Markdown files round-trip. `CARETLINE_OUTLINE_SEEDS` runs more seeds |
+| [`caretline/tests/keymap.rs`](../../crates/caretline/tests/keymap.rs) | Key bindings and the key-script parser |
+| [`caretline/tests/common/mod.rs`](../../crates/caretline/tests/common/mod.rs) | Shared helpers: caret notation, `golden`, `keys`, `send`, `frame`, random generators |
+| `caretline/src/helix/**` | Helix's own unit tests, vendored with the code |
 | [`caretline-app/tests/cli.rs`](../../crates/caretline-app/tests/cli.rs) | The binary: fixtures render to their saved snapshots, traces replay, `--keys` and `--dump-state` round-trip, effects are reported and never performed |
 
 Run them:
 
 ```sh
-cargo test -p caretline-next
+cargo test -p caretline
 cargo test -p caretline-app
 ```
 

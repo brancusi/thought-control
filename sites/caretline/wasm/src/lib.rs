@@ -1,4 +1,4 @@
-//! A tiny C-ABI wrapper around `caretline_next::Session`, for the site's playground.
+//! A tiny C-ABI wrapper around `caretline::Session`, for the site's playground.
 //!
 //! The page writes a state-protocol request (one JSON line, as `caretline serve` reads) into
 //! memory from `cl_alloc`, calls `cl_handle`, and reads the response at `cl_out_ptr` for the
@@ -6,7 +6,7 @@
 //! process: no I/O and no clock (the page sends `now_ms` when it wants time to pass).
 //! Several sessions can live side by side, by number: the page keeps a live one and a
 //! second one to replay traces into.
-use caretline_next::{Session, State, Viewport};
+use caretline::{Session, State, Viewport};
 use std::cell::RefCell;
 
 thread_local! {

@@ -1,7 +1,7 @@
 # caretline
 
 A terminal text editor for plain text and Markdown, built on the
-[`caretline-next`](../caretline-next/README.md) engine. Every state can be saved as JSON,
+[`caretline`](../caretline/README.md) engine. Every state can be saved as JSON,
 reopened exactly, and every session replayed message by message.
 
 ```sh

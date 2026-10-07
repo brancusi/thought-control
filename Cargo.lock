@@ -186,28 +186,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "caretline"
-version = "0.1.0"
-dependencies = [
- "serde",
- "unicode-segmentation",
- "unicode-width 0.2.2",
-]
-
-[[package]]
-name = "caretline-app"
-version = "0.1.0"
-dependencies = [
- "caretline-next",
- "clap",
- "crossterm",
- "libc",
- "ratatui",
- "serde_json",
-]
-
-[[package]]
-name = "caretline-next"
-version = "0.1.0"
+version = "0.2.0"
 dependencies = [
  "log",
  "rand 0.9.5",
@@ -219,6 +198,18 @@ dependencies = [
  "unicode-general-category",
  "unicode-segmentation",
  "unicode-width 0.1.12",
+]
+
+[[package]]
+name = "caretline-app"
+version = "0.1.0"
+dependencies = [
+ "caretline",
+ "clap",
+ "crossterm",
+ "libc",
+ "ratatui",
+ "serde_json",
 ]
 
 [[package]]
@@ -2215,7 +2206,6 @@ version = "0.9.65"
 dependencies = [
  "anyhow",
  "caretline",
- "caretline-next",
  "chrono",
  "foldhash 0.2.0",
  "libc",

@@ -7,10 +7,10 @@
 //! - Every view is mapped through it, keeps the editing invariants, and the save point and
 //!   typing run stay on their revisions.
 
-use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
-use caretline_next::helix::{ChangeSet, Rope, Selection, Tendril, Transaction};
-use caretline_next::outline::markdown;
-use caretline_next::{
+use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
+use caretline::helix::{ChangeSet, Rope, Selection, Tendril, Transaction};
+use caretline::outline::markdown;
+use caretline::{
     update, update_doc, view, By, Dir, Document, Effect, ExtChange, ExternalUndo, Kind, MarkId, Msg, NewBlock,
     OutlineConfig, State, View, Viewport,
 };

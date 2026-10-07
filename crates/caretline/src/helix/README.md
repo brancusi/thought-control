@@ -2,7 +2,7 @@
 
 These files come from [Helix](https://github.com/helix-editor/helix) at commit
 `ba40e547426b0f9896c8bdc699a4ab11f2b37dbc` and are licensed under the Mozilla Public License 2.0 (`LICENSE-MPL-2.0`).
-MPL-2.0 applies per file: the rest of `caretline-next` is MIT.
+MPL-2.0 applies per file: the rest of `caretline` is MIT.
 
 | File here | Upstream |
 |---|---|

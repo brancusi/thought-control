@@ -1,6 +1,6 @@
 //! Tab nests any note under the note above, paragraphs too (like Logseq): typed in the
 //! editor, saved as a child of the paragraph's node, still nested after reopening, and
-//! indented under it in the Markdown export. On both editor engines.
+//! indented under it in the Markdown export.
 
 mod common;
 
@@ -38,10 +38,9 @@ impl V {
         v["items"][0].clone()
     }
 
-    fn snap(&self, engine: &str, keys: &str) -> String {
+    fn snap(&self, _tag: &str, keys: &str) -> String {
         let o = self
             .cmd()
-            .env("THC_EDITOR", engine)
             .env("THC_TUI_SNAPSHOT", "100x24")
             .env("THC_TUI_KEYS", keys)
             .env("THC_TUI_SNAPSHOT_WRITE", "1")
@@ -64,7 +63,7 @@ fn column(frame: &str, text: &str) -> usize {
     line[..line.find(text).unwrap()].chars().count()
 }
 
-fn tab_under_a_paragraph_saves_a_child(engine: &str) {
+fn tab_under_a_paragraph_saves_a_child_in(engine: &str) {
     let v = V::new(engine);
     v.snap(engine, "Para line<cr>first subtask<tab><esc>");
     let para = v.node("Para line");
@@ -81,13 +80,8 @@ fn tab_under_a_paragraph_saves_a_child(engine: &str) {
 }
 
 #[test]
-fn tab_under_a_paragraph_saves_a_child_on_the_old_engine() {
-    tab_under_a_paragraph_saves_a_child("old");
-}
-
-#[test]
-fn tab_under_a_paragraph_saves_a_child_on_caretline_next() {
-    tab_under_a_paragraph_saves_a_child("next");
+fn tab_under_a_paragraph_saves_a_child() {
+    tab_under_a_paragraph_saves_a_child_in("tab");
 }
 
 #[test]

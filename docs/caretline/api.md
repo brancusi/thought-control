@@ -2,10 +2,10 @@
 
 The `caretline` crate, by task. Every snippet here compiles against the crate on `main`.
 The complete program at the end is also in the repo as
-[`examples/basic.rs`](../../crates/caretline-next/examples/basic.rs):
+[`examples/basic.rs`](../../crates/caretline/examples/basic.rs):
 
 ```sh
-cargo run -p caretline-next --example basic
+cargo run -p caretline --example basic
 ```
 
 ## Add the dependency
@@ -21,10 +21,8 @@ cargo add caretline
 caretline = "0.2"
 ```
 
-Its library is `caretline::`. Inside this repository the crate is still named
-`caretline-next` (and imported as `caretline_next::`) until the older engine is removed; the
-published crate is the same code. A few things on `main` are newer than the latest release;
-for those, use a git dependency (`caretline-next = { git = "https://github.com/brancusi/thought-control" }`).
+Its library is `caretline::`; this repository's crate is the same code. A few things on `main` are newer than the latest release;
+for those, use a git dependency (`caretline = { git = "https://github.com/brancusi/thought-control" }`).
 
 Its dependencies are ropey, smallvec, smartstring, the unicode crates, serde, serde_json and
 log. There's no terminal crate and no ratatui.
@@ -424,7 +422,7 @@ println!("{}", reply.response); // {"id":1,"result":{"rev":3,"w":30,…}}
 
 ## A complete program
 
-This is [`examples/basic.rs`](../../crates/caretline-next/examples/basic.rs). It builds a
+This is [`examples/basic.rs`](../../crates/caretline/examples/basic.rs). It builds a
 state, drives it with messages and keys, handles effects, renders, round-trips the state
 through JSON and replays the trace.
 

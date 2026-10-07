@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-use caretline_next::state::{RUN_MAX_CHARS, RUN_WORD_BREAK_CHARS};
-use caretline_next::{view, Msg, Session, State, Viewport};
+use caretline::state::{RUN_MAX_CHARS, RUN_WORD_BREAK_CHARS};
+use caretline::{view, Msg, Session, State, Viewport};
 
 /// Types `n` characters of `pattern` one message at a time, rendering every `render_every`
 /// characters (0: never). Returns the session and the time it took.
@@ -48,7 +48,7 @@ fn prose_runs_break_at_word_boundaries() {
     let (s, _) = type_run(2000, PROSE, 0);
     let mut state = s.state().clone();
     let full = state.doc.text.to_string();
-    caretline_next::update(&mut state, Msg::Undo);
+    caretline::update(&mut state, Msg::Undo);
     let kept = state.doc.text.len_chars();
     let removed: String = full.chars().skip(kept).collect();
     assert!(removed.starts_with(' '), "the last step starts at a word boundary: {removed:?}");
@@ -87,8 +87,8 @@ fn a_16k_character_run_is_linear() {
 /// few keys without timing them.
 #[test]
 fn typing_in_a_5000_block_outline() {
-    use caretline_next::outline::markdown;
-    use caretline_next::OutlineConfig;
+    use caretline::outline::markdown;
+    use caretline::OutlineConfig;
     let mut md = String::new();
     for i in 0..5000 {
         md.push_str(&format!("- [ ] item number {i} with some words\n"));
@@ -96,16 +96,16 @@ fn typing_in_a_5000_block_outline() {
     let base = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
     let keys = if cfg!(debug_assertions) { 20 } else { 400 };
     // Without and with the outline layout (markers in a hang, a column per depth).
-    for layout in [None, Some(caretline_next::OutlineLayout::default())] {
+    for layout in [None, Some(caretline::OutlineLayout::default())] {
         let mut s = base.clone();
         s.view.layout = layout.clone();
         for pos in [10, s.doc.text.len_chars() - 3] {
-            s.view.selection = caretline_next::helix::Selection::point(pos);
+            s.view.selection = caretline::helix::Selection::point(pos);
             let t = Instant::now();
             for k in 0..keys {
-                caretline_next::update(&mut s, Msg::InsertText { text: "x".into() });
+                caretline::update(&mut s, Msg::InsertText { text: "x".into() });
                 if k % 50 == 49 {
-                    caretline_next::update(&mut s, Msg::InsertNewline);
+                    caretline::update(&mut s, Msg::InsertNewline);
                 }
                 std::hint::black_box(view(&s));
             }

@@ -4,8 +4,8 @@
 //! is: `⟦abc▮⟧` was selected left to right and `⟦▮abc⟧` right to left.
 #![allow(dead_code)]
 
-use caretline_next::helix::Selection;
-use caretline_next::{script_to_msgs, update, view, Effect, Msg, State, Viewport};
+use caretline::helix::Selection;
+use caretline::{script_to_msgs, update, view, Effect, Msg, State, Viewport};
 
 /// Builds a state from notation, laid out at `width`x`height`.
 pub fn state_wh(notation: &str, width: u16, height: u16) -> State {
@@ -115,8 +115,8 @@ pub fn cursor(state: &State) -> Option<(u16, u16)> {
 
 /// Random documents and messages for the property tests (seeded, so failures reproduce).
 pub mod gen {
-    use caretline_next::helix::{Range, Selection, SmallVec};
-    use caretline_next::{By, Dir, Msg, State};
+    use caretline::helix::{Range, Selection, SmallVec};
+    use caretline::{By, Dir, Msg, State};
     use rand::rngs::StdRng;
     use rand::Rng;
 
@@ -208,7 +208,7 @@ pub mod gen {
 
     /// A random multi-range selection on grapheme boundaries (as a state file could hold).
     pub fn multi_selection(rng: &mut StdRng, state: &State) -> Selection {
-        use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
+        use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
         let text = state.doc.text.slice(..);
         let len = text.len_chars();
         let n = rng.random_range(1..4);

@@ -11,9 +11,9 @@
 
 mod common;
 
-use caretline_next::helix::Selection;
-use caretline_next::outline::markdown;
-use caretline_next::{script_to_msgs_for, update, view, BlockAttrs, Effect, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
+use caretline::helix::Selection;
+use caretline::outline::markdown;
+use caretline::{script_to_msgs_for, update, view, BlockAttrs, Effect, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
 
 // ---------------------------------------------------------------------------------------
 // The notation
@@ -937,7 +937,7 @@ fn the_docs_example_runs() {
 #[test]
 fn the_api_example_runs() {
     let mut s = markdown::load("- [ ] Pay rent\n", None, Viewport { width: 40, height: 6 }, OutlineConfig::default());
-    update(&mut s, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::LineEnd, extend: false });
+    update(&mut s, Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::LineEnd, extend: false });
     update(&mut s, Msg::InsertNewline);
     update(&mut s, Msg::InsertText { text: "Call Ana".into() });
     update(&mut s, Msg::Indent);
@@ -958,7 +958,7 @@ fn a_paragraphs_children_copy_indented_and_paste_back_nested() {
 
 #[test]
 fn a_paragraphs_children_round_trip_through_a_file() {
-    use caretline_next::outline::markdown::{load, to_file};
+    use caretline::outline::markdown::{load, to_file};
     let md = "Para line\n\n  first subtask\n  more\n\n  - [ ] a task\n\nAfter\n";
     let s = load(md, None, Viewport { width: 80, height: 24 }, OutlineConfig::default());
     let o = s.blocks().unwrap();

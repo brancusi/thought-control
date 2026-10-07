@@ -3,8 +3,8 @@
 
 mod common;
 
-use caretline_next::helix::graphemes::ensure_grapheme_boundary_prev;
-use caretline_next::{update, view, Msg, State, Viewport};
+use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
+use caretline::{update, view, Msg, State, Viewport};
 use common::gen;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -201,7 +201,7 @@ fn cut_paste_and_copy_paste_are_identities() {
         let t = s.doc.text.slice(..);
         let a = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
         let b = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
-        s.view.selection = caretline_next::helix::Selection::single(a, b);
+        s.view.selection = caretline::helix::Selection::single(a, b);
         let mut cut = s.clone();
         update(&mut cut, Msg::Cut);
         update(&mut cut, Msg::Paste { text: None });
@@ -230,6 +230,6 @@ fn select_all_delete_then_undo() {
         assert_eq!(s.doc.text.len_chars(), 0);
         update(&mut s, Msg::Undo);
         assert_eq!(s.doc.text.to_string(), text);
-        assert_eq!(s.view.selection, caretline_next::helix::Selection::single(0, s.doc.text.len_chars()));
+        assert_eq!(s.view.selection, caretline::helix::Selection::single(0, s.doc.text.len_chars()));
     }
 }

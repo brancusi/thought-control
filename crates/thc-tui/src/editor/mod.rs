@@ -1,11 +1,9 @@
 //! The editor seam: the one way the rest of thc-tui reads and changes an open page or day.
 //!
-//! Behind it is an engine and thc's per-line save state (`doc.rs`), motion (`motion.rs`) and
-//! refreshes from the vault (`patch.rs`). Nothing outside this module touches the engine, its
-//! view or its lines directly: the engine's fields are private to it, and every type here is
-//! thc's own. Two engines sit behind the seam, chosen when a document opens ([`engine_kind`]):
-//! the block engine (`caretline`, the default) and caretline-next (`next.rs`,
-//! `THC_EDITOR=next`), whose blocks thc's lines mirror.
+//! Behind it is the engine, caretline (`next.rs`: one outline document per page or day, whose
+//! blocks thc's lines mirror), thc's per-line save state (`doc.rs`) and refreshes from the
+//! vault (`patch.rs`). Nothing outside this module touches the engine, its view or its lines
+//! directly: the engine's fields are private to it, and every type here is thc's own.
 //!
 //! The seam, by what it's for:
 //!
@@ -28,7 +26,6 @@
 //!   [`Doc::name_conflict`].
 
 mod doc;
-mod motion;
 mod next;
 mod patch;
 
@@ -49,14 +46,11 @@ pub fn ms(t: std::time::Instant) -> u64 {
     t.saturating_duration_since(epoch).as_millis() as u64
 }
 
-/// A note as the document reads it back from the vault, on the engine documents open on now:
-/// on caretline-next, saved text that starts with a list or task marker (`[x] done`, `- a`)
-/// reads as that kind. (Test-only: the fuzz compares a reopened document with what it meant.)
+/// A note as the document reads it back from the vault: saved text that starts with a list
+/// or task marker (`[x] done`, `- a`) reads as that kind. (Test-only: the fuzz compares a
+/// reopened document with what it meant.)
 #[cfg(test)]
 pub fn read_back(n: (Kind, usize, Option<String>, String)) -> (Kind, usize, Option<String>, String) {
-    if engine_kind() != EngineKind::Next {
-        return n;
-    }
     let (kind, depth, status, text) = n;
     let b: thc_core::outline::Block = serde_json::from_value(serde_json::json!({
         "id": "x", "parent": null, "depth": depth, "kind": format!("{kind:?}").to_lowercase(),
@@ -68,68 +62,6 @@ pub fn read_back(n: (Kind, usize, Option<String>, String)) -> (Kind, usize, Opti
     let l = &d.blocks()[0];
     let status = if l.kind() == Kind::Task { l.status.clone() } else { None };
     (l.kind(), l.depth, status, l.text.trim().to_string())
-}
-
-/// Which engine edits a document: the old block engine (the default) or caretline-next
-/// (`THC_EDITOR=next`), chosen when the document opens.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum EngineKind {
-    Old,
-    Next,
-}
-
-thread_local! {
-    /// A test's choice of engine, over `THC_EDITOR` (tests run both engines in one process).
-    static ENGINE: std::cell::Cell<Option<EngineKind>> = const { std::cell::Cell::new(None) };
-}
-
-/// The engine a document opened now gets: a test's choice, else `THC_EDITOR` (`next`), else
-/// the old engine.
-pub fn engine_kind() -> EngineKind {
-    if let Some(k) = ENGINE.with(|e| e.get()) {
-        return k;
-    }
-    match std::env::var("THC_EDITOR").as_deref() {
-        Ok("next") => EngineKind::Next,
-        _ => EngineKind::Old,
-    }
-}
-
-/// Run `f` with documents opened on engine `k` (this thread only).
-#[cfg(test)]
-pub fn with_engine<R>(k: EngineKind, f: impl FnOnce() -> R) -> R {
-    let prev = ENGINE.with(|e| e.replace(Some(k)));
-    struct Back(Option<EngineKind>);
-    impl Drop for Back {
-        fn drop(&mut self) {
-            ENGINE.with(|e| e.set(self.0));
-        }
-    }
-    let _back = Back(prev);
-    f()
-}
-
-/// Run test `f` on each engine and fail with what failed on each (both are tried).
-#[cfg(test)]
-pub fn on_both_engines(f: fn()) {
-    let mut fails = Vec::new();
-    for k in [EngineKind::Old, EngineKind::Next] {
-        if let Err(e) = with_engine(k, || std::panic::catch_unwind(f)) {
-            let why = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_default();
-            fails.push(format!("[engine {k:?}] {why}"));
-        }
-    }
-    assert!(fails.is_empty(), "\n{}", fails.join("\n\n"));
-}
-
-impl Doc {
-    /// The engine this document is on.
-    pub fn engine(&self) -> EngineKind {
-        match self.engine {
-            doc::Engine::Old(_) => EngineKind::Old,
-            doc::Engine::Next(_) => EngineKind::Next,
-        }
-    }
 }
 
 /// A caret position: a block (by its index in the document) and a byte offset in its text, on a
@@ -227,61 +159,6 @@ pub struct NewBlock {
     pub text: String,
 }
 
-impl From<Motion> for caretline::motion::Motion {
-    fn from(m: Motion) -> Self {
-        use caretline::motion::Motion as M;
-        match m {
-            Motion::Up => M::Up,
-            Motion::Down => M::Down,
-            Motion::Page(n) => M::Page(n),
-            Motion::Left => M::Left,
-            Motion::Right => M::Right,
-            Motion::WordLeft => M::WordLeft,
-            Motion::WordRight => M::WordRight,
-            Motion::Home => M::Home,
-            Motion::End => M::End,
-            Motion::DocStart => M::DocStart,
-            Motion::DocEnd => M::DocEnd,
-            Motion::NoteUp => M::NoteUp,
-            Motion::NoteDown => M::NoteDown,
-        }
-    }
-}
-
-impl From<EditCmd> for caretline::Command {
-    fn from(c: EditCmd) -> Self {
-        use caretline::Command as C;
-        match c {
-            EditCmd::Newline => C::Newline,
-            EditCmd::SoftBreak => C::SoftBreak,
-            EditCmd::Backspace => C::Backspace,
-            EditCmd::Delete => C::Delete,
-            EditCmd::DeleteWordBack => C::DeleteWordBack,
-            EditCmd::KillToEnd => C::KillToEnd,
-            EditCmd::KillToStart => C::KillToStart,
-            EditCmd::Indent => C::Indent,
-            EditCmd::Outdent => C::Outdent,
-            EditCmd::TaskCycle => C::TaskCycle,
-            EditCmd::MoveLine(n) => C::MoveLine(n),
-            EditCmd::SelectAll => C::SelectAll,
-            EditCmd::Undo => C::Undo,
-            EditCmd::Redo => C::Redo,
-            EditCmd::Move { motion, select } => C::Move { motion: motion.into(), select },
-        }
-    }
-}
-
-impl From<caretline::Outcome> for Outcome {
-    fn from(o: caretline::Outcome) -> Self {
-        match o {
-            caretline::Outcome::Done => Outcome::Done,
-            caretline::Outcome::Nothing(why) => Outcome::Nothing(why),
-            caretline::Outcome::Completed => Outcome::Completed,
-            caretline::Outcome::Restored => Outcome::Restored,
-        }
-    }
-}
-
 // ---- reading ------------------------------------------------------------------------------------
 
 impl Doc {
@@ -337,19 +214,6 @@ impl Doc {
         crate::doc_ui::folded_hidden(self.lines(), i, &self.view.folds)
     }
 
-    /// The caret is on a stop of the layout at these widths (motion lands only on stops): None,
-    /// or where it would be valid.
-    #[cfg(test)]
-    pub fn caret_off_stop(&mut self, width_of: &dyn Fn(&Line) -> usize) -> Option<BlockPos> {
-        if self.engine() == EngineKind::Next {
-            // caretline-next keeps every caret on a stop itself (outside markers and folds).
-            return None;
-        }
-        let caret = self.view.caret;
-        let l = motion::layout(self, width_of);
-        let valid = l.valid(caret);
-        (!l.stops.is_empty() && valid != caret).then(|| valid.into())
-    }
 }
 
 // ---- the caret and the selection ----------------------------------------------------------------
@@ -433,29 +297,20 @@ impl Doc {
     /// Apply an editing or motion command at the caret, with thc's layout (`width_of`: the text
     /// column of a note) for motion.
     pub fn apply(&mut self, cmd: EditCmd, width_of: &dyn Fn(&Line) -> usize) -> Outcome {
-        match self.engine() {
-            EngineKind::Old => self.apply_command(cmd.into(), width_of).into(),
-            EngineKind::Next => self.next_apply(cmd, width_of),
-        }
+        self.next_apply(cmd, width_of)
     }
 
     /// A paste of more than one line: Markdown (unless `plain`) read into notes at the caret,
     /// one undo step. How many notes, and how many images were left out.
     pub fn paste(&mut self, text: &str, plain: bool) -> (usize, usize) {
-        if self.engine() == EngineKind::Next {
-            return self.next_paste(text, plain);
-        }
-        let (lines, images) = doc::parse_paste(text, plain);
-        let n = lines.len();
-        self.paste_lines(lines);
-        (n, images)
+        self.next_paste(text, plain)
     }
 
-    /// A paste of one line: typed in as is. On caretline-next, the text it copied or cut
-    /// itself (whole notes copy as one line) goes back as it was taken: notes, ids kept.
+    /// A paste of one line: typed in as is. The text the engine copied or cut itself (whole
+    /// notes copy as one line) goes back as it was taken: notes, ids kept.
     pub fn paste_line(&mut self, text: &str) {
-        if self.engine() == EngineKind::Next && self.next_is_register(text) {
-            self.next_run(caretline_next::Msg::Paste { text: Some(text.to_string()) });
+        if self.next_is_register(text) {
+            self.next_run(caretline::Msg::Paste { text: Some(text.to_string()) });
             return;
         }
         self.insert(text);
@@ -493,7 +348,7 @@ impl Doc {
         let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == id) else { return false };
         if l.text != text || l.kind() != kind || l.depth != depth {
             l.text = text.to_string();
-            l.kind = doc::engine_kind(kind);
+            l.kind = kind;
             l.depth = depth;
             l.status = status;
             return true;
@@ -564,10 +419,7 @@ impl Doc {
     /// Notes for a test, the caret at the start. Test-only.
     #[cfg(test)]
     pub fn set_blocks(&mut self, lines: Vec<Line>) {
-        match &mut self.engine {
-            doc::Engine::Old(_) => *self.lines_mut() = lines,
-            doc::Engine::Next(n) => **n = next::Next::load(lines),
-        }
+        *self.engine = next::Next::load(lines);
     }
 
     /// Note `i`'s blank line before it, set and saved. Test-only.
