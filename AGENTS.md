@@ -350,6 +350,17 @@ First plan removes the gate. Agents never accept work on the human's behalf.
   - Replay must stay a pure function of the events. Anything clock-, random- or
     timezone-dependent belongs in `TxBuilder` (the writer), never in `Store::apply`.
   - New op types need a format version bump.
+- **caretline (the editor engine):** caretline lives at brancusi/caretline; engine bugs found in
+  thc are fixed there first, released or pinned, then pulled into thc. Never patch the engine
+  inside thought-control.
+  - thc depends on `caretline = "0.3"` (crates.io) in `crates/thc-tui/Cargo.toml`.
+  - A fix not yet released is pinned in the root `Cargo.toml`:
+    `[patch.crates-io] caretline = { git = "https://github.com/brancusi/caretline", rev = "<sha>" }`.
+    Bump the rev when thc needs a newer engine commit (merged on brancusi/caretline main), and
+    remove the patch once a caretline release contains it.
+  - Working on both at once: point the patch at your caretline checkout
+    (`caretline = { path = "../caretline/crates/caretline" }`), never commit that, then land
+    the engine PR in brancusi/caretline and pin its merged rev here.
 - **Keys:** one table (`crates/thc-tui/src/keymap.rs`, keymap.md) drives dispatch, the footer, help,
   the palette and `thc keys`. The write context's editing keys and their words come from caretline's
   command catalog and default keymap (`crates/thc-tui/src/editing_keys.rs`); thc's own differences are

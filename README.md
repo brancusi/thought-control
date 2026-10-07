@@ -22,7 +22,7 @@ $ thc q 'status:open (due<=+7d or priority:high) -#someday sort:due' --json
 
 **caretline**, the editor engine inside `thc`, also stands alone. Try it in one line:
 `curl -fsSL https://caretline.app/install.sh | sh && caretline demo` (see
-[docs/caretline/quickstart.md](docs/caretline/quickstart.md)).
+[caretline.app](https://caretline.app/docs/quickstart/)).
 
 **New here?** Start with [the guide](docs/guide/README.md): your first ten minutes, every view,
 how writing works, and every key.
@@ -94,10 +94,11 @@ check exit codes, and never touch the vault files directly.
 
 ## caretline, the editor engine
 
-[caretline](docs/caretline/README.md) is a standalone terminal text-editing engine and editor
-in this repository: Helix's editing model in a pure, replayable Elm architecture, with
-serializable state, headless snapshots and exact replay. It doesn't depend on thc and can be
-embedded in other projects. Start with [docs/caretline](docs/caretline/README.md).
+caretline is a standalone terminal text-editing engine and editor: Helix's editing model in
+a pure, replayable Elm architecture, with serializable state, headless snapshots and exact
+replay. It lives in its own repository, **[brancusi/caretline](https://github.com/brancusi/caretline)**
+(docs at [caretline.app](https://caretline.app/docs/)), and thc depends on it as the
+`caretline` crate. Engine changes are made there first, then pulled into thc.
 
 ## Status
 

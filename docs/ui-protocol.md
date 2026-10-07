@@ -13,7 +13,7 @@ drive the TUI through the state:
 - **render a state with no TUI running** (`thc ui render --state FILE`), and
 - **record** a session and **replay** it to the same frames (`thc tui --trace`, `thc ui replay`).
 
-The wire format follows caretline's [state protocol](caretline/protocol.md): JSON lines,
+The wire format follows caretline's [state protocol](https://caretline.app/docs/protocol/): JSON lines,
 `rev` and `if_rev`, `subscribe`, traces and replay. The editor inside the TUI is caretline, so
 the two read and feel the same.
 

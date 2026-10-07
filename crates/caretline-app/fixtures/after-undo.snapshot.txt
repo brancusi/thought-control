@@ -1,5 +1,0 @@
-Undo keeps text, caret and selection exactly.
-Redo puts the change back.
-
-
- undo.md [+]                                 1:11
