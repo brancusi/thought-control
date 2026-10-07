@@ -1073,3 +1073,14 @@ mod tests {
         }
     }
 }
+#[cfg(test)]
+mod widths {
+    /// The engine and thc's drawing measure every grapheme the same (one width table in the
+    /// document: a cell the engine counts is a cell drawn), wide and narrow alike.
+    #[test]
+    fn the_engine_and_the_drawing_agree_on_widths() {
+        for g in ["🙂", "👨\u{200d}👩\u{200d}👧", "🇯🇵", "字", "e\u{301}", "1\u{fe0f}\u{20e3}", "❤\u{fe0f}", "👍🏽", "⚠", "⚠\u{fe0f}", "★", "→", "a", " "] {
+            assert_eq!(caretline_next::view::display_width(g), crate::text::width(g), "{g:?}");
+        }
+    }
+}
