@@ -367,20 +367,22 @@ impl Session {
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
-        if doc.is_some() && self.app.doc.is_some() {
-            // `scroll` counts rows as the view's width wraps them: lay the document out at
-            // the screen's geometry first, then put the caret and the scroll back as given
-            // (zjvvd: set against a view not yet laid out, the row landed elsewhere).
-            self.follow();
-        }
-        if let (Some(ds), Some(d)) = (doc, self.app.doc.as_mut()) {
-            if !ds.caret_id.is_empty() {
-                // The caret goes back as it does on reopening (a remembered caret): a day's
-                // fresh last line is only there when the caret is on it.
-                let journal = matches!(d.target, crate::editor::Target::Journal { .. });
-                d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
+        if let Some(ds) = doc {
+            if let Some(d) = self.app.doc.as_mut() {
+                if !ds.caret_id.is_empty() {
+                    // The caret goes back as it does on reopening (a remembered caret): a day's
+                    // fresh last line is only there when the caret is on it.
+                    let journal = matches!(d.target, crate::editor::Target::Journal { .. });
+                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
+                }
             }
-            d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
+            // The scroll is a row of the document as laid out at the session's size: lay it out
+            // first (a document just opened has no geometry yet, and a wrapped note above the
+            // top made the row land lines away), then scroll.
+            self.follow();
+            if let Some(d) = self.app.doc.as_mut() {
+                d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
+            }
         }
         self.follow();
         self.rev += 1;
@@ -733,13 +735,20 @@ impl Session {
         app.ui = new;
         rehydrate(app);
         let _ = app.reload();
-        if let (true, Some(ds), Some(d)) = (doc_changed, doc, app.doc.as_mut()) {
-            if !ds.caret_id.is_empty() {
-                d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+        if let (true, Some(ds)) = (doc_changed, doc) {
+            if let Some(d) = self.app.doc.as_mut() {
+                if !ds.caret_id.is_empty() {
+                    d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+                }
             }
-            d.set_scroll(ds.scroll, true);
-            app.ui.doc_scroll_free = true;
+            // A row of the document at the session's size: laid out first (see `restore`).
+            self.follow();
+            if let Some(d) = self.app.doc.as_mut() {
+                d.set_scroll(ds.scroll, true);
+            }
+            self.app.ui.doc_scroll_free = true;
         }
+        let app = &mut self.app;
         app.history_tick(false);
         if let Some(a) = actor {
             let change = crate::sidebar::AgentChange::between(a, &stack_before, &app.ui.sidebar);
