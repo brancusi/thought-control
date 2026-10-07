@@ -2,6 +2,11 @@
 //! and keeping it in view. Shared by `update` (motion, scrolling) and `view` (drawing).
 
 use std::cell::RefCell;
+use std::collections::BTreeMap;
+
+use serde::{Deserialize, Serialize};
+
+use crate::marks::MarkId;
 use std::sync::Arc;
 
 use crate::helix::chars::char_is_line_ending;
@@ -10,7 +15,37 @@ use crate::helix::text_annotations::TextAnnotations;
 use crate::helix::transaction::{ChangeSet, Operation};
 use crate::helix::{Rope, RopeSlice};
 use crate::outline::Outline;
-use crate::state::{Config, Scroll, State};
+use crate::state::{Config, Follow, Scroll, State};
+
+/// The outline layout a host gives a view: column geometry as data. With it, an outline
+/// document's markers move out of the text into a hang, nested blocks get their own
+/// columns, and folds hide children (see `docs/caretline/outline.md`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default)]
+pub struct OutlineLayout {
+    /// Columns before everything, for marks a host draws (a conflict sign, a flash).
+    pub marks: u16,
+    /// Columns per depth.
+    pub indent: u16,
+    /// Columns of the hang: the bullet, number, task box or heading sign before the content.
+    pub hang: u16,
+    /// The wrap width of depth-0 content (`min(72, available)` is a good choice).
+    pub column: u16,
+    /// The narrowest a nested block's content wraps at.
+    pub min_column: u16,
+    /// Rows a host draws after a block (its fields on their own row, an inline image).
+    #[serde(skip_serializing_if = "BTreeMap::is_empty")]
+    pub extra_rows: BTreeMap<MarkId, u16>,
+    /// Draw a plain glyph in each hang (`•`, `1.`, `[ ]`, `#`), for a host that draws none.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub hang_glyphs: bool,
+}
+
+impl Default for OutlineLayout {
+    fn default() -> Self {
+        OutlineLayout { marks: 2, indent: 4, hang: 4, column: 72, min_column: 20, extra_rows: BTreeMap::new(), hang_glyphs: false }
+    }
+}
 
 /// Soft-wrapped lines at least this long remember where their rows start (see
 /// [`WrapCache`]); shorter lines are laid out from their start every time.
@@ -189,10 +224,10 @@ pub struct Layout {
 impl Layout {
     pub fn new(state: &State) -> Self {
         Layout {
-            rope: state.text.clone(),
-            fmt: text_format(&state.config, state.viewport.width, true),
+            rope: state.doc.text.clone(),
+            fmt: text_format(&state.doc.config, state.view.viewport.width, true),
             annotations: TextAnnotations::default(),
-            cache: RefCell::new(state.wrap.clone()),
+            cache: RefCell::new(state.view.wrap.clone()),
             outline: state.blocks(),
         }
     }
@@ -200,8 +235,8 @@ impl Layout {
     /// The same document laid out without soft wrap (for logical-line motion).
     pub fn unwrapped(state: &State) -> Self {
         Layout {
-            rope: state.text.clone(),
-            fmt: text_format(&state.config, state.viewport.width, false),
+            rope: state.doc.text.clone(),
+            fmt: text_format(&state.doc.config, state.view.viewport.width, false),
             annotations: TextAnnotations::default(),
             cache: RefCell::new(WrapCache::default()),
             outline: state.blocks(),
@@ -224,7 +259,7 @@ impl Layout {
     /// Hands what this layout learned about long lines back to `state`, whose text must be
     /// the text this layout was made from.
     pub fn store(self, state: &mut State) {
-        state.wrap = self.cache.into_inner();
+        state.view.wrap = self.cache.into_inner();
     }
 
     /// Whether line `line` is laid out through the [`WrapCache`].
@@ -562,16 +597,29 @@ impl Layout {
     }
 }
 
+/// Keeps a freely scrolled view's top inside the document, without following the caret.
+pub fn clamp_scroll(state: &mut State) {
+    let layout = Layout::new(state);
+    let top = layout.top(&state.view.scroll);
+    let col = if layout.wraps() { 0 } else { state.view.scroll.col };
+    state.view.scroll = Scroll { line: top.line, row: top.row, col };
+    layout.store(state);
+}
+
 /// Moves the view the least needed for the primary caret to sit in it, `scrolloff` rows
 /// from the edges where possible.
 pub fn ensure_caret_visible(state: &mut State) {
     let layout = Layout::new(state);
     let h = state.text_rows();
-    let w = state.viewport.width as usize;
+    let w = state.view.viewport.width as usize;
     let (caret, col) = layout.pos_coords(state.caret());
-    let mut top = layout.top(&state.scroll);
-    if h > 0 {
-        let so = (state.config.scrolloff as usize).min((h - 1) / 2);
+    let mut top = layout.top(&state.view.scroll);
+    if let (Follow::Typewriter { percent }, true) = (state.view.config.follow, h > 0) {
+        // The caret's row sits at `percent` of the height (the top clamps at the start).
+        let row = ((h - 1) * percent.min(100) as usize + 50) / 100;
+        top = layout.step_rows(caret, -(row as isize)).0;
+    } else if h > 0 {
+        let so = (state.view.config.scrolloff as usize).min((h - 1) / 2);
         let dist = layout.rows_between(top, caret, h + so);
         if dist < so as isize {
             top = layout.step_rows(caret, -(so as isize)).0;
@@ -591,7 +639,7 @@ pub fn ensure_caret_visible(state: &mut State) {
     } else {
         top = caret;
     }
-    let mut scroll_col = state.scroll.col;
+    let mut scroll_col = state.view.scroll.col;
     if layout.wraps() {
         scroll_col = 0;
     } else if col < scroll_col {
@@ -599,7 +647,7 @@ pub fn ensure_caret_visible(state: &mut State) {
     } else if col >= scroll_col + w {
         scroll_col = col + 1 - w;
     }
-    state.scroll = Scroll {
+    state.view.scroll = Scroll {
         line: top.line,
         row: top.row,
         col: scroll_col,
@@ -718,12 +766,12 @@ mod tests {
                     _ => Msg::Move { dir: Dir::Backward, by: By::Grapheme, extend: false },
                 };
                 let mut cold = warm.clone();
-                cold.wrap.clear();
+                cold.view.wrap.clear();
                 update(&mut warm, msg.clone());
                 update(&mut cold, msg.clone());
                 let ctx = format!("seed {seed} step {step} {msg:?}");
                 assert_eq!(warm, cold, "{ctx}: state");
-                assert_eq!(warm.scroll, cold.scroll, "{ctx}: scroll");
+                assert_eq!(warm.view.scroll, cold.view.scroll, "{ctx}: scroll");
                 assert_eq!(view(&warm), view(&cold), "{ctx}: frame");
                 if step.is_multiple_of(8) {
                     let layout = Layout::new(&warm);

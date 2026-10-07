@@ -70,9 +70,9 @@ fn hand_written_states_are_repaired_on_load() {
     json["selection"]["ranges"][0]["head"] = 99.into();
     json["viewport"]["width"] = 0.into();
     let fixed = State::from_json(&json.to_string()).unwrap();
-    assert_eq!(fixed.selection.primary().anchor, 1);
-    assert_eq!(fixed.selection.primary().head, 4);
-    assert_eq!(fixed.viewport.width, 1);
+    assert_eq!(fixed.view.selection.primary().anchor, 1);
+    assert_eq!(fixed.view.selection.primary().head, 4);
+    assert_eq!(fixed.view.viewport.width, 1);
     s.sanitize();
     round_trip(&s);
 }
@@ -123,7 +123,7 @@ fn replaying_a_trace_gives_the_live_state() {
     assert!(count > 10);
     assert_eq!(replayed, live.state);
     assert_eq!(view(&replayed), view(&live.state));
-    assert!(!replayed.dirty || replayed.saved_revision.is_some());
+    assert!(!replayed.doc.dirty || replayed.doc.saved_revision.is_some());
 }
 
 #[test]

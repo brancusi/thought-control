@@ -250,7 +250,7 @@ fn cell_rows(frame: &Frame) -> Vec<CellRow> {
 }
 
 fn render(session: &Session, spec: FrameSpec) -> Result<RenderedFrame, ProtoError> {
-    let v = session.state().viewport;
+    let v = session.state().view.viewport;
     let (w, h) = (spec.w.unwrap_or(v.width), spec.h.unwrap_or(v.height));
     if w == 0 || h == 0 {
         return Err(err("bad_request", "w and h must be at least 1"));
@@ -359,13 +359,13 @@ impl Session {
                     return Err(err("unsupported", "this server returns effects; it doesn't perform them"));
                 }
                 // The clock: the request's own `now_ms`, else the runtime's (only forward).
-                let now = self.state().now_ms;
+                let now = self.state().doc.now_ms;
                 let tick = req.now_ms.filter(|&t| t != now).or(clock_ms.filter(|&t| t > now));
                 let base = tick.unwrap_or(now);
                 let mut msgs: Vec<Msg> = tick.map(|now_ms| Msg::Tick { now_ms }).into_iter().collect();
                 if req.op == "keys" {
                     let script = req.keys.ok_or_else(|| err("bad_request", "keys needs a keys script"))?;
-                    let outline = self.state().outline.is_some();
+                    let outline = self.state().doc.outline.is_some();
                     msgs.extend(crate::keymap::script_to_msgs_for(&script, base, outline).map_err(|e| err("bad_keys", e))?);
                 } else {
                     msgs.extend(req.msgs.ok_or_else(|| err("bad_request", "msgs needs a msgs array"))?);

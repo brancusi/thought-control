@@ -205,10 +205,10 @@ fn e33_copy_changes_nothing_but_the_clipboard() {
     let before = s.clone();
     let fx = keys(&mut s, "<d-c>");
     assert_eq!(fx, vec![Effect::ClipboardSet { text: "wor".into() }]);
-    assert_eq!(s.clipboard, "wor");
+    assert_eq!(s.doc.clipboard, "wor");
     assert_eq!(show(&s), "Hello ⟦wor▮⟧ld");
-    assert_eq!(s.history, before.history);
-    assert_eq!(s.dirty, before.dirty);
+    assert_eq!(s.doc.history, before.doc.history);
+    assert_eq!(s.doc.dirty, before.doc.dirty);
     // The Ctrl twin does the same.
     let mut t = before.clone();
     assert_eq!(keys(&mut t, "<c-c>"), fx);
@@ -217,11 +217,11 @@ fn e33_copy_changes_nothing_but_the_clipboard() {
 #[test]
 fn e36_copy_with_nothing_selected_copies_nothing() {
     let mut s = state("Hello wor▮ld");
-    s.clipboard = "kept".into();
+    s.doc.clipboard = "kept".into();
     let fx = keys(&mut s, "<c-c>");
     assert!(fx.is_empty());
-    assert_eq!(s.clipboard, "kept");
-    assert_eq!(s.status.as_deref(), Some("nothing selected"));
+    assert_eq!(s.doc.clipboard, "kept");
+    assert_eq!(s.view.status.as_deref(), Some("nothing selected"));
     assert_eq!(show(&s), "Hello wor▮ld");
 }
 
@@ -238,7 +238,7 @@ fn e37_cut_is_one_undo_step() {
 #[test]
 fn e38_paste_replaces_the_selection() {
     let mut s = state("Hello ⟦wor▮⟧ld");
-    s.clipboard = "X".into();
+    s.doc.clipboard = "X".into();
     keys(&mut s, "<c-v>");
     assert_eq!(show(&s), "Hello X▮ld");
 }
@@ -288,9 +288,9 @@ fn e43_redo_with_nothing_to_redo() {
     keys(&mut s, "X");
     keys(&mut s, "<c-s-z>");
     assert_eq!(show(&s), "Hello X▮ld");
-    assert_eq!(s.status.as_deref(), Some("nothing to redo"));
+    assert_eq!(s.view.status.as_deref(), Some("nothing to redo"));
     keys(&mut s, "<c-z>");
-    assert_eq!(s.status, None);
+    assert_eq!(s.view.status, None);
     keys(&mut s, "<c-y>");
     assert_eq!(show(&s), "Hello X▮ld");
 }
@@ -354,7 +354,7 @@ fn undo_and_redo_restore_exact_text_and_selection() {
     keys(&mut s, "<c-z>");
     assert_eq!(show(&s), "alpha ⟦▮beta⟧ gamma");
     keys(&mut s, "<c-z>");
-    assert_eq!(s.status.as_deref(), Some("nothing to undo"));
+    assert_eq!(s.view.status.as_deref(), Some("nothing to undo"));
     keys(&mut s, "<c-y>");
     assert_eq!(show(&s), "alpha ▮ gamma");
     keys(&mut s, "<c-y>");
@@ -364,21 +364,21 @@ fn undo_and_redo_restore_exact_text_and_selection() {
 #[test]
 fn saving_marks_clean_and_editing_marks_dirty() {
     let mut s = state("ab▮");
-    assert!(!s.dirty);
+    assert!(!s.doc.dirty);
     keys(&mut s, "c");
-    assert!(s.dirty);
+    assert!(s.doc.dirty);
     let fx = keys(&mut s, "<c-s>");
     assert_eq!(
         fx,
         vec![Effect::WriteFile { path: "test.md".into(), text: "abc".into() }]
     );
     send(&mut s, [Msg::Saved]);
-    assert!(!s.dirty);
+    assert!(!s.doc.dirty);
     // Typing straight after a save starts a new step, so the save point stays exact.
     keys(&mut s, "d");
-    assert!(s.dirty);
+    assert!(s.doc.dirty);
     keys(&mut s, "<c-z>");
-    assert!(!s.dirty);
+    assert!(!s.doc.dirty);
     assert_eq!(show(&s), "abc▮");
 }
 
@@ -388,7 +388,7 @@ fn quitting_with_unsaved_changes_asks_twice() {
     assert_eq!(keys(&mut s, "<c-q>"), vec![Effect::Quit]);
     keys(&mut s, "c");
     assert!(keys(&mut s, "<c-q>").is_empty());
-    assert!(s.status.is_some());
+    assert!(s.view.status.is_some());
     assert_eq!(keys(&mut s, "<c-q>"), vec![Effect::Quit]);
 }
 
@@ -422,12 +422,12 @@ fn up_on_the_first_row_goes_to_the_start_and_down_on_the_last_to_the_end() {
 fn crlf_documents_stay_crlf() {
     let mut s = state("a▮\r\nb");
     keys(&mut s, "<cr>");
-    assert_eq!(s.text.to_string(), "a\r\n\r\nb");
+    assert_eq!(s.doc.text.to_string(), "a\r\n\r\nb");
     // A CRLF is one grapheme: one backspace removes both characters.
     keys(&mut s, "<bs>");
-    assert_eq!(s.text.to_string(), "a\r\nb");
+    assert_eq!(s.doc.text.to_string(), "a\r\nb");
     send(&mut s, [Msg::Paste { text: Some("x\ny".into()) }]);
-    assert_eq!(s.text.to_string(), "ax\r\ny\r\nb");
+    assert_eq!(s.doc.text.to_string(), "ax\r\ny\r\nb");
 }
 
 #[test]
@@ -651,10 +651,10 @@ fn numbered(n: usize) -> String {
 fn page_down_moves_a_screenful_and_keeps_the_column() {
     let mut s = state_wh(&format!("line▮ 1\n{}", &numbered(60)["line 1\n".len()..]), 20, 11);
     keys(&mut s, "<pgdn>");
-    assert_eq!(s.text.char_to_line(s.caret()), 10);
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 10);
     assert_eq!(cursor(&s).map(|c| c.0), Some(4));
     keys(&mut s, "<pgdn><pgup>");
-    assert_eq!(s.text.char_to_line(s.caret()), 10);
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 10);
     keys(&mut s, "<pgup><pgup>");
     assert_eq!(s.caret(), 0);
 }
@@ -666,23 +666,23 @@ fn the_view_follows_the_caret_with_a_margin() {
         keys(&mut s, "<down>");
     }
     // Ten text rows, a two-row margin: line 10 sits on row 7, so the view scrolled by 2.
-    assert_eq!(s.scroll.line, 2);
+    assert_eq!(s.view.scroll.line, 2);
     assert_eq!(cursor(&s), Some((0, 7)));
     keys(&mut s, "<d-down>");
     assert_eq!(frame(&s).lines().nth(9).unwrap(), "line 40");
     keys(&mut s, "<d-up>");
-    assert_eq!(s.scroll.line, 0);
+    assert_eq!(s.view.scroll.line, 0);
 }
 
 #[test]
 fn wheel_scrolling_drags_the_caret_along() {
     let mut s = state_wh(&format!("▮{}", numbered(40)), 20, 11);
     send(&mut s, [Msg::Scroll { rows: 5 }]);
-    assert_eq!(s.scroll.line, 5);
+    assert_eq!(s.view.scroll.line, 5);
     // The caret moved down to stay two rows inside the view.
-    assert_eq!(s.text.char_to_line(s.caret()), 7);
+    assert_eq!(s.doc.text.char_to_line(s.caret()), 7);
     send(&mut s, [Msg::Scroll { rows: 100 }]);
-    assert_eq!(s.scroll.line, 30, "stops with the last line at the bottom");
+    assert_eq!(s.view.scroll.line, 30, "stops with the last line at the bottom");
 }
 
 #[test]

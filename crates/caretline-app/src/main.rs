@@ -145,14 +145,14 @@ fn serve(args: ServeArgs) -> Result<(), String> {
             None => new_state("", None, Viewport { width, height }, args.outline),
         },
     };
-    if args.outline && state.outline.is_none() {
+    if args.outline && state.doc.outline.is_none() {
         state.enable_outline(OutlineConfig::default());
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
-        state.path = Some(path.clone());
+        state.doc.path = Some(path.clone());
     }
     if args.no_status_bar {
-        state.config.status_bar = false;
+        state.view.config.status_bar = false;
     }
     let trace = match &args.trace {
         Some(p) => Some(
@@ -249,7 +249,7 @@ fn run() -> Result<(), String> {
             None => Viewport { width: 80, height: 24 },
         };
         let mut state = new_state(&text, Some(path.clone()), viewport, args.outline);
-        state.config.status_bar = !args.no_status_bar;
+        state.view.config.status_bar = !args.no_status_bar;
         println!("{}", state.to_json());
         return Ok(());
     }
@@ -266,12 +266,12 @@ fn run() -> Result<(), String> {
             None => new_state("", None, viewport, args.outline),
         }
     };
-    if args.outline && state.outline.is_none() {
+    if args.outline && state.doc.outline.is_none() {
         state.enable_outline(OutlineConfig::default());
     }
     if let (Some(path), Some(_)) = (&args.file, &args.state) {
         // A file given with a state names where the state saves.
-        state.path = Some(path.clone());
+        state.doc.path = Some(path.clone());
     }
 
     let headless = args.snapshot.is_some()
@@ -286,7 +286,7 @@ fn run() -> Result<(), String> {
             Some(p) => Some(std::path::PathBuf::from(p)),
         };
         if args.no_status_bar {
-            state.config.status_bar = false;
+            state.view.config.status_bar = false;
         }
         return runtime::run_interactive(
             state,
@@ -318,7 +318,7 @@ fn run() -> Result<(), String> {
     let msgs = if let Some(path) = &args.msgs {
         parse_msgs(&read_input(path)?)?
     } else if let Some(script) = &args.keys {
-        script_to_msgs_for(script, state.now_ms, state.outline.is_some())?
+        script_to_msgs_for(script, state.doc.now_ms, state.doc.outline.is_some())?
     } else {
         Vec::new()
     };
@@ -327,7 +327,7 @@ fn run() -> Result<(), String> {
     }
     if let Some(size) = &args.snapshot {
         let (width, height) = parse_size(size)?;
-        if (width, height) != (state.viewport.width, state.viewport.height) {
+        if (width, height) != (state.view.viewport.width, state.view.viewport.height) {
             apply(&mut state, Msg::Resize { width, height })?;
         }
     }

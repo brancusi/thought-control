@@ -71,7 +71,7 @@ fn doc_wh(notation: &str, width: u16, height: u16) -> State {
     }
     let mut s = State::new(&text, Some("t.md".into()), Viewport { width, height });
     for &p in &starts {
-        s.marks.mint(p);
+        s.doc.marks.mint(p);
     }
     s.enable_outline(OutlineConfig::default());
     // Blank rows as written: explicit only where the default differs.
@@ -79,7 +79,7 @@ fn doc_wh(notation: &str, width: u16, height: u16) -> State {
     for (k, (_, want)) in blocks.iter().enumerate().skip(1) {
         let b = o.get(MarkId(k as u64)).unwrap_or_else(|| panic!("no block for segment {k} of {notation:?}"));
         if b.gap != *want {
-            s.marks.set_attrs(b.id, BlockAttrs { gap: Some(*want) });
+            s.doc.marks.set_attrs(b.id, BlockAttrs { gap: Some(*want) });
         }
     }
     s.outline_changed();
@@ -94,7 +94,7 @@ fn doc_wh(notation: &str, width: u16, height: u16) -> State {
         }
         _ => head,
     };
-    s.selection = Selection::single(anchor, head);
+    s.view.selection = Selection::single(anchor, head);
     update(&mut s, Msg::Resize { width, height });
     s
 }
@@ -102,8 +102,8 @@ fn doc_wh(notation: &str, width: u16, height: u16) -> State {
 /// The document in notation.
 fn show(s: &State) -> String {
     let o = s.blocks().expect("an outline");
-    let r = s.selection.primary();
-    let chars: Vec<char> = s.text.chars().collect();
+    let r = s.view.selection.primary();
+    let chars: Vec<char> = s.doc.text.chars().collect();
     let mut out = String::new();
     let mark = |out: &mut String, i: usize| {
         if r.anchor == r.head {
@@ -145,7 +145,7 @@ fn ids(s: &State) -> Vec<u64> {
 
 /// Runs keys through the outline keymap; returns the effects.
 fn keys(s: &mut State, script: &str) -> Vec<Effect> {
-    let msgs = script_to_msgs_for(script, s.now_ms, true).expect("key script");
+    let msgs = script_to_msgs_for(script, s.doc.now_ms, true).expect("key script");
     msgs.into_iter().flat_map(|m| update(s, m)).collect()
 }
 
@@ -216,7 +216,7 @@ fn e22_a_paragraph_doesnt_nest() {
     let mut s = doc("Para▮");
     keys(&mut s, "<tab>");
     assert_eq!(show(&s), "Para▮");
-    assert_eq!(s.status.as_deref(), Some("paragraphs don't nest"));
+    assert_eq!(s.view.status.as_deref(), Some("paragraphs don't nest"));
 }
 
 #[test]
@@ -296,7 +296,7 @@ fn cut_blocks_pasted_elsewhere_keep_their_ids_and_blank_rows() {
     let mut s = doc("⟦- a ¦ - b▮⟧ ¦ - c");
     // Select the whole lines, from the first content start to the next block's start.
     let c = s.blocks().unwrap().blocks[2].start;
-    s.selection = Selection::single(0, c);
+    s.view.selection = Selection::single(0, c);
     keys(&mut s, "<c-x>");
     assert_eq!(show(&s), "- ▮c");
     assert_eq!(ids(&s), [2]);
@@ -379,7 +379,7 @@ fn e55_down_onto_an_image_and_off_keeps_the_goal_column() {
 #[test]
 fn e56_e57_e58_backspace_and_delete_select_an_image_before_removing_it() {
     let mut s = golden_img("Above ‖ ⟦[img]▮⟧ ‖ Below", "<bs>", "Above▮ ‖ Below");
-    assert_eq!(s.status.as_deref(), Some("removed k3m9q-shot.png"));
+    assert_eq!(s.view.status.as_deref(), Some("removed k3m9q-shot.png"));
     keys(&mut s, "<c-z>");
     assert_eq!(show(&s), img("Above ‖ ⟦[img]▮⟧ ‖ Below"), "undo brings it back, selected");
     golden_img("Above ‖ [img] ‖ ▮Below", "<bs>", "Above ‖ ⟦[img]▮⟧ ‖ Below");
@@ -612,7 +612,7 @@ fn tab_nests_one_level_below_the_block_above_at_most() {
 fn shift_tab_at_the_top_level_says_so() {
     let mut s = doc("- ▮a");
     keys(&mut s, "<s-tab>");
-    assert_eq!(s.status.as_deref(), Some("already at the top level"));
+    assert_eq!(s.view.status.as_deref(), Some("already at the top level"));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -641,7 +641,7 @@ fn a_click_on_the_box_sets_the_status_and_never_makes_text() {
     send(&mut s, [Msg::SetStatus { id: MarkId(1), ch: ' ' }]);
     assert_eq!(show(&s), "- [x] Pay▮ ¦ - [ ] Done");
     send(&mut s, [Msg::SetStatus { id: MarkId(1), ch: 'q' }]);
-    assert_eq!(s.status.as_deref(), Some("'q' isn't a task state"));
+    assert_eq!(s.view.status.as_deref(), Some("'q' isn't a task state"));
 }
 
 // ---------------------------------------------------------------------------------------
@@ -660,10 +660,10 @@ fn moving_past_the_end_of_a_list_is_refused() {
     let mut s = doc("- ▮a ¦ - b");
     keys(&mut s, "<a-up>");
     assert_eq!(show(&s), "- ▮a ¦ - b");
-    assert_eq!(s.status.as_deref(), Some("first in its list · Shift-Tab to move out"));
+    assert_eq!(s.view.status.as_deref(), Some("first in its list · Shift-Tab to move out"));
     let mut s = doc("- a ¦   - ▮b");
     keys(&mut s, "<a-down>");
-    assert_eq!(s.status.as_deref(), Some("last in its list · Shift-Tab to move out"));
+    assert_eq!(s.view.status.as_deref(), Some("last in its list · Shift-Tab to move out"));
 }
 
 #[test]
@@ -709,8 +709,8 @@ fn ctrl_arrows_step_by_block() {
 #[test]
 fn a_blank_row_is_a_virtual_row() {
     let mut s = doc_wh("# Trip ‖ Booked.⏎Faces the river. ‖ - [ ] Pay▮ ¦   - ask Ana", 30, 8);
-    assert_eq!(s.text.to_string(), "# Trip\nBooked.\nFaces the river.\n- [ ] Pay\n  - ask Ana");
-    s.config.status_bar = false;
+    assert_eq!(s.doc.text.to_string(), "# Trip\nBooked.\nFaces the river.\n- [ ] Pay\n  - ask Ana");
+    s.view.config.status_bar = false;
     assert_eq!(
         view(&s).to_text(),
         "# Trip\n\nBooked.\nFaces the river.\n\n- [ ] Pay\n  - ask Ana\n\n"
@@ -743,7 +743,7 @@ fn block_left_restored_and_notices() {
     keys(&mut s, "x");
     let fx = keys(&mut s, "<c-z>");
     assert!(fx.contains(&Effect::Restored), "{fx:?}");
-    s.config.status_bar = false;
+    s.view.config.status_bar = false;
     let fx = keys(&mut s, "<tab>");
     assert!(fx.contains(&Effect::Notice { text: "paragraphs don't nest".into() }), "{fx:?}");
 }
@@ -753,14 +753,14 @@ fn outline_messages_in_a_plain_document_only_say_so() {
     let mut s = common::state("- a▮");
     update(&mut s, Msg::Indent);
     assert_eq!(common::show(&s), "- a▮");
-    assert_eq!(s.status.as_deref(), Some("only in outline documents"));
+    assert_eq!(s.view.status.as_deref(), Some("only in outline documents"));
 }
 
 #[test]
 fn save_writes_markdown_and_load_reads_it_back() {
     let md = "# Trip\n\n- [ ] Pay the deposit\n  - ask Ana\n    on two lines\n- [x] Flights\n\nNotes.\n";
     let mut s = markdown::load(md, Some("trip.md".into()), Viewport { width: 80, height: 24 }, OutlineConfig::default());
-    assert!(!s.dirty);
+    assert!(!s.doc.dirty);
     keys(&mut s, "<d-down>!");
     let fx = keys(&mut s, "<c-s>");
     let Effect::WriteFile { text, .. } = &fx[0] else { panic!("{fx:?}") };

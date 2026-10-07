@@ -13,24 +13,24 @@ const SEEDS: u64 = 24;
 const STEPS: usize = 500;
 
 fn check_selection(state: &State, ctx: &str) {
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let len = text.len_chars();
-    for r in state.selection.iter() {
+    for r in state.view.selection.iter() {
         for pos in [r.anchor, r.head] {
             assert!(pos <= len, "{ctx}: position {pos} past the end {len}");
             assert_eq!(
                 ensure_grapheme_boundary_prev(text, pos),
                 pos,
                 "{ctx}: position {pos} is inside a grapheme of {:?}",
-                state.text.to_string()
+                state.doc.text.to_string()
             );
         }
     }
 }
 
 fn single_range(state: &State) -> Option<(usize, usize, usize, usize)> {
-    if state.selection.len() == 1 {
-        let r = state.selection.primary();
+    if state.view.selection.len() == 1 {
+        let r = state.view.selection.primary();
         Some((r.anchor, r.head, r.from(), r.to()))
     } else {
         None
@@ -72,7 +72,7 @@ fn run_seed(seed: u64) -> usize {
         let ctx = format!("seed {seed} step {step}");
         if rng.random_range(0..40) == 0 {
             // Start from a multi-range selection now and then, as a state file could.
-            state.selection = gen::multi_selection(&mut rng, &state);
+            state.view.selection = gen::multi_selection(&mut rng, &state);
         }
         let msg = gen::msg(&mut rng, &state);
         let before = state.clone();
@@ -80,12 +80,12 @@ fn run_seed(seed: u64) -> usize {
         steps += 1;
         let ctx = format!("{ctx} {msg:?}");
         check_selection(&state, &ctx);
-        let text_before = before.text.to_string();
+        let text_before = before.doc.text.to_string();
 
         match &msg {
             // EI1: a motion without Shift leaves no selection.
             Msg::Move { extend: false, .. } => {
-                assert!(state.selection.iter().all(|r| r.is_empty()), "{ctx}: EI1");
+                assert!(state.view.selection.iter().all(|r| r.is_empty()), "{ctx}: EI1");
             }
             // EI2: a motion with Shift never moves the anchor.
             Msg::Move { extend: true, .. } => {
@@ -96,10 +96,10 @@ fn run_seed(seed: u64) -> usize {
             }
             // EI4: copy changes nothing but the clipboard.
             Msg::Copy => {
-                assert_eq!(state.text, before.text, "{ctx}: EI4 text");
-                assert_eq!(state.selection, before.selection, "{ctx}: EI4 selection");
-                assert_eq!(state.history, before.history, "{ctx}: EI4 history");
-                assert_eq!(state.dirty, before.dirty, "{ctx}: EI4 dirty");
+                assert_eq!(state.doc.text, before.doc.text, "{ctx}: EI4 text");
+                assert_eq!(state.view.selection, before.view.selection, "{ctx}: EI4 selection");
+                assert_eq!(state.doc.history, before.doc.history, "{ctx}: EI4 history");
+                assert_eq!(state.doc.dirty, before.doc.dirty, "{ctx}: EI4 dirty");
             }
             _ => {}
         }
@@ -110,7 +110,7 @@ fn run_seed(seed: u64) -> usize {
                 match &msg {
                     // EI6: typing over a selection replaces exactly it.
                     Msg::InsertText { text } if !text.contains(['\r', '\n']) => {
-                        assert_eq!(state.text.to_string(), splice(&text_before, from, to, text), "{ctx}: EI6");
+                        assert_eq!(state.doc.text.to_string(), splice(&text_before, from, to, text), "{ctx}: EI6");
                     }
                     // EI7: every delete with a selection removes exactly the selection.
                     Msg::DeleteBackward
@@ -121,7 +121,7 @@ fn run_seed(seed: u64) -> usize {
                     | Msg::DeleteToLineEnd
                     | Msg::KillLine
                     | Msg::Cut => {
-                        assert_eq!(state.text.to_string(), removed, "{ctx}: EI7");
+                        assert_eq!(state.doc.text.to_string(), removed, "{ctx}: EI7");
                     }
                     _ => {}
                 }
@@ -130,14 +130,14 @@ fn run_seed(seed: u64) -> usize {
 
         // EI5: an edit that made a new revision undoes to exactly the state before it
         // (text and selection), and redoes to exactly the state after it.
-        if is_edit(&msg) && state.history.len() == before.history.len() + 1 {
+        if is_edit(&msg) && state.doc.history.len() == before.doc.history.len() + 1 {
             let mut undone = state.clone();
             update(&mut undone, Msg::Undo);
-            assert_eq!(undone.text, before.text, "{ctx}: EI5 undo text");
-            assert_eq!(undone.selection, before.selection, "{ctx}: EI5 undo selection");
+            assert_eq!(undone.doc.text, before.doc.text, "{ctx}: EI5 undo text");
+            assert_eq!(undone.view.selection, before.view.selection, "{ctx}: EI5 undo selection");
             update(&mut undone, Msg::Redo);
-            assert_eq!(undone.text, state.text, "{ctx}: EI5 redo text");
-            assert_eq!(undone.selection.ranges().len(), state.selection.ranges().len(), "{ctx}: EI5 redo");
+            assert_eq!(undone.doc.text, state.doc.text, "{ctx}: EI5 redo text");
+            assert_eq!(undone.view.selection.ranges().len(), state.view.selection.ranges().len(), "{ctx}: EI5 redo");
         }
 
         // Effects are plain values and match the message.
@@ -147,7 +147,7 @@ fn run_seed(seed: u64) -> usize {
 
         // view never panics, at the state's size and at extreme sizes.
         let frame = view(&state);
-        assert_eq!(frame.cells.len(), state.viewport.width as usize * state.viewport.height as usize);
+        assert_eq!(frame.cells.len(), state.view.viewport.width as usize * state.view.viewport.height as usize);
         if step % 10 == 0 {
             for (w, h) in [(1, 1), (2, 200), (200, 2), gen::size(&mut rng)] {
                 let mut sized = state.clone();
@@ -172,13 +172,13 @@ fn run_seed(seed: u64) -> usize {
     let mut guard = 0;
     loop {
         update(&mut state, Msg::Undo);
-        if state.status.as_deref() == Some("nothing to undo") {
+        if state.view.status.as_deref() == Some("nothing to undo") {
             break;
         }
         guard += 1;
         assert!(guard < 10_000, "seed {seed}: undo never reached the root");
     }
-    assert_eq!(state.text.to_string(), original, "seed {seed}: full undo");
+    assert_eq!(state.doc.text.to_string(), original, "seed {seed}: full undo");
     check_selection(&state, &format!("seed {seed} after full undo"));
     steps
 }
@@ -197,23 +197,23 @@ fn cut_paste_and_copy_paste_are_identities() {
     for _ in 0..400 {
         let text = gen::text(&mut rng);
         let mut s = State::new(&text, None, Viewport { width: 40, height: 10 });
-        let len = s.text.len_chars();
-        let t = s.text.slice(..);
+        let len = s.doc.text.len_chars();
+        let t = s.doc.text.slice(..);
         let a = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
         let b = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
-        s.selection = caretline_next::helix::Selection::single(a, b);
+        s.view.selection = caretline_next::helix::Selection::single(a, b);
         let mut cut = s.clone();
         update(&mut cut, Msg::Cut);
         update(&mut cut, Msg::Paste { text: None });
         if a != b {
-            assert_eq!(cut.text, s.text, "EI3 on {text:?} {a}..{b}");
+            assert_eq!(cut.doc.text, s.doc.text, "EI3 on {text:?} {a}..{b}");
             assert_eq!(cut.caret(), a.max(b), "EI3 caret at the end of the paste");
         }
         let mut copy = s.clone();
         update(&mut copy, Msg::Copy);
         update(&mut copy, Msg::Paste { text: None });
         if a != b {
-            assert_eq!(copy.text, s.text, "EI8 on {text:?} {a}..{b}");
+            assert_eq!(copy.doc.text, s.doc.text, "EI8 on {text:?} {a}..{b}");
         }
     }
 }
@@ -227,9 +227,9 @@ fn select_all_delete_then_undo() {
         let mut s = State::new(&text, None, Viewport { width: 30, height: 8 });
         update(&mut s, Msg::SelectAll);
         update(&mut s, Msg::DeleteBackward);
-        assert_eq!(s.text.len_chars(), 0);
+        assert_eq!(s.doc.text.len_chars(), 0);
         update(&mut s, Msg::Undo);
-        assert_eq!(s.text.to_string(), text);
-        assert_eq!(s.selection, caretline_next::helix::Selection::single(0, s.text.len_chars()));
+        assert_eq!(s.doc.text.to_string(), text);
+        assert_eq!(s.view.selection, caretline_next::helix::Selection::single(0, s.doc.text.len_chars()));
     }
 }

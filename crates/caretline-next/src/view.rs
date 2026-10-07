@@ -170,15 +170,16 @@ fn printable(g: &str) -> &str {
 
 /// Renders the state. Pure: the same state always gives the same frame.
 pub fn view(state: &State) -> Frame {
-    let width = state.viewport.width.max(1);
-    let height = state.viewport.height.max(1);
+    let width = state.view.viewport.width.max(1);
+    let height = state.view.viewport.height.max(1);
     let mut frame = Frame::new(width, height);
     let text_rows = state.text_rows();
     let layout = Layout::new(state);
-    let top = layout.top(&state.scroll);
-    let hscroll = if layout.wraps() { 0 } else { state.scroll.col };
+    let top = layout.top(&state.view.scroll);
+    let hscroll = if layout.wraps() { 0 } else { state.view.scroll.col };
     let caret = state.caret();
     let ranges: Vec<(usize, usize)> = state
+        .view
         .selection
         .iter()
         .filter(|r| !r.is_empty())
@@ -243,7 +244,7 @@ pub fn view(state: &State) -> Frame {
         }
     }
 
-    if state.config.status_bar {
+    if state.view.config.status_bar {
         draw_status(state, &mut frame, height as usize - 1);
     }
     frame
@@ -256,7 +257,7 @@ fn draw_status(state: &State, frame: &mut Frame, y: usize) {
     for x in 0..width {
         frame.put(x, y, " ", 1, Role::Status);
     }
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let caret = state.caret();
     let line = text.char_to_line(caret);
     let line_start = text.line_to_char(line);
@@ -268,7 +269,7 @@ fn draw_status(state: &State, frame: &mut Frame, y: usize) {
     } else {
         prefix.to_string().graphemes(true).count()
     };
-    let selected: usize = state.selection.iter().map(|r| r.len()).sum();
+    let selected: usize = state.view.selection.iter().map(|r| r.len()).sum();
     let mut right = format!("{}:{} ", line + 1, col + 1);
     if selected > 0 {
         right = format!("{selected} sel  {right}");
@@ -278,10 +279,10 @@ fn draw_status(state: &State, frame: &mut Frame, y: usize) {
     frame.put_str(right_x, y, &right, width, Role::Status);
 
     let mut x = frame.put_str(1, y, &state.name(), right_x.saturating_sub(1), Role::Status);
-    if state.dirty {
+    if state.doc.dirty {
         x = frame.put_str(x, y, " [+]", right_x.saturating_sub(1), Role::StatusAccent);
     }
-    if let Some(msg) = &state.status {
+    if let Some(msg) = &state.view.status {
         frame.put_str(x + 2, y, msg, right_x.saturating_sub(1), Role::Status);
     }
 }

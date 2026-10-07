@@ -170,7 +170,7 @@ const CHECKBOXES: [(&str, char); 6] = [("[ ] ", ' '), ("[x] ", 'x'), ("[X] ", 'x
 /// content start), then every later block with its marker and indentation, a blank line
 /// around paragraphs and none between list items. Soft breaks are line breaks.
 pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String {
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let piece = |a: usize, b: usize| text.slice(a..b.max(a)).to_string().replace("\r\n", "\n");
     let parts: Vec<(&BlockInfo, String)> = o
         .indices_between(text, from, to)
@@ -238,8 +238,8 @@ fn continuation_indent(b: &BlockInfo) -> usize {
 /// before it, continuation lines indented under their item, and a final line break. Empty
 /// paragraphs (a fresh line to type on) are left out.
 pub fn to_file(state: &State) -> String {
-    let Some(o) = state.blocks() else { return state.text.to_string() };
-    let text = state.text.slice(..);
+    let Some(o) = state.blocks() else { return state.doc.text.to_string() };
+    let text = state.doc.text.slice(..);
     let mut lines: Vec<String> = Vec::new();
     for b in &o.blocks {
         if b.kind == Kind::Para && b.hang == Hang::None && b.is_empty() && b.line_count == 1 {
@@ -312,10 +312,10 @@ pub fn load(md: &str, path: Option<String>, viewport: Viewport, cfg: OutlineConf
     let (text, starts) = from_file(md, &cfg);
     let mut state = State::new(&text, path, viewport);
     for &(line, _) in &starts {
-        let pos = state.text.line_to_char(line);
-        state.marks.mint(pos);
+        let pos = state.doc.text.line_to_char(line);
+        state.doc.marks.mint(pos);
     }
-    let o = derive(state.text.slice(..), &state.marks, &cfg);
+    let o = derive(state.doc.text.slice(..), &state.doc.marks, &cfg);
     let blank: std::collections::HashMap<usize, bool> = starts.into_iter().collect();
     for (i, b) in o.blocks.iter().enumerate() {
         if i == 0 {
@@ -324,7 +324,7 @@ pub fn load(md: &str, path: Option<String>, viewport: Viewport, cfg: OutlineConf
         let want = blank.get(&b.first_line).copied().unwrap_or(false);
         let default = default_gap(o.blocks.get(i - 1), b);
         if want != default {
-            state.marks.set_attrs(b.id, BlockAttrs { gap: Some(want) });
+            state.doc.marks.set_attrs(b.id, BlockAttrs { gap: Some(want) });
         }
     }
     state.enable_outline(cfg);

@@ -14,7 +14,7 @@ use crate::marks::{BlockAttrs, ClipMark, Clipboard, Mark, MarkId, Marks};
 use crate::msg::{By, Dir, Effect, Msg};
 use crate::outline::markdown;
 use crate::outline::{BlockInfo, Hang, Kind, NewBlock, Outline};
-use crate::state::State;
+use crate::state::{Document, State};
 use crate::update::{self, Step};
 
 /// Applies `msg` with the outline's rules, when one applies. `None` leaves it to the plain
@@ -50,11 +50,11 @@ pub(crate) fn update(state: &mut State, msg: &Msg) -> Option<Vec<Effect>> {
 // Helpers
 
 fn le(state: &State) -> String {
-    state.config.line_ending.as_str().to_string()
+    state.doc.config.line_ending.as_str().to_string()
 }
 
 fn single(state: &State) -> Option<Range> {
-    (state.selection.len() == 1).then(|| state.selection.primary())
+    (state.view.selection.len() == 1).then(|| state.view.selection.primary())
 }
 
 fn line_end(text: RopeSlice, line: usize) -> usize {
@@ -62,7 +62,7 @@ fn line_end(text: RopeSlice, line: usize) -> usize {
 }
 
 fn notice(state: &mut State, text: &str) -> Vec<Effect> {
-    state.status = Some(text.to_string());
+    state.view.status = Some(text.to_string());
     Vec::new()
 }
 
@@ -75,16 +75,16 @@ fn edit(
     merge: bool,
     fix: impl FnOnce(&mut Marks, RopeSlice),
 ) {
-    let txn = Transaction::change(&state.text, changes.into_iter().map(|(a, b, t)| (a, b, t.map(|t| Tendril::from(t.as_str())))))
+    let txn = Transaction::change(&state.doc.text, changes.into_iter().map(|(a, b, t)| (a, b, t.map(|t| Tendril::from(t.as_str())))))
         .with_selection(selection);
     update::commit_with(state, txn, Step { kind: None, replaced: false, merge }, fix);
 }
 
 /// Maps a selection through changes (positions at an insertion move past it).
 fn mapped(state: &State, changes: &[(usize, usize, Option<String>)], assoc: Assoc) -> Selection {
-    let txn = Transaction::change(&state.text, changes.iter().map(|(a, b, t)| (*a, *b, t.as_deref().map(Tendril::from))));
+    let txn = Transaction::change(&state.doc.text, changes.iter().map(|(a, b, t)| (*a, *b, t.as_deref().map(Tendril::from))));
     let cs = txn.changes();
-    state.selection.clone().transform(|r| Range {
+    state.view.selection.clone().transform(|r| Range {
         anchor: cs.map_pos(r.anchor, assoc),
         head: cs.map_pos(r.head, assoc),
         old_visual_position: None,
@@ -106,7 +106,7 @@ fn focused_atomic(o: &Outline, text: RopeSlice, r: &Range) -> Option<usize> {
 }
 
 fn focus(state: &mut State, b: &BlockInfo) -> Vec<Effect> {
-    state.selection = Selection::single(b.content_start(), b.end);
+    state.view.selection = Selection::single(b.content_start(), b.end);
     Vec::new()
 }
 
@@ -122,7 +122,7 @@ fn marker_of(text: RopeSlice, b: &BlockInfo) -> String {
 
 /// The marker for the item after `b` (Enter): the same bullet, the next number, a task open.
 fn next_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
-    let cfg = state.outline.as_ref().expect("outline");
+    let cfg = state.doc.outline.as_ref().expect("outline");
     let m = marker_of(text, b);
     match (b.kind, b.hang) {
         (_, Hang::Number(n)) => {
@@ -136,7 +136,7 @@ fn next_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
 
 /// The marker for a new empty item like `b` (an open task, the same bullet or number).
 fn empty_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
-    let cfg = state.outline.as_ref().expect("outline");
+    let cfg = state.doc.outline.as_ref().expect("outline");
     let m = marker_of(text, b);
     match b.kind {
         Kind::Task => format!("{} [{}] ", m.chars().next().unwrap_or('-'), cfg.cycle[0]),
@@ -150,7 +150,7 @@ fn empty_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
 fn newline(state: &mut State, soft: bool) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     if let Some(i) = focused_atomic(&o, text, &r) {
         // A new empty paragraph after the block.
         let b = o.blocks[i].clone();
@@ -172,7 +172,7 @@ fn newline(state: &mut State, soft: bool) -> Option<Vec<Effect>> {
 
 fn newline_at(state: &mut State, soft: bool, merge: bool) {
     let o = state.blocks().expect("outline");
-    let rope = state.text.clone();
+    let rope = state.doc.text.clone();
     let text = rope.slice(..);
     let le = le(state);
     let n = le.chars().count();
@@ -259,7 +259,7 @@ fn newline_at(state: &mut State, soft: bool, merge: bool) {
 fn type_text(state: &mut State, typed: &str) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let i = focused_atomic(&o, state.text.slice(..), &r)?;
+    let i = focused_atomic(&o, state.doc.text.slice(..), &r)?;
     if typed.is_empty() || typed.contains(['\n', '\r']) {
         return None;
     }
@@ -295,7 +295,7 @@ enum Fwd {
 fn backward(state: &mut State, how: Back) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     if let Some(i) = focused_atomic(&o, text, &r) {
         return Some(remove_block(state, &o, i, true));
     }
@@ -338,7 +338,7 @@ fn backward(state: &mut State, how: Back) -> Option<Vec<Effect>> {
 /// bullet, a bullet or heading a paragraph), and a paragraph joins the block above.
 fn backspace_at_start(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
     let b = o.blocks[i].clone();
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     if b.prefix_len > 0 {
         let (from, to) = match b.kind {
             Kind::Task => (b.start + b.indent + 2, b.content_start()),
@@ -370,7 +370,7 @@ fn backspace_at_start(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
 fn forward(state: &mut State, how: Fwd) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     if let Some(i) = focused_atomic(&o, text, &r) {
         return Some(remove_block(state, &o, i, false));
     }
@@ -433,7 +433,7 @@ fn delete_at_end(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
 /// Removes a whole (atomic) block, as one undo step.
 fn remove_block(state: &mut State, o: &Outline, i: usize, backward: bool) -> Vec<Effect> {
     let b = o.blocks[i].clone();
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let last = text.len_lines() - 1;
     let (from, to) = if b.last_line() < last {
         (b.start, text.line_to_char(b.last_line() + 1))
@@ -455,9 +455,9 @@ fn remove_block(state: &mut State, o: &Outline, i: usize, backward: bool) -> Vec
 
 fn nest(state: &mut State, delta: i32) -> Vec<Effect> {
     let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let cfg = state.outline.clone().expect("outline");
-    let text = state.text.slice(..);
-    let r = state.selection.primary();
+    let cfg = state.doc.outline.clone().expect("outline");
+    let text = state.doc.text.slice(..);
+    let r = state.view.selection.primary();
     let range = o.indices_between(text, r.from(), r.to());
     let unit = cfg.indent.max(1) as i32;
     // The depth of the last non-empty block above: an item nests at most one below it.
@@ -518,10 +518,10 @@ enum Cycle {
 
 fn task_cycle(state: &mut State) -> Vec<Effect> {
     let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let cfg = state.outline.clone().expect("outline");
-    let rope = state.text.clone();
+    let cfg = state.doc.outline.clone().expect("outline");
+    let rope = state.doc.text.clone();
     let text = rope.slice(..);
-    let r = state.selection.primary();
+    let r = state.view.selection.primary();
     let (fi, li) = (o.index_at(text, r.from()), o.index_at(text, r.to()));
     let b = o.blocks[fi].clone();
     if fi == li && b.kind == Kind::Para && !b.fence && b.line_count > 1 {
@@ -576,7 +576,7 @@ fn task_cycle(state: &mut State) -> Vec<Effect> {
     if changes.is_empty() && joins.is_empty() {
         return Vec::new();
     }
-    state.status = Some(match target {
+    state.view.status = Some(match target {
         Cycle::Open(_) => "task",
         Cycle::Done(_) => "done",
         Cycle::Text => "text",
@@ -595,10 +595,10 @@ fn task_cycle(state: &mut State) -> Vec<Effect> {
 /// the lines before and after stay paragraphs. The piece holding the first line keeps the
 /// paragraph's id; the new pieces sit right against it (no blank row).
 fn split_for_task(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
-    let cfg = state.outline.clone().expect("outline");
+    let cfg = state.doc.outline.clone().expect("outline");
     let b = o.blocks[i].clone();
-    let text = state.text.slice(..);
-    let r = state.selection.primary();
+    let text = state.doc.text.slice(..);
+    let r = state.view.selection.primary();
     let (ka, kb) = (text.char_to_line(r.from()), text.char_to_line(r.to()));
     let marker = format!("- [{}] ", cfg.cycle[0]);
     let mut changes = Vec::new();
@@ -609,7 +609,7 @@ fn split_for_task(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
     let after = (kb < b.last_line()).then_some(kb + 1);
     let first = b.first_line;
     let sel = mapped(state, &changes, Assoc::After);
-    state.status = Some("task".into());
+    state.view.status = Some("task".into());
     edit(state, changes, sel, false, move |m, new| {
         let tight = BlockAttrs { gap: Some(false) };
         for k in (ka..=kb).chain(after) {
@@ -623,7 +623,7 @@ fn split_for_task(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
 
 fn set_status(state: &mut State, id: MarkId, ch: char) -> Vec<Effect> {
     let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let cfg = state.outline.clone().expect("outline");
+    let cfg = state.doc.outline.clone().expect("outline");
     let Some(b) = o.get(id).cloned() else { return notice(state, "no such block") };
     if b.kind != Kind::Task {
         return notice(state, "not a task");
@@ -650,7 +650,7 @@ fn set_status(state: &mut State, id: MarkId, ch: char) -> Vec<Effect> {
 
 fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
     let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let rope = state.text.clone();
+    let rope = state.doc.text.clone();
     let text = rope.slice(..);
     let i = o.index_at(text, state.caret());
     let d = o.blocks[i].depth;
@@ -689,8 +689,8 @@ fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
         }
     }
     let l_len = l_text.chars().count();
-    let u_marks: Vec<Mark> = state.marks.in_range(u_start, l_start).to_vec();
-    let l_marks: Vec<Mark> = state.marks.in_range(l_start, l_end).to_vec();
+    let u_marks: Vec<Mark> = state.doc.marks.in_range(u_start, l_start).to_vec();
+    let l_marks: Vec<Mark> = state.doc.marks.in_range(l_start, l_end).to_vec();
     let new_text = format!("{l_text}{u_text}");
     let new_len = new_text.chars().count();
     // The caret moves with its block.
@@ -704,7 +704,7 @@ fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
             pos
         }
     };
-    let sel = state.selection.clone().transform(|r| Range { anchor: shift(r.anchor), head: shift(r.head), old_visual_position: None });
+    let sel = state.view.selection.clone().transform(|r| Range { anchor: shift(r.anchor), head: shift(r.head), old_visual_position: None });
     edit(state, vec![(u_start, l_end, Some(new_text))], sel, false, move |m, _| {
         m.remove_range(u_start, u_start + new_len);
         for mk in &l_marks {
@@ -723,7 +723,7 @@ fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
 fn select_block(state: &mut State, id: MarkId) -> Vec<Effect> {
     let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
     let Some(b) = o.get(id).cloned() else { return notice(state, "no such block") };
-    state.selection = Selection::single(b.content_start(), b.end);
+    state.view.selection = Selection::single(b.content_start(), b.end);
     Vec::new()
 }
 
@@ -735,7 +735,7 @@ fn insert_blocks(state: &mut State, after: Option<MarkId>, blocks: &[NewBlock]) 
     if blocks.is_empty() {
         return Vec::new();
     }
-    let cfg = state.outline.clone().expect("outline");
+    let cfg = state.doc.outline.clone().expect("outline");
     let le = le(state);
     let n = le.chars().count();
     let at = match after {
@@ -762,7 +762,7 @@ fn insert_blocks(state: &mut State, after: Option<MarkId>, blocks: &[NewBlock]) 
     }
     let ins = if after.is_some() { format!("\n{body}") } else { format!("{body}\n") };
     let ins = if le == "\n" { ins } else { ins.replace('\n', &le) };
-    let base = state.text.char_to_line(at);
+    let base = state.doc.text.char_to_line(at);
     let changes = vec![(at, at, Some(ins))];
     let sel = mapped(state, &changes, Assoc::Before);
     edit(state, changes, sel, false, move |m, new| {
@@ -785,7 +785,7 @@ fn insert_blocks(state: &mut State, after: Option<MarkId>, blocks: &[NewBlock]) 
 fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effect>> {
     let text = text?;
     let text = update::normalize_line_endings(text, "\n");
-    if state.clipboard.is_own(&text) || !text.contains('\n') {
+    if state.doc.clipboard.is_own(&text) || !text.contains('\n') {
         // The register (with its marks), or one line: the plain editor pastes it as is.
         return None;
     }
@@ -796,7 +796,7 @@ fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effec
     }
     paste_blocks(state, &blocks);
     if images > 0 {
-        state.status = Some(format!("left out {}", plural(images, "image")));
+        state.view.status = Some(format!("left out {}", plural(images, "image")));
     }
     Some(Vec::new())
 }
@@ -809,13 +809,13 @@ fn plural(n: usize, what: &str) -> String {
 /// is before it), the rest follow as new blocks, and the text after the caret ends the last.
 fn paste_blocks(state: &mut State, blocks: &[NewBlock]) {
     let mut merge = false;
-    if !state.selection.primary().is_empty() {
+    if !state.view.selection.primary().is_empty() {
         update::delete(state, None, |_, _, head| (head, head));
         merge = true;
     }
     let o = state.blocks().expect("outline");
-    let cfg = state.outline.clone().expect("outline");
-    let text = state.text.slice(..);
+    let cfg = state.doc.outline.clone().expect("outline");
+    let text = state.doc.text.slice(..);
     let le = le(state);
     let n = le.chars().count();
     let p = state.caret();
@@ -867,12 +867,12 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
         return None;
     }
     let o = state.blocks()?;
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let raw = text.slice(r.from()..r.to()).to_string();
     let md = markdown::to_markdown(state, &o, r.from(), r.to());
     let n_blocks = o.indices_between(text, r.from(), r.to()).count();
     let what = if n_blocks > 1 { plural(n_blocks, "block") } else { update::count_label(&raw) };
-    state.status = Some(format!("{} {what}", if cut { "cut" } else { "copied" }));
+    state.view.status = Some(format!("{} {what}", if cut { "cut" } else { "copied" }));
     let mut marks = Vec::new();
     if cut {
         let removed = update::delete_marks(state, None, |_, _, head| (head, head));
@@ -883,7 +883,7 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
             .collect();
     }
     let external = (md != raw).then(|| md.clone());
-    state.clipboard = Clipboard { text: raw, external, marks };
+    state.doc.clipboard = Clipboard { text: raw, external, marks };
     Some(vec![Effect::ClipboardSet { text: md }])
 }
 
@@ -893,8 +893,15 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
 /// Keeps every selection end out of block prefixes and atomic blocks, after any message.
 /// `prev` is the selection before the message.
 pub(crate) fn normalize(state: &mut State, prev: &Selection, msg: &Msg) {
-    let Some(o) = state.blocks() else { return };
-    let rope = state.text.clone();
+    if let Some(selection) = normalized(&state.doc, &state.view.selection, prev, msg) {
+        state.view.selection = selection;
+    }
+}
+
+/// [`normalize`] for any selection of `doc`: the fixed selection, when it changes.
+pub(crate) fn normalized(doc: &Document, selection: &Selection, prev: &Selection, msg: &Msg) -> Option<Selection> {
+    let o = doc.blocks()?;
+    let rope = doc.text.clone();
     let text = rope.slice(..);
     let moving = matches!(msg, Msg::Move { .. });
     let back = matches!(msg, Msg::Move { dir: Dir::Backward, by: By::Grapheme | By::Word, .. });
@@ -965,18 +972,16 @@ pub(crate) fn normalize(state: &mut State, prev: &Selection, msg: &Msg) {
         }
         Range { anchor, head, old_visual_position: r.old_visual_position }
     };
-    let ranges: crate::helix::SmallVec<[Range; 1]> = state.selection.iter().map(fix).collect();
-    let primary = state.selection.primary_index();
-    let selection = Selection::new(ranges, primary);
-    if selection != state.selection {
-        state.selection = selection;
-    }
+    let ranges: crate::helix::SmallVec<[Range; 1]> = selection.iter().map(fix).collect();
+    let primary = selection.primary_index();
+    let fixed = Selection::new(ranges, primary);
+    (fixed != *selection).then_some(fixed)
 }
 
 /// Whether `r` is a focused atomic block (a vertical motion from it keeps its goal column).
 pub(crate) fn is_focused_atomic(state: &State, r: &Range) -> bool {
     match state.blocks() {
-        Some(o) => focused_atomic(&o, state.text.slice(..), r).is_some(),
+        Some(o) => focused_atomic(&o, state.doc.text.slice(..), r).is_some(),
         None => false,
     }
 }
@@ -984,7 +989,7 @@ pub(crate) fn is_focused_atomic(state: &State, r: &Range) -> bool {
 /// The content start of the block before or after the one holding `pos` (`⌃↑` / `⌃↓`).
 pub(crate) fn block_step(state: &State, pos: usize, dir: Dir) -> usize {
     let Some(o) = state.blocks() else { return pos };
-    let text = state.text.slice(..);
+    let text = state.doc.text.slice(..);
     let i = o.index_at(text, pos);
     match dir {
         Dir::Forward => o.blocks.get(i + 1).map_or(text.len_chars(), |b| b.content_start()),
@@ -1003,7 +1008,7 @@ pub(crate) fn block_step(state: &State, pos: usize, dir: Dir) -> usize {
 
 /// After an edit, new block starts get a mark. Runs inside the commit.
 pub(crate) fn settle(state: &mut State) {
-    crate::outline::mint_missing(state);
+    crate::outline::mint_missing(&mut state.doc);
 }
 
 /// What an edit may not change: blank rows before blocks, by id (see [`pin`]).
@@ -1027,7 +1032,7 @@ pub(crate) fn pins_for(state: &State, msg: &Msg) -> Option<Pins> {
         | Msg::DeleteToLineStart
         | Msg::DeleteToLineEnd
         | Msg::KillLine => {
-            let i = o.index_at(state.text.slice(..), state.caret());
+            let i = o.index_at(state.doc.text.slice(..), state.caret());
             let b = &o.blocks[i];
             let gaps = o.blocks[i..(i + 2).min(o.blocks.len())].iter().map(|b| (b.id, b.gap)).collect();
             Some(Pins::Near { id: b.id, shape: (b.kind, b.depth), gaps })
@@ -1059,7 +1064,7 @@ pub(crate) fn pin(state: &mut State, pins: Pins) {
     if changes.is_empty() {
         return;
     }
-    let txn = Transaction::new(&state.text);
+    let txn = Transaction::new(&state.doc.text);
     update::commit_with(state, txn, Step { kind: None, replaced: false, merge: true }, move |m, _| {
         for (id, gap) in changes {
             m.set_attrs(id, BlockAttrs { gap: Some(gap) });

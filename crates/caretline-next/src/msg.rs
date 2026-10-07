@@ -134,9 +134,34 @@ pub enum Msg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         text: Option<String>,
     },
+
+    // Views (see docs/caretline/architecture.md#documents-and-views).
+    /// Scroll the view by rows (negative is up) without moving the caret. The view stays
+    /// where it is put (`free`) until the next caret motion or edit.
+    ScrollView { rows: i32 },
+    /// Hide a block's children in this view (outline documents). A caret inside them moves
+    /// to the block's content end.
+    Fold { id: MarkId },
+    /// Show a folded block's children again.
+    Unfold { id: MarkId },
+    ToggleFold { id: MarkId },
 }
 
 impl Msg {
+    /// Messages that never end an edit run or clear the status: the clock, a resize, a
+    /// save's result, a status message.
+    pub fn is_passive(&self) -> bool {
+        matches!(
+            self,
+            Msg::Tick { .. } | Msg::Resize { .. } | Msg::Saved | Msg::SaveFailed { .. } | Msg::ShowStatus { .. }
+        )
+    }
+
+    /// A change from outside the editor, applied to the document rather than through a view.
+    pub fn is_external(&self) -> bool {
+        false
+    }
+
     /// Whether the message can change the text (or marks).
     pub fn edits(&self) -> bool {
         matches!(
@@ -166,8 +191,10 @@ impl Msg {
     }
 }
 
-/// Work for the runtime. `update` never performs I/O; it returns these instead.
+/// Work for the runtime. `update` never performs I/O; it returns these instead. New kinds may
+/// be added: match with a wildcard arm.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[non_exhaustive]
 #[serde(tag = "effect", rename_all = "snake_case")]
 pub enum Effect {
     /// Write the document. The runtime answers with `Saved` or `SaveFailed`.
@@ -189,4 +216,6 @@ pub enum Effect {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         to: Option<MarkId>,
     },
+    /// An editing message reached a read-only view: nothing changed.
+    Refused,
 }

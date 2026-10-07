@@ -61,11 +61,11 @@ fn random_doc(rng: &mut StdRng) -> State {
         _ => (rng.random_range(20..100), rng.random_range(4..30)),
     };
     let mut s = markdown::load(&md, Some("fuzz.md".into()), Viewport { width: w, height: h }, OutlineConfig::default());
-    let len = s.text.len_chars();
-    let t = s.text.slice(..);
+    let len = s.doc.text.len_chars();
+    let t = s.doc.text.slice(..);
     let a = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
     let b = if rng.random_bool(0.5) { a } else { ensure_grapheme_boundary_prev(t, rng.random_range(0..=len)) };
-    s.selection = Selection::single(a, b);
+    s.view.selection = Selection::single(a, b);
     update(&mut s, Msg::Resize { width: w, height: h });
     s
 }
@@ -85,7 +85,7 @@ fn outline_msg(rng: &mut StdRng, s: &State) -> Msg {
         15..=16 => Msg::MoveBlock { dir },
         17 => Msg::SetStatus { id, ch: ['x', ' ', '/'][rng.random_range(0..3)] },
         18 => Msg::SelectBlock { id },
-        19 => Msg::SelectWordAt { pos: rng.random_range(0..=s.text.len_chars()) },
+        19 => Msg::SelectWordAt { pos: rng.random_range(0..=s.doc.text.len_chars()) },
         20 => Msg::InsertBlocks {
             after: rng.random_bool(0.8).then_some(id),
             blocks: vec![NewBlock { depth: 0, kind: Kind::Bullet, status: None, text: "new".into(), gap: None, mark: None }],
@@ -100,17 +100,17 @@ fn outline_msg(rng: &mut StdRng, s: &State) -> Msg {
 
 fn check(s: &State, ctx: &str) {
     let o = s.blocks().expect("outline");
-    let text = s.text.slice(..);
+    let text = s.doc.text.slice(..);
     // Marks and blocks agree.
     let block_ids: Vec<(usize, MarkId)> = o.blocks.iter().map(|b| (b.start, b.id)).collect();
-    let mark_ids: Vec<(usize, MarkId)> = s.marks.iter().map(|m| (m.pos, m.id)).collect();
-    assert_eq!(block_ids, mark_ids, "{ctx}: blocks and marks differ in {:?}", s.text.to_string());
+    let mark_ids: Vec<(usize, MarkId)> = s.doc.marks.iter().map(|m| (m.pos, m.id)).collect();
+    assert_eq!(block_ids, mark_ids, "{ctx}: blocks and marks differ in {:?}", s.doc.text.to_string());
     let mut seen = HashSet::new();
     for (_, id) in &mark_ids {
         assert!(seen.insert(*id), "{ctx}: id {id:?} twice");
     }
     // The caret invariant.
-    for r in s.selection.iter() {
+    for r in s.view.selection.iter() {
         for (end, pos) in [("anchor", r.anchor), ("head", r.head)] {
             assert!(pos <= text.len_chars(), "{ctx}: {end} past the end");
             let b = o.block_at(text, pos);
@@ -118,7 +118,7 @@ fn check(s: &State, ctx: &str) {
                 !(b.prefix_len > 0 && pos >= b.start && pos < b.content_start()),
                 "{ctx}: {end} {pos} inside the marker of {:?} in {:?}",
                 b,
-                s.text.to_string()
+                s.doc.text.to_string()
             );
         }
         if r.is_empty() {
@@ -126,7 +126,7 @@ fn check(s: &State, ctx: &str) {
             assert!(
                 !(b.atomic && r.head >= b.content_start() && r.head <= b.end),
                 "{ctx}: a caret on an image in {:?}",
-                s.text.to_string()
+                s.doc.text.to_string()
             );
         }
     }
@@ -139,7 +139,7 @@ fn gaps(s: &State) -> HashMap<MarkId, bool> {
 fn run_seed(seed: u64) -> usize {
     let mut rng = StdRng::seed_from_u64(0x0b1e ^ seed.wrapping_mul(0x9e37_79b9));
     let mut s = random_doc(&mut rng);
-    let original = (s.text.to_string(), s.marks.clone());
+    let original = (s.doc.text.to_string(), s.doc.marks.clone());
     check(&s, &format!("seed {seed} start"));
     let mut steps = 0;
     for step in 0..300 {
@@ -157,31 +157,31 @@ fn run_seed(seed: u64) -> usize {
         // A motion without Shift leaves no selection, except a selected image (one unit).
         if let Msg::Move { extend: false, .. } = msg {
             let o = s.blocks().unwrap();
-            for r in s.selection.iter().filter(|r| !r.is_empty()) {
-                let b = o.block_at(s.text.slice(..), r.from());
+            for r in s.view.selection.iter().filter(|r| !r.is_empty()) {
+                let b = o.block_at(s.doc.text.slice(..), r.from());
                 assert!(b.atomic && r.from() == b.content_start() && r.to() == b.end, "{ctx}: a motion left a selection");
             }
         }
-        let new_revision = s.history.len() == before.history.len() + 1;
+        let new_revision = s.doc.history.len() == before.doc.history.len() + 1;
         if msg.edits() && new_revision && !matches!(msg, Msg::Undo | Msg::Redo) {
             let mut undone = s.clone();
             update(&mut undone, Msg::Undo);
-            assert_eq!(undone.text, before.text, "{ctx}: undo text");
-            assert_eq!(undone.marks.as_slice(), before.marks.as_slice(), "{ctx}: undo marks");
-            assert_eq!(undone.selection, before.selection, "{ctx}: undo selection");
+            assert_eq!(undone.doc.text, before.doc.text, "{ctx}: undo text");
+            assert_eq!(undone.doc.marks.as_slice(), before.doc.marks.as_slice(), "{ctx}: undo marks");
+            assert_eq!(undone.view.selection, before.view.selection, "{ctx}: undo selection");
             update(&mut undone, Msg::Redo);
-            assert_eq!(undone.text, s.text, "{ctx}: redo text");
-            assert_eq!(undone.marks.as_slice(), s.marks.as_slice(), "{ctx}: redo marks");
+            assert_eq!(undone.doc.text, s.doc.text, "{ctx}: redo text");
+            assert_eq!(undone.doc.marks.as_slice(), s.doc.marks.as_slice(), "{ctx}: redo marks");
         }
         // A kind or depth change moves no other block.
-        if matches!(msg, Msg::TaskCycle | Msg::Indent | Msg::Outdent) && before.selection.primary().is_empty() {
+        if matches!(msg, Msg::TaskCycle | Msg::Indent | Msg::Outdent) && before.view.selection.primary().is_empty() {
             let (g0, g1) = (gaps(&before), gaps(&s));
-            let caret_block = before.blocks().unwrap().block_at(before.text.slice(..), before.caret()).id;
+            let caret_block = before.blocks().unwrap().block_at(before.doc.text.slice(..), before.caret()).id;
             let first = s.blocks().unwrap().blocks[0].id;
             for (id, g) in &g1 {
                 if *id != caret_block && *id != first {
                     if let Some(was) = g0.get(id) {
-                        assert_eq!(was, g, "{ctx}: block {id:?}'s blank row moved in {:?}", s.text.to_string());
+                        assert_eq!(was, g, "{ctx}: block {id:?}'s blank row moved in {:?}", s.doc.text.to_string());
                     }
                 }
             }
@@ -192,16 +192,16 @@ fn run_seed(seed: u64) -> usize {
             assert_eq!(view(&back), view(&s), "{ctx}: round-trip frame");
         }
         let frame = view(&s);
-        assert_eq!(frame.cells.len(), s.viewport.width as usize * s.viewport.height as usize);
+        assert_eq!(frame.cells.len(), s.view.viewport.width as usize * s.view.viewport.height as usize);
     }
     let mut guard = 0;
-    while s.history.current_revision() != 0 {
+    while s.doc.history.current_revision() != 0 {
         update(&mut s, Msg::Undo);
         guard += 1;
         assert!(guard < 10_000, "seed {seed}: undo never reached the root");
     }
-    assert_eq!(s.text.to_string(), original.0, "seed {seed}: full undo text");
-    assert_eq!(s.marks.as_slice(), original.1.as_slice(), "seed {seed}: full undo marks");
+    assert_eq!(s.doc.text.to_string(), original.0, "seed {seed}: full undo text");
+    assert_eq!(s.doc.marks.as_slice(), original.1.as_slice(), "seed {seed}: full undo marks");
     check(&s, &format!("seed {seed} after full undo"));
     steps
 }
@@ -220,25 +220,25 @@ fn cut_and_paste_in_place_keeps_text_and_ids() {
     let mut tested = 0;
     for case in 0..300 {
         let mut s = random_doc(&mut rng);
-        if s.selection.primary().is_empty() {
+        if s.view.selection.primary().is_empty() {
             continue;
         }
         let before = s.clone();
-        let r = before.selection.primary();
+        let r = before.view.selection.primary();
         update(&mut s, Msg::Cut);
         if s.caret() != r.from() {
             // The cut left the caret's place inside a marker (the text after it starts with
             // spaces or a marker), so the caret moved: there is no "same place" to paste at.
             continue;
         }
-        if s.marks.iter().any(|m| !before.marks.contains(m.id)) {
+        if s.doc.marks.iter().any(|m| !before.doc.marks.contains(m.id)) {
             // What remained has new blocks (the cut closed a fence, and marker lines after it
             // started blocks): they keep their ids after the paste.
             continue;
         }
         update(&mut s, Msg::Paste { text: None });
-        assert_eq!(s.text, before.text, "case {case}: text after cutting {}..{} of {:?}", r.from(), r.to(), before.text.to_string());
-        assert_eq!(s.marks.as_slice(), before.marks.as_slice(), "case {case}: ids after cutting {}..{} of {:?}", r.from(), r.to(), before.text.to_string());
+        assert_eq!(s.doc.text, before.doc.text, "case {case}: text after cutting {}..{} of {:?}", r.from(), r.to(), before.doc.text.to_string());
+        assert_eq!(s.doc.marks.as_slice(), before.doc.marks.as_slice(), "case {case}: ids after cutting {}..{} of {:?}", r.from(), r.to(), before.doc.text.to_string());
         tested += 1;
     }
     assert!(tested > 60, "only {tested} cases");
@@ -252,13 +252,13 @@ fn select_all_delete_then_undo_restores_the_ids() {
         let mut s = random_doc(&mut rng);
         let before = s.clone();
         update(&mut s, Msg::SelectAll);
-        let selected = s.selection.clone();
+        let selected = s.view.selection.clone();
         update(&mut s, Msg::DeleteBackward);
-        assert_eq!(s.blocks().unwrap().blocks.len(), 1, "{:?}", s.text.to_string());
+        assert_eq!(s.blocks().unwrap().blocks.len(), 1, "{:?}", s.doc.text.to_string());
         update(&mut s, Msg::Undo);
-        assert_eq!(s.text, before.text);
-        assert_eq!(s.marks.as_slice(), before.marks.as_slice());
-        assert_eq!(s.selection, selected);
+        assert_eq!(s.doc.text, before.doc.text);
+        assert_eq!(s.doc.marks.as_slice(), before.doc.marks.as_slice());
+        assert_eq!(s.view.selection, selected);
     }
 }
 
@@ -275,7 +275,7 @@ fn markdown_files_round_trip() {
             o.blocks
                 .iter()
                 .filter(|b| !(b.kind == Kind::Para && b.is_empty() && b.line_count == 1 && b.hang == caretline_next::outline::Hang::None))
-                .map(|b| (b.kind, b.depth, b.gap, s.text.slice(b.content_start()..b.end).to_string()))
+                .map(|b| (b.kind, b.depth, b.gap, s.doc.text.slice(b.content_start()..b.end).to_string()))
                 .collect()
         };
         assert_eq!(shape(&back), shape(&s), "{md:?}");

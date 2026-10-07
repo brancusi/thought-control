@@ -53,8 +53,8 @@ fn main() {
     }
 
     // 5. Read the result.
-    let primary = state.selection.primary();
-    println!("text:      {:?}", state.text.to_string());
+    let primary = state.view.selection.primary();
+    println!("text:      {:?}", state.doc.text.to_string());
     println!("selection: anchor {} head {}", primary.anchor, primary.head);
     println!("selected:  {:?}", selection_text(&state));
 
@@ -75,7 +75,7 @@ fn main() {
             }
         }
     }
-    println!("dirty:     {}", state.dirty);
+    println!("dirty:     {}", state.doc.dirty);
 
     // 7. Render. `view` is pure: a grid of cells plus the caret's cell.
     let frame = view(&state);
@@ -87,7 +87,7 @@ fn main() {
     let mut back = State::from_json(&json).expect("state parses");
     assert_eq!(back, state);
     update(&mut back, Msg::Undo);
-    println!("after undo: {:?}", back.text.to_string());
+    println!("after undo: {:?}", back.doc.text.to_string());
 
     // 9. A trace (initial state + every message) replays to the same state.
     let jsonl: String = trace.iter().map(|l| l.to_line() + "\n").collect();
