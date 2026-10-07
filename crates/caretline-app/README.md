@@ -9,6 +9,9 @@ cargo run -p caretline-app -- notes.md         # or, installed: caretline notes.
 cargo install --locked --path crates/caretline-app
 ```
 
+Full documentation: [the `caretline` command](../../docs/caretline/cli.md), and
+[docs/caretline](../../docs/caretline/README.md) for the engine, its API and embedding.
+
 ## How it works
 
 The engine is an Elm architecture around Helix's editing core:
@@ -109,9 +112,23 @@ caretline --replay t.jsonl --snapshot 80x24
 
 ### Example
 
-```sh
+```console
 $ caretline --state crates/caretline-app/fixtures/wrapped-paragraph.state.json \
     --keys '<up><up><s-a-right><s-a-right>' --snapshot 44x14
+# Field notes
+
+The editing model is a rope of text with
+one or more selections, each an anchor and
+a head. Every edit is a transaction that
+maps the selections through its changes, so
+nothing drifts.
+
+- Soft wrap keeps a goal column when moving
+up and down across wrapped rows.
+- Undo restores the exact text and
+selection.
+
+ wrapped.md                     9 sel  3:21
 ```
 
 ## Fixtures

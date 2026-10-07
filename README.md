@@ -88,6 +88,13 @@ Everything is a **node**: pages, journal days, tasks, events and tags.
 See [AGENTS.md](AGENTS.md). In short: set `THC_ACTOR`, use `--json`, refer to nodes by ID,
 check exit codes, and never touch the vault files directly.
 
+## caretline, the editor engine
+
+[caretline](docs/caretline/README.md) is a standalone terminal text-editing engine and editor
+in this repository: Helix's editing model in a pure, replayable Elm architecture, with
+serializable state, headless snapshots and exact replay. It doesn't depend on thc and can be
+embedded in other projects. Start with [docs/caretline](docs/caretline/README.md).
+
 ## Status
 
 | Milestone | State |
