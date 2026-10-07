@@ -4,7 +4,6 @@ use super::typing::q4;
 use super::*;
 
 #[test]
-#[ignore = "sqjch"]
 fn an_agent_adds_to_today_while_you_type_there() {
     let mut f = flow("thc add to today while typing in today");
     f.known("02pjq", Known::Restore).keys("T<c-end><cr>").type_text("my own words");

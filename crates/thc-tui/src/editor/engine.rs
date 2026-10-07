@@ -672,6 +672,9 @@ impl Doc {
     /// one of thc's host commands (`thc.task_cycle`). Up, down and pages follow the view's
     /// layout (`Doc::set_view`).
     pub fn run_command(&mut self, id: &str) -> Outcome {
+        if id == "edit.newline" && !self.newline_as_saved() {
+            return Outcome::Done;
+        }
         let msg = if id.starts_with("thc.") {
             Msg::Command { name: id.into(), args: serde_json::Value::Null }
         } else {
@@ -699,6 +702,21 @@ impl Doc {
             Some(why) if !quiet => Outcome::Nothing(why),
             _ => Outcome::Done,
         }
+    }
+
+    /// Enter, as thc keeps notes (writing.md §1; 02pjq): what the screen shows while you type is
+    /// what the saved page shows when it opens again. An empty paragraph isn't saved, so on one
+    /// Enter does nothing: there's no note to end, and the blank rows it used to make vanished
+    /// on save (the page jumped up when it opened again). False: Enter does nothing here.
+    ///
+    /// (A split still leaves the spaces after the caret leading the new note, which the save
+    /// drops: dropping them here takes the engine's Enter doing it in its one undo step, 0d61e.)
+    fn newline_as_saved(&self) -> bool {
+        if self.selection().is_some() {
+            return true;
+        }
+        let l = self.caret_block();
+        !(l.kind() == thc_core::outline::Kind::Para && l.text.is_empty())
     }
 
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
