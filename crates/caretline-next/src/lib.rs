@@ -38,6 +38,7 @@ pub mod external;
 pub use marks::{BlockAttrs, Mark, MarkId, Marks};
 pub use outline::{BlockInfo, Kind, NewBlock, Outline, OutlineConfig};
 pub use keymap::{keymap, keymap_for, outline_keymap, parse_keys, script_to_msgs, script_to_msgs_for, Key, KeyCode, Mods};
+pub use external::ExtChange;
 pub use msg::{By, Dir, Effect, Msg};
 pub use session::Session;
 pub use state::{Config, Document, ExternalUndo, Follow, Scroll, State, View, ViewConfig, Viewport};

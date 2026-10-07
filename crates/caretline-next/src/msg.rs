@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::marks::MarkId;
+use crate::external::ExtChange;
 use crate::outline::NewBlock;
 
 /// Which way a motion goes.
@@ -145,6 +146,12 @@ pub enum Msg {
     /// Show a folded block's children again.
     Unfold { id: MarkId },
     ToggleFold { id: MarkId },
+
+    /// Changes from elsewhere (another device, a daemon, an agent), applied in order to the
+    /// document outside the undo history: every view is mapped through them, and undo never
+    /// takes them back (see docs/caretline/messages.md#external-changes). Passive: it
+    /// doesn't end an edit run or clear the status.
+    External { changes: Vec<ExtChange> },
 }
 
 impl Msg {
@@ -153,13 +160,18 @@ impl Msg {
     pub fn is_passive(&self) -> bool {
         matches!(
             self,
-            Msg::Tick { .. } | Msg::Resize { .. } | Msg::Saved | Msg::SaveFailed { .. } | Msg::ShowStatus { .. }
+            Msg::Tick { .. }
+                | Msg::Resize { .. }
+                | Msg::Saved
+                | Msg::SaveFailed { .. }
+                | Msg::ShowStatus { .. }
+                | Msg::External { .. }
         )
     }
 
     /// A change from outside the editor, applied to the document rather than through a view.
     pub fn is_external(&self) -> bool {
-        false
+        matches!(self, Msg::External { .. })
     }
 
     /// Whether the message can change the text (or marks).

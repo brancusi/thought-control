@@ -2,7 +2,7 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: `current_transaction` and `current_inversion` accessors; module paths; revision timestamps are caller-supplied milliseconds (`Timestamp`) instead of `std::time::Instant`, so no clock is read; removed `commit_revision` (it read the clock) and the regex-based duration parser; serde derives; added `amend_current_revision`, `len`, `is_empty` and `can_redo`.
+// Changes from upstream: `current_transaction` and `current_inversion` accessors; module paths; revision timestamps are caller-supplied milliseconds (`Timestamp`) instead of `std::time::Instant`, so no clock is read; removed `commit_revision` (it read the clock) and the regex-based duration parser; serde derives; added `amend_current_revision`, `len`, `is_empty`, `can_redo` and `rebase_over` (operational transform over a change made elsewhere).
 
 use crate::helix::{Assoc, ChangeSet, Range, Rope, Selection, Transaction};
 use std::num::NonZeroUsize;
@@ -59,6 +59,19 @@ pub struct State {
 pub struct History {
     revisions: Vec<Revision>,
     current: usize,
+}
+
+/// One revision kept by [`History::rebase_over`].
+///
+/// caretline addition: not in upstream Helix.
+#[derive(Debug, Clone)]
+pub struct Rebased {
+    /// Its index before.
+    pub old: usize,
+    /// The remote change as it applies to its document before (`R_k`).
+    pub remote: ChangeSet,
+    /// Its document after: the old one with the remote change.
+    pub text: Rope,
 }
 
 /// A single point in history. See [History] for more information.
@@ -140,6 +153,70 @@ impl History {
         rev.inversion = transaction.invert(original_doc).compose(inversion);
         rev.timestamp = timestamp;
         true
+    }
+
+    /// Transforms the history over `remote`, a change made elsewhere to the current
+    /// document, so that undo takes back only the local edits and keeps `remote` (operational
+    /// transform). `doc` is the document after `remote`. Walking from the current revision
+    /// back to the root, each revision's inversion is mapped over the remote change as it
+    /// stood at that revision (`I'_k = I_k.map(R_k)`), the remote change is carried one
+    /// revision back (`R_{k-1} = R_k.map(I_k, before)`), and each transaction becomes the
+    /// inverse of its new inversion. Selections are mapped the same way. Revisions off the
+    /// path from the root to the current one (redo branches) are dropped.
+    ///
+    /// Returns, for each revision kept (by new index), its old index, the remote change as it
+    /// applies to that revision's old document (`R_k`) and the revision's new document, for
+    /// callers that keep data per revision.
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn rebase_over(&mut self, remote: &ChangeSet, doc: &Rope) -> Vec<Rebased> {
+        let path = self.path_up(self.current, 0);
+        // `path` runs from the current revision down to the root's child.
+        let mut r = remote.clone();
+        let mut text = doc.clone();
+        let mut rebuilt: Vec<(Rebased, Transaction, Transaction, Timestamp)> = Vec::with_capacity(path.len());
+        for &k in &path {
+            let rev = &self.revisions[k];
+            let inv = rev.inversion.changes();
+            let inv2 = inv.map_ordered(&r, false);
+            let r_prev = r.map_ordered(inv, true);
+            let transaction = {
+                let t = Transaction::from(inv2.invert(&text));
+                match rev.transaction.selection() {
+                    Some(sel) => t.with_selection(map_selection(sel, &r)),
+                    None => t,
+                }
+            };
+            let mut prev_text = text.clone();
+            inv2.apply(&mut prev_text);
+            let inversion = {
+                let t = Transaction::from(inv2);
+                match rev.inversion.selection() {
+                    Some(sel) => t.with_selection(map_selection(sel, &r_prev)),
+                    None => t,
+                }
+            };
+            let remote_k = std::mem::replace(&mut r, r_prev);
+            let text_k = std::mem::replace(&mut text, prev_text);
+            rebuilt.push((Rebased { old: k, remote: remote_k, text: text_k }, transaction, inversion, rev.timestamp));
+        }
+        let mut kept = vec![Rebased { old: 0, remote: r, text }];
+        let mut revisions = vec![Revision {
+            parent: 0,
+            last_child: None,
+            transaction: std::mem::take(&mut self.revisions[0].transaction),
+            inversion: std::mem::take(&mut self.revisions[0].inversion),
+            timestamp: self.revisions[0].timestamp,
+        }];
+        for (rebased, transaction, inversion, timestamp) in rebuilt.into_iter().rev() {
+            let i = revisions.len();
+            revisions[i - 1].last_child = NonZeroUsize::new(i);
+            revisions.push(Revision { parent: i - 1, last_child: None, transaction, inversion, timestamp });
+            kept.push(rebased);
+        }
+        self.current = revisions.len() - 1;
+        self.revisions = revisions;
+        kept
     }
 
     /// The current revision's transaction (from its parent to it). The root's is empty.
@@ -532,4 +609,14 @@ mod test {
         assert_eq!("a\n", state.doc);
     }
 
+}
+
+/// Maps a selection stored in a revision through `changes`, clamping it to the document the
+/// changes apply to first (a stored selection is always inside it; this only guards against
+/// a hand-edited state).
+fn map_selection(sel: &Selection, changes: &ChangeSet) -> Selection {
+    let len = changes.len();
+    sel.clone()
+        .transform(|r| Range { anchor: r.anchor.min(len), head: r.head.min(len), old_visual_position: None })
+        .map(changes)
 }

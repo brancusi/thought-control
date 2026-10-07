@@ -218,6 +218,8 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         Msg::Fold { id } => crate::views::fold(state, id, Some(true)),
         Msg::Unfold { id } => crate::views::fold(state, id, Some(false)),
         Msg::ToggleFold { id } => crate::views::fold(state, id, None),
+        // `update` and `update_doc` apply it to the document and every view.
+        Msg::External { .. } => {}
         Msg::SelectAll => {
             state.view.selection = Selection::single(0, state.doc.text.len_chars());
         }
@@ -280,6 +282,9 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
             let txn = state.doc.history.undo().cloned();
             match txn {
                 Some(txn) => apply_history(state, &txn, rev, true),
+                None if state.doc.undo_floor => {
+                    state.view.status = Some("undo stops at a change from elsewhere".into())
+                }
                 None => state.view.status = Some("nothing to undo".into()),
             }
         }
@@ -668,6 +673,11 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
         state.doc.marks.map(old.slice(..), state.doc.text.slice(..), txn.changes());
         state.doc.marks.apply(&fixup);
         after_marks_changed(state);
+    }
+    // A step transformed over a change from elsewhere may leave a new block start unmarked
+    // (its fix-ups describe the text before that change): give it a mark.
+    if state.doc.outline.is_some() {
+        crate::outline::mint_missing(&mut state.doc);
     }
     state.view.selection = match txn.selection() {
         Some(sel) => sel.clone(),
