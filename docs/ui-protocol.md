@@ -137,6 +137,7 @@ order they happened.
 | `external` | `patch` | A change that came from outside any message, as a merge patch: the daemon's push (an agent's write flashing, an alert toast), a poll that found another device's change, an idle save, an update check. The runtime records it so a trace and subscribers see every change; replay applies it |
 | `frame` | | A frame was drawn, and what waits for one ran: the save of the line just left |
 | `idle` | | The open document passed its idle point: the typing so far became one undo step and was saved |
+| `aside` | `target`, `pin`, `fold`, `close`, `actor` | `aside`: put something beside the person in the sidebar, or close a panel the actor opened |
 | `poll` | | The runtime looked for changes from elsewhere (another process, another device, the daemon's push) and found some: what's shown reloaded |
 
 `frame`, `idle` and `poll` are the runtime's own steps that read or write the vault. The TUI
@@ -193,6 +194,16 @@ flashes, double clicks, the which-key delay and the bar's clock are all measured
 state's `now_ms`. A running TUI ticks before input, and while something on screen is waiting
 on time. With `THC_NOW` pinned the clock never moves, so a pinned run is the same every time.
 
+### Agents and the sidebar
+
+The sidebar (`state.sidebar`: `shown`, `width`, `focused`, `open`, `closed`, `image_folded`) is
+presentation state like the rest, with rules for an agent's `patch`, `state.set` and `aside`
+(any request with an `actor`): its `focus` or `sidebar.focused` change makes that panel the
+active one but never moves the person's keyboard; it can't close or unpin a pinned panel
+(`invalid`, exit 6); `opened_by` is the TUI's to set (a panel the agent added is marked as
+its). Each such change is one history step: `⌘[` closes what the agent opened, brings back what
+it closed and unfolds what it folded, and nothing else.
+
 ## Revisions
 
 `rev` goes up by one for every message applied: ticks, resizes and the person's keys too. Use
@@ -223,6 +234,8 @@ carries `rev`.
 | `unsubscribe` | | `rev`, `subscribed: false` |
 | `trace.get` | `since_rev` or `all` | `rev`, `from_rev`, `trace` |
 | `trace.checkpoint` | | `rev`. Saves the open document, then starts a new trace segment from the current state |
+| `aside` | `target`, `pin`, `fold`, `close`, `if_rev`, `actor` | `rev`, `panel` (the top panel's key), `focused`, `focus`, `sidebar` (as `aside.ls`). The sidebar's rules run in the TUI (dedupe, move to top, the 8-panel limit); an actor's panel is marked, its open is a history step, and focus never moves |
+| `aside.ls` | | `rev`, `sidebar`: `focus`, `focused`, `shown`, `width`, `closed` (a count) and `open`, each panel as in the state plus `title` and counts (`notes`, `open` tasks, list `rows`) |
 
 `render` never changes the state: a size other than the TUI's is drawn and then put back.
 
@@ -263,6 +276,8 @@ the keyboard, any client, or the runtime.
 | `bad_keys` | The key script doesn't parse | 6 |
 | `invalid` | The state or patch doesn't validate | 6 |
 | `stale` | `if_rev` didn't match | 4 |
+| `not_found` | `aside`: no such page or day, or no such panel to close | 3 |
+| `ambiguous` | `aside`: an id prefix matching several | 5 |
 | `trimmed` | `since_rev` is older than the kept trace | 3 |
 | `unsupported` | `apply_effects` where effects can't be performed | 2 |
 
@@ -380,6 +395,7 @@ keyboard.
 | `thc ui set FILE\|- [--if-rev N]` | `state.set` |
 | `thc ui patch JSON\|@FILE [--if-rev N]` | `patch` |
 | `thc ui send …` | `keys SCRIPT`, `msgs FILE\|-\|JSON`, `render [WxH] [FORMAT]`, `state.get [no-history]`, `subscribe [WxH [FORMAT]] [state]`, `trace.get [all\|since REV]`, `trace.checkpoint`, `hello`, or a raw JSON request. With no words, JSON requests from stdin, one per line. `--raw` prints the payload; `--apply-effects` lets the TUI perform effects |
+| `thc ui aside TARGET [--pin] [--fold] [--close] [--if-rev N]` | `aside`: a page (title or id), a day (`today`, `fri`, `2026-10-06`), `@view`, `"#tag"` or a query, beside the person. `--ls` lists the stack (`--json` for `aside.ls`) |
 | `thc ui render [WxH] [--format F]` | A running TUI's frame |
 | `thc ui render [WxH] --state FILE` | A state's frame, headless |
 | `thc ui replay FILE [--size WxH] [--format F] [--every]` | Replay a trace headlessly, on the vault as it was when the trace began. `--size`: the frames' size (layout still follows the trace's) |

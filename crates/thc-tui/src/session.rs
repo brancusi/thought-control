@@ -64,6 +64,19 @@ pub enum Msg {
     Poll,
     /// Test fixtures: another actor writes to the vault (`THC_TUI_KEYS` only).
     Fixture { fixture: Fixture },
+    /// Put something beside the person (`thc ui aside`, sidebar.md §10.3), or close a panel the
+    /// actor opened.
+    Aside {
+        target: String,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        pin: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        fold: bool,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        close: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -420,8 +433,8 @@ impl Session {
     pub fn check(&self, msg: &Msg) -> Result<(), String> {
         match msg {
             Msg::Key { key } if crate::script::key_event(key).is_none() => Err(format!("unknown key {key}")),
-            Msg::SetState { state, .. } => self.parse_state(state).map(|_| ()),
-            Msg::Patch { patch, .. } => self.app.ui.patched(patch).and_then(|s| self.same_vault(s)).map(|_| ()),
+            Msg::SetState { state, actor } => self.parse_state(state).and_then(|s| self.agent_may(&s, actor.as_deref())),
+            Msg::Patch { patch, actor } => self.app.ui.patched(patch).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
             Msg::Resize { w, h } if *w == 0 || *h == 0 => Err("a size is at least 1x1".into()),
             _ => Ok(()),
         }
@@ -429,6 +442,23 @@ impl Session {
 
     fn parse_state(&self, state: &Value) -> Result<UiState, String> {
         UiState::from_json_over(&self.app.ui, state, state.get("history").is_none()).and_then(|s| self.same_vault(s))
+    }
+
+    /// What an agent may not do to the sidebar (sidebar.md §10.4): close or unpin a pinned
+    /// panel. (Focus and `opened_by` are put right when the state lands, in `set_state`.)
+    fn agent_may(&self, s: &UiState, actor: Option<&str>) -> Result<(), String> {
+        if actor.is_none() {
+            return Ok(());
+        }
+        for (i, p) in self.app.ui.sidebar.open.iter().enumerate().filter(|(_, p)| p.pinned) {
+            let k = p.key();
+            match s.sidebar.get(&k) {
+                None => return Err(format!("sidebar.open: {} is pinned (open[{i}]) · a pinned panel is the person's; an agent can't close it", self.app.panel_name(&k))),
+                Some(q) if !q.pinned => return Err(format!("sidebar.open: {} is pinned · an agent can't unpin it", self.app.panel_name(&k))),
+                _ => {}
+            }
+        }
+        Ok(())
     }
 
     fn same_vault(&self, s: UiState) -> Result<UiState, String> {
@@ -492,6 +522,9 @@ impl Session {
                 self.set_state(new, actor.as_deref());
             }
             Msg::Fixture { fixture } => self.fixture(fixture),
+            Msg::Aside { target, pin, fold, close, actor } => {
+                self.app.agent_aside(&target, pin, fold, close, actor.as_deref()).map_err(|e| e.message())?;
+            }
             Msg::External { patch } => self.external(&patch)?,
             Msg::Frame => {
                 self.app.after_frame();
@@ -668,6 +701,25 @@ impl Session {
         if changed.is_empty() {
             return;
         }
+        let mut new = new;
+        let stack_before = self.app.ui.sidebar.clone();
+        if let Some(a) = actor {
+            // Agents never move the keyboard (§10.4): a `focus` or `sidebar.focused` change
+            // makes that panel the active one, and focus stays where the person had it.
+            if !crate::sidebar::policy::AGENTS_MOVE_FOCUS {
+                new.focus = self.app.ui.focus;
+                if new.focus == crate::app::Focus::Sidebar && !new.sidebar.has_panels() {
+                    new.focus = crate::app::Focus::List;
+                }
+            }
+            // `opened_by` is the TUI's: a panel the agent added is its; the rest keep theirs.
+            for p in new.sidebar.open.iter_mut() {
+                p.opened_by = match stack_before.get(&p.key()) {
+                    Some(old) => old.opened_by.clone(),
+                    None => Some(a.to_string()),
+                };
+            }
+        }
         let app = &mut self.app;
         app.history_tick(false);
         let doc = new.document.clone();
@@ -683,6 +735,15 @@ impl Session {
             app.ui.doc_scroll_free = true;
         }
         app.history_tick(false);
+        if let Some(a) = actor {
+            let change = crate::sidebar::AgentChange::between(a, &stack_before, &app.ui.sidebar);
+            if !change.is_empty() {
+                app.history_agent_step(change);
+            }
+        }
+        if app.ui.sidebar != stack_before {
+            app.persist_sidebar();
+        }
         if let Some(actor) = actor {
             let g = app.theme.glyphs();
             let back = if app.cmd_seen { "⌘[" } else { "⌃⌥←" };

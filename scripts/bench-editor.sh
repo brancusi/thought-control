@@ -44,3 +44,13 @@ run "paste 1000   " "<paste:$(cat "$S/paste.md")>" p "Big page"
 echo "== 300-line journal day"
 run "open         " "" j
 run "type at end  " "$typing" j
+# The sidebar (sidebar.md): three doc panels beside the page (today's journal, a small page,
+# and the big page itself, a second view of the same document) while typing in the main view.
+"$THC" page new "Small page" >/dev/null
+aside='<m-:>aside today<cr><esc><m-:>aside Small page<cr><esc><m-:>aside Big page<cr><esc>'
+echo "== 5,000-line page, three doc panels open"
+run "open         " "$aside" p "Big page"
+run "type at top  " "$aside$typing" p "Big page"
+run "type middle  " "$aside$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
+echo "== 300-line journal day, three doc panels open"
+run "type at end  " "$aside$typing" j

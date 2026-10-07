@@ -5,7 +5,6 @@
 
 use crate::app::{App, Focus, Row, View};
 use crate::sidebar::{ListScroll, ListState, PanelKey, PanelKind};
-use crate::update::SidebarOp;
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 /// A list panel's runtime: its rows and selection, and its own view choices.

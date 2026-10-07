@@ -76,13 +76,6 @@ pub fn placement(app: &App, w: u16) -> Option<Layout> {
     }
 }
 
-/// The column's width at screen width `w`, when the sidebar is a column now (§6.1).
-pub fn column(app: &App, w: u16) -> Option<u16> {
-    match placement(app, w) {
-        Some(Layout::Column { width }) => Some(width),
-        _ => None,
-    }
-}
 
 /// What a panel needs to lay out its body: its natural height and how to draw it.
 struct Measure {
@@ -90,21 +83,25 @@ struct Measure {
     linked: usize,
 }
 
+/// Pages linking here, for the `▸ linked from N` row: counted when the panel's document is
+/// read or refreshed (sidebar_app.rs), never per frame.
 fn backlinks(app: &App, key: &PanelKey) -> usize {
-    let (PanelKind::Page, Some(id)) = (key.kind, key.id.as_deref()) else { return 0 };
-    let here: std::collections::HashSet<String> = app.panel_doc(key).map(|d| d.blocks().iter().map(|l| l.id.clone()).collect()).unwrap_or_default();
-    app.vault
-        .store
-        .nodes_where("n.deleted=0 AND n.id IN (SELECT src FROM edges WHERE rel='mention' AND dst=?1) ORDER BY n.updated_ms DESC LIMIT 50", &[&id])
-        .unwrap_or_default()
-        .iter()
-        .filter(|n| !here.contains(&n.id))
-        .count()
+    app.panels.get(key).map_or(0, |rt| rt.linked)
+}
+
+/// What a panel's layout depends on, hashed: a frame with the same inputs reuses it.
+fn layout_key(app: &App, key: &PanelKey, parts: impl std::hash::Hash) -> Option<u64> {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let d = app.panel_doc(key)?;
+    let mut h = foldhash::fast::FixedState::with_seed(7).build_hasher();
+    d.revision().hash(&mut h);
+    parts.hash(&mut h);
+    Some(h.finish())
 }
 
 /// Lay a doc panel's view out at `w` columns and `h` rows (metas on their own row where they
-/// don't fit beside the text). The rows it lays out to.
-fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16) -> Option<usize> {
+/// don't fit beside the text). The rows it lays out to, counting no further than `cap`.
+fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16, cap: usize) -> Option<usize> {
     let column = w.saturating_sub((MARKS + HANG) as u16 + 1).max(10);
     let (d, _) = app.panel_doc_mut(key)?;
     let mut g = ViewGeometry { width: w.max(1), height: h.max(1), column, extra_rows: Vec::new(), typewriter: false };
@@ -122,12 +119,22 @@ fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16) -> Option<usize> {
     if !g.extra_rows.is_empty() {
         d.set_view(&g);
     }
-    let total = d.scroll_rows().0;
+    let total = d.rows_capped(cap);
     app.main_view_current();
     Some(total)
 }
 
-fn measure(app: &mut App, key: &PanelKey, w: u16) -> Measure {
+/// A panel's cached layout (`Derived::sidebar_cache`).
+#[derive(Default)]
+pub struct PanelCache {
+    measure_key: u64,
+    natural: usize,
+    rows_key: u64,
+    lines: Vec<Line<'static>>,
+    cursor: Option<(u16, u16)>,
+}
+
+fn measure(app: &mut App, key: &PanelKey, w: u16, cap: usize) -> Measure {
     let linked = backlinks(app, key);
     if !key.kind.is_doc() {
         let n = app.lists.get(key).map_or(1, |rt| rt.rows.len().max(1));
@@ -136,7 +143,19 @@ fn measure(app: &mut App, key: &PanelKey, w: u16) -> Measure {
     if app.panels.get(key).is_some_and(|rt| rt.problem.is_some()) {
         return Measure { natural: 1, linked: 0 };
     }
-    let rows = lay_out(app, key, w, 200).unwrap_or(1);
+    let mk = layout_key(app, key, (w, cap)).unwrap_or(0);
+    let rows = match app.derived.sidebar_cache.get(key).filter(|c| c.measure_key == mk) {
+        Some(c) => c.natural,
+        None => {
+            let rows = lay_out(app, key, w, cap.min(u16::MAX as usize) as u16, cap).unwrap_or(1);
+            let c = app.derived.sidebar_cache.entry(key.clone()).or_default();
+            c.measure_key = mk;
+            c.natural = rows;
+            // The view was laid out at another height: the rows go again.
+            c.rows_key = 0;
+            rows
+        }
+    };
     Measure { natural: (rows + (linked > 0) as usize).min(u16::MAX as usize) as u16, linked }
 }
 
@@ -196,7 +215,9 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
     let view_w = s_w.saturating_sub(2);
     let active = app.ui.sidebar.active_key();
     let sidebar_focus = app.ui.focus == Focus::Sidebar;
-    let measures: Vec<Measure> = keys.iter().map(|k| measure(app, k, view_w)).collect();
+    let cap = area.height as usize + 1;
+    let measures: Vec<Measure> = keys.iter().map(|k| measure(app, k, view_w, cap)).collect();
+    app.derived.sidebar_cache.retain(|k, _| keys.contains(k));
     let natural: Vec<(u16, bool, bool)> = keys
         .iter()
         .zip(&measures)
@@ -423,18 +444,45 @@ fn list_rows(app: &mut App, key: &PanelKey, s_w: u16, h: u16, focused: bool, y0:
 
 /// A doc panel's rows at `w` × `h`, styled, and its caret's cell in the view.
 fn doc_rows(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
-    lay_out(app, key, w, h);
+    // The same inputs as last frame: the same rows (a panel costs nothing while you type
+    // elsewhere).
+    let now = app.ui.now_ms;
+    let inputs = app.panel_doc(key).map(|d| {
+        let live = d.blocks().iter().any(|l| l.flash_until.is_some_and(|t| t > now) || app.ui.flashes.get(&l.id).is_some_and(|(t, _)| now.saturating_sub(*t) < 3000));
+        (w, h, live, app.theme.ascii, app.theme.is_ansi())
+    });
+    let view_inputs = app.panel_doc_mut(key).map(|(d, _)| (d.caret(), d.anchor(), d.scroll_anchor(), d.scroll_free()));
+    app.main_view_current();
+    let rk = layout_key(app, key, (inputs, view_inputs.map(|(c, a, s, f)| (c.line, c.byte, a.map(|a| (a.line, a.byte)), s, f)))).unwrap_or(1);
+    if let Some(c) = app.derived.sidebar_cache.get(key).filter(|c| c.rows_key == rk && rk != 0) {
+        return (c.lines.clone(), c.cursor);
+    }
+    let r = doc_rows_fresh(app, key, w, h);
+    let c = app.derived.sidebar_cache.entry(key.clone()).or_default();
+    c.rows_key = rk;
+    c.lines = r.0.clone();
+    c.cursor = r.1;
+    r
+}
+
+fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+    lay_out(app, key, w, h, h as usize + 1);
     let th = app.theme;
     let journal = key.kind == PanelKind::Day;
     let mut out = Vec::new();
     let mut cursor = None;
-    let forms: Vec<crate::doc_ui::Form> = match app.panel_doc(key) {
-        Some(d) => d.blocks().iter().map(|l| crate::doc_ui::form(app, l)).collect(),
-        None => return (out, None),
-    };
     let now = app.ui.now_ms;
     // Rows changed elsewhere in the last 3 s get the live tint (§4.3).
     let live: std::collections::HashSet<String> = if th.is_ansi() { Default::default() } else { app.ui.flashes.iter().filter(|(_, (t, _))| now.saturating_sub(*t) < 3000).map(|(id, _)| id.clone()).collect() };
+    let shown: Vec<usize> = match app.panel_doc_mut(key) {
+        Some((d, _)) => d.frame().rows.iter().filter_map(|r| if let DocRow::Text { line, .. } = r { Some(*line) } else { None }).collect(),
+        None => return (out, None),
+    };
+    app.main_view_current();
+    let forms: std::collections::HashMap<usize, crate::doc_ui::Form> = match app.panel_doc(key) {
+        Some(d) => shown.iter().map(|&i| (i, crate::doc_ui::form(app, &d.blocks()[i]))).collect(),
+        None => return (out, None),
+    };
     let Some((d, _)) = app.panel_doc_mut(key) else { return (out, None) };
     let frame = d.frame();
     let sel = d.selection();
@@ -445,7 +493,7 @@ fn doc_rows(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>
         match *r {
             DocRow::Text { line, start, end, first, .. } => {
                 let l = &blocks[line];
-                let fm = &forms[line];
+                let fm = &forms[&line];
                 let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
                 let mark = if l.conflict {
                     Span::styled("≠ ", th.s(Token::Conflict))
