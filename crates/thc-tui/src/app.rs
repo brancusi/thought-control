@@ -459,6 +459,11 @@ pub struct App {
     pub panel_pointer: Option<crate::sidebar::PanelKey>,
     /// The sidebar's column width this frame (None: no column), set before drawing.
     pub sidebar_col: Option<u16>,
+    /// The sidebar's place this frame when it isn't a column: the drawer's or replace's rect.
+    pub sidebar_over: Option<(crate::sidebar::Layout, ratatui::layout::Rect)>,
+    /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
+    /// would drop).
+    pub sidebar_drag: Option<crate::sidebar_app::Drag>,
 }
 
 impl std::ops::Deref for App {
@@ -513,6 +518,11 @@ pub const PALETTE: &[PaletteItem] = &[
     PaletteItem { label: "Filter tasks", action: "tasks.filter", cmd: "thc q …" },
     PaletteItem { label: "Today ⇄ agenda", action: "today.agenda_toggle", cmd: "thc agenda" },
     PaletteItem { label: "Toggle detail pane", action: "pane.detail_toggle", cmd: "" },
+    PaletteItem { label: "Open beside (in the sidebar)", action: "sidebar.open_aside", cmd: ":aside <page | day | @view | #tag>" },
+    PaletteItem { label: "Sidebar: focus · back to main", action: "sidebar.focus", cmd: "" },
+    PaletteItem { label: "Sidebar: close all", action: "sidebar.close_all", cmd: ":sidebar close all" },
+    PaletteItem { label: "Sidebar: reopen closed panel", action: "sidebar.reopen", cmd: "" },
+    PaletteItem { label: "Sidebar: hide · show", action: "sidebar.toggle", cmd: ":sidebar hide" },
     PaletteItem { label: "Go to Today", action: "go.today", cmd: "thc today" },
     PaletteItem { label: "Go to Inbox", action: "go.inbox", cmd: "thc inbox" },
     PaletteItem { label: "Go to Tasks", action: "go.tasks", cmd: "thc q" },
@@ -821,6 +831,8 @@ impl App {
             sidebar_checked: false,
             panel_pointer: None,
             sidebar_col: None,
+            sidebar_over: None,
+            sidebar_drag: None,
         };
         app.load_page_ids();
         if !deferred {

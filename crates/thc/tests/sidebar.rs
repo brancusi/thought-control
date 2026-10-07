@@ -286,3 +286,168 @@ fn goldens() {
     golden("frame-h-140x40-ascii.txt", &Snap::new(sample()).env("THC_GLYPHS", "ascii").run(&b));
     golden("frame-h-140x40-ansi.ansi", &Snap::new(sample()).env("THC_GLYPHS", "ascii").env("THC_THEME", "ansi").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").run(&format!("{b}<m-s>")));
 }
+
+// ---- phase 2: the stack, layouts, days ----------------------------------------------------------
+
+/// The sample vault plus pages `P1`…`Pn` (and three long ones), for checks that need many.
+fn many_pages() -> &'static Path {
+    static V: OnceLock<PathBuf> = OnceLock::new();
+    V.get_or_init(|| {
+        let root = copy_of_sample("many");
+        let thc = |args: &[&str]| -> String {
+            let o = common::thc().args(args).env("THC_VAULT", root.join("vault")).env("THC_CACHE_DIR", root.join("cache")).env("THC_NOW", "2026-10-07T09:12").output().unwrap();
+            assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
+            String::from_utf8_lossy(&o.stdout).into()
+        };
+        for i in 1..=9 {
+            thc(&["page", "new", &format!("P{i}")]);
+        }
+        for p in ["Alpha", "Beta", "Gamma"] {
+            let out = thc(&["page", "new", &format!("Long {p}"), "--json"]);
+            let v: serde_json::Value = serde_json::from_str(&out).unwrap();
+            let id = v["nodes"][0]["id"].as_str().unwrap().to_string();
+            for i in 1..=20 {
+                thc(&["add", "--under", &id, &format!("{p} line {i}")]);
+            }
+        }
+        root
+    })
+}
+
+fn aside(targets: &[&str]) -> String {
+    targets.iter().map(|t| format!(":aside {t}<cr><esc>")).collect()
+}
+
+#[test]
+fn s7_close_reopen_and_the_limit() {
+    let s = Snap::new(many_pages());
+    // ⌥W closes; ⌥⇧T reopens it with its caret.
+    let f = s.run(&format!("1{}<m-s><down><m-w><m-T><m-s>x", aside(&["Health"])));
+    assert!(sidebar(&f).iter().any(|l| l.contains("xSchedule annual physical")), "{f}");
+    // Nine opens: the bottom unpinned panel closes, and the bar says so.
+    let nine: Vec<String> = (1..=9).map(|i| format!("P{i}")).collect();
+    let f = s.run(&format!("1{}", aside(&nine.iter().map(String::as_str).collect::<Vec<_>>())));
+    assert!(f.contains("¶ P1 closed to make room · ⌥⇧T reopen"), "{f}");
+    assert!(!headers(&f).iter().any(|h| h == "¶ P1"), "{f}");
+    // Eight pinned: the ninth is refused.
+    let pin8: String = (1..=8).map(|i| format!(":aside P{i}<cr><m-p><esc>")).collect();
+    let f = s.run(&format!("1{pin8}:aside P9<cr>"));
+    assert!(f.contains("8 panels pinned · unpin one to open another"), "{f}");
+    assert!(!headers(&f).iter().any(|h| h.starts_with("¶ P9")), "{f}");
+}
+
+#[test]
+fn s8_pinned_survives_close_all() {
+    let s = Snap::new(many_pages());
+    let f = s.run(&format!("1{}:aside Health<cr><m-p><esc><space>wX", aside(&["P1", "P2"])));
+    assert_eq!(headers(&f), ["¶ Health"], "{f}");
+    assert!(f.contains("pinned"), "{f}");
+}
+
+#[test]
+fn s9_reorder_within_a_group_and_drag_across_the_pin() {
+    let s = Snap::new(many_pages());
+    let base = format!("1{}", aside(&["P1", "P2", "P3"]));
+    assert_eq!(headers(&s.run(&base)), ["¶ P3", "¶ P2", "¶ P1"]);
+    assert_eq!(headers(&s.run(&format!("{base}<m-s><m-J>"))), ["¶ P2", "¶ P3", "¶ P1"]);
+    assert_eq!(headers(&s.run(&format!("{base}<m-s><m-J><m-J><m-K>"))), ["¶ P2", "¶ P3", "¶ P1"]);
+    // Pin P1 (it goes to the top), then drag P2's header above it: P2 is pinned too.
+    let f = s.run(&format!("{base}<m-s><m-k><m-p>"));
+    assert_eq!(headers(&f), ["¶ P1", "¶ P3", "¶ P2"], "{f}");
+    let y_p2 = sidebar(&f).iter().position(|l| l.contains("¶ P2")).unwrap();
+    let f = s.run(&format!("{base}<m-s><m-k><m-p><drag:100,{y_p2},100,2>"));
+    assert_eq!(headers(&f), ["¶ P2", "¶ P1", "¶ P3"], "{f}");
+    assert_eq!(sidebar(&f).iter().filter(|l| l.contains("pinned  ")).count(), 2, "{f}");
+}
+
+#[test]
+fn s11_long_panels_share_the_height() {
+    let s = Snap::new(many_pages());
+    let base = format!("1{}", aside(&["Long Alpha", "Long Beta", "Long Gamma"]));
+    let f = s.run(&format!("{base}<m-s>"));
+    let side = sidebar(&f).join("\n");
+    assert!(side.contains("Gamma line 20"), "the active one fills the rest: {side}");
+    assert_eq!(side.matches("↓ 15 more").count(), 2, "{side}");
+    let f = s.run(&format!("{base}<m-s><m-j>"));
+    let side = sidebar(&f).join("\n");
+    assert!(side.contains("Beta line 20") && !side.contains("Gamma line 6"), "⌥J moves the room: {side}");
+}
+
+#[test]
+fn s14_day_panels_move_by_day() {
+    let s = Snap::new(sample());
+    let f = s.run("1:aside 2026-10-06<cr>");
+    assert!(f.contains("▾ § Tue 06 Oct"), "{f}");
+    let f = s.run("1:aside 2026-10-06<cr><c-n>");
+    assert!(f.contains("▾ § Wed 07 Oct · today"), "⌃N retargets it: {f}");
+    assert_eq!(headers(&f).len(), 1);
+    // No history step: ⌘[ doesn't go back to Tue.
+    let f = s.run("1:aside today<cr>");
+    assert!(f.contains("§ Wed 07 Oct · today"), "{f}");
+}
+
+#[test]
+fn s16_the_drawer_at_100() {
+    let s = Snap::new(sample()).size("100x30");
+    let f = s.run("5<sclick:31,9>");
+    let row = f.lines().nth(2).unwrap();
+    assert!(row.chars().skip(40).collect::<String>().starts_with("│▌▾ ¶ Health"), "60 wide, focused: {f}");
+    assert!(f.lines().nth(1).unwrap().chars().nth(40) == Some('┬'));
+    let a = Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").run("5<sclick:31,9>");
+    assert!(a.contains("48;2;"), "the raised background");
+    let f = s.run("5<sclick:31,9><esc>");
+    assert!(!f.contains("¶ Health"), "Esc closes the drawer: {f}");
+    let f = s.run("5<sclick:31,9><esc><m-s>");
+    assert!(f.contains("▌▾ ¶ Health"), "the stack stayed: {f}");
+}
+
+#[test]
+fn s17_replace_at_80() {
+    let s = Snap::new(sample()).size("80x24");
+    let f = s.run("5<sclick:31,9>");
+    assert!(f.lines().nth(2).unwrap().contains("‹ § Wed 07 Oct   beside it: 1 panel"), "{f}");
+    assert!(f.lines().nth(3).unwrap().starts_with("▌▾ ¶ Health"), "{f}");
+    let f = s.run("5<sclick:31,9><esc>");
+    assert!(f.contains("WED 07 OCT 2026"), "{f}");
+}
+
+#[test]
+fn s18_widths() {
+    let width_of = |f: &str| -> usize {
+        let rule = f.lines().nth(1).unwrap();
+        rule.chars().count() - rule.chars().position(|c| c == '┬').unwrap() - 1
+    };
+    let s = Snap::new(sample()).size("120x32");
+    let f = s.run("5<sclick:54,8>");
+    assert_eq!(width_of(&f), 40, "{f}");
+    // At 120 a set width can't pass W − 80 = 40 (§6.1): ⌥= steps at 140 (46 → 50 → 54).
+    let w = Snap::new(sample());
+    let f = w.run("5<sclick:54,8><m-=><m-=>");
+    assert_eq!(width_of(&f), 54, "{f}");
+    let f = w.run("5<sclick:54,8><m-=><m-=><m-0>");
+    assert_eq!(width_of(&f), 46, "{f}");
+    let f = s.run("5<sclick:54,8><m-=><m-=>");
+    assert_eq!(width_of(&f), 40, "clamped at 120: {f}");
+    let f = Snap::new(sample()).size("192x40").run("1:aside Health<cr><esc>");
+    assert_eq!(width_of(&f), 64, "{f}");
+    // A divider drag sets it (at 140: the divider is column 93).
+    let f = Snap::new(sample()).run("5<sclick:54,8><drag:93,10,83,10>");
+    assert_eq!(width_of(&f), 56, "{f}");
+}
+
+#[test]
+fn s19_the_detail_pane_yields_and_comes_back() {
+    let s = Snap::new(sample());
+    let f = s.run("5<sclick:54,8>");
+    assert!(!f.contains("October 2026"), "{f}");
+    let f = s.run("5<sclick:54,8><m-\\>");
+    assert!(f.contains("October 2026") && !f.contains("¶ Health "), "⌥\\ hides the sidebar: {f}");
+}
+
+#[test]
+fn goldens_narrow() {
+    golden("frame-f-100x30.txt", &Snap::new(sample()).size("100x30").run("5<sclick:31,9>"));
+    golden("frame-g-80x24.txt", &Snap::new(sample()).size("80x24").run("5<sclick:31,9>"));
+    golden("frame-f-100x30-ember-light.ansi", &Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").env("THC_THEME", "ember-light").run("5<sclick:31,9>"));
+    golden("frame-g-80x24-ascii.txt", &Snap::new(sample()).size("80x24").env("THC_GLYPHS", "ascii").run("5<sclick:31,9>"));
+}

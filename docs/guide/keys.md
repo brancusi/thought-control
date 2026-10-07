@@ -374,7 +374,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | Keys | Does | Action | When |
 |---|---|---|---|
 | `⌥S` | main | `sidebar.focus` |  |
-| `Esc` | main | `sidebar.back` |  |
+| `Esc` | back | `sidebar.back` |  |
 | `⌥J` | panel | `sidebar.next` |  |
 | `⌥K` | panel | `sidebar.prev` |  |
 | `⌥C` | fold | `sidebar.fold` |  |

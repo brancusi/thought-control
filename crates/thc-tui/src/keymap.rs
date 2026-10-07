@@ -321,6 +321,8 @@ pub enum When {
     SidebarClosedAny,
     /// The active panel is a page or a day.
     PanelIsDoc,
+    /// The sidebar is the drawer or replace (narrower than a column): Esc closes it.
+    SidebarOver,
 }
 
 impl When {
@@ -355,13 +357,14 @@ impl When {
             When::SidebarShown => "sidebar_shown",
             When::SidebarClosedAny => "sidebar_closed_any",
             When::PanelIsDoc => "panel_is_doc",
+            When::SidebarOver => "sidebar_over",
         }
     }
 
     /// For help: a row's state (a task, children, an alert) is taken as given, since help
     /// describes keys, not this row; the app's state (Pages, the lane, a filter) still decides.
     pub fn holds_for_help(self, app: &App) -> bool {
-        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable | When::HasTarget | When::RowAside | When::SidebarHasPanels | When::SidebarShown | When::SidebarClosedAny | When::PanelIsDoc) || self.holds(app)
+        matches!(self, When::HasNode | When::NodeIsTask | When::NodeHasAlert | When::NodeHasConflict | When::NodeRepeats | When::Foldable | When::HasTarget | When::RowAside | When::SidebarHasPanels | When::SidebarShown | When::SidebarClosedAny | When::PanelIsDoc | When::SidebarOver) || self.holds(app)
     }
 
     pub fn holds(self, app: &App) -> bool {
@@ -395,6 +398,7 @@ impl When {
             When::SidebarShown => app.ui.sidebar.has_panels() && app.ui.sidebar.shown,
             When::SidebarClosedAny => !app.ui.sidebar.closed.is_empty(),
             When::PanelIsDoc => app.ui.sidebar.active_key().is_some_and(|k| k.kind.is_doc()),
+            When::SidebarOver => app.sidebar_over.is_some(),
         }
     }
 }
@@ -700,6 +704,7 @@ pub fn defaults() -> Vec<Binding> {
     t.extend(vec![
         // ---- sidebar (sidebar.md §5.3): chords only, over the panel's own keys.
         b!(Sidebar, "A-s", "sidebar.focus", Always, "main", "Sidebar", 1),
+        b!(Sidebar, "esc", "sidebar.back", SidebarOver, "back", "Sidebar", 6),
         b!(Sidebar, "esc", "sidebar.back", Always, "main", "Sidebar"),
         b!(Sidebar, "A-j", "sidebar.next", Always, "panel", "Sidebar", 2),
         b!(Sidebar, "A-k", "sidebar.prev", Always, "panel", "Sidebar", 2),

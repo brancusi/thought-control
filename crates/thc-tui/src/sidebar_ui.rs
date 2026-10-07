@@ -59,14 +59,25 @@ pub struct PreparedSidebar {
     pub hidden: usize,
 }
 
-/// The column's width at screen width `w`, when the sidebar is a column now (§6.1).
-pub fn column(app: &App, w: u16) -> Option<u16> {
+/// Where the sidebar is this frame at screen width `w` (§6.1, §6.4): a column beside the main
+/// area, the drawer over its right side or the whole body (narrower). The drawer and replace
+/// show while the keyboard is in the sidebar; none at all with no panels, hidden, or in Focus.
+pub fn placement(app: &App, w: u16) -> Option<Layout> {
     let sb = &app.ui.sidebar;
     if !sb.has_panels() || !sb.shown || (app.focus_mode && app.doc.is_some()) {
         return None;
     }
     match crate::sidebar::layout_at(sb, w) {
-        Layout::Column { width } => Some(width),
+        l @ Layout::Column { .. } => Some(l),
+        l if app.ui.focus == Focus::Sidebar => Some(l),
+        _ => None,
+    }
+}
+
+/// The column's width at screen width `w`, when the sidebar is a column now (§6.1).
+pub fn column(app: &App, w: u16) -> Option<u16> {
+    match placement(app, w) {
+        Some(Layout::Column { width }) => Some(width),
         _ => None,
     }
 }
@@ -467,9 +478,89 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, div
             }
         }
     }
+    // A header being dragged: an accent `━` where it would drop (§3.5).
+    if let Some(crate::sidebar_app::Drag::Header { to: Some(at), key, .. }) = &app.sidebar_drag {
+        let others: Vec<&PreparedPanel> = p.panels.iter().filter(|pp| pp.key != *key).collect();
+        let y = match others.get(*at) {
+            Some(pp) => pp.header_y.saturating_sub(1),
+            None => others.last().map_or(area.y, |pp| pp.body_y + pp.body.len() as u16),
+        };
+        if y >= area.y && y < area.bottom() {
+            let st = if th.is_ansi() { Style::default().add_modifier(Modifier::BOLD) } else { th.s(Token::Accent) };
+            f.render_widget(Paragraph::new(Line::styled("━".repeat(area.width as usize), st)), Rect { x: area.x, y, width: area.width, height: 1 });
+        }
+    }
     if p.hidden > 0 {
         let y = p.panels.last().map_or(area.y, |pp| pp.body_y + pp.body.len() as u16 + 1).min(area.bottom().saturating_sub(1));
         f.render_widget(Paragraph::new(Line::from(vec![Span::raw("   "), Span::styled(format!("{} {} more panels", g.more, p.hidden), th.s(Token::Muted))])), Rect { x: area.x, y, width: area.width, height: 1 });
+    }
+}
+
+/// The drawer (90–119 columns, §6.4): the same sidebar over the right of the main view, on the
+/// `raised` background, with a `│` left edge (`┬` on the tab rule).
+pub fn draw_drawer(render: &mut RenderOutput, f: &mut Frame, app: &App, rect: Rect, rule_y: u16) {
+    let th = app.theme;
+    let g = th.glyphs();
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let raised = th.fill(Token::Raised);
+    f.render_widget(Paragraph::new("").style(raised), rect);
+    let buf = f.buffer_mut();
+    if buf.area.contains((rect.x, rule_y).into()) {
+        buf[(rect.x, rule_y)].set_symbol(g.tee).set_style(th.s(Token::Line));
+    }
+    let edge = Rect { width: 1, ..rect };
+    let lines: Vec<Line> = (0..edge.height).map(|_| Line::styled(g.vsep, th.s(Token::Line).patch(raised))).collect();
+    f.render_widget(Paragraph::new(lines), edge);
+    let inner = Rect { x: rect.x + 1, width: rect.width - 1, ..rect };
+    draw(render, f, app, inner, None);
+    patch_bg(f, inner, raised);
+    // Clicks under the drawer belong to it, not to the main view beneath.
+    render.click_targets.retain(|t| !(t.y >= rect.y && t.y < rect.bottom() && t.x0 >= rect.x && t.x1 <= rect.right()) || matches!(t.what, Click::Panel(..)));
+}
+
+/// Replace (under 90 columns, §6.4): the sidebar takes the body, under its back row
+/// `‹ § Wed 07 Oct   beside it: 2 panels`.
+pub fn draw_replace(render: &mut RenderOutput, f: &mut Frame, app: &App, rect: Rect) {
+    let th = app.theme;
+    let g = th.glyphs();
+    f.render_widget(ratatui::widgets::Clear, rect);
+    let here = main_name(app);
+    let n = app.ui.sidebar.open.len();
+    let back = Line::from(vec![
+        Span::raw(" "),
+        Span::styled(g.back, th.s(Token::Accent)),
+        Span::raw(" "),
+        Span::styled(here.clone(), th.s(Token::Muted).add_modifier(Modifier::UNDERLINED)),
+        Span::styled(format!("   beside it: {n} panel{}", if n == 1 { "" } else { "s" }), th.s(Token::Muted)),
+    ]);
+    f.render_widget(Paragraph::new(back), Rect { height: 1, ..rect });
+    crate::ui::target(render, rect.x + 1, rect.x + 3 + width(&here) as u16, rect.y, Click::Action("sidebar.back"));
+    draw(render, f, app, Rect { y: rect.y + 1, height: rect.height.saturating_sub(1), ..rect }, None);
+}
+
+/// The main view as the back row names it: `§ Wed 07 Oct`, `¶ Health`, `Today`.
+fn main_name(app: &App) -> String {
+    let g = app.theme.glyphs();
+    match app.doc.as_ref().map(|d| &d.target) {
+        Some(crate::editor::Target::Journal { date }) => format!("{} {}", g.journal, date.format("%a %d %b")),
+        Some(crate::editor::Target::Page { title, .. }) => format!("{} {title}", g.page),
+        None => format!("{:?}", app.view),
+    }
+}
+
+/// Every cell of `r` without a background gets `fill`'s.
+fn patch_bg(f: &mut Frame, r: Rect, fill: Style) {
+    let Some(bg) = fill.bg else { return };
+    let buf = f.buffer_mut();
+    for y in r.y..r.bottom() {
+        for x in r.x..r.right() {
+            if buf.area.contains((x, y).into()) {
+                let c = &mut buf[(x, y)];
+                if c.bg == ratatui::style::Color::Reset {
+                    c.set_bg(bg);
+                }
+            }
+        }
     }
 }
 

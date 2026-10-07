@@ -30,6 +30,9 @@ so you can mix them freely.
 | **Click `pinned`** | Unpin it |
 | **Click `↓ 9 more`** | Focus that panel (it gets the room) |
 | **Wheel** over a panel | Scroll it, without moving its cursor |
+| **Drag** a panel's header | Move it; dropped among the pinned panels it's pinned |
+| **Drag the divider** | Resize the sidebar. Double-click it: automatic width |
+| **⇧-click** a day (the strip, the rail) or a page in the rail | Open it beside |
 | **Click** the main view | The keyboard goes back there |
 
 ## Scrolling
