@@ -2,7 +2,8 @@
 // at commit ba40e547426b0f9896c8bdc699a4ab11f2b37dbc.
 // SPDX-License-Identifier: MPL-2.0. This file is under the Mozilla Public License 2.0;
 // see LICENSE-MPL-2.0 in the `helix` directory.
-// Changes from upstream: module paths; serde derives on `Operation`, `ChangeSet` and `Transaction`.
+// Changes from upstream: module paths; serde derives on `Operation`, `ChangeSet` and `Transaction`;
+// `ChangeSet::map` implemented (operational transform) and `map_ordered` added.
 
 use ropey::RopeSlice;
 use smallvec::SmallVec;
@@ -107,6 +108,20 @@ impl ChangeSet {
     #[doc(hidden)] // used by lsp to convert to LSP changes
     pub fn changes(&self) -> &[Operation] {
         &self.changes
+    }
+
+    /// The length (in chars) of the document the set applies to.
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    /// The length of the document after it.
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn len_after(&self) -> usize {
+        self.len_after
     }
 
     // Changeset builder operations: delete/insert/retain
@@ -309,8 +324,81 @@ impl ChangeSet {
     /// provides a basic form of [operational
     /// transformation](https://en.wikipedia.org/wiki/Operational_transformation),
     /// and can be used for collaborative editing.
-    pub fn map(self, _other: Self) -> Self {
-        unimplemented!()
+    ///
+    /// caretline: implemented here (upstream leaves it `unimplemented!()`). `map` treats
+    /// `other` as coming first; [`ChangeSet::map_ordered`] takes the order. Deletions win:
+    /// text either side deleted stays deleted, and both sides' insertions are kept.
+    pub fn map(self, other: Self) -> Self {
+        self.map_ordered(&other, false)
+    }
+
+    /// [`ChangeSet::map`] with the order of insertions at the same position: with `before`,
+    /// this set's insertions go before `other`'s; otherwise after them.
+    ///
+    /// caretline addition: not in upstream Helix.
+    pub fn map_ordered(&self, other: &Self, before: bool) -> Self {
+        use Operation::*;
+        assert!(self.len == other.len, "map: change sets of different documents");
+        // An empty change set retains everything.
+        let whole = |cs: &ChangeSet| -> Vec<Operation> {
+            if cs.changes.is_empty() && cs.len > 0 {
+                vec![Retain(cs.len)]
+            } else {
+                cs.changes.clone()
+            }
+        };
+        let (a_ops, b_ops) = (whole(self), whole(other));
+        let mut a = a_ops.into_iter();
+        let mut b = b_ops.into_iter();
+        let mut ha = a.next();
+        let mut hb = b.next();
+        let mut out = Self::with_capacity(self.changes.len() + other.changes.len());
+        loop {
+            match (ha.take(), hb.take()) {
+                (None, None) => break,
+                (Some(Insert(s)), Some(Insert(t))) => {
+                    if before {
+                        out.insert(s);
+                        ha = a.next();
+                        hb = Some(Insert(t));
+                    } else {
+                        out.retain(t.chars().count());
+                        ha = Some(Insert(s));
+                        hb = b.next();
+                    }
+                }
+                (Some(Insert(s)), other_head) => {
+                    out.insert(s);
+                    ha = a.next();
+                    hb = other_head;
+                }
+                (this_head, Some(Insert(t))) => {
+                    out.retain(t.chars().count());
+                    ha = this_head;
+                    hb = b.next();
+                }
+                (Some(x), Some(y)) => {
+                    let n = x.len_chars().min(y.len_chars());
+                    match (&x, &y) {
+                        (Retain(_), Retain(_)) => out.retain(n),
+                        (Delete(_), Retain(_)) => out.delete(n),
+                        // `other` deleted these chars: nothing of this set's is left there.
+                        (Retain(_), Delete(_)) | (Delete(_), Delete(_)) => {}
+                        _ => unreachable!(),
+                    }
+                    let rest = |op: Operation, a: &mut std::vec::IntoIter<Operation>| match op {
+                        Retain(m) if m > n => Some(Retain(m - n)),
+                        Delete(m) if m > n => Some(Delete(m - n)),
+                        _ => a.next(),
+                    };
+                    ha = rest(x, &mut a);
+                    hb = rest(y, &mut b);
+                }
+                (x, y) => unreachable!("map: lengths disagree ({x:?}, {y:?})"),
+            }
+        }
+        debug_assert_eq!(out.len, other.len_after);
+        out
     }
 
     /// Returns a new changeset that reverts this one. Useful for `undo` implementation.

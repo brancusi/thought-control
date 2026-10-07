@@ -186,6 +186,10 @@ pub struct Document {
     /// elsewhere ([`crate::Msg::External`]).
     #[serde(rename = "doc_rev", skip_serializing_if = "is_zero")]
     pub rev: u64,
+    /// The history was trimmed at a change from elsewhere ([`ExternalUndo::Barrier`]):
+    /// undo stops there.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub undo_floor: bool,
     /// The outline derived from the text and marks: a memo, not part of the value.
     #[serde(skip)]
     pub(crate) derived: OutlineCache,
@@ -360,6 +364,7 @@ impl Document {
             mark_log: vec![MarkDelta::default()],
             outline: None,
             rev: 0,
+            undo_floor: false,
             derived: OutlineCache::default(),
             edits: EditCount::default(),
             journal: Journal::default(),
@@ -464,6 +469,8 @@ pub struct StateInput {
     #[serde(default)]
     pub doc_rev: u64,
     #[serde(default)]
+    pub undo_floor: bool,
+    #[serde(default)]
     pub folds: BTreeSet<MarkId>,
     #[serde(default)]
     pub read_only: bool,
@@ -544,6 +551,7 @@ impl From<StateInput> for State {
             mark_log: input.mark_log,
             outline: input.outline,
             rev: input.doc_rev,
+            undo_floor: input.undo_floor,
             derived: OutlineCache::default(),
             edits: EditCount::default(),
             journal: Journal::default(),
@@ -610,6 +618,8 @@ struct StateOut<'a> {
     word_drag: &'a Option<(usize, usize)>,
     #[serde(skip_serializing_if = "is_zero")]
     doc_rev: u64,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    undo_floor: bool,
     #[serde(skip_serializing_if = "BTreeSet::is_empty")]
     folds: &'a BTreeSet<MarkId>,
     #[serde(skip_serializing_if = "std::ops::Not::not")]
@@ -667,6 +677,7 @@ impl Serialize for State {
             outline: &d.outline,
             word_drag: &v.word_drag,
             doc_rev: d.rev,
+            undo_floor: d.undo_floor,
             folds: &v.folds,
             read_only: v.read_only,
             focused: v.focused,
