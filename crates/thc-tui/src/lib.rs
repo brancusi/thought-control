@@ -468,6 +468,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 s.readvertise(&session.app.ui.vault_name, &real);
             }
         }
+        // What changed outside messages (the daemon, a poll, an idle save) is recorded first.
+        session.sync_external();
         // Protocol requests that arrived while the last frame was drawn.
         if let Some(s) = server.as_mut() {
             s.pump(session);
@@ -480,7 +482,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         }
         // Time-dependent things on screen (a toast, a flash, the which-key delay, the bar's
         // minute) need the clock to move while nothing is typed.
-        if session.app.ui.wants_clock(runtime_effects::wall_clock().0) {
+        if session.app.ui.wants_clock(runtime_effects::wall_clock().0) || session.app.doc_wants_clock() {
             session.tick_wall();
         }
         let app = &mut session.app;
@@ -584,6 +586,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             s.pump(session);
         }
         if ready {
+            session.sync_external();
             session.tick_wall();
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {

@@ -78,6 +78,10 @@ What's **not** in the state:
 - **Runtime handles:** the vault connection, channels, terminal capabilities, the last frame's
   hit regions and the image protocol. They live beside the state, not in it.
 
+Within `ui_state_version` 1 the state only gains fields. Panels that don't exist yet (the
+sidebar's stack of pages) arrive as new fields, and a client that doesn't know them can ignore
+them.
+
 ### Writing a state
 
 `state.set` (`thc ui set FILE`) replaces the state. **Fields you leave out take their
@@ -130,6 +134,7 @@ order they happened.
 | `focus` | `gained` | The terminal gained or lost focus (losing it saves) |
 | `set_state` | `state`, `actor` | `state.set` |
 | `patch` | `patch`, `actor` | `patch` |
+| `external` | `patch` | A change that came from outside any message, as a merge patch: the daemon's push (an agent's write flashing, an alert toast), a poll that found another device's change, an idle save, an update check. The runtime records it so a trace and subscribers see every change; replay applies it |
 
 ```json
 {"msg":"key","key":"<c-o>"}
@@ -281,9 +286,10 @@ thc ui replay t.jsonl --size 120x40 --format ansi
 
 **Replay is deterministic.** With `THC_NOW` pinned, the same trace on the same vault gives the
 same bytes every run. Replay runs on a scratch copy of the vault, so the keys in a trace can
-write without touching the real one. A trace records UI input, not the data: changes that
-arrived from elsewhere while it was recorded (another device, an agent's writes) aren't in it.
-Replaying on a vault in a different state can draw different rows.
+write without touching the real one. A trace records the UI, not the data. What changed in the
+*state* because of something from elsewhere (a toast, a flash, a moved caret) is in the trace
+as `external` messages and replays. The other device's notes themselves are not, so replaying
+on a vault in a different state can draw different rows.
 
 ## Headless render
 
@@ -386,12 +392,15 @@ still run the older way, inside `Session::apply`, with the vault in reach:
   around it. They're still single messages in the trace and replay deterministically on the
   same vault, but they aren't `update` functions yet.
 - **The document's key path:** `doc_keys.rs` and `doc_app.rs` drive the editor model and save
-  through the writer thread. The editor's own clock is a separate monotonic scale
-  (`editor::ms`) fed by the runtime, not `UiState::now_ms`.
+  through the writer thread on `App`. Its clock is `UiState::now_ms`, so typing runs and idle
+  saves replay, but new lines' ids are minted by the runtime as they're needed and aren't in
+  the trace.
 - **Background work in the terminal loop:** the daemon's pushes and the log poll
   (`drain_live`, `poll_external`), the update check, the registry check, idle saves
-  (`doc_tick`) and the in-place update's progress (`drain_update`). These change rows,
-  flashes and toasts outside messages, so a trace doesn't record them.
+  (`doc_tick`) and the in-place update's progress (`drain_update`) still run as runtime code
+  on `App`. What they change in the state is caught between frames and recorded as an
+  `external` message, so traces and subscribers see it, but they aren't messages with an
+  update of their own yet.
 - **Frame preparation:** `derived::prepare` and `ui::prepare_frame` read the store, settings
   and attachment metadata every frame. This is the explicit derivation stage, run by the
   runtime before the view; it isn't the view, but it isn't memoized on revisions everywhere

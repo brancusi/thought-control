@@ -252,6 +252,15 @@ fn a_running_tui_answers_and_a_pushed_state_changes_its_screen() {
         }
     };
     assert!(event.starts_with("{\"event\":\"state\""), "{event}");
+    // An agent writes to the vault: the TUI's poll finds it, and the state change it makes (the
+    // toast, the flash) reaches subscribers as an `external` message.
+    ok(thc(&r.0).args(["add", "from an agent"]).env("THC_ACTOR", "claude").env_remove("THC_NOW").env_remove("THC_FIXTURE_IDS"));
+    loop {
+        let l = rx.recv_timeout(std::time::Duration::from_secs(10)).expect("an external event for the agent's write");
+        if l.contains("\"msg\":\"external\"") {
+            break;
+        }
+    }
     drop(sub);
 
     // Read-tier agents can read but not steer.

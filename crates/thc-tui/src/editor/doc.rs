@@ -42,9 +42,9 @@ pub struct Line {
     pub saved_status: Option<String>,
     pub is_new: bool,
     pub conflict: bool,
-    /// The meta flashes accent until then (values settling after a save), in ms ([`super::ms`]).
+    /// The meta flashes accent until then (values settling after a save), in ms on the UI's logical clock (`UiState::now_ms`).
     pub flash_until: Option<u64>,
-    /// A save in flight since (◌ after 3 s), in ms ([`super::ms`]).
+    /// A save in flight since (◌ after 3 s), in ms on the UI's logical clock (`UiState::now_ms`).
     pub saving_since: Option<u64>,
     pub save_error: Option<String>,
     /// Changed elsewhere while you're on it (§9): the new text, applied when you leave.
@@ -244,7 +244,7 @@ pub struct Doc {
     pub(super) wraps: Wraps,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
-    /// The clock as the runtime last gave it ([`Doc::tick`], ms on [`super::ms`]'s scale).
+    /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
 }
 
@@ -362,7 +362,7 @@ impl Doc {
         self.engine.take_host_changes();
     }
 
-    /// The runtime's clock (ms, [`super::ms`]), before it hands the document input: idle saves,
+    /// The runtime's clock (ms on the UI's logical clock, `UiState::now_ms`), before it hands the document input: idle saves,
     /// flashes and the engine's typing runs read it; the model reads no clock itself.
     pub fn tick(&mut self, now_ms: u64) {
         self.now_ms = now_ms;
