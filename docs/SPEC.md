@@ -476,6 +476,8 @@ The rendered `base` is stored, so if someone else changed the same nodes in the 
 
 **Install:** a launchd LaunchAgent (`thc daemon install`, or registered by the Mac app through `SMAppService`), or a `systemd --user` unit on Linux.
 
+**Reinstalls and updates:** an install renames a new binary over the old one, which keeps the path (and the version, for a rebuild), so a running daemon can't be judged by those alone. The daemon records which file it started from (`exe_id`, `dev:inode`, in `status`); a daemon whose file has since been replaced, or that runs another binary than its login item names, is *stale*. `thc setup` (install.sh's last step), `thc daemon install`, `thc daemon start` and `thc update` restart a stale daemon through whatever runs it (launchd `kickstart -k`, `systemctl --user restart`, or a plain stop and spawn), wait for the new process to answer and report it. `thc daemon install` also points a login item that names another binary at this one. `thc daemon status --json` carries `stale` (why) and `thc doctor` lists it as an issue with the fix.
+
 **As built (M2):**
 - **Writes:** the CLI and TUI write directly under the device write lock (`flock` on `<cache>/write.lock`, plus `BEGIN IMMEDIATE`). They never route writes through the socket, so they never depend on the daemon. The daemon sees every append to the log, this device's included, and pushes `changed` within ~120 ms. The socket's write methods (`capture`, `complete`, `set`, `snooze`, `ack`, `undo`) exist for clients without file access, such as ThoughtBar, and take the same lock.
 - **Socket:** `/tmp/thc-<uid>/<hash of cache dir>.sock`, mode 0600, because macOS caps socket paths at 104 bytes. Clients discover it through `<cache>/daemon.json`.

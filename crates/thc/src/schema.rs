@@ -226,7 +226,7 @@ fn defs() -> Value {
             "type": "object", "required": ["state"],
             "properties": {
                 "state": { "enum": ["live", "offline"] }, "pid": { "type": "integer" }, "version": { "type": "string" }, "proto": { "type": "integer" },
-                "socket": { "type": "string", "description": "unix socket path (live only)" }, "exe": { "type": "string", "description": "the running daemon's binary" }, "vault": { "type": "string" }, "device": { "type": "string" },
+                "socket": { "type": "string", "description": "unix socket path (live only)" }, "exe": { "type": "string", "description": "the running daemon's binary" }, "exe_id": { "type": "string", "description": "dev:inode of the binary the daemon started from (differs from the file at exe once an install replaced it)" }, "started_ms": { "type": "integer" }, "stale": { "type": "string", "description": "why the daemon isn't on the binary its login item (or this thc) runs; absent when current" }, "vault": { "type": "string" }, "device": { "type": "string" },
                 "uptime_s": { "type": "integer" }, "notify": { "type": "string" }, "alerts": { "type": "object" }, "install": { "type": "object" }, "devices": {}, "last_change": {},
                 "vault_source": { "$ref": "#/$defs/VaultSource" }
             }
@@ -382,7 +382,7 @@ fn output_for(cmd: &str) -> Value {
         "alert" => json!({ "type": "object", "properties": { "alerts": { "type": "array", "items": { "$ref": "#/$defs/Alert" } }, "alert": { "$ref": "#/$defs/Alert" } } }),
         "conflict" => json!({ "type": "object", "properties": { "conflicts": { "type": "array", "items": { "$ref": "#/$defs/Conflict" } } } }),
         "daemon" => r("DaemonStatus"),
-        "doctor" => json!({ "type": "object", "properties": { "issues": { "type": "array", "items": { "type": "string" } }, "notices": { "type": "array", "items": { "type": "string" } } } }),
+        "doctor" => json!({ "type": "object", "properties": { "issues": { "type": "array", "items": { "type": "string" } }, "notices": { "type": "array", "items": { "type": "string" } }, "daemon": { "type": "object", "description": "the vault's daemon: state, version, exe, manager, and stale (why it isn't on the expected binary) when it isn't" } } }),
         _ => json!({ "type": "object" }),
     }
 }

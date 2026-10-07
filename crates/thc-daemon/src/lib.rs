@@ -131,6 +131,8 @@ impl Shared {
 /// every vault, not only home. The registry is watched (read every half second, compared): a
 /// vault added starts at once, one removed stops, one renamed restarts under its new name.
 pub fn run(paths: Paths, opts: RunOpts) -> Result<()> {
+    // Which file this process runs, before an install can replace it (status reports it).
+    let _ = proto::own_exe_identity();
     if !opts.host {
         return serve(paths, opts, true);
     }
@@ -734,6 +736,8 @@ pub fn status_json(shared: &Shared) -> Result<Value> {
         "watching": shared.watching.load(Ordering::SeqCst),
         "version": VERSION,
         "exe": std::env::current_exe().ok().map(|p| p.display().to_string()),
+        "exe_id": proto::own_exe_identity(),
+        "started_ms": shared.started_ms,
         "proto": PROTO_VERSION,
         "socket": shared.socket,
         "vault": v.paths.vault,

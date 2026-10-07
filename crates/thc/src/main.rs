@@ -2487,9 +2487,14 @@ fn doctor(ctx: &mut Ctx) -> Result<()> {
     for o in &drift.orphans {
         notices.push(format!("attachment {} isn't shown anywhere · thc show {} --json", ctx.store().short(o), ctx.store().short(o)));
     }
+    // The daemon on another binary than it should be (an install replaced thc and nothing
+    // restarted it), or another version than this thc.
+    let (daemon, daemon_issue) = daemon_cmd::health(&ctx.vault.paths);
+    issues.extend(daemon_issue);
     let v = json!({
         "vault": ctx.vault.paths.vault,
         "vault_source": vault_source_json(),
+        "daemon": daemon,
         "cache": ctx.vault.paths.cache,
         "device": ctx.vault.device,
         "devices": devices,
@@ -2509,6 +2514,11 @@ fn doctor(ctx: &mut Ctx) -> Result<()> {
         ctx.out.line(format!("device   {}  ({} device(s) in log)", ctx.vault.device, devices.len()));
         ctx.out.line(format!("events   {events} in {} log file(s)", files.len()));
         ctx.out.line(format!("nodes    {nodes} ({tasks_open} open tasks)"));
+        let d = &v["daemon"];
+        ctx.out.line(match d["state"].as_str() {
+            Some("live") => format!("daemon   live · pid {} · thc {} · {}", d["pid"], d["version"].as_str().unwrap_or("?"), d["manager"].as_str().unwrap_or("?")),
+            _ => "daemon   offline".to_string(),
+        });
         for n in &notices {
             let l = ctx.out.dim(&format!("· {n}"));
             ctx.out.line(l);

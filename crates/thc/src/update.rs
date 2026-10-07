@@ -219,7 +219,7 @@ fn restart_daemon(bin: &Path, expect: &str) -> Option<String> {
         let mut c = Command::new(bin);
         c.args(args).current_dir("/").stdin(std::process::Stdio::null());
         for k in ["THC_VAULT", "THC_CACHE_DIR"] {
-            if let Some(v) = crate::daemon_cmd::plist_env(k) {
+            if let Some(v) = crate::daemon_cmd::login_env(k) {
                 c.env(k, v);
             }
         }
@@ -238,6 +238,25 @@ fn restart_daemon(bin: &Path, expect: &str) -> Option<String> {
         Some(v) if v["version"].as_str() == Some(expect) => "daemon restarted on the new thc".into(),
         Some(v) if v["state"] == "live" => format!("! the daemon still runs thc {} · thc daemon restart", v["version"].as_str().unwrap_or("?")),
         _ => "! the daemon didn't come back · thc daemon start".into(),
+    })
+}
+
+/// The new binary's restart (`update --finish`): the login daemon (its vault from the login
+/// item, never whatever the caller's directory resolves to) restarts through whatever runs it,
+/// launchd, systemd or a plain process, and must come back on `expect`. None when no daemon runs.
+fn finish_daemon(me: &Path, expect: &str) -> Option<String> {
+    // A .thc.toml in the caller's directory once made update skip the restart.
+    let _ = std::env::set_current_dir("/");
+    let paths = crate::daemon_cmd::login_paths().or_else(|| thc_core::vault::Paths::resolve(std::env::var_os("THC_VAULT").map(PathBuf::from).as_deref()).ok())?;
+    let expect = expect.trim_start_matches("thc ").trim();
+    Some(match crate::daemon_cmd::ensure(&paths, me, true) {
+        Ok(e) if e.action == "offline" => return None,
+        Ok(e) => match &e.after {
+            Some(v) if v["version"].as_str() == Some(expect) => "daemon restarted on the new thc".into(),
+            Some(v) => format!("! the daemon still runs thc {} · thc daemon restart", v["version"].as_str().unwrap_or("?")),
+            None => "! the daemon didn't come back · thc daemon start".into(),
+        },
+        Err(e) => format!("! daemon restart failed: {e:#} · thc daemon restart"),
     })
 }
 
@@ -273,7 +292,7 @@ pub fn run(out: &mut Out, check: bool, rollback: bool, finish: Option<&str>) -> 
     // The new binary's half of an update (see finish_with): always JSON, for the old binary.
     if let Some(to) = finish {
         let me = std::env::current_exe()?;
-        let daemon = restart_daemon(&me, to);
+        let daemon = finish_daemon(&me, to);
         let agents = refresh_agents(&me);
         println!("{}", json!({ "daemon": daemon, "agents": agents }));
         return Ok(());

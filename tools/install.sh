@@ -6,7 +6,9 @@
 # Puts thc in ~/.local/bin, then runs `thc setup --all --yes`: the vault (~/thought), PATH, the
 # background daemon (a LaunchAgent) and agent skills. If thc is currently a link into
 # Thought Central.app, it migrates: the standalone binary replaces the link, the app's login item
-# goes, and thc's own runs the daemon.
+# goes, and thc's own runs the daemon. A daemon still running the binary this install replaced
+# (same path, maybe the same version) is restarted onto the new one by setup's login step, through
+# launchd, and setup waits for it to answer.
 #
 # Checks before anything is installed: the tarball's sha256 against the manifest, every manifest
 # signature against the ed25519 key built into thc, and that the binary reports the manifest's version.

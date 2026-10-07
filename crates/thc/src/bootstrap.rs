@@ -455,20 +455,32 @@ fn login_step(env: &Env, rec: &mut Record) -> Step {
     }
     // CLI-only: thc's own LaunchAgent (or systemd unit), which also starts the daemon now.
     let was = crate::daemon_cmd::install_info();
-    let o = Command::new(&env.exe).args(["daemon", "install"]).current_dir("/").stdin(Stdio::null()).output();
+    // Installed before, `daemon install` also points the login item at this binary and restarts
+    // a daemon still running the one this install replaced (through launchd or systemd), so a
+    // reinstall or update never leaves the old version running.
+    let o = Command::new(&env.exe).args(["--json", "daemon", "install"]).current_dir("/").stdin(Stdio::null()).output();
     match o {
         Ok(o) if o.status.success() => {
+            let said: serde_json::Value = serde_json::from_slice(&o.stdout).unwrap_or_default();
             let info = crate::daemon_cmd::install_info();
             let kind = info["kind"].as_str().unwrap_or("none").to_string();
             let path = info["path"].as_str().map(PathBuf::from);
             // Installed before: make sure it's running too (a stopped daemon isn't "already").
             let _ = Command::new(&env.exe).args(["daemon", "start"]).current_dir("/").stdin(Stdio::null()).output();
-            if was["kind"] == "none" {
+            let mut s = if was["kind"] == "none" {
                 rec.put(Item { piece: "login".into(), path, target: None, agent: None, kind: Some(kind), created: true, at: now() });
+                Step::new("login", "done", "Running in the background · starts at login").short("running · starts at login")
+            } else if said["note"].is_string() {
+                // A restart onto this binary is work done, not "already".
                 Step::new("login", "done", "Running in the background · starts at login").short("running · starts at login")
             } else {
                 Step::new("login", "already", "Running in the background · starts at login").short("running · starts at login")
+            };
+            if let Some(note) = said["note"].as_str() {
+                s.short = Some(format!("running · starts at login · {note}"));
+                s.detail = Some(note.to_string());
             }
+            s
         }
         Ok(o) => Step::failed("login", "Couldn't start thc", anyhow!("{}", String::from_utf8_lossy(&o.stderr).trim().trim_start_matches("thc: "))),
         Err(e) => Step::failed("login", "Couldn't start thc", e),
