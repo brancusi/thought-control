@@ -1,0 +1,187 @@
+{
+  "text": "Undo keeps text, caret and selection exactly.\nRedo puts the change back.\n",
+  "selection": {
+    "ranges": [
+      {
+        "anchor": 10,
+        "head": 10,
+        "old_visual_position": null
+      }
+    ],
+    "primary_index": 0
+  },
+  "scroll": {
+    "line": 0,
+    "row": 0,
+    "col": 0
+  },
+  "viewport": {
+    "width": 50,
+    "height": 5
+  },
+  "clipboard": "",
+  "path": "undo.md",
+  "history": {
+    "revisions": [
+      {
+        "parent": 0,
+        "last_child": 1,
+        "transaction": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "inversion": {
+          "changes": {
+            "changes": [],
+            "len": 0,
+            "len_after": 0
+          },
+          "selection": null
+        },
+        "timestamp": 0
+      },
+      {
+        "parent": 0,
+        "last_child": 2,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 5
+              },
+              {
+                "Insert": "keeps"
+              },
+              {
+                "Delete": 8
+              },
+              {
+                "Retain": 63
+              }
+            ],
+            "len": 76,
+            "len_after": 73
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 10,
+                "head": 10,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 5
+              },
+              {
+                "Insert": "restores"
+              },
+              {
+                "Delete": 5
+              },
+              {
+                "Retain": 63
+              }
+            ],
+            "len": 73,
+            "len_after": 76
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 13,
+                "head": 5,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 2000
+      },
+      {
+        "parent": 1,
+        "last_child": null,
+        "transaction": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 10
+              },
+              {
+                "Insert": "\nNew line typed here."
+              },
+              {
+                "Retain": 63
+              }
+            ],
+            "len": 73,
+            "len_after": 94
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 31,
+                "head": 31,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "inversion": {
+          "changes": {
+            "changes": [
+              {
+                "Retain": 10
+              },
+              {
+                "Delete": 21
+              },
+              {
+                "Retain": 63
+              }
+            ],
+            "len": 94,
+            "len_after": 73
+          },
+          "selection": {
+            "ranges": [
+              {
+                "anchor": 10,
+                "head": 10,
+                "old_visual_position": null
+              }
+            ],
+            "primary_index": 0
+          }
+        },
+        "timestamp": 4000
+      }
+    ],
+    "current": 1
+  },
+  "saved_revision": 0,
+  "saving": null,
+  "dirty": true,
+  "config": {
+    "tab_width": 4,
+    "soft_wrap": true,
+    "scrolloff": 2,
+    "line_ending": "LF"
+  },
+  "status": null,
+  "now_ms": 6000,
+  "run": null,
+  "quit_armed": false
+}
