@@ -8,7 +8,7 @@ socket from a script.
 ## Summary
 
 The engine is not the bottleneck for anything a person or a terminal does. An edit costs 1–2 µs,
-a caret move 10–30 µs, a socket round trip about 13 µs and a typical frame about 0.13 ms.
+a caret move 2–10 µs, a socket round trip about 13 µs and a typical frame about 0.13 ms.
 Document size barely matters: a million-line document edits and scrolls as fast as a
 hundred-line one. The practical ceilings are outside caretline: how fast the terminal paints and
 how fast a client can produce input.
@@ -20,7 +20,9 @@ how fast a client can produce input.
 | `msgs`, one edit, in process | 1.6 µs | 1.7 µs |
 | `msgs`, one edit, socket round trip | 13.4 µs | 14.2 µs |
 | `hello`, socket round trip | 11.4 µs | 11.5 µs |
-| `keys "<down>"`, socket round trip | 42.9 µs | 34.8 µs |
+| `keys "<down>"`, socket round trip | 24.5 µs (was 42.9) | 21.0 µs (was 34.8) |
+| `msgs` move down (what `<down>` becomes), socket round trip | 24.9 µs | 21.1 µs |
+| `keys`, one edit (`x` or `<bs>`), in process | 1.5 µs | 1.7 µs |
 | `render` 100×40, in process | 127 µs | 128 µs |
 | `render` 100×40, socket round trip | 144 µs | 145 µs |
 | `state.get`, in process | 22 µs | 2.55 ms |
@@ -30,12 +32,27 @@ how fast a client can produce input.
 |---|---|
 | `tick` | 0.8 µs |
 | move by grapheme | 9.5 µs |
-| move by visual line | 28.4 µs |
+| move by visual line, caret at the bottom of a 40-row view | 9.1 µs (was 28.4) |
 | a realistic mix | ≈ 32,000 messages/s |
 
 **Typing runs** (one `insert_text` per character, no clock) cost about 10 µs per character at
 any length: 16,000 characters take 0.15 s and 64,000 take 0.6 s. Before the wrap cache and undo-run
 caps this was quadratic (8.1 s for 16,000 characters).
+
+### Why `keys "<down>"` looked 3× slower than `msgs`
+
+It wasn't the key script. Parsing a script and running it through the keymap costs well under
+a microsecond, and `keys` and `msgs` with the same edit cost the same (1.5 µs in process). The
+bench compared a `<down>` at the bottom of the view with an edit at the top: every message ends
+by keeping the caret in view, which counts the rows between the top of the view and the caret,
+and that count looked each line up in the rope and walked its chars. Now plain text walks the
+lines with one iterator and places a line on one row from its byte length (no char but a tab
+is wider than its UTF-8 bytes), formatting only lines that might wrap. A motion at the bottom
+of the view went from 28 µs to 9 µs in process, and `keys "<down>"` over a socket is now the
+same as the `msgs` it becomes and about 1.5× a one-edit `msgs` at the top of the document (the
+remaining difference is the view walk the bottom of the view still needs). Keeping the caret in
+view at the very end of a document also walks up from the end, so the last screen of a
+document costs a few microseconds more than the middle.
 
 ## Stress test (live editor, driven over the socket)
 
@@ -87,7 +104,6 @@ trace; when states arrive faster than the terminal paints, the screen shows the 
 | Gap | Impact | Plan |
 |---|---|---|
 | `state.get` includes the whole undo history | 1.5 MB after 3,000 small edits; 9 MB on a 100,000-line document | `state.get {history: false}` and a separate `history.get` |
-| `keys` costs about 3× an equivalent `msgs` | 35–43 µs against 13 µs per round trip | cache parsed key scripts and keymap tables |
 | Outline blocks are re-derived on every edit | ≈ 1 ms per key at 5,000 blocks | make derivation incremental if pages approach 50,000 blocks |
 | No synchronized output | frames can tear in the terminal | wrap each repaint in synchronized-update mode (DEC 2026) |
 | Repaints follow input, not the display | wasted work past the display rate | coalesce to one paint per refresh; redraw changed cells only |

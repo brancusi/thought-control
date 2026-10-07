@@ -557,6 +557,12 @@ impl Layout {
         lf.before + self.text_rows_with(line, &lf) + lf.after
     }
 
+    /// A cursor for counting the rows of neighbouring lines one after another (see
+    /// [`LineWalk`]).
+    fn walk(&self) -> LineWalk<'_> {
+        LineWalk { layout: self, lines: None }
+    }
+
     /// The rows line `line`'s text takes.
     pub fn text_rows_of(&self, line: usize) -> usize {
         let lf = self.line_format(line);
@@ -610,8 +616,14 @@ impl Layout {
         let fmt = self.fmt_of(lf);
         let width = fmt.viewport_width as usize;
         let tab = fmt.tab_width as usize;
+        // `Rope::line` skips the full-slice bookkeeping `RopeSlice::line` pays.
+        let text = self.rope.line(line);
+        let rest = if lf.skip == 0 { text } else { text.slice(lf.skip.min(text.len_chars())..) };
+        if surely_fits(rest, width, tab) {
+            return true;
+        }
         let mut sum = 1;
-        for c in self.text().line(line).chars().skip(lf.skip) {
+        for c in rest.chars() {
             sum += match c {
                 '\t' => tab,
                 c if char_is_line_ending(c) => 0,
@@ -706,12 +718,13 @@ impl Layout {
     /// the document. Hidden lines take no rows. Returns the position and how many rows were
     /// actually moved.
     pub fn step_rows(&self, at: RowPos, n: isize) -> (RowPos, isize) {
+        let mut walk = self.walk();
         let mut pos = at;
         let mut moved: isize = 0;
         if n >= 0 {
             let mut left = n as usize;
             while left > 0 {
-                let rows = self.line_rows(pos.line).max(1);
+                let rows = walk.rows(pos.line).max(1);
                 if pos.row + left < rows {
                     pos.row += left;
                     moved += left as isize;
@@ -740,7 +753,7 @@ impl Layout {
                     left -= step;
                     moved -= step as isize;
                     pos.line = prev;
-                    pos.row = self.line_rows(prev).max(1) - 1;
+                    pos.row = walk.rows(prev).max(1) - 1;
                 } else {
                     moved -= pos.row as isize;
                     pos.row = 0;
@@ -760,8 +773,9 @@ impl Layout {
         let mut sum = 0usize;
         let mut line = from.line;
         let mut row = from.row;
+        let mut walk = self.walk();
         while line < to.line {
-            sum += self.line_rows(line).saturating_sub(row);
+            sum += walk.rows(line).saturating_sub(row);
             row = 0;
             line += 1;
             if let Some((_, b)) = crate::views::hidden_range(&self.hidden, line) {
@@ -876,6 +890,67 @@ pub fn ensure_caret_visible(state: &mut State) {
     layout.store(state);
 }
 
+/// Counts the rows of lines visited one next to another (stepping or measuring rows). In
+/// plain text (no outline, no folds) it keeps a lines iterator beside the last line it saw,
+/// so a neighbour costs no tree descent, and only a line the width bound can't place on one
+/// row is formatted. Otherwise it is [`Layout::line_rows`].
+struct LineWalk<'a> {
+    layout: &'a Layout,
+    /// The iterator and the line its `next` returns.
+    lines: Option<(crate::helix::ropey::iter::Lines<'a>, usize)>,
+}
+
+impl LineWalk<'_> {
+    fn rows(&mut self, line: usize) -> usize {
+        let l = self.layout;
+        if l.outline.is_some() || !l.hidden.is_empty() {
+            return l.line_rows(line);
+        }
+        if !l.fmt.soft_wrap {
+            return 1;
+        }
+        let slice = match &mut self.lines {
+            Some((it, at)) if *at == line => {
+                *at += 1;
+                it.next()
+            }
+            Some((it, at)) if *at == line + 1 => {
+                *at = line;
+                it.prev()
+            }
+            _ => {
+                let mut it = l.rope.lines_at(line);
+                let s = it.next();
+                self.lines = Some((it, line + 1));
+                s
+            }
+        };
+        match slice {
+            Some(s) if surely_fits(s, l.fmt.viewport_width as usize, l.fmt.tab_width as usize) => 1,
+            _ => l.line_rows(line),
+        }
+    }
+}
+
+/// Whether a line's text surely fits on one row of `width` cells, by a bound that needs no
+/// char walk: no char but a tab is wider than its UTF-8 bytes (a double-width char is at least
+/// 3 bytes), so the bytes plus the tabs' extra cells, plus a cell for the line end, bound the
+/// width. `false` means "maybe not": format the line to know.
+fn surely_fits(line: RopeSlice<'_>, width: usize, tab: usize) -> bool {
+    let mut bytes = 0;
+    let mut tabs = 0;
+    for chunk in line.chunks() {
+        bytes += chunk.len();
+        if chunk.contains('\t') {
+            tabs += chunk.matches('\t').count();
+        }
+        if bytes >= width {
+            return false;
+        }
+    }
+    1 + bytes + tabs * tab.saturating_sub(1) < width
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -904,6 +979,34 @@ mod tests {
             if layout.fits_one_row(0, &layout.line_format(0)) {
                 assert_eq!(layout.formatted_rows(0), 1, "{line:?} at width {width}");
             }
+        }
+    }
+
+    /// The line walk (an iterator beside the last line, and the width bound) counts the
+    /// same rows as asking each line on its own, stepping down, up and measuring.
+    #[test]
+    fn the_line_walk_counts_what_line_rows_counts() {
+        let pieces = ["a", "word ", "\t", "界", "🙂", "e\u{301}", "  ", "long-unbroken-token", "\n"];
+        let mut next = xorshift(0x9e37_79b9);
+        for _ in 0..200 {
+            let mut text = String::new();
+            for _ in 0..(next() % 300) {
+                text.push_str(pieces[next() as usize % pieces.len()]);
+            }
+            let width = 11 + (next() % 40) as u16;
+            let state = State::new(&text, None, Viewport { width, height: 10 });
+            let layout = Layout::new(&state);
+            let last = layout.last_line();
+            let rows: Vec<usize> = (0..=last).map(|l| layout.line_rows(l)).collect();
+            let a = (next() as usize) % (last + 1);
+            let b = (next() as usize) % (last + 1);
+            let (a, b) = (a.min(b), a.max(b));
+            let want: usize = rows[a..b].iter().sum();
+            let from = RowPos { line: a, row: 0 };
+            let to = RowPos { line: b, row: 0 };
+            assert_eq!(layout.rows_between(from, to, usize::MAX / 2), want as isize, "{text:?} at {width}");
+            assert_eq!(layout.step_rows(from, want as isize), (to, want as isize), "{text:?} at {width}");
+            assert_eq!(layout.step_rows(to, -(want as isize)), (from, -(want as isize)), "{text:?} at {width}");
         }
     }
 
