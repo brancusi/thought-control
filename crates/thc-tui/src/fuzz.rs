@@ -179,10 +179,14 @@ pub(crate) fn settle(app: &mut App) {
     panic!("the saves never settled");
 }
 
-/// Save everything and wait for it (through the late writer when there is one).
+/// Save everything and wait for it (through the late writer when there is one). Twice: a
+/// result can leave something to save (a ≠ note emptied is saved as text first, and deleted
+/// once the save clears the ≠).
 fn flush(app: &mut App) {
-    app.save_doc(true);
-    app.drain_saves(true);
+    for _ in 0..2 {
+        app.save_doc(true);
+        app.drain_saves(true);
+    }
 }
 
 /// The late writer hands back the one result it holds, if any.
@@ -316,7 +320,9 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
             };
             // (A remote text held for a line lands as the caret leaves it: that's the remote
             // edit, not the motion, so a document holding one isn't compared.)
-            let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape));
+            // (Nor one with a refresh from the vault waiting for a save: it lands when the
+            // save's result does, whatever the next op is.)
+            let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape)) || app.doc_saver.as_ref().is_some_and(|s| s.patch_waiting());
             let texts_before: Option<Vec<String>> = (matches!(op, Op::Move(_) | Op::Select(_)) && !holding).then(|| app.doc.as_ref().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default());
             apply(&mut app, *op);
             // The late writer answers now and then: one result at a time, at random.
@@ -1031,6 +1037,26 @@ mod soak_found {
     fn a_bullet_saved_as_a_box_reads_back_as_a_task() {
         let ops = vec![Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Enter, Op::Paste("- [x] done item"), Op::Enter, Op::Type("漢字"), Op::Undo, Op::Undo, Op::TaskCycle, Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Tab, Op::Click(33, 15), Op::Tab, Op::Paste("- [x] done item"), Op::MoveLine(false), Op::Tab, Op::Click(19, 16), Op::Enter, Op::Bs];
         if let Err(e) = run(&ops, 4, "soak108") {
+            panic!("{e}");
+        }
+    }
+
+    /// A ≠ note emptied is saved as text, and deleted once that save clears the ≠: the fuzz's
+    /// flush saves until nothing's left (2000×200 soak, case 466).
+    #[test]
+    fn an_emptied_conflicted_note_goes_after_its_save() {
+        let ops = vec![Enter, LeaveReturn, Click(6, 15), Bs, Type("end."), Type("dash-y"), Type("end."), BackTab, Enter, Type("two words"), Type("dash-y"), Bs, TaskCycle, Type("end."), Marker("1. "), Marker("- "), Remote(3), Type("dash-y"), Type("two words"), Select(KeyCode::Left), Undo, Move(KeyCode::Up)];
+        if let Err(e) = run(&ops, 4, "soak466") {
+            panic!("{e}");
+        }
+    }
+
+    /// A refresh from the vault waiting on a late save lands with the save's result, on
+    /// whatever op comes next (a motion here): not the motion's doing (case 110).
+    #[test]
+    fn a_waiting_refresh_isnt_the_next_motions() {
+        let ops = vec![Type("end."), Marker("1. "), Remote(2), Type("two words"), Bs, Type("x"), Paste("line a\nline b"), Type("bé"), Type("end."), Paste("line a\nline b"), Tab, Paste("- [x] done item"), LeaveReturn, Move(KeyCode::Right), Type("alpha"), MoveLine(false), Enter, TaskCycle, Remote(5), Marker("- "), Type("bé"), Paste("- one\n- [ ] two\n\nthird para"), Type("alpha"), Bs, Type("🙂"), Enter, BackTab, Marker("1. "), Type("dash-y"), Type("漢字"), Enter, Type("漢字"), Enter, Move(KeyCode::PageDown), TaskCycle, Select(KeyCode::Right), Type("x"), Bs, LeaveReturn, Undo, MoveLine(true), Tab, Cut, TaskCycle, Type("🙂"), Marker("* "), Move(KeyCode::PageDown), TaskCycle, Type("🙂"), Enter, Enter, MoveLine(false), Click(4, 14), MoveLine(false), Undo, Remote(1), Tab, Type("漢字"), Type("bé"), Marker("[ ] "), BackTab, Type("bé"), Type("alpha"), MoveLine(true), Enter, Remote(3), MoveLine(false), Type("x"), MoveLine(true), Enter, Paste("- [x] done item"), Marker("[ ] "), Redo, Paste("line a\nline b"), Bs, Type("dash-y"), Move(KeyCode::Left), Remote(1), Click(11, 27), MoveLine(true), Marker("- "), Click(26, 8), Enter, Paste("- [x] done item"), Bs, Enter, Type("bé"), Enter, Marker("* "), Type("漢字"), LeaveReturn, Type("dash-y"), Enter, Marker("[ ] "), Paste("- one\n- [ ] two\n\nthird para"), Select(KeyCode::Left), Type("dash-y"), Enter, Undo, Bs, BackTab, Move(KeyCode::PageDown), Paste("line a\nline b"), LeaveReturn, Type("alpha"), Select(KeyCode::Up), Redo, Enter, Enter, TaskCycle, Type("alpha"), Move(KeyCode::Left), Bs, Remote(2), MoveLine(true), Type("x"), Bs, LeaveReturn, Move(KeyCode::Right), Marker("* "), Type("two words"), Type("alpha"), Enter, LeaveReturn, Remote(2), Tab, MoveLine(false), Type("bé"), Cut, Select(KeyCode::Up), Type("end."), Undo, Type("🙂"), Bs, Tab, Tab, Type("漢字"), BackTab, Click(17, 7), Enter, Type("bé"), Enter, Move(KeyCode::Home), Type("alpha"), Type("x"), TaskCycle, Remote(0), Select(KeyCode::Up)];
+        if let Err(e) = run_with(&ops, 4, "soak110", Some(0xBADC_0FFE ^ 110)) {
             panic!("{e}");
         }
     }

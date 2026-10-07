@@ -42,6 +42,13 @@ pub struct Saver {
 }
 
 impl Saver {
+    /// A refresh from the vault waits for the save that's out (the fuzz: a change from
+    /// elsewhere is still to land).
+    #[cfg(test)]
+    pub(crate) fn patch_waiting(&self) -> bool {
+        self.patch
+    }
+
     fn spawn(paths: thc_core::vault::Paths) -> Saver {
         let (tx, jobs) = std::sync::mpsc::channel::<Job>();
         let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
