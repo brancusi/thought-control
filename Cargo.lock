@@ -192,7 +192,7 @@ checksum = "fc652a48c352aef3ea3aed32080501cf3ef6ed5da78602a020c991775b0aff04"
 
 [[package]]
 name = "caretline"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "log",
  "rand 0.9.5",
@@ -208,7 +208,7 @@ dependencies = [
 
 [[package]]
 name = "caretline-cli"
-version = "0.2.1"
+version = "0.3.0"
 dependencies = [
  "caretline",
  "clap",

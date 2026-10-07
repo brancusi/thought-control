@@ -18,7 +18,7 @@ cargo add caretline
 
 ```toml
 [dependencies]
-caretline = "0.2"
+caretline = "0.3"
 ```
 
 Its library is `caretline::`; this repository's crate is the same code. A few things on `main` are newer than the latest release;
