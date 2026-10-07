@@ -60,6 +60,7 @@ deletes exactly the selection.
 | `line_end` | The end of the caret's visual row (`dir` is ignored) |
 | `page` | A screenful of visual rows; the view scrolls by the same amount |
 | `doc_start`, `doc_end` | The start or end of the document (`dir` is ignored) |
+| `block` | In an [outline](outline.md): the next block's content start, or back to this block's (then the previous one's). Elsewhere, as `line` |
 
 **Collapse rules.** A motion without `extend` on a non-empty selection collapses it instead
 of moving from the caret. Backward goes to the selection's start and forward to its end. Up
@@ -88,6 +89,29 @@ the last row to the end, as in a macOS text field.
 | `Tick { now_ms }` | `{"msg":"tick","now_ms":1000}` | Reports the time. Undo grouping uses it |
 | `ShowStatus { text }` | `{"msg":"show_status","text":"hi"}` | Shows a one-line message in the status bar (the first line of `text`) |
 
+### Outline documents
+
+These act on [outline documents](outline.md) (`state.outline` set). Elsewhere they only set the
+status message `only in outline documents`, except `soft_break` (a line break),
+`select_word_at` and `paste_plain` (a paste). In an outline, Enter, Backspace, Delete, the word
+and line deletes, typing, copy, cut and paste also follow the outline's rules (see
+[outline.md](outline.md#the-rules)).
+
+| Msg | JSON | Does |
+|---|---|---|
+| `SoftBreak` | `{"msg":"soft_break"}` | A line break inside the block (in a paragraph, as Enter) |
+| `Indent`, `Outdent` | `{"msg":"indent"}` | Nests the caret's block, or every block the selection touches, one level deeper or shallower |
+| `TaskCycle` | `{"msg":"task_cycle"}` | Text → open task → done → text, on the caret's block or the selected blocks. Inside a multi-line paragraph, splits the selected lines out as tasks |
+| `SetStatus { id, ch }` | `{"msg":"set_status","id":3,"ch":"x"}` | Sets a task's box character (a click on the box) |
+| `MoveBlock { dir }` | `{"msg":"move_block","dir":"backward"}` | Swaps the caret's block and its children with the previous or next sibling |
+| `SelectBlock { id }` | `{"msg":"select_block","id":3}` | Selects a block's content |
+| `SelectWordAt { pos }` | `{"msg":"select_word_at","pos":12}` | Selects the word at a char position; a `click` with `extend` right after extends by words |
+| `InsertBlocks { after, blocks }` | `{"msg":"insert_blocks","after":3,"blocks":[{"kind":"task","status":" ","text":"Call Ana"}]}` | Inserts host blocks after a block, or at the start without `after`. One undo step |
+| `PastePlain { text }` | `{"msg":"paste_plain","text":"a\nb"}` | Pastes as paragraphs with their line breaks kept |
+
+A block is named by its mark id, a number. A `NewBlock` is `{"depth":0,"kind":"para"|"bullet"|"task","status":" ","text":"…","gap":true,"mark":7}`;
+everything but `kind` and `text` is optional.
+
 `tick`, `resize`, `saved`, `save_failed` (and `show_status`) are **passive**. They don't
 clear the status message, don't end a typing run and don't disarm a pending quit.
 
@@ -98,6 +122,10 @@ clear the status message, don't end a typing run and don't disarm a pending quit
 | `WriteFile { path, text }` | `{"effect":"write_file","path":"notes.md","text":"…"}` | Write the file, then send `saved` or `save_failed` |
 | `ClipboardSet { text }` | `{"effect":"clipboard_set","text":"…"}` | Put the text on the system clipboard |
 | `Quit` | `{"effect":"quit"}` | Exit |
+| `Notice { text }` | `{"effect":"notice","text":"paragraphs don't nest"}` | Show a message: an outline document's status message when the status bar is off |
+| `Completed { id }` | `{"effect":"completed","id":3}` | Nothing required. A task reached done in an outline (a host may save at once) |
+| `Restored` | `{"effect":"restored"}` | Nothing required. Undo or redo changed an outline (a host re-reads what it keeps per block) |
+| `BlockLeft { from, to }` | `{"effect":"block_left","from":2,"to":3}` | Nothing required. The caret moved to another block of an outline |
 
 ## The keymap
 
@@ -133,6 +161,12 @@ the selection.
 
 Unbound: `Shift-Tab`, `Alt-↑`/`Alt-↓`, `Ctrl-↑`/`Ctrl-↓`, and Cmd or Ctrl with any letter
 not listed. Moving by document `line` has no key; send the message.
+
+An outline document uses `outline_keymap`, which adds `Tab`/`Shift-Tab` (`indent`/`outdent`),
+`Ctrl-T` (`task_cycle`), `Shift-Enter` and `Ctrl-J` (`soft_break`), `Alt-↑`/`Alt-↓`
+(`move_block`), `Ctrl-↑`/`Ctrl-↓` (`move` by `block`) and `Alt-V` (`paste_plain`).
+`keymap_for(outline, key)` picks the right one; key scripts, `Session::keys` and the
+protocol's `keys` op use the state's.
 
 ## Key scripts
 

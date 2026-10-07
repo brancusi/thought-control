@@ -8,6 +8,7 @@ use crate::helix::line_ending::auto_detect_line_ending;
 use crate::helix::{LineEnding, Range, Rope, Selection, SmallVec};
 use crate::layout::WrapCache;
 use crate::marks::{Clipboard, MarkDelta, Marks};
+use crate::outline::{OutlineCache, OutlineConfig};
 
 /// Editor settings that change behaviour or layout.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -145,6 +146,19 @@ pub struct State {
     /// restore them exactly). Always as long as the history.
     #[serde(skip_serializing_if = "mark_log_is_empty")]
     pub mark_log: Vec<MarkDelta>,
+    /// Set for an outline document: blocks bounded by marks, and the outline's editing
+    /// rules ([`crate::outline`]). Absent, the document is plain text.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub outline: Option<OutlineConfig>,
+    /// A double-click's word, while a shift-click or drag may extend it by words.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub word_drag: Option<(usize, usize)>,
+    /// The outline derived from the text and marks: a memo, not part of the value.
+    #[serde(skip)]
+    pub(crate) derived: OutlineCache,
+    /// Counts recorded edits (a change of text or marks), for `update`'s own bookkeeping.
+    #[serde(skip)]
+    pub(crate) edits: EditCount,
     /// Where long lines' rows start: a layout memo, not part of the state's value.
     #[serde(skip)]
     pub(crate) wrap: WrapCache,
@@ -193,6 +207,10 @@ pub struct StateInput {
     pub marks: Marks,
     #[serde(default)]
     pub mark_log: Vec<MarkDelta>,
+    #[serde(default)]
+    pub outline: Option<OutlineConfig>,
+    #[serde(default)]
+    pub word_drag: Option<(usize, usize)>,
 }
 
 /// The deserialized form of [`Config`] inside a [`StateInput`]: every field optional, with
@@ -252,10 +270,17 @@ impl From<StateInput> for State {
             quit_armed: input.quit_armed,
             marks: input.marks,
             mark_log: input.mark_log,
+            outline: input.outline,
+            word_drag: input.word_drag,
+            derived: OutlineCache::default(),
+            edits: EditCount::default(),
             wrap: WrapCache::default(),
         };
         state.marks.repair(state.text.slice(..));
         state.fit_mark_log();
+        if state.outline.is_some() {
+            crate::outline::mint_missing(&mut state);
+        }
         state.dirty = state.compute_dirty();
         state
     }
@@ -290,6 +315,10 @@ impl State {
             quit_armed: false,
             marks: Marks::default(),
             mark_log: vec![MarkDelta::default()],
+            outline: None,
+            word_drag: None,
+            derived: OutlineCache::default(),
+            edits: EditCount::default(),
             wrap: WrapCache::default(),
         };
         state.dirty = state.compute_dirty();
@@ -346,6 +375,12 @@ impl State {
         }
         self.marks.repair(self.text.slice(..));
         self.fit_mark_log();
+        self.outline_changed();
+        if let Some((a, b)) = self.word_drag {
+            if a > b || b > len {
+                self.word_drag = None;
+            }
+        }
         self.dirty = self.compute_dirty();
     }
 
@@ -382,6 +417,16 @@ impl State {
                 .unwrap_or_else(|| p.clone()),
             None => "[scratch]".to_string(),
         }
+    }
+}
+
+/// A counter that is not part of the state's value (it compares equal to any other).
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct EditCount(pub u64);
+
+impl PartialEq for EditCount {
+    fn eq(&self, _: &EditCount) -> bool {
+        true
     }
 }
 

@@ -15,7 +15,9 @@
 //!   in their place) removes the marks in `[a, b)`; a mark at `b` survives and moves up to
 //!   `a`. Cutting whole lines therefore takes exactly their marks.
 //! - Any other deletion removes the marks in `(a, b]`; a mark at `a` survives (typing over
-//!   a selection that starts at a block's start keeps the block).
+//!   a selection that starts at a block's start keeps the block). A mark at `b` survives
+//!   too when the text typed in the deletion's place ends with a line break (its line is
+//!   still a line of its own).
 //!
 //! If two surviving marks land on one line, the one that was earlier keeps it and the
 //! later one is removed. Every removal is reported, so undo can bring it back.
@@ -226,7 +228,7 @@ impl Marks {
         // Deletions in old positions (with whether text was inserted in their place), and
         // the old span the changes touch.
         let ops = changes.changes();
-        let mut dels: Vec<(usize, usize, bool)> = Vec::new();
+        let mut dels: Vec<(usize, usize, bool, bool)> = Vec::new();
         let mut at = 0usize;
         let mut first: Option<usize> = None;
         let mut last_end = 0usize;
@@ -234,10 +236,15 @@ impl Marks {
             match op {
                 Operation::Retain(n) => at += n,
                 Operation::Delete(n) => {
-                    let replaced = matches!(i.checked_sub(1).and_then(|j| ops.get(j)), Some(Operation::Insert(_)))
-                        || matches!(ops.get(i + 1), Some(Operation::Insert(_)));
+                    let ins = match (i.checked_sub(1).and_then(|j| ops.get(j)), ops.get(i + 1)) {
+                        (Some(Operation::Insert(s)), _) | (_, Some(Operation::Insert(s))) => Some(s),
+                        _ => None,
+                    };
+                    // What was typed in its place ends with a line break: the line after the
+                    // deletion stays a line of its own.
+                    let keeps_next = ins.is_some_and(|s| s.ends_with('\n'));
                     first.get_or_insert(at);
-                    dels.push((at, at + n, replaced));
+                    dels.push((at, at + n, ins.is_some(), keeps_next));
                     at += n;
                     last_end = at;
                 }
@@ -255,12 +262,12 @@ impl Marks {
         let mut removed = Vec::new();
         let mut middle: Vec<Mark> = Vec::with_capacity(end - start);
         for m in &self.marks[start..end] {
-            let gone = dels.iter().any(|&(a, b, replaced)| {
+            let gone = dels.iter().any(|&(a, b, replaced, keeps_next)| {
                 let whole = !replaced && a < b && is_line_start(old, a) && is_line_start(old, b);
                 if whole {
                     a <= m.pos && m.pos < b
                 } else {
-                    a < m.pos && m.pos <= b
+                    a < m.pos && (m.pos < b || (m.pos == b && !keeps_next))
                 }
             });
             if gone {

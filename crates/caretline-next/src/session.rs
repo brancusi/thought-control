@@ -9,7 +9,7 @@
 
 use std::collections::VecDeque;
 
-use crate::keymap::script_to_msgs;
+use crate::keymap::script_to_msgs_for;
 use crate::msg::{Effect, Msg};
 use crate::state::State;
 use crate::trace::TraceLine;
@@ -214,7 +214,7 @@ impl Session {
     /// Runs a key script through the keymap (the `--keys` syntax). Returns the messages it
     /// became and their effects, unperformed.
     pub fn keys(&mut self, script: &str) -> Result<(Vec<Msg>, Vec<Effect>), String> {
-        let msgs = script_to_msgs(script, self.state.now_ms)?;
+        let msgs = script_to_msgs_for(script, self.state.now_ms, self.state.outline.is_some())?;
         let effects = self.apply_all(msgs.iter().cloned());
         Ok((msgs, effects))
     }

@@ -147,6 +147,51 @@ pub fn keymap(key: &Key) -> Option<Msg> {
     }
 }
 
+/// The keymap of an outline document: the plain [`keymap`] with the outline's keys on top.
+///
+/// | Key | Msg |
+/// |---|---|
+/// | `Tab` / `Shift-Tab` | `indent` / `outdent` |
+/// | `Ctrl-T` | `task_cycle` |
+/// | `Shift-Enter`, `Ctrl-J` | `soft_break` |
+/// | `Alt-↑` / `Alt-↓` | `move_block` |
+/// | `Ctrl-↑` / `Ctrl-↓` | `move` by `block` (Shift extends) |
+/// | `Alt-V` | `paste_plain` |
+pub fn outline_keymap(key: &Key) -> Option<Msg> {
+    let m = key.mods;
+    use Dir::{Backward as B, Forward as F};
+    match key.code {
+        KeyCode::Tab if !(m.ctrl || m.alt || m.cmd) => {
+            return Some(if m.shift { Msg::Outdent } else { Msg::Indent });
+        }
+        KeyCode::BackTab => return Some(Msg::Outdent),
+        KeyCode::Enter if m.shift && !(m.ctrl || m.alt || m.cmd) => return Some(Msg::SoftBreak),
+        KeyCode::Char(c) if m.ctrl && !m.cmd && !m.alt => match c.to_ascii_lowercase() {
+            't' => return Some(Msg::TaskCycle),
+            'j' => return Some(Msg::SoftBreak),
+            _ => {}
+        },
+        KeyCode::Char(c) if m.alt && !m.ctrl && !m.cmd && c.eq_ignore_ascii_case(&'v') => {
+            return Some(Msg::PastePlain { text: None });
+        }
+        KeyCode::Up if m.alt && !m.cmd => return Some(Msg::MoveBlock { dir: B }),
+        KeyCode::Down if m.alt && !m.cmd => return Some(Msg::MoveBlock { dir: F }),
+        KeyCode::Up if m.ctrl && !m.cmd => return mv(B, By::Block, m.shift),
+        KeyCode::Down if m.ctrl && !m.cmd => return mv(F, By::Block, m.shift),
+        _ => {}
+    }
+    keymap(key)
+}
+
+/// [`outline_keymap`] for an outline document, else [`keymap`].
+pub fn keymap_for(outline: bool, key: &Key) -> Option<Msg> {
+    if outline {
+        outline_keymap(key)
+    } else {
+        keymap(key)
+    }
+}
+
 /// One step of a key script.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScriptItem {
@@ -250,11 +295,16 @@ fn parse_token(token: &str) -> Result<ScriptItem, String> {
 /// Turns a key script into messages through the keymap. Waits become `Tick`s, counted
 /// from `now_ms`. Keys the keymap ignores are dropped.
 pub fn script_to_msgs(script: &str, now_ms: u64) -> Result<Vec<Msg>, String> {
+    script_to_msgs_for(script, now_ms, false)
+}
+
+/// [`script_to_msgs`] through the outline keymap when `outline` is set.
+pub fn script_to_msgs_for(script: &str, now_ms: u64, outline: bool) -> Result<Vec<Msg>, String> {
     let mut now = now_ms;
     let mut msgs = Vec::new();
     for item in parse_keys(script)? {
         match item {
-            ScriptItem::Key(key) => msgs.extend(keymap(&key)),
+            ScriptItem::Key(key) => msgs.extend(keymap_for(outline, &key)),
             ScriptItem::Wait(ms) => {
                 now += ms;
                 msgs.push(Msg::Tick { now_ms: now });

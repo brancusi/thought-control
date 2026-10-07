@@ -2,12 +2,14 @@
 //! and keeping it in view. Shared by `update` (motion, scrolling) and `view` (drawing).
 
 use std::cell::RefCell;
+use std::sync::Arc;
 
 use crate::helix::chars::char_is_line_ending;
 use crate::helix::doc_formatter::{DocumentFormatter, TextFormat};
 use crate::helix::text_annotations::TextAnnotations;
 use crate::helix::transaction::{ChangeSet, Operation};
 use crate::helix::{Rope, RopeSlice};
+use crate::outline::Outline;
 use crate::state::{Config, Scroll, State};
 
 /// Soft-wrapped lines at least this long remember where their rows start (see
@@ -179,6 +181,9 @@ pub struct Layout {
     pub annotations: TextAnnotations<'static>,
     /// A copy of the state's [`WrapCache`], extended as lookups need.
     cache: RefCell<WrapCache>,
+    /// An outline document's blocks: a gapped block's first line has a virtual (blank) row
+    /// before its text rows. Rows of a line count from that virtual row.
+    outline: Option<Arc<Outline>>,
 }
 
 impl Layout {
@@ -188,6 +193,7 @@ impl Layout {
             fmt: text_format(&state.config, state.viewport.width, true),
             annotations: TextAnnotations::default(),
             cache: RefCell::new(state.wrap.clone()),
+            outline: state.blocks(),
         }
     }
 
@@ -198,7 +204,21 @@ impl Layout {
             fmt: text_format(&state.config, state.viewport.width, false),
             annotations: TextAnnotations::default(),
             cache: RefCell::new(WrapCache::default()),
+            outline: state.blocks(),
         }
+    }
+
+    /// Virtual rows before line `line`'s text: 1 for a gapped block's first line, else 0.
+    pub fn gap(&self, line: usize) -> usize {
+        match &self.outline {
+            Some(o) => o.gap_before_line(line) as usize,
+            None => 0,
+        }
+    }
+
+    /// Whether `at` is a virtual row (never a caret stop).
+    pub fn is_virtual(&self, at: RowPos) -> bool {
+        at.row < self.gap(at.line)
     }
 
     /// Hands what this layout learned about long lines back to `state`, whose text must be
@@ -313,7 +333,8 @@ impl Layout {
     /// A formatter that starts at or before visual row `at` and yields every grapheme from
     /// there on, with rows numbered from the start of `at.line`.
     pub fn formatter_at_row(&self, at: RowPos) -> DocumentFormatter<'_> {
-        self.formatter_for(at.line, Need::Row(at.row))
+        let row = at.row.saturating_sub(self.gap(at.line));
+        self.formatter_for(at.line, Need::Row(row))
     }
 
     pub fn text(&self) -> RopeSlice<'_> {
@@ -328,8 +349,13 @@ impl Layout {
         self.text().len_lines().saturating_sub(1)
     }
 
-    /// The number of visual rows document line `line` takes.
+    /// The number of visual rows document line `line` takes (its virtual row included).
     pub fn line_rows(&self, line: usize) -> usize {
+        self.gap(line) + self.text_rows_of(line)
+    }
+
+    /// The rows line `line`'s text takes.
+    fn text_rows_of(&self, line: usize) -> usize {
         if !self.fmt.soft_wrap || self.fits_one_row(line) {
             return 1;
         }
@@ -395,12 +421,18 @@ impl Layout {
                 break;
             }
         }
-        (RowPos { line, row: last.row }, last.col)
+        (RowPos { line, row: last.row + self.gap(line) }, last.col)
     }
 
     /// The char position on visual row `at` closest to column `col` (Helix's rule: the
     /// grapheme covering the column, else the row's last grapheme).
     pub fn pos_at(&self, at: RowPos, col: usize) -> usize {
+        // A virtual row: the line's start.
+        let gap = self.gap(at.line);
+        if at.row < gap {
+            return self.text().line_to_char(at.line);
+        }
+        let at = RowPos { line: at.line, row: at.row - gap };
         // Search within the one line so a row past its end can't spill into the next line.
         let end = if at.line < self.last_line() {
             self.text().line_to_char(at.line + 1)
@@ -414,7 +446,7 @@ impl Layout {
     /// covering `col` on row `at.row`, else that row's last grapheme.
     fn char_at_row_col(&self, at: RowPos, col: usize) -> usize {
         use std::cmp::Ordering;
-        let mut formatter = self.formatter_at_row(at);
+        let mut formatter = self.formatter_for(at.line, Need::Row(at.row));
         let mut last_char_idx = formatter.next_char_pos();
         let mut found_non_virtual_on_row = false;
         for g in &mut formatter {
