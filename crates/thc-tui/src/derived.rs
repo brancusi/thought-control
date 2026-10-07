@@ -11,7 +11,7 @@ pub(crate) struct PagePreview {
     pub vault: PathBuf,
     pub page: String,
     revision: String,
-    collapsed: HashSet<String>,
+    collapsed: std::collections::BTreeSet<String>,
     pub rows: Vec<Row>,
 }
 
@@ -78,9 +78,6 @@ impl Derived {
         self.attachments.get(&(vault.to_owned(), path.to_owned()))
     }
 
-    pub fn age(&self, since: std::time::Instant) -> std::time::Duration {
-        self.now.saturating_duration_since(since)
-    }
 }
 
 /// The runtime calls this before layout, so reading these caches during drawing does
@@ -91,7 +88,7 @@ pub(crate) fn prepare(app: &mut App) {
     app.derived.data.overlay = crate::overlay_snapshot::capture(app);
     app.derived.data.presentation = crate::presentation_snapshot::capture(app);
     app.derived.data.bindings = crate::binding_snapshot::capture(app);
-    app.derived.clock = thc_core::dates::now_local().format("%H:%M").to_string();
+    app.derived.clock = app.ui.local_time().format("%H:%M").to_string();
     let source = app.doc.as_ref().and_then(|d| d.blocks().get(d.caret().line))
         .map(|l| (app.today, l.text.clone()));
     if source != app.derived.chip_source {

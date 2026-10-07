@@ -162,7 +162,7 @@ thread_local! {
 /// Hand back every result the late writer holds; again while a save waited for them.
 pub(crate) fn settle(app: &mut App) {
     for _ in 0..20 {
-        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
         let had = !dones.is_empty();
         WRITER.with(|w| {
             if let Some(w) = w.borrow().as_ref() {
@@ -187,7 +187,7 @@ fn flush(app: &mut App) {
 
 /// The late writer hands back the one result it holds, if any.
 fn settle_one(app: &mut App) {
-    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.today)).unwrap_or_default());
+    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
     WRITER.with(|w| {
         if let Some(w) = w.borrow().as_ref() {
             for d in dones {
@@ -334,7 +334,7 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
                     if ta != tb {
                         return Err(format!("step {step}: a motion changed the text: {tb:?} → {ta:?}"));
                     }
-                    let (sw, detail) = (app.screen_width, app.show_detail);
+                    let (sw, detail) = (app.screen_width, app.ui.show_detail);
                     let caret = d.caret();
                     if let Some(valid) = d.caret_off_stop(&|l: &crate::editor::Line| crate::doc_ui::text_width(ctx, sw, detail, l.depth)) {
                         return Err(format!("step {step}: the caret {caret:?} isn't on a stop (valid: {valid:?})"));

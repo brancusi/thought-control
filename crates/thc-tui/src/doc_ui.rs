@@ -871,7 +871,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                 meta = "⌃O open".to_string();
             }
             // The near-miss chip (writing.md §5), for 3 s after the save.
-            if let Some((_, typed, existing, _, since)) = app.near_miss.as_ref().filter(|n| n.0 == l.id && app.derived.age(n.4).as_secs() < 3) {
+            if let Some((_, typed, existing, _, since)) = app.near_miss.as_ref().filter(|n| n.0 == l.id && app.ui.age(n.4).as_secs() < 3) {
                 let _ = since;
                 meta = format!("new page \"{typed}\" · ⌃O {existing}?");
             }
@@ -1005,7 +1005,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         if !fv.has(El::Footer) {
             let bottom = area.bottom().saturating_sub(1);
             let failed = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.save_error.is_some()));
-            let msg = app.toast.as_ref().filter(|t| t.alive_at(app.derived.now)).map(|t| (t.parts.iter().map(|(s, _)| s.as_str()).collect::<String>(), Token::Muted));
+            let msg = app.toast.as_ref().filter(|t| t.alive_at(app.ui.now_ms)).map(|t| (t.parts.iter().map(|(s, _)| s.as_str()).collect::<String>(), Token::Muted));
             let msg = msg.or(failed.then(|| ("not saved · :retry".to_string(), Token::Overdue)));
             if let Some((text, tok)) = msg {
                 let x = left_edge(ctx, w) + MARKS + HANG;

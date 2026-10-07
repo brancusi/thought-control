@@ -338,7 +338,7 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
 /// lists what can follow, groups ending in `+`. At most 8 rows, in columns; every entry is a
 /// button for its key.
 fn draw_which_key(render: &mut RenderOutput, f: &mut Frame, app: &App, above: Rect) {
-    if app.overlay.is_some() || app.prompt.is_some() || !crate::keymap::popup_due_at(app, app.derived.now) {
+    if app.overlay.is_some() || app.prompt.is_some() || !crate::keymap::popup_due_at(app, app.ui.now_ms) {
         return;
     }
     let th = app.theme;
@@ -743,7 +743,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
     }
     // In-place editing owns the bar (tui-handoff §10.1).
     if app.edit.is_some() && app.overlay.is_none() {
-        if let Some(t) = app.toast.as_ref().filter(|t| t.kind != crate::app::ToastKind::Error && t.alive_at(app.derived.now)) {
+        if let Some(t) = app.toast.as_ref().filter(|t| t.kind != crate::app::ToastKind::Error && t.alive_at(app.ui.now_ms)) {
             let mut left = lead();
             left.extend(t.parts.iter().map(|(text, tok)| Span::styled(text.clone(), th.s(*tok))));
             return bar_line(f, area, &th, left, vec![], surface, render);
@@ -760,7 +760,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             let mut left = lead();
             // A refused write (veto, read-only) shows here while the drawer keeps the text
             // (policy.md §3.4: a veto never loses what a person typed).
-            if let Some(t) = app.toast.as_ref().filter(|t| t.kind == crate::app::ToastKind::Error && t.alive_at(app.derived.now)) {
+            if let Some(t) = app.toast.as_ref().filter(|t| t.kind == crate::app::ToastKind::Error && t.alive_at(app.ui.now_ms)) {
                 left.extend(t.parts.iter().map(|(text, _)| Span::styled(text.clone(), th.s(Token::Overdue))));
                 return bar_line(f, area, &th, left, hints(&th, &[("Enter", "retry"), ("Esc", "")]), th.fill(Token::OverdueTint), render);
             }
@@ -870,7 +870,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         return bar_line(f, area, &th, vec![Span::raw(" "), Span::styled("updating… · back in a moment", th.s(Token::Text))], vec![], surface, render);
     }
     if let crate::app::UpdateState::Failed(why) = &app.update_state {
-        if app.toast.as_ref().is_none_or(|t| !t.alive_at(app.derived.now)) {
+        if app.toast.as_ref().is_none_or(|t| !t.alive_at(app.ui.now_ms)) {
             let left = vec![Span::raw(" "), Span::styled("update ", th.s(Token::Text)), Span::styled("failed", th.s(Token::Overdue)), Span::styled(format!(": {why} · :update to retry"), th.s(Token::Muted))];
             return bar_line(f, area, &th, left, vec![], th.fill(Token::OverdueTint), render);
         }
@@ -881,7 +881,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         let left = vec![Span::raw(" "), Span::styled(crumb, th.s(Token::Accent))];
         // With the which-key popup open, its keys aren't repeated here: just how to
         // step back or leave.
-        if crate::keymap::popup_due_at(app, app.derived.now) && app.overlay.is_none() {
+        if crate::keymap::popup_due_at(app, app.ui.now_ms) && app.overlay.is_none() {
             next.clear();
         }
         // Groups show as words (`f find`); the fitting rule drops from the end.
@@ -900,7 +900,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         }
     }
     // Toasts own the bar while alive.
-    if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(app.derived.now)) {
+    if let Some(t) = app.toast.as_ref().filter(|t| t.alive_at(app.ui.now_ms)) {
         let mut left = lead();
         for (txt, tok) in &t.parts {
             left.push(Span::styled(txt.clone(), th.s(*tok)));
@@ -2356,7 +2356,7 @@ fn gutter_for(app: &App, id: &str, selected: bool, focused: bool) -> Gutter {
         Gutter::Conflict
     } else if selected {
         Gutter::Cursor { focused }
-    } else if let Some((_, agent)) = app.flashes.get(id).filter(|(t, _)| app.derived.age(*t).as_secs() < 3) {
+    } else if let Some((_, agent)) = app.flashes.get(id).filter(|(t, _)| app.ui.age(*t).as_secs() < 3) {
         Gutter::Live { agent: *agent }
     } else {
         Gutter::None
@@ -2514,7 +2514,7 @@ fn row_line(render: &mut RenderOutput, app: &App, row: &Row, selected: bool, foc
             };
             let line = node_row::render(&th, spec, wd);
             // A row an agent (or another device) just changed gets a 3 s tint (§7.3).
-            if !selected && app.flashes.get(&node.id).is_some_and(|(t, _)| app.derived.age(*t).as_secs() < 3) && !th.is_ansi() {
+            if !selected && app.flashes.get(&node.id).is_some_and(|(t, _)| app.ui.age(*t).as_secs() < 3) && !th.is_ansi() {
                 node_row::finish(&th, line.spans, false, wd).patch_style(th.fill(Token::AgentTint))
             } else {
                 line
@@ -4125,7 +4125,7 @@ fn draw_help(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, al
 /// Whether the page's own caret (a document's, an inline input's) may show: not under an overlay
 /// or the which-key panel. Overlays that take text place their own caret.
 pub fn caret_allowed(app: &App) -> bool {
-    app.overlay.is_none() && !crate::keymap::popup_due_at(app, app.derived.now)
+    app.overlay.is_none() && !crate::keymap::popup_due_at(app, app.ui.now_ms)
 }
 
 
@@ -4646,14 +4646,14 @@ mod render_tests {
         update_frame(&mut app, Rect::new(0, 0, 120, 40));
         app.derived.pinned_warning = None;
         // The wall clock is beyond the toast's lifetime; the supplied clock is not.
-        let at = app.derived.now - std::time::Duration::from_secs(30);
+        let at = app.ui.now_ms.saturating_sub(30_000);
         app.toast = Some(crate::app::Toast { kind: ToastKind::Agent, parts: vec![("sampled clock toast".into(), Token::Agent)], at });
-        app.derived.now = at + std::time::Duration::from_secs(1);
+        app.ui.now_ms = at + 1_000;
         let visible = render(&app, (120, 40));
         let cells = |output: &RenderOutput| output.cells.as_ref().unwrap().content.iter().map(|c| c.symbol()).collect::<String>();
         assert!(cells(&visible).contains("sampled clock toast"));
         assert_eq!(visible, render(&app, (120, 40)));
-        app.derived.now = at + std::time::Duration::from_secs(5);
+        app.ui.now_ms = at + 5_000;
         assert!(!cells(&render(&app, (120, 40))).contains("sampled clock toast"));
     }
 }

@@ -111,7 +111,7 @@ pub struct Alert {
     pub fire_at: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
 pub struct ConflictVersion {
     pub text: String,
     pub dev: String,
@@ -120,7 +120,7 @@ pub struct ConflictVersion {
     pub eid: Option<String>,
 }
 
-#[derive(Clone, Debug, Serialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, serde::Deserialize)]
 pub struct ConflictDetail {
     pub id: i64,
     pub node: String,

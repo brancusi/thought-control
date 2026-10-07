@@ -183,7 +183,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool, width_of: &dyn F
         // a line deleted here, edited elsewhere, then undone, kept the old text and never saved).
         // The first ⌃Z after a drop: the attachment becomes the pasted path, as text (like undoing
         // an autocorrect); the next ⌃Z removes that.
-        "doc.undo" if app.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.blocks().iter().any(|l| &l.id == id)) => {
+        "doc.undo" if app.ui.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.blocks().iter().any(|l| &l.id == id)) => {
             let (id, raw, _) = app.last_drop.take().unwrap();
             let d = app.doc.as_mut().unwrap();
             if let Some(i) = d.blocks().iter().position(|l| l.id == id) {
@@ -288,8 +288,8 @@ pub fn paste(app: &mut App, text: &str) {
         return;
     }
     let Some(d) = app.doc.as_mut() else { return };
-    if !app.doc_write {
-        app.doc_write = true;
+    if !app.ui.doc_write {
+        app.ui.doc_write = true;
     }
     // One line: typed in as is, less what can't show in a line (a tab, a stray CR).
     if !text.contains('\n') && !text.contains('\r') {
@@ -297,7 +297,7 @@ pub fn paste(app: &mut App, text: &str) {
         app.doc_after_key();
         return;
     }
-    let (n, images) = d.paste(text, app.paste_plain);
+    let (n, images) = d.paste(text, app.ui.paste_plain);
     app.paste_plain = false;
     app.save_doc(false);
     let mut msg = format!("pasted {n} line{}", if n == 1 { "" } else { "s" });
