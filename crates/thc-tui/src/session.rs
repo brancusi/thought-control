@@ -225,15 +225,19 @@ impl Session {
         if let Some(f) = &self.frontier {
             line["log"] = json!(f);
         }
-        // What the frames show from the process and terminal rather than the state: replay
+        // What the frames show from the process and terminal rather than the state (the theme
+        // TERM and COLORTERM chose, the glyphs, the pinned-clock warning, inline images): replay
         // draws them as this session did, not as the replaying process would.
         let d = &self.app.derived;
-        line["env"] = json!({"pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
+        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
         line
     }
 
     /// A `state` line's `env`, taken up by a replay (see `state_line`).
     pub fn set_env(&mut self, env: &Value) {
+        if let Some(t) = env.get("theme").and_then(|t| serde_json::from_value::<crate::theme::Theme>(t.clone()).ok()) {
+            self.app.theme = t;
+        }
         let d = &mut self.app.derived;
         d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
         if let Some(b) = env.get("inline_images").and_then(Value::as_bool) {
@@ -509,6 +513,10 @@ impl Session {
     /// it at the same point. What the step changed in the state is left for the next `external`
     /// message, as before: the step's line carries its data, the patch its look.
     pub fn runtime(&mut self, msg: Msg) {
+        // Nothing waits for this frame (most keys): nothing to run or record, and no state read.
+        if matches!(msg, Msg::Frame) && !self.app.doc_save_after_frame {
+            return;
+        }
         // Anything still unrecorded is recorded first, apart from the step.
         self.sync_external();
         let did = match &msg {

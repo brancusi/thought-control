@@ -274,7 +274,7 @@ Within protocol version 1, results only gain fields. Ignore the ones you don't k
 A trace is JSON lines: a `state` line, then messages.
 
 ```json
-{"state":{"ui_state_version":1,"view":"today",…},"size":[100,30],"rev":0,"log":{"mbp-7f3a/2026-10.jsonl":48213},"env":{"pinned_warning":null,"inline_images":false}}
+{"state":{"ui_state_version":1,"view":"today",…},"size":[100,30],"rev":0,"log":{"mbp-7f3a/2026-10.jsonl":48213},"env":{"theme":{…},"pinned_warning":null,"inline_images":false}}
 {"msg":"key","key":"3","_rev":1}
 {"msg":"patch","patch":{"tasks_filter":"#work"},"actor":"claude","_rev":2}
 {"msg":"poll","_rev":3,"_log":[{"v":1,"eid":"01K6…","dev":"mbp-7f3a","via":"cli","op":"node.create",…}]}
@@ -285,8 +285,10 @@ A trace is JSON lines: a `state` line, then messages.
 - **`log` pins the vault** the trace starts on. It records how far the vault's log had been
   read, per file (`log/<device>/<month>.jsonl` → bytes). The log is append-only, so cutting
   every file there gives back the vault exactly as it was then (FORMAT.md).
-- **`env`** is what the frames showed from the process and terminal rather than the state
-  (the pinned-clock warning, inline images). A replay draws it as the session did.
+- **`env`** is what the frames showed from the process and terminal rather than the state:
+  the theme and glyphs that `TERM`, `COLORTERM`, the locale and settings chose, the
+  pinned-clock warning and inline images. A replay draws them as the session did, whatever
+  terminal it runs in.
 - **`_log` on a message** holds the log lines other writers added before it ran: an agent's
   `thc add`, another device's sync. They're copied exactly as written. The TUI's own writes
   are left out, because replaying its messages makes them again. Those are this device's
