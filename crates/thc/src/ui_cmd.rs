@@ -82,6 +82,73 @@ enum UiCmd {
         #[command(flatten)]
         target_tui: Target,
     },
+    /// Point at something on the person's screen: a callout beside ANCHOR (row:<id>,
+    /// ui:tab:tasks, action:<command>, panel:<n>, caret, text:<from>..<to>, or JSON), with an
+    /// arrow and a ring. It's marked as yours (◆ name); Esc or ⌘[ takes it away.
+    Hint {
+        anchor: String,
+        text: String,
+        #[arg(long)]
+        title: Option<String>,
+        /// How long it shows: 8s, 1500ms, 2m (default: until taken away).
+        #[arg(long)]
+        ttl: Option<String>,
+        /// Sides to try, in order: below,above,right,left.
+        #[arg(long)]
+        place: Option<String>,
+        #[arg(long)]
+        no_arrow: bool,
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Ring ANCHOR (no box).
+    Highlight {
+        anchor: String,
+        #[arg(long)]
+        ttl: Option<String>,
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Spotlight ANCHOR: everything else dims, and the row is selected (never the keyboard).
+    /// With TEXT, a callout too.
+    Focus {
+        anchor: String,
+        text: Option<String>,
+        #[arg(long)]
+        title: Option<String>,
+        #[arg(long)]
+        ttl: Option<String>,
+        #[command(flatten)]
+        target: Target,
+    },
+    /// The layers showing (`--clear`: take yours away; `--pop ID`: one of them).
+    Layers {
+        #[arg(long)]
+        clear: bool,
+        #[arg(long, value_name = "ID")]
+        pop: Option<String>,
+        #[command(flatten)]
+        target: Target,
+    },
+    /// A walkthrough: `thc ui tour FILE|-` starts one from JSON steps
+    /// (`[{"anchor", "title"?, "text"}]` or `{"steps": […], "spotlight": true}`);
+    /// `thc ui tour next|back|stop` moves it. The person moves it with F2, ⇧F2, F3 or its
+    /// buttons.
+    Tour {
+        what: String,
+        #[command(flatten)]
+        target: Target,
+    },
+    /// Write in the open document through your own view (the person's caret stays put):
+    /// `open [--at start|end|<id>]`, `write TEXT` (a new paragraph at your caret), `set ID TEXT`
+    /// (a note's text), `msgs JSON` (caretline messages), `close`.
+    Doc {
+        words: Vec<String>,
+        #[arg(long)]
+        at: Option<String>,
+        #[command(flatten)]
+        target: Target,
+    },
     /// Send requests: `keys SCRIPT`, `msgs FILE|-|JSON`, `render [WxH] [FORMAT]`, `state.get
     /// [no-history]`, `subscribe [WxH [FORMAT]] [state]`, `trace.get [all|since REV]`,
     /// `trace.checkpoint`, `hello`, or a raw JSON request. None: JSON requests from stdin.
@@ -268,8 +335,172 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             println!("{}", request(paths, &target, &req)?);
             Ok(())
         }
-        UiCmd::Send { words, raw, apply_effects, target } => send(cli, paths, &target, words, raw, apply_effects),
-        UiCmd::Aside { target, pin, fold, close, ls, if_rev, target_tui } => {
+        UiCmd::Send {
+            words,
+            raw,
+            apply_effects,
+            target,
+        } => send(cli, paths, &target, words, raw, apply_effects),
+        UiCmd::Hint {
+            anchor,
+            text,
+            title,
+            ttl,
+            place,
+            no_arrow,
+            target,
+        } => {
+            let mut req = json!({"op": "hint.show", "anchor": anchor_arg(&anchor)?, "text": text});
+            if let Some(t) = title {
+                req["title"] = json!(t);
+            }
+            if let Some(t) = ttl {
+                req["ttl_ms"] = json!(parse_ttl(&t)?);
+            }
+            if let Some(p) = place {
+                req["place"] = json!(p.split(',').map(str::trim).collect::<Vec<_>>());
+            }
+            if no_arrow {
+                req["arrow"] = json!(false);
+            }
+            layer_req(cli, paths, &target, req)
+        }
+        UiCmd::Highlight {
+            anchor,
+            ttl,
+            target,
+        } => {
+            let mut req = json!({"op": "highlight", "anchor": anchor_arg(&anchor)?});
+            if let Some(t) = ttl {
+                req["ttl_ms"] = json!(parse_ttl(&t)?);
+            }
+            layer_req(cli, paths, &target, req)
+        }
+        UiCmd::Focus {
+            anchor,
+            text,
+            title,
+            ttl,
+            target,
+        } => {
+            let mut req = json!({"op": "focus", "anchor": anchor_arg(&anchor)?});
+            if let Some(t) = text {
+                req["text"] = json!(t);
+            }
+            if let Some(t) = title {
+                req["title"] = json!(t);
+            }
+            if let Some(t) = ttl {
+                req["ttl_ms"] = json!(parse_ttl(&t)?);
+            }
+            layer_req(cli, paths, &target, req)
+        }
+        UiCmd::Layers { clear, pop, target } => {
+            if clear || pop.is_some() {
+                let req = match pop {
+                    Some(id) => json!({"op": "layer.pop", "layer": id}),
+                    None => json!({"op": "hint.clear"}),
+                };
+                return layer_req(cli, paths, &target, req);
+            }
+            let r = request(paths, &target, &json!({"op": "layer.ls"}))?;
+            if cli.json {
+                println!("{}", serde_json::to_string_pretty(&r)?);
+                return Ok(());
+            }
+            let ls = r["layers"]["layers"]
+                .as_array()
+                .cloned()
+                .unwrap_or_default();
+            if ls.is_empty() {
+                println!("no layers");
+            }
+            for l in ls {
+                let what = l["content"]["data"]["title"]
+                    .as_str()
+                    .or(l["content"]["data"]["text"].as_str())
+                    .unwrap_or(if l.get("spotlight").is_some() {
+                        "spotlight"
+                    } else {
+                        "ring"
+                    });
+                println!(
+                    "{:<8} {:<16} {:<40} {}",
+                    l["id"].as_str().unwrap_or(""),
+                    l["owner"].as_str().unwrap_or(""),
+                    what,
+                    l["anchor"]
+                );
+            }
+            if let Some(t) = r["layers"].get("tour") {
+                println!(
+                    "walkthrough: step {} of {}",
+                    t["at"].as_u64().unwrap_or(0) + 1,
+                    t["of"]
+                );
+            }
+            Ok(())
+        }
+        UiCmd::Tour { what, target } => {
+            let req = match what.as_str() {
+                "next" | "back" | "stop" => json!({"op": format!("tour.{what}")}),
+                file => {
+                    let v: Value = serde_json::from_str(&read_arg(file)?)
+                        .map_err(|e| invalid(format!("the walkthrough isn't JSON: {e}")))?;
+                    let mut req = if v.is_array() { json!({"steps": v}) } else { v };
+                    req["op"] = json!("tour.start");
+                    req
+                }
+            };
+            layer_req(cli, paths, &target, req)
+        }
+        UiCmd::Doc { words, at, target } => {
+            let w: Vec<&str> = words.iter().map(String::as_str).collect();
+            let at = at.map(|a| {
+                if a == "start" || a == "end" {
+                    json!(a)
+                } else {
+                    json!({"id": a})
+                }
+            });
+            let mut req = match w.as_slice() {
+                ["open"] => json!({"op": "doc.view.open"}),
+                ["close"] => json!({"op": "doc.view.close"}),
+                ["write", text @ ..] => {
+                    let text = text.join(" ");
+                    let mut msgs = vec![json!({"msg": "move", "dir": "forward", "by": "doc_end"})];
+                    msgs.push(json!({"msg": "insert_newline"}));
+                    msgs.push(json!({"msg": "insert_text", "text": text}));
+                    json!({"op": "doc.msgs", "msgs": msgs})
+                }
+                ["set", id, text @ ..] => {
+                    json!({"op": "doc.text.set", "id": id, "text": text.join(" ")})
+                }
+                ["msgs", m] => {
+                    let v: Value = serde_json::from_str(&read_arg_or(m)?)
+                        .map_err(|e| invalid(format!("the messages aren't JSON: {e}")))?;
+                    json!({"op": "doc.msgs", "msgs": if v.is_array() { v } else { json!([v]) }})
+                }
+                _ => {
+                    return Err(usage(
+                        "thc ui doc open | write TEXT | set ID TEXT | msgs JSON | close",
+                    ));
+                }
+            };
+            if let Some(a) = at {
+                req["at"] = a;
+            }
+            layer_req(cli, paths, &target, req)
+        }
+        UiCmd::Aside {
+            target,
+            pin,
+            fold,
+            close,
+            ls,
+            if_rev,
+            target_tui,
+        } => {
             if ls {
                 let r = request(paths, &target_tui, &json!({"op": "aside.ls"}))?;
                 return print_aside(cli, &r["sidebar"]);
@@ -293,6 +524,84 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             }
             Ok(())
         }
+    }
+}
+
+/// A layer or doc-view request: the actor and policy as for any control; the result printed.
+fn layer_req(cli: &Cli, paths: &Paths, target: &Target, mut req: Value) -> Result<()> {
+    may_control(cli)?;
+    let if_rev = cli.if_match.as_deref().and_then(|s| s.parse().ok());
+    control_fields(cli, &mut req, if_rev);
+    let r = request(paths, target, &req)?;
+    if cli.json {
+        println!("{}", serde_json::to_string_pretty(&r)?);
+        return Ok(());
+    }
+    let mut out = Vec::new();
+    if let Some(l) = r["layer"].as_str() {
+        out.push(format!("layer {l}"));
+        match (&r["resolved"], r["reason"].as_str()) {
+            (_, Some(why)) => out.push(format!("({why}: not on screen)")),
+            (v, None) if v.get("off").is_some() => {
+                out.push(format!("(off screen, {})", v["off"].as_str().unwrap_or("")))
+            }
+            _ => {}
+        }
+    }
+    if let Some(p) = r["popped"].as_array().filter(|p| !p.is_empty()) {
+        out.push(format!(
+            "took away {}",
+            p.iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(", ")
+        ));
+    }
+    if let Some(d) = r.get("doc") {
+        out.push(format!(
+            "view {} · caret on {}",
+            d["view"],
+            d["caret"]["id"].as_str().unwrap_or("?")
+        ));
+    }
+    out.push(format!("rev {}", r["rev"]));
+    println!("{}", out.join(" · "));
+    Ok(())
+}
+
+/// An anchor as given: a short form (`row:abc`) stays a string; JSON (`{…}`, `[…]`) parses.
+fn anchor_arg(s: &str) -> Result<Value> {
+    let t = s.trim();
+    if t.starts_with('{') || t.starts_with('[') {
+        return serde_json::from_str(t).map_err(|e| invalid(format!("the anchor isn't JSON: {e}")));
+    }
+    Ok(json!(t))
+}
+
+/// `8s`, `1500ms`, `2m`, or milliseconds.
+fn parse_ttl(s: &str) -> Result<u64> {
+    let s = s.trim();
+    let (n, mult) = if let Some(n) = s.strip_suffix("ms") {
+        (n, 1)
+    } else if let Some(n) = s.strip_suffix('s') {
+        (n, 1000)
+    } else if let Some(n) = s.strip_suffix("min").or_else(|| s.strip_suffix('m')) {
+        (n, 60_000)
+    } else {
+        (s, 1)
+    };
+    n.trim()
+        .parse::<u64>()
+        .map(|v| v * mult)
+        .map_err(|_| usage(format!("--ttl {s}: like 8s, 1500ms or 2m")))
+}
+
+/// JSON given inline, or @FILE / `-`.
+fn read_arg_or(s: &str) -> Result<String> {
+    match s.strip_prefix('@') {
+        Some(f) => read_arg(f),
+        None if s == "-" => read_arg("-"),
+        None => Ok(s.to_string()),
     }
 }
 
@@ -420,6 +729,10 @@ fn result(r: Value) -> Result<Value> {
         return Err(match kind {
             "stale" => thc_core::error::ThcError::Stale { message: msg, hint: "re-read with thc ui state, then decide".into(), node: String::new(), rev: None, changed: vec![] }.into(),
             "invalid" | "bad_keys" => invalid(msg),
+            "refused" => invalid(format!(
+                "{}: {msg}",
+                e["reason"].as_str().unwrap_or("refused")
+            )),
             "not_found" => thc_core::error::not_found(msg),
             "ambiguous" => thc_core::error::ThcError::Ambiguous { prefix: msg.split('"').nth(1).unwrap_or("").to_string(), candidates: msg.split(" · ").nth(1).map(|c| c.split(", ").map(str::to_string).collect()).unwrap_or_default() }.into(),
             "trimmed" => thc_core::error::not_found(msg),

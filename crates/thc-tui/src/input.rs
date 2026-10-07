@@ -194,6 +194,10 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| handle_key(app, KeyEvent { code, modifiers, kind: KeyEventKind::Press, state: KeyEventState::NONE });
     let at = app.render.click_targets.iter().rev().find(|t| t.y == y && x >= t.x0 && x < t.x1).map(|t| t.what.clone());
     let left_down = m.kind == K::Down(MouseButton::Left);
+    // A click on a layer is the layer's (its buttons, an edge chip, a hint's box).
+    if left_down && crate::layers_ui::click(app, x, y) {
+        return;
+    }
     if m.kind == K::Moved {
         app.hover = Some((x, y));
         // Hover selects a menu row (mouse.md "Overlays are menus").
@@ -538,6 +542,10 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
     // Tests only: F12 panics, to prove a crash restores the terminal and keeps what's typed.
     if k.code == KeyCode::F(12) && std::env::var("THC_TUI_TEST_PANIC").is_ok_and(|v| v == "1") {
         panic!("test panic (THC_TUI_TEST_PANIC)");
+    }
+    // Layers first: a walkthrough's keys, Esc dismissing agents' layers (layers_ui.rs).
+    if crate::layers_ui::key(app, &k) {
+        return;
     }
     if app.edit.is_some() && app.overlay.is_none() {
         return edit_key(app, k);

@@ -62,6 +62,8 @@ pub enum DocRow {
 pub struct DocFrame {
     pub rows: Vec<DocRow>,
     pub cursor: Option<(u16, u16)>,
+    /// The engine's own frame (layers resolve text, block and caret anchors in it).
+    pub cn: cn::Frame,
 }
 
 /// What a click at a cell of the view hits.
@@ -81,8 +83,20 @@ impl Doc {
     pub fn set_view(&mut self, g: &ViewGeometry) {
         self.engine.flush();
         let lines = self.engine.lines();
-        let extra_rows: BTreeMap<MarkId, u16> = g.extra_rows.iter().filter_map(|&(i, n)| Some((MarkId(lines.get(i)?.mark?), n))).filter(|(_, n)| *n > 0).collect();
-        let layout = OutlineLayout { gutter: MARKS, indent: INDENT, hang: HANG, column: g.column.max(1), min_column: MIN_COLUMN, extra_rows, hang_glyphs: false };
+        let extra_rows: BTreeMap<MarkId, u16> = g
+            .extra_rows
+            .iter()
+            .filter_map(|&(i, n)| Some((MarkId(lines.get(i)?.mark?), n)))
+            .filter(|(_, n)| *n > 0)
+            .collect();
+        let layout = OutlineLayout::default()
+            .with_gutter(MARKS)
+            .with_indent(INDENT)
+            .with_hang(HANG)
+            .with_column(g.column.max(1))
+            .with_min_column(MIN_COLUMN)
+            .with_extra_rows(extra_rows)
+            .with_hang_glyphs(false);
         let st = self.engine.state_mut();
         let v = &mut st.view;
         v.viewport = Viewport { width: g.width.max(1), height: g.height.max(1) };
@@ -155,7 +169,11 @@ impl Doc {
                 _ => DocRow::Past,
             })
             .collect();
-        DocFrame { rows, cursor: frame.cursor }
+        DocFrame {
+            rows,
+            cursor: frame.cursor,
+            cn: frame,
+        }
     }
 
     /// What a click at cell (`col`, `row`) of the view hits. A blank row, or one a note draws

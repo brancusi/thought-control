@@ -226,7 +226,18 @@ struct After {
 /// The document laid out by the engine in a view `w` wide and `h` high: the rows on screen
 /// (blank spacer rows included), the caret's cell, the lines whose meta has its own row, and
 /// (all rows, the first on screen) for the scrollbar.
-fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize)) {
+fn layout(
+    app: &mut App,
+    w: usize,
+    h: u16,
+) -> (
+    Vec<Row>,
+    Option<(u16, u16)>,
+    std::collections::HashSet<usize>,
+    (usize, usize),
+    caretline::Frame,
+    usize,
+) {
     let ctx = DocContext::from_app(app);
     let left = left_edge(ctx, w);
     let app_vault = app.vault.paths.vault.clone();
@@ -296,8 +307,12 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
             })
         })
         .collect();
-    let own = after.iter().filter(|(_, a)| a.meta_row).map(|(&i, _)| i).collect();
-    (rows, f.cursor, own, d.scroll_rows())
+    let own = after
+        .iter()
+        .filter(|(_, a)| a.meta_row)
+        .map(|(&i, _)| i)
+        .collect();
+    (rows, f.cursor, own, d.scroll_rows(), f.cn, left)
 }
 
 impl Row {
@@ -570,6 +585,16 @@ pub struct PreparedDoc {
     header: Vec<TLine<'static>>,
     days: Vec<(u16, u16, u16, chrono::NaiveDate)>,
     body: Rect,
+    /// The engine's frame and where its top-left cell is on screen (layers_ui.rs).
+    pub frame: caretline::Frame,
+    pub frame_at: (u16, u16),
+}
+
+impl PreparedDoc {
+    /// Whether this prepared document is the one drawn now (its area and revision).
+    pub fn current(&self, app: &App) -> bool {
+        self.revision == source_revision(app)
+    }
 }
 
 pub(crate) fn prepare(app: &mut App, mut area: Rect) {
@@ -583,9 +608,26 @@ pub(crate) fn prepare(app: &mut App, mut area: Rect) {
     let mut days = Vec::new();
     let header = header(ctx, &mut days, app, w);
     let head_h = (header.len() as u16).min(area.height);
-    let body = Rect { y: area.y + head_h, height: area.height.saturating_sub(head_h), ..area };
-    let (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
-    app.derived.doc = Some(PreparedDoc { area: source_area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body });
+    let body = Rect {
+        y: area.y + head_h,
+        height: area.height.saturating_sub(head_h),
+        ..area
+    };
+    let (rows, cursor, own_meta, scroll, frame, left) = layout(app, w, body.height);
+    let frame_at = (body.x + left as u16, body.y);
+    app.derived.doc = Some(PreparedDoc {
+        area: source_area,
+        revision: source_revision(app),
+        rows,
+        cursor,
+        own_meta,
+        scroll,
+        header,
+        days,
+        body,
+        frame,
+        frame_at,
+    });
 }
 
 pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {

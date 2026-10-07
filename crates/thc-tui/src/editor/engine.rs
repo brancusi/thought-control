@@ -80,6 +80,10 @@ pub(crate) struct Engine {
     /// edit through one maps every other one (`caretline::update_doc`).
     others: Vec<(u32, cn::View)>,
     current: u32,
+    /// The text changes since the host last took them, composed (layers' text anchors follow
+    /// them). Kept only while `track` is on.
+    changes: Option<cn::ChangeSet>,
+    pub(super) track: bool,
 }
 
 /// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
@@ -165,6 +169,8 @@ impl Engine {
             pool: IdPool::default(),
             others: Vec::new(),
             current: 0,
+            changes: None,
+            track: false,
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -197,6 +203,11 @@ impl Engine {
     pub(super) fn state_mut(&mut self) -> &mut cn::State {
         self.flush();
         &mut self.st
+    }
+
+    /// The engine's document, the host's changes in (layers resolve block anchors in it).
+    pub(super) fn cn_doc(&self) -> &cn::Document {
+        &self.st.doc
     }
 
     pub(super) fn rev(&self) -> u64 {
@@ -502,15 +513,32 @@ impl Engine {
     /// One message through the current view, every other view of the document mapped
     /// through what it changed (in a stable order by id, so a typing run stays one view's).
     fn step(&mut self, msg: Msg) -> Vec<Effect> {
+        let (fx, cs) = self.step_changes(msg);
+        if let (true, Some(cs)) = (self.track, cs) {
+            self.changes = Some(match self.changes.take() {
+                Some(prev) => prev.compose(cs),
+                None => cs,
+            });
+        }
+        fx
+    }
+
+    /// The text changes since the last call (None: none, or not tracking).
+    pub(super) fn take_changes(&mut self) -> Option<cn::ChangeSet> {
+        self.flush();
+        self.changes.take()
+    }
+
+    fn step_changes(&mut self, msg: Msg) -> (Vec<Effect>, Option<cn::ChangeSet>) {
         if self.others.is_empty() {
-            return cn::update(&mut self.st, msg);
+            return cn::update_with_changes(&mut self.st, msg);
         }
         let mut all: Vec<(u32, cn::View)> = std::mem::take(&mut self.others);
         all.push((self.current, std::mem::take(&mut self.st.view)));
         all.sort_by_key(|(id, _)| *id);
         let acting = all.iter().position(|(id, _)| *id == self.current).unwrap_or(0);
         let (ids, mut views): (Vec<u32>, Vec<cn::View>) = all.into_iter().unzip();
-        let fx = cn::update_doc(&mut self.st.doc, &mut views, acting, msg);
+        let r = cn::update_doc_with_changes(&mut self.st.doc, &mut views, acting, msg);
         for (id, v) in ids.into_iter().zip(views) {
             if id == self.current {
                 self.st.view = v;
@@ -518,7 +546,7 @@ impl Engine {
                 self.others.push((id, v));
             }
         }
-        fx
+        r
     }
 
     /// The view messages act through, and the one `state()` shows.

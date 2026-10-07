@@ -470,6 +470,12 @@ pub struct App {
     /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
     /// would drop).
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
+    /// The agent policy for layers (`[layers] agent_limits`; a trace records it in `env`).
+    pub layer_limits: crate::layers::AgentLimits,
+    /// Each agent's own view on the open document (doc_view.rs): actor → view id.
+    pub agent_views: std::collections::BTreeMap<String, u32>,
+    /// The last `doc_view` message's result, for the socket's reply.
+    pub doc_view_reply: Option<serde_json::Value>,
 }
 
 impl std::ops::Deref for App {
@@ -842,6 +848,13 @@ impl App {
             sidebar_col: None,
             sidebar_over: None,
             sidebar_drag: None,
+            layer_limits: crate::layers::AgentLimits::parse(
+                thc_core::settings::current()
+                    .str("layers.agent_limits")
+                    .unwrap_or("off"),
+            ),
+            agent_views: Default::default(),
+            doc_view_reply: None,
         };
         app.load_page_ids();
         if !deferred {

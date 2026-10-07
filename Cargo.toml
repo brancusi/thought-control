@@ -28,7 +28,10 @@ sha2 = "0.10"
 # this patch is removed once a caretline release contains it. Never patch the engine in this
 # repo; for local work on both, use a path patch to your caretline checkout and don't commit it.
 [patch.crates-io]
-caretline = { git = "https://github.com/brancusi/caretline", rev = "282c8a531157dd6e95687beff019c8251749c5a3" }
+# LOCAL-ONLY (feat/layers, never pushed): the engine and caretline-layers from a sibling
+# checkout, so both use one engine. Must become published versions (caretline 0.4.0,
+# caretline-layers 0.1.0) before this branch is pushed.
+caretline = { path = "../caretline/crates/caretline" }
 
 [profile.release]
 lto = "fat"

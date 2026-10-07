@@ -200,6 +200,11 @@ pub struct RenderOutput {
     pub about: crate::about::Out,
     pub size: Rect,
     pub cells: Option<ratatui::buffer::Buffer>,
+    /// Where this frame drew what layers anchor to (layers_ui.rs): put while drawing, the rest
+    /// collected from the click targets when layers show.
+    pub anchors: caretline_layers::AnchorMap,
+    /// The layers placed this frame (clicks on their boxes and buttons go to them).
+    pub layer_plan: Option<caretline_layers::Plan>,
     hint_actions: Vec<(String, &'static str)>,
     drawing_row: Option<usize>,
 }
@@ -234,6 +239,11 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
     let mut output = RenderOutput { size: f.area(), ..RenderOutput::default() };
     let render = &mut output;
     draw_frame(render, f, app);
+    // Layers over everything (layers_ui.rs).
+    if let Some(mut p) = crate::layers_ui::plan(render, f.buffer_mut(), app) {
+        crate::layers_ui::draw(f.buffer_mut(), &mut p, app);
+        render.layer_plan = Some(p);
+    }
     // Hover (mouse.md §6): the target under the pointer turns accent; colour only, never layout.
     if let Some((hx, hy)) = app.hover {
         let accent = app.theme.s(Token::Accent).fg;
@@ -338,7 +348,22 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
             let detail = Rect { x: content.x + lw + 2, width: main_w.saturating_sub(lw + 2), ..content };
             let lines: Vec<Line> = (0..sep.height).map(|_| Line::styled(th.glyphs().vsep, th.s(Token::Line))).collect();
             f.render_widget(Paragraph::new(lines), sep);
-            if app.doc.is_some() { draw_document(render, f, app, list) } else { draw_content(render, f, app, list) }
+            if app.doc.is_some() {
+                draw_document(render, f, app, list)
+            } else {
+                draw_content(render, f, app, list)
+            }
+            render.anchors.put(
+                caretline_layers::AnchorKey::host(
+                    "ui",
+                    if app.view == View::Journal {
+                        "calendar"
+                    } else {
+                        "detail"
+                    },
+                ),
+                crate::layers_ui::rect(detail),
+            );
             draw_side(render, f, app, detail);
         }
         None if app.doc.is_some() => draw_document(render, f, app, content),

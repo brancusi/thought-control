@@ -35,11 +35,9 @@ pub const COMPLETED: &str = "thc.completed";
 /// thc's outline: two spaces per depth, its statuses as tags, a new item after a task an open
 /// task, whole-line images.
 pub fn config() -> OutlineConfig {
-    OutlineConfig {
-        tags: STATUSES.iter().map(|(c, _)| *c).collect(),
-        new_tag: Some(OPEN),
-        ..OutlineConfig::default()
-    }
+    OutlineConfig::default()
+        .with_tags(STATUSES.iter().map(|(c, _)| *c).collect())
+        .with_new_tag(Some(OPEN))
 }
 
 /// The host every thc document runs with.

@@ -274,6 +274,28 @@ impl Doc {
         self.engine.now_ms = now_ms;
     }
 
+    /// Keep the engine's text changes for [`Doc::take_changes`] (layers with text anchors).
+    pub fn track_changes(&mut self, on: bool) {
+        if !on && self.engine.track {
+            let _ = self.engine.take_changes();
+        }
+        self.engine.track = on;
+    }
+
+    pub fn tracking(&self) -> bool {
+        self.engine.track
+    }
+
+    /// The text changes since the last call, composed (None: none, or not tracking).
+    pub fn take_changes(&mut self) -> Option<caretline::ChangeSet> {
+        self.engine.take_changes()
+    }
+
+    /// The engine's document (layers: where blocks start, for anchors off screen).
+    pub fn cn_doc(&self) -> &caretline::Document {
+        self.engine.cn_doc()
+    }
+
     /// The engine's text (tests: the lines against it).
     #[cfg(test)]
     pub fn engine_text(&self) -> String {

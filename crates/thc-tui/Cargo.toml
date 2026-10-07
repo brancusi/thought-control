@@ -16,6 +16,8 @@ toml.workspace = true
 libc.workspace = true
 thc-core = { path = "../thc-core" }
 caretline = "0.3"
+# LOCAL-ONLY path dependency (see the root Cargo.toml patch).
+caretline-layers = { path = "../../../caretline/crates/caretline-layers" }
 unicode-width = "0.2"
 unicode-segmentation = "1"
 foldhash = "0.2"

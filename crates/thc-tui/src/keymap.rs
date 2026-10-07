@@ -1546,7 +1546,12 @@ pub fn run(app: &mut App, action: &str) -> bool {
                 app.info("one vault here · the scope picker is for views across vaults".to_string());
             }
         }
-        "nav.back" => app.history_go(-1),
+        // An agent's layer step first: ⌘[ takes back its newest layer (layers.rs).
+        "nav.back" => {
+            if !app.ui.layers.back_agent_step() {
+                app.history_go(-1)
+            }
+        }
         "nav.forward" => app.history_go(1),
         "context.toggle" => app.toggle_context(),
         "go.journal_today" => {
