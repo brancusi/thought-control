@@ -202,3 +202,25 @@ fn the_text_column_doesnt_reserve_room_for_a_yielded_detail_pane() {
     assert!(panel_open(&s, "Garden"));
     assert_eq!(width(&rows), w0, "the paragraph wraps at the same width\n{}", rows.join("\n"));
 }
+
+/// A wide character that doesn't fit whole at the end of a row starts the next row: a 72-cell
+/// column never draws a 73-cell row (hyrg2: the engine's wrap takes it when its first cell
+/// fits, and its right half lands on the scrollbar or the meta).
+#[test]
+#[ignore = "hyrg2"]
+fn a_wide_character_that_doesnt_fit_wraps_whole() {
+    use crate::editor::{Doc, DocRow, Target, ViewGeometry};
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    for (depth, pad, column) in [(0usize, 71usize, 72usize), (1, 67, 68)] {
+        let text = format!("{}🙂 tail words here", "a".repeat(pad));
+        let b: thc_core::outline::Block = serde_json::from_value(serde_json::json!({"id": "n0", "parent": null, "depth": depth, "kind": "bullet", "text": text, "text_rev": "r"})).unwrap();
+        let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[b], today);
+        d.set_view(&ViewGeometry { width: 100, height: 10, column: 72, extra_rows: vec![], typewriter: false });
+        for r in d.frame().rows {
+            if let DocRow::Text { start, end, .. } = r {
+                let w = unicode_width::UnicodeWidthStr::width(text[start..end].trim_end());
+                assert!(w <= column, "depth {depth}: a {w}-cell row in a {column}-cell column: {:?}", &text[start..end]);
+            }
+        }
+    }
+}
