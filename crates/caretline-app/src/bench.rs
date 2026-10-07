@@ -15,6 +15,9 @@ const EDITS: [&str; 2] = [
     r#"{"id":1,"op":"msgs","msgs":[{"msg":"delete_backward"}]}"#,
 ];
 
+/// The same edits as a key script.
+const KEY_EDITS: [&str; 2] = [r#"{"id":1,"op":"keys","keys":"x"}"#, r#"{"id":1,"op":"keys","keys":"<bs>"}"#];
+
 fn doc(lines: usize) -> String {
     let mut s = String::with_capacity(lines * 64);
     for i in 0..lines {
@@ -160,6 +163,11 @@ pub fn main(argv: &[String]) -> Result<(), String> {
             i += 1;
             drop(s.handle(EDITS[i % 2], None))
         }));
+        let mut i = 0;
+        row("keys, the same edit (x or <bs>)", time(2000, || {
+            i += 1;
+            drop(s.handle(KEY_EDITS[i % 2], None))
+        }));
     }
 
     for lines in [1_000usize, 100_000] {
@@ -172,6 +180,12 @@ pub fn main(argv: &[String]) -> Result<(), String> {
             c.ask(EDITS[i % 2])
         }));
         row("keys \"<down>\"", time(5000, || c.ask(r#"{"id":1,"op":"keys","keys":"<down>"}"#)));
+        row("msgs, move down (what <down> becomes)", time(5000, || c.ask(r#"{"id":1,"op":"msgs","msgs":[{"msg":"move","dir":"forward","by":"visual_line"}]}"#)));
+        let mut i = 0;
+        row("keys, one edit (x or <bs>)", time(5000, || {
+            i += 1;
+            c.ask(KEY_EDITS[i % 2])
+        }));
         row("render 100x40 text", time(2000, || c.ask(r#"{"id":1,"op":"render"}"#)));
         row("render 100x40 cells", time(2000, || c.ask(r#"{"id":1,"op":"render","format":"cells"}"#)));
         row("state.get", time(100, || c.ask(r#"{"id":1,"op":"state.get"}"#)));

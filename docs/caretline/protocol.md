@@ -291,7 +291,7 @@ socket. Build with `--release` for meaningful numbers. On an Apple-silicon Mac:
 |---|---|---|
 | `hello` | | ~11 µs |
 | `msgs`, one edit | ~1–2 µs | ~12–14 µs |
-| `keys "<down>"` | | ~30–37 µs |
+| `keys "<down>"` (the same as the `msgs` it becomes) | | ~21–25 µs |
 | `render` 100x40 (`text` or `cells`) | ~85–90 µs | ~100 µs |
 | `state.get`, 1,000 lines, fresh history | ~23 µs | ~80 µs |
 | `state.get`, 100,000 lines (6.6 MB) | ~2.5 ms | ~7 ms |
