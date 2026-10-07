@@ -18,7 +18,7 @@ caretline is on [crates.io](https://crates.io/crates/caretline): `cargo add care
 
 ```toml
 [dependencies]
-caretline = "0.1"
+caretline = "0.2"
 ```
 
 Its library is `caretline::`. Inside this repository the crate is still named
@@ -56,7 +56,7 @@ selects and undoes; `Ctrl-Q` twice quits and prints the text.
 
 ```toml
 [dependencies]
-caretline = "0.1"
+caretline = "0.2"
 ratatui = "0.30"
 crossterm = "0.29"
 ```
