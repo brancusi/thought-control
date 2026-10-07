@@ -56,7 +56,7 @@ pub fn tools() -> Vec<Tool> {
         ),
         tool(
             "open",
-            "Open a session. With no arguments, attach to the newest live editor; pid or socket picks one. With file (a path) or text, start a headless engine in this process instead (outline: read the file as Markdown blocks: lists, tasks, nesting). Returns a session id and the document's rev. Attaching never moves the person's caret or changes their text.",
+            "Open a session. With no arguments, attach to the newest live editor; pid or socket picks one. With file (a path) or text, start a headless engine in this process instead (outline: read the file as Markdown blocks: lists, headings, nesting). Returns a session id and the document's rev. Attaching never moves the person's caret or changes their text.",
             json!({
                 "type": "object",
                 "properties": {
@@ -64,7 +64,7 @@ pub fn tools() -> Vec<Tool> {
                     "socket": {"type": "string", "description": "Attach to the editor or `caretline serve --socket` listening on this Unix socket"},
                     "file": {"type": "string", "description": "Headless: open this file (created on save if missing)"},
                     "text": {"type": "string", "description": "Headless: start from this text, with no file"},
-                    "outline": {"type": "boolean", "description": "Headless: an outline document (Markdown lists, tasks and blocks)"},
+                    "outline": {"type": "boolean", "description": "Headless: an outline document (Markdown lists, headings and blocks)"},
                     "layout": {"type": "boolean", "description": "Headless: an outline with the outline layout when rendered"},
                     "width": {"type": "integer", "description": "Headless: the viewport width (default 80)"},
                     "height": {"type": "integer", "description": "Headless: the viewport height (default 24)"},

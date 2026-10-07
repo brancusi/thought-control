@@ -1,5 +1,5 @@
 {
-  "text": "# Lisbon trip\nBooked the flat in Lisbon.\nIt faces the river.\n- [ ] Pay the deposit\n  - ask Ana about her desk\n- [ ] Book flights\n- [x] Renew passport\n![boiler label](files/boiler.png)\n1. Pack\n2. Leave",
+  "text": "# Lisbon trip\nBooked the flat in Lisbon.\nIt faces the river.\n- Pay the deposit\n  - ask Ana about her desk\n- Book flights\n- Renew passport\n![boiler label](files/boiler.png)\n1. Pack\n2. Leave",
   "selection": {
     "ranges": [
       {
@@ -76,27 +76,27 @@
         "id": 2
       },
       {
-        "pos": 83,
+        "pos": 79,
         "id": 3
       },
       {
-        "pos": 110,
+        "pos": 106,
         "id": 4
       },
       {
-        "pos": 129,
+        "pos": 121,
         "id": 5
       },
       {
-        "pos": 150,
+        "pos": 138,
         "id": 6
       },
       {
-        "pos": 184,
+        "pos": 172,
         "id": 7
       },
       {
-        "pos": 192,
+        "pos": 180,
         "id": 8
       }
     ],
@@ -104,32 +104,6 @@
   },
   "outline": {
     "indent": 2,
-    "task_markers": [
-      {
-        "ch": " ",
-        "name": "todo"
-      },
-      {
-        "ch": "x",
-        "name": "done"
-      },
-      {
-        "ch": "/",
-        "name": "doing"
-      },
-      {
-        "ch": "w",
-        "name": "waiting"
-      },
-      {
-        "ch": "-",
-        "name": "cancelled"
-      }
-    ],
-    "cycle": [
-      " ",
-      "x"
-    ],
     "atomic_images": true,
     "numbered": true
   }

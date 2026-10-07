@@ -73,7 +73,7 @@ pub enum Hit {
         deco: Option<String>,
     },
     /// A block's gutter, left of everything, with its decoration's id.
-    Marks {
+    Gutter {
         block: MarkId,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         deco: Option<String>,
@@ -307,7 +307,7 @@ pub fn render(doc: &Document, view: &View) -> Frame {
                 let last = block.is_some_and(|b| b.last_line() == l) && row + 1 == text_n;
                 frame.rows.push(RowInfo::Text { block: id, line: l, row: row as u16, first, last, chars: 0..0, x });
                 if let (true, Some(g), Some(b)) = (first, &geometry, block) {
-                    let from = lf.x.saturating_sub(g.hang as usize).max(g.marks as usize).min(lf.x);
+                    let from = lf.x.saturating_sub(g.hang as usize).max(g.gutter as usize).min(lf.x);
                     for cx in from..lf.x.min(width as usize) {
                         frame.cells[(y0 + k) * width as usize + cx].role = Role::Hang;
                     }
@@ -318,7 +318,7 @@ pub fn render(doc: &Document, view: &View) -> Frame {
                     }
                     if let Some(d) = &deco.gutter {
                         let role = frame.named(&d.role);
-                        frame.put_str(0, y0 + k, &d.text, (g.marks as usize).min(from).min(width as usize), role);
+                        frame.put_str(0, y0 + k, &d.text, (g.gutter as usize).min(from).min(width as usize), role);
                     }
                 }
             }
@@ -436,7 +436,6 @@ fn hang_glyph(hang: Hang) -> String {
         Hang::None | Hang::Fence => String::new(),
         Hang::Bullet => "•".into(),
         Hang::Number(n) => format!("{n}."),
-        Hang::Task(c) => format!("[{c}]"),
         Hang::Heading(n) => "#".repeat(n as usize),
         Hang::Quote => "│".into(),
     }
@@ -469,8 +468,8 @@ pub fn hit(doc: &Document, view: &View, col: u16, row: u16) -> Hit {
             if c < lf.x {
                 // Only a block's first row carries its decoration.
                 let deco = (at.row == lf.before && b.first_line == at.line).then(|| decoration(doc, view, g, b)).unwrap_or_default();
-                if c < g.marks as usize {
-                    return Hit::Marks { block: b.id, deco: deco.gutter.and_then(|d| d.id) };
+                if c < g.gutter as usize {
+                    return Hit::Gutter { block: b.id, deco: deco.gutter.and_then(|d| d.id) };
                 }
                 return Hit::Hang { block: b.id, deco: deco.hang.and_then(|d| d.id) };
             }

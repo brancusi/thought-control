@@ -29,7 +29,7 @@ use crate::update::step;
 ///
 /// `update(state, msg)` is `update_doc(&mut state.doc, [&mut state.view], 0, msg)`.
 pub fn update_doc(doc: &mut Document, views: &mut [View], acting: usize, msg: Msg) -> Vec<Effect> {
-    doc.journal.0.clear();
+    doc.change_log.0.clear();
     if msg.is_external() {
         return crate::external::apply(doc, views, msg);
     }
@@ -54,14 +54,14 @@ pub fn update_doc(doc: &mut Document, views: &mut [View], acting: usize, msg: Ms
     if doc.edits.0 != edits {
         // The acting view's folds drop with their blocks too (whatever path the edit took).
         views[acting].folds.retain(|id| doc.marks.contains(*id));
-        let journal = std::mem::take(&mut doc.journal.0);
+        let changes = std::mem::take(&mut doc.change_log.0);
         for (i, v) in views.iter_mut().enumerate() {
             if i != acting {
-                rebase(doc, v, &journal, tops[i]);
+                rebase(doc, v, &changes, tops[i]);
             }
         }
     }
-    doc.journal.0.clear();
+    doc.change_log.0.clear();
     effects
 }
 
@@ -72,19 +72,19 @@ pub(crate) fn tops(doc: &Document, views: &[View]) -> Vec<usize> {
     views.iter().map(|v| doc.text.line_to_char(v.scroll.line.min(last))).collect()
 }
 
-/// Maps a view through text changes made elsewhere (`journal`, in order), then fits it to
+/// Maps a view through text changes made elsewhere (`changes`, in order), then fits it to
 /// the document: selections inside the text and out of block markers, out of folded
 /// blocks, folds on live blocks, the scroll on the line it showed (`top`, before).
-pub(crate) fn rebase(doc: &Document, view: &mut View, journal: &[ChangeSet], top: usize) {
+pub(crate) fn rebase(doc: &Document, view: &mut View, changes: &[ChangeSet], top: usize) {
     let mut top = top;
     let mut selection = view.selection.clone();
-    for cs in journal {
+    for cs in changes {
         selection = map_elsewhere(selection, cs);
         view.wrap.edited(cs);
         top = cs.map_pos(top, Assoc::Before);
     }
     view.selection = selection;
-    if !journal.is_empty() {
+    if !changes.is_empty() {
         view.word_drag = None;
         view.scroll.line = doc.text.char_to_line(top.min(doc.text.len_chars()));
     }

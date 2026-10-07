@@ -121,8 +121,8 @@ fn a_minimal_state_file_is_a_working_editor() {
 fn outline_mode_reads_markdown_edits_blocks_and_saves_markdown() {
     let dir = fixtures();
     let file = dir.join("trip.md");
-    let frame = run(bin().arg("--outline").arg(&file).args(["--keys", "<down><down><down><c-t>", "--snapshot", "50x18"]));
-    assert!(frame.contains("- [x] Pay the deposit"), "{frame}");
+    let frame = run(bin().arg("--outline").arg(&file).args(["--keys", "<down><down><down><down><down><tab>", "--snapshot", "50x18"]));
+    assert!(frame.contains("\n  - Book flights"), "{frame}");
     let effects = run(bin().arg("--outline").arg(&file).args(["--keys", "<d-down>!<c-s>", "--effects"]));
     let write = effects.lines().find(|l| l.contains("write_file")).expect("a write_file effect");
     let v: serde_json::Value = serde_json::from_str(write).unwrap();

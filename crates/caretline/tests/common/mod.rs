@@ -226,3 +226,57 @@ pub mod gen {
         Selection::new(ranges, 0)
     }
 }
+
+/// Outline documents with tags `a` and `b` (Enter after a tagged item makes an `a`).
+#[allow(dead_code)]
+pub fn tagged_cfg() -> caretline::OutlineConfig {
+    caretline::OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..caretline::OutlineConfig::default() }
+}
+
+/// A made-up host for fuzzing commands: `test.retag` steps every selected block through
+/// text → `- [a] ` → `- [b] ` → text (keeping blank rows), `test.set_tag {id, tag}` sets one
+/// tagged block's tag.
+#[allow(dead_code)]
+pub fn retag_host() -> caretline::Host {
+    use caretline::outline::Kind;
+    use caretline::{Edit, Host};
+    Host::new()
+        .command("test.retag", |ctx, _| {
+            let o = ctx.blocks().ok_or("only in outline documents")?;
+            let text = ctx.text();
+            let r = ctx.selection().primary();
+            let (fi, li) = (o.index_at(text, r.from()), o.index_at(text, r.to()));
+            let mut changes = Vec::new();
+            for b in &o.blocks[fi..=li] {
+                if b.fence {
+                    continue;
+                }
+                let at = b.start + b.indent;
+                match (b.kind, b.tag) {
+                    (Kind::Para, _) => changes.push((at, at, "- [a] ".to_string())),
+                    (_, Some('a')) => changes.push((at + 3, at + 4, "b".to_string())),
+                    (_, Some(_)) => changes.push((b.start, b.content_start(), String::new())),
+                    (_, None) => changes.push((at, b.content_start(), "- [a] ".to_string())),
+                }
+            }
+            Ok(Edit { selection: Some(ctx.mapped_selection(&changes)), changes, keep_gaps: true, ..Edit::default() })
+        })
+        .command("test.set_tag", |ctx, args| {
+            let o = ctx.blocks().ok_or("only in outline documents")?;
+            let id = caretline::MarkId(args["id"].as_u64().ok_or("no id")?);
+            let tag = args["tag"].as_str().and_then(|t| t.chars().next()).ok_or("no tag")?;
+            let b = o.get(id).ok_or("no such block")?;
+            if b.tag.is_none() || b.tag == Some(tag) {
+                return Ok(Edit::default());
+            }
+            let at = b.start + b.indent + 3;
+            let changes = vec![(at, at + 1, tag.to_string())];
+            Ok(Edit { selection: Some(ctx.mapped_selection(&changes)), changes, ..Edit::default() })
+        })
+}
+
+/// The message `test.retag` sends.
+#[allow(dead_code)]
+pub fn retag() -> caretline::Msg {
+    caretline::Msg::Command { name: "test.retag".into(), args: serde_json::Value::Null }
+}

@@ -3,11 +3,11 @@
 Booked the flat in Lisbon.
 It faces the river.
 
-- [ ] Pay the deposit
+- Pay the deposit
   - ask Ana about her desk
-    - [x] Call Ana
-- [x] Renew passport
-- [ ] Book flights
+    - Call Ana
+- Renew passport
+- Book flights
 
 ![boiler label](files/boiler.png)
 
@@ -15,4 +15,4 @@ It faces the river.
 2. Leave
 
 
- trip.md [+]                                 7:19
+ trip.md [+]                                 7:15

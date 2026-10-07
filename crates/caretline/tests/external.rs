@@ -90,14 +90,18 @@ fn outline_doc(rng: &mut StdRng) -> State {
         let line = match rng.random_range(0..4) {
             0 => format!("para {i} with words\n\n"),
             1 => format!("- item {i}\n"),
-            2 => format!("  - [ ] task {i}\n"),
+            2 => format!("  - [a] tagged {i}\n"),
             _ => format!("1. number {i}\n"),
         };
         md.push_str(&line);
     }
     // A paragraph first, so nested items always have a parent.
     let md = format!("start here\n\n{md}");
-    markdown::load(&md, None, Viewport { width: 40, height: 12 }, OutlineConfig::default())
+    markdown::load(&md, None, Viewport { width: 40, height: 12 }, tagged())
+}
+
+fn tagged() -> OutlineConfig {
+    OutlineConfig { tags: "ab".into(), ..OutlineConfig::default() }
 }
 
 /// A local edit inside a local block's content: typing, or deleting a span of it.
@@ -132,7 +136,7 @@ fn remote_change(rng: &mut StdRng, s: &State, next_id: &mut u64) -> Option<ExtCh
         *next_id += 2;
         return Some(ExtChange::InsertBlock {
             after: None,
-            block: NewBlock { depth: 0, kind: Kind::Bullet, status: None, tag: None, text: "from elsewhere".into(), gap: None, mark: Some(MarkId(*next_id)) },
+            block: NewBlock { depth: 0, kind: Kind::Bullet, tag: None, text: "from elsewhere".into(), gap: None, mark: Some(MarkId(*next_id)) },
         });
     }
     let b = &theirs[rng.random_range(0..theirs.len())];
@@ -144,16 +148,15 @@ fn remote_change(rng: &mut StdRng, s: &State, next_id: &mut u64) -> Option<ExtCh
                 after: Some(b.id),
                 block: NewBlock {
                     depth: b.depth,
-                    kind: [Kind::Bullet, Kind::Task][rng.random_range(0..2)],
-                    status: Some(' '),
-                    tag: None,
+                    kind: Kind::Bullet,
+                    tag: [None, Some('a')][rng.random_range(0..2)],
                     text: "inserted".into(),
                     gap: None,
                     mark: Some(MarkId(*next_id)),
                 },
             }
         }
-        3 if b.kind != Kind::Para => ExtChange::SetShape { id: b.id, depth: b.depth, kind: Kind::Task, status: Some('x'), tag: None },
+        3 if b.kind != Kind::Para => ExtChange::SetShape { id: b.id, depth: b.depth, kind: Kind::Bullet, tag: Some('b') },
         _ if o.blocks.last().map(|l| l.id) != Some(b.id) => ExtChange::RemoveBlock { id: b.id },
         _ => ExtChange::SetGap { id: b.id, gap: Some(true) },
     })
@@ -278,7 +281,7 @@ fn two_views_and_random_changes_from_elsewhere_keep_the_invariants() {
 // Behaviour
 
 fn outline(md: &str) -> State {
-    markdown::load(md, Some("x.md".into()), Viewport { width: 40, height: 10 }, OutlineConfig::default())
+    markdown::load(md, Some("x.md".into()), Viewport { width: 40, height: 10 }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() })
 }
 
 #[test]
@@ -392,12 +395,12 @@ fn set_shape_rewrites_the_marker_and_keeps_the_content() {
         &mut s,
         Msg::External {
             changes: vec![
-                ExtChange::SetShape { id: ids[0], depth: 0, kind: Kind::Task, status: Some('x'), tag: None },
-                ExtChange::SetShape { id: ids[1], depth: 1, kind: Kind::Bullet, status: None, tag: None },
+                ExtChange::SetShape { id: ids[0], depth: 0, kind: Kind::Bullet, tag: Some('b') },
+                ExtChange::SetShape { id: ids[1], depth: 1, kind: Kind::Bullet, tag: None },
             ],
         },
     );
-    assert_eq!(s.doc.text.to_string(), "- [x] one\n  1. two");
+    assert_eq!(s.doc.text.to_string(), "- [b] one\n  1. two");
     assert_eq!(s.doc.marks.iter().map(|m| m.id).collect::<Vec<_>>(), ids);
 }
 
@@ -405,9 +408,9 @@ fn set_shape_rewrites_the_marker_and_keeps_the_content() {
 fn an_inserted_block_takes_the_hosts_id() {
     let mut s = outline("- one\n- two\n");
     let one = s.doc.marks.iter().next().unwrap().id;
-    let nb = NewBlock { depth: 1, kind: Kind::Task, status: Some(' '), tag: None, text: "new".into(), gap: None, mark: Some(MarkId(500)) };
+    let nb = NewBlock { depth: 1, kind: Kind::Bullet, tag: Some('a'), text: "new".into(), gap: None, mark: Some(MarkId(500)) };
     update(&mut s, Msg::External { changes: vec![ExtChange::InsertBlock { after: Some(one), block: nb }] });
-    assert_eq!(s.doc.text.to_string(), "- one\n  - [ ] new\n- two");
+    assert_eq!(s.doc.text.to_string(), "- one\n  - [a] new\n- two");
     assert_eq!(s.doc.marks.iter().nth(1).unwrap().id, MarkId(500));
     // A change to a block that isn't there is skipped and said.
     let fx = update(&mut s, Msg::External { changes: vec![ExtChange::RemoveBlock { id: MarkId(9) }] });
@@ -417,7 +420,7 @@ fn an_inserted_block_takes_the_hosts_id() {
 #[test]
 fn external_changes_are_plain_json() {
     let msg: Msg = serde_json::from_str(
-        r#"{"msg":"external","changes":[{"change":"replace_content","id":3,"text":"hi"},{"change":"replace","from":0,"to":2,"text":"x"},{"change":"insert_block","after":3,"block":{"kind":"task","status":" ","text":"new","mark":12}}]}"#,
+        r#"{"msg":"external","changes":[{"change":"replace_content","id":3,"text":"hi"},{"change":"replace","from":0,"to":2,"text":"x"},{"change":"insert_block","after":3,"block":{"kind":"bullet","tag":" ","text":"new","mark":12}}]}"#,
     )
     .unwrap();
     let Msg::External { changes } = &msg else { panic!() };
@@ -490,7 +493,7 @@ fn a_change_inside_a_block_keeps_its_mark() {
     let mut s = State::new("\n\n", None, Viewport { width: 40, height: 10 });
     s.doc.marks.insert(caretline::Mark { pos: 0, id: MarkId(1), attrs: Default::default() }).unwrap();
     s.doc.marks.insert(caretline::Mark { pos: 1, id: MarkId(0), attrs: Default::default() }).unwrap();
-    s.doc.outline = Some(OutlineConfig::default());
+    s.doc.outline = Some(OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() });
     s.outline_changed();
     let ids = |s: &State| s.blocks().unwrap().blocks.iter().map(|b| (b.id.0, b.start, b.end)).collect::<Vec<_>>();
     assert_eq!(ids(&s), [(1, 0, 0), (0, 1, 2)]);
@@ -501,7 +504,7 @@ fn a_change_inside_a_block_keeps_its_mark() {
     let mut s = State::new("\n\n", None, Viewport { width: 40, height: 10 });
     s.doc.marks.insert(caretline::Mark { pos: 0, id: MarkId(1), attrs: Default::default() }).unwrap();
     s.doc.marks.insert(caretline::Mark { pos: 1, id: MarkId(0), attrs: Default::default() }).unwrap();
-    s.doc.outline = Some(OutlineConfig::default());
+    s.doc.outline = Some(OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() });
     s.outline_changed();
     external(&mut s, ExtChange::ReplaceContent { id: MarkId(0), text: String::new() });
     assert_eq!(ids(&s), [(1, 0, 0), (0, 1, 1)]);

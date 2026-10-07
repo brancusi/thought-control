@@ -3,10 +3,10 @@
 Booked the flat in Lisbon.
 It faces the river.
 
-- [ ] Pay the deposit
+- Pay the deposit
   - ask Ana about her desk
-- [ ] Book flights
-- [x] Renew passport
+- Book flights
+- Renew passport
 
 ![boiler label](files/boiler.png)
 

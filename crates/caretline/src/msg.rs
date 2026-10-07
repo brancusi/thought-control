@@ -117,11 +117,6 @@ pub enum Msg {
     Indent,
     /// Un-nest them one level.
     Outdent,
-    /// The task cycle on the caret's block or the selected blocks: text → open → done →
-    /// text.
-    TaskCycle,
-    /// Set a task's box (a click on it).
-    SetStatus { id: MarkId, ch: char },
     /// Swap the caret's block (with its children) with its previous or next sibling.
     MoveBlock { dir: Dir },
     /// Select a block's whole content (a triple-click).
@@ -220,8 +215,6 @@ impl Msg {
                 | Msg::SoftBreak
                 | Msg::Indent
                 | Msg::Outdent
-                | Msg::TaskCycle
-                | Msg::SetStatus { .. }
                 | Msg::MoveBlock { .. }
                 | Msg::InsertBlocks { .. }
                 | Msg::Edit { .. }
@@ -243,10 +236,6 @@ pub enum Effect {
     Quit,
     /// A message for the person, from an outline document whose status bar is off.
     Notice { text: String },
-    /// A task reached done (a host may save at once).
-    Completed { id: MarkId },
-    /// Undo or redo changed an outline document (a host re-reads what it keeps per block).
-    Restored,
     /// The primary caret moved from one block to another in an outline document (a commit
     /// point for a host).
     BlockLeft {

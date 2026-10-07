@@ -5,7 +5,7 @@
 //! - No caret is inside a marker, and no caret is strictly inside an atomic (image) block.
 //! - Undo after an edit restores text, selection and marks exactly; redo re-applies them;
 //!   undoing everything gives back the first document and marks.
-//! - The task cycle, Tab and Shift-Tab never change another block's blank row, and undo
+//! - The item cycle, Tab and Shift-Tab never change another block's blank row, and undo
 //!   restores every blank row.
 //! - Cut then paste in place gives back the same text and the same ids.
 //! - The state survives JSON, and `view` never panics.
@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
 use caretline::helix::Selection;
 use caretline::outline::markdown;
-use caretline::{update, view, By, Dir, Kind, MarkId, Msg, NewBlock, OutlineConfig, State, Viewport};
+use caretline::{update, view, By, Dir, Kind, MarkId, Msg, NewBlock, State, Viewport};
 use common::gen;
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
@@ -47,7 +47,7 @@ fn random_doc(rng: &mut StdRng) -> State {
                 format!("{text}{more}")
             }
             3 | 4 => format!("{pad}- {text}"),
-            5 | 6 => format!("{pad}- [{}] {text}", [' ', 'x', '/'][rng.random_range(0..3)]),
+            5 | 6 => format!("{pad}- [{}] {text}", ['a', 'b', 'z'][rng.random_range(0..3)]),
             7 => format!("{pad}{}. {text}", rng.random_range(1..20)),
             8 => format!("## {text}"),
             9 => "![shot](files/a.png)".to_string(),
@@ -60,7 +60,8 @@ fn random_doc(rng: &mut StdRng) -> State {
         0 => (rng.random_range(4..20), rng.random_range(2..6)),
         _ => (rng.random_range(20..100), rng.random_range(4..30)),
     };
-    let mut s = markdown::load(&md, Some("fuzz.md".into()), Viewport { width: w, height: h }, OutlineConfig::default());
+    let mut s = markdown::load(&md, Some("fuzz.md".into()), Viewport { width: w, height: h }, common::tagged_cfg());
+    s.doc.set_host(common::retag_host());
     let len = s.doc.text.len_chars();
     let t = s.doc.text.slice(..);
     let a = ensure_grapheme_boundary_prev(t, rng.random_range(0..=len));
@@ -70,7 +71,7 @@ fn random_doc(rng: &mut StdRng) -> State {
     s
 }
 
-const PIECES: &[&str] = &["- ", "[ ] ", "# ", "```", "1. ", "x", "word ", "  ", "\n", "日", "👍🏽", "![a](b)"];
+const PIECES: &[&str] = &["- ", "[a] ", "# ", "```", "1. ", "x", "word ", "  ", "\n", "日", "👍🏽", "![a](b)"];
 
 fn outline_msg(rng: &mut StdRng, s: &State) -> Msg {
     let blocks = s.blocks().unwrap();
@@ -81,16 +82,19 @@ fn outline_msg(rng: &mut StdRng, s: &State) -> Msg {
         4..=5 => Msg::SoftBreak,
         6..=8 => Msg::Indent,
         9..=10 => Msg::Outdent,
-        11..=14 => Msg::TaskCycle,
+        11..=14 => common::retag(),
         15..=16 => Msg::MoveBlock { dir },
-        17 => Msg::SetStatus { id, ch: ['x', ' ', '/'][rng.random_range(0..3)] },
+        17 => {
+            let tag = ["a", "b", "z"][rng.random_range(0..3)];
+            Msg::Command { name: "test.set_tag".into(), args: serde_json::json!({ "id": id.0, "tag": tag }) }
+        }
         18 => Msg::SelectBlock { id },
         19 => Msg::SelectWordAt { pos: rng.random_range(0..=s.doc.text.len_chars()) },
         20 => Msg::InsertBlocks {
             after: rng.random_bool(0.8).then_some(id),
-            blocks: vec![NewBlock { depth: 0, kind: Kind::Bullet, status: None, tag: None, text: "new".into(), gap: None, mark: None }],
+            blocks: vec![NewBlock { depth: 0, kind: Kind::Bullet, tag: None, text: "new".into(), gap: None, mark: None }],
         },
-        21 => Msg::Paste { text: Some("- a\n  - [ ] b\n\npara".into()) },
+        21 => Msg::Paste { text: Some("- a\n  - [a] b\n\npara".into()) },
         22 => Msg::PastePlain { text: Some("one\ntwo\n\nthree".into()) },
         23..=25 => Msg::Move { dir, by: By::Block, extend: rng.random_bool(0.3) },
         26..=29 => Msg::InsertNewline,
@@ -174,7 +178,7 @@ fn run_seed(seed: u64) -> usize {
             assert_eq!(undone.doc.marks.as_slice(), s.doc.marks.as_slice(), "{ctx}: redo marks");
         }
         // A kind or depth change moves no other block.
-        if matches!(msg, Msg::TaskCycle | Msg::Indent | Msg::Outdent) && before.view.selection.primary().is_empty() {
+        if (msg == common::retag() || matches!(msg, Msg::Indent | Msg::Outdent)) && before.view.selection.primary().is_empty() {
             let (g0, g1) = (gaps(&before), gaps(&s));
             let caret_block = before.blocks().unwrap().block_at(before.doc.text.slice(..), before.caret()).id;
             let first = s.blocks().unwrap().blocks[0].id;
@@ -269,7 +273,7 @@ fn markdown_files_round_trip() {
     for _ in 0..300 {
         let s = random_doc(&mut rng);
         let md = markdown::to_file(&s);
-        let back = markdown::load(&md, None, Viewport { width: 80, height: 24 }, OutlineConfig::default());
+        let back = markdown::load(&md, None, Viewport { width: 80, height: 24 }, common::tagged_cfg());
         let shape = |s: &State| -> Vec<(Kind, u16, bool, String)> {
             let o = s.blocks().unwrap();
             o.blocks

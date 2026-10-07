@@ -38,7 +38,6 @@ pub fn config() -> OutlineConfig {
     OutlineConfig {
         tags: STATUSES.iter().map(|(c, _)| *c).collect(),
         new_tag: Some(OPEN),
-        task_markers: Vec::new(),
         ..OutlineConfig::default()
     }
 }
@@ -247,5 +246,304 @@ fn decorate(_: &Ctx, b: &BlockInfo) -> Decoration {
             gutter: None,
         },
         None => Decoration::default(),
+    }
+}
+
+/// thc's task goldens (moved from caretline's outline goldens: they are this host's commands).
+/// Notation as there: each block is its first line's text, `⏎` a soft break, ` ‖ ` a blank row
+/// between blocks and ` ¦ ` none; `▮` the caret, `⟦…⟧` a selection. Blocks get ids 0, 1, 2…
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use cn::keymap::{parse_keys, ScriptItem};
+    use cn::outline::markdown;
+    use cn::{update, Effect, KeyCode, State, Viewport};
+
+    fn doc(notation: &str) -> State {
+        let mut blocks: Vec<(String, bool)> = Vec::new();
+        let mut rest = notation;
+        let mut gap = false;
+        loop {
+            let (a, b) = (rest.find(" ‖ "), rest.find(" ¦ "));
+            let (at, next_gap, len) = match (a, b) {
+                (Some(x), Some(y)) if x < y => (x, true, " ‖ ".len()),
+                (_, Some(y)) => (y, false, " ¦ ".len()),
+                (Some(x), None) => (x, true, " ‖ ".len()),
+                (None, None) => break,
+            };
+            blocks.push((rest[..at].to_string(), gap));
+            gap = next_gap;
+            rest = &rest[at + len..];
+        }
+        blocks.push((rest.to_string(), gap));
+        let (mut text, mut n, mut starts) = (String::new(), 0usize, Vec::new());
+        let (mut caret, mut open, mut close) = (None, None, None);
+        for (k, (b, _)) in blocks.iter().enumerate() {
+            if k > 0 {
+                text.push('\n');
+                n += 1;
+            }
+            starts.push(n);
+            for c in b.chars() {
+                match c {
+                    '▮' => caret = Some(n),
+                    '⟦' => open = Some(n),
+                    '⟧' => close = Some(n),
+                    '⏎' => {
+                        text.push('\n');
+                        n += 1;
+                    }
+                    c => {
+                        text.push(c);
+                        n += 1;
+                    }
+                }
+            }
+        }
+        let mut s = State::new(&text, Some("t.md".into()), Viewport { width: 80, height: 24 });
+        for &p in &starts {
+            s.doc.marks.mint(p);
+        }
+        s.doc.set_host(host());
+        s.enable_outline(config());
+        let o = s.blocks().unwrap();
+        for (k, (_, want)) in blocks.iter().enumerate().skip(1) {
+            let b = o.get(MarkId(k as u64)).unwrap();
+            if b.gap != *want {
+                s.doc.marks.set_gap(b.id, Some(*want));
+            }
+        }
+        s.outline_changed();
+        let head = caret.expect("notation needs a caret ▮");
+        let anchor = match (open, close) {
+            (Some(o), Some(c)) => {
+                if head == o {
+                    c
+                } else {
+                    o
+                }
+            }
+            _ => head,
+        };
+        s.view.selection = Selection::single(anchor, head);
+        update(&mut s, Msg::Resize { width: 80, height: 24 });
+        s
+    }
+
+    fn show(s: &State) -> String {
+        let o = s.blocks().unwrap();
+        let r = s.view.selection.primary();
+        let chars: Vec<char> = s.doc.text.chars().collect();
+        let mut out = String::new();
+        let mark = |out: &mut String, i: usize| {
+            if r.anchor == r.head {
+                if i == r.head {
+                    out.push('▮');
+                }
+                return;
+            }
+            if i == r.from() {
+                out.push('⟦');
+                if r.head == i {
+                    out.push('▮');
+                }
+            }
+            if i == r.to() {
+                if r.head == i {
+                    out.push('▮');
+                }
+                out.push('⟧');
+            }
+        };
+        for (k, b) in o.blocks.iter().enumerate() {
+            if k > 0 {
+                out.push_str(if b.gap { " ‖ " } else { " ¦ " });
+            }
+            for (i, &c) in chars.iter().enumerate().take(b.end).skip(b.start) {
+                mark(&mut out, i);
+                out.push(if c == '\n' { '⏎' } else { c });
+            }
+            mark(&mut out, b.end);
+        }
+        out
+    }
+
+    fn ids(s: &State) -> Vec<u64> {
+        s.blocks().unwrap().blocks.iter().map(|b| b.id.0).collect()
+    }
+
+    /// Keys through caretline's outline keymap, with thc's ⌃T on top.
+    fn keys(s: &mut State, script: &str) -> Vec<Effect> {
+        let mut fx = Vec::new();
+        for item in parse_keys(script).unwrap() {
+            let ScriptItem::Key(k) = item else { continue };
+            let msg = if k.code == KeyCode::Char('t') && k.mods.ctrl { Some(Msg::Command { name: TASK_CYCLE.into(), args: Value::Null }) } else { cn::keymap_for(true, &k) };
+            if let Some(m) = msg {
+                fx.extend(update(s, m));
+            }
+        }
+        fx
+    }
+
+    #[track_caller]
+    fn golden(before: &str, script: &str, after: &str) -> State {
+        let mut s = doc(before);
+        keys(&mut s, script);
+        assert_eq!(show(&s), after, "{before:?} · {script:?}");
+        s
+    }
+
+    fn completed(fx: &[Effect]) -> Vec<u64> {
+        fx.iter().filter_map(|e| match e {
+            Effect::Host { name, data } if name == COMPLETED => data["id"].as_u64(),
+            _ => None,
+        })
+        .collect()
+    }
+
+    #[test]
+    fn e23_the_task_cycle_applies_to_every_selected_block() {
+        golden("o⟦ne ‖ tw▮⟧o", "<c-t>", "- [ ] o⟦ne ‖ - [ ] tw▮⟧o");
+    }
+
+    /// `[ ] `, `[x] ` or `[] ` typed at the start of a paragraph's line is a task: the box gets
+    /// its list marker, and on a later line the task is a block of its own.
+    #[test]
+    fn a_bare_task_box_typed_at_a_line_start_makes_a_task() {
+        golden("▮", "[ ] call", "- [ ] call▮");
+        golden("▮", "[x] paid", "- [x] paid▮");
+        golden("▮", "[] call", "- [ ] call▮");
+        golden("intro⏎▮", "[ ] call", "intro ‖ - [ ] call▮");
+        golden("say ▮", "[ ] hi", "say [ ] hi▮");
+        golden("▮", "[q] hi", "[q] hi▮");
+    }
+
+    #[test]
+    fn e70_the_task_cycle_inside_a_paragraph_splits_out_that_line() {
+        let s = golden("First line⏎sec▮ond line⏎third line", "<c-t>", "First line ¦ - [ ] sec▮ond line ¦ third line");
+        assert_eq!(ids(&s), [0, 1, 2]);
+    }
+
+    #[test]
+    fn e71_on_the_first_line_the_task_keeps_the_id() {
+        let s = golden("fir▮st⏎second", "<c-t>", "- [ ] fir▮st ¦ second");
+        assert_eq!(ids(&s), [0, 1]);
+    }
+
+    #[test]
+    fn e72_each_selected_line_becomes_its_own_task() {
+        golden("a⏎⟦b⏎c▮⟧⏎d", "<c-t>", "a ¦ - [ ] ⟦b ¦ - [ ] c▮⟧ ¦ d");
+    }
+
+    #[test]
+    fn e73_a_list_item_with_a_soft_break_stays_one_item() {
+        golden("- item one⏎more of it▮", "<c-t>", "- [ ] item one⏎more of it▮");
+    }
+
+    #[test]
+    fn e74_a_task_after_a_task_keeps_its_blank_row() {
+        golden("- [ ] Buy milk ‖ Call ▮the bank", "<c-t>", "- [ ] Buy milk ‖ - [ ] Call ▮the bank");
+    }
+
+    #[test]
+    fn e75_back_to_text_adds_no_blank_row() {
+        golden("- [ ] A ¦ - [ ] B▮", "<c-t><c-t>", "- [ ] A ¦ B▮");
+    }
+
+    #[test]
+    fn e76_back_to_text_never_joins_across_a_blank_row() {
+        let s = golden("Para one ‖ - [ ] Ta▮sk", "<c-t><c-t>", "Para one ‖ Ta▮sk");
+        assert_eq!(ids(&s), [0, 1]);
+    }
+
+    #[test]
+    fn e77_tab_keeps_the_blank_row() {
+        golden("- [ ] A ‖ - [ ] B▮", "<tab>", "- [ ] A ‖   - [ ] B▮");
+    }
+
+    #[test]
+    fn e78_undo_puts_the_paragraph_back() {
+        let mut s = golden("First line⏎sec▮ond line⏎third line", "<c-t><c-z>", "First line⏎sec▮ond line⏎third line");
+        assert_eq!(ids(&s), [0]);
+        keys(&mut s, "<c-y>");
+        assert_eq!(show(&s), "First line ¦ - [ ] sec▮ond line ¦ third line");
+        assert_eq!(ids(&s), [0, 1, 2], "redo brings back the same ids");
+    }
+
+    #[test]
+    fn e79_deleting_the_marker_adds_no_blank_row() {
+        golden("- [ ] ▮A ¦ - [ ] B", "<bs><bs><bs><bs>", "▮A ¦ - [ ] B");
+    }
+
+    #[test]
+    fn e80_blank_rows_round_trip_through_markdown() {
+        let s = doc("- [ ] A ‖ - [ ] B▮");
+        let md = markdown::to_file(&s);
+        assert_eq!(md, "- [ ] A\n\n- [ ] B\n");
+        let back = markdown::load(&md, None, Viewport { width: 80, height: 24 }, config());
+        let gaps: Vec<bool> = back.blocks().unwrap().blocks.iter().map(|b| b.gap).collect();
+        assert_eq!(gaps, [false, true]);
+    }
+
+    #[test]
+    fn e81_back_to_text_joins_the_lines_it_split_from() {
+        let s = golden("First line⏎sec▮ond line⏎third line", "<c-t><c-t><c-t>", "First line⏎sec▮ond line⏎third line");
+        assert_eq!(ids(&s), [0]);
+    }
+
+    #[test]
+    fn the_task_cycle_goes_text_open_done_text() {
+        let mut s = doc("Call ▮Sam");
+        keys(&mut s, "<c-t>");
+        assert_eq!(show(&s), "- [ ] Call ▮Sam");
+        let fx = keys(&mut s, "<c-t>");
+        assert_eq!(show(&s), "- [x] Call ▮Sam");
+        assert_eq!(completed(&fx), [0]);
+        keys(&mut s, "<c-t>");
+        assert_eq!(show(&s), "Call ▮Sam");
+        golden("- bul▮let", "<c-t>", "- [ ] bul▮let");
+        golden("  - [/] doing▮", "<c-t>", "  - [x] doing▮");
+    }
+
+    #[test]
+    fn a_click_on_the_box_sets_the_status_and_never_makes_text() {
+        let set = |id: u64, st: &str| Msg::Command { name: SET_STATUS.into(), args: json!({ "id": id, "status": st }) };
+        let mut s = doc("- [ ] Pay▮ ¦ - [x] Done");
+        let fx = update(&mut s, set(0, "x"));
+        assert_eq!(show(&s), "- [x] Pay▮ ¦ - [x] Done");
+        assert_eq!(completed(&fx), [0]);
+        update(&mut s, set(1, " "));
+        assert_eq!(show(&s), "- [x] Pay▮ ¦ - [ ] Done");
+        update(&mut s, set(1, "q"));
+        assert_eq!(s.view.status.as_deref(), Some("'q' isn't a task state"));
+    }
+
+    #[test]
+    fn enter_after_a_task_opens_one_and_backspace_steps_back() {
+        golden("- [x] done▮", "<cr>", "- [x] done ¦ - [ ] ▮");
+        golden("- [ ] ▮task", "<bs>", "- ▮task");
+        golden("  - [x] ▮deep", "<bs><bs>", "▮deep");
+    }
+
+    #[test]
+    fn a_trace_with_task_commands_replays_with_thcs_host() {
+        let mut session = cn::Session::new(doc("Call ▮Sam"));
+        session.apply(Msg::Command { name: TASK_CYCLE.into(), args: Value::Null });
+        session.apply(Msg::Command { name: TASK_CYCLE.into(), args: Value::Null });
+        let (replayed, _, _) = cn::trace::replay_trace_with(&session.trace_jsonl(), &host()).unwrap();
+        assert_eq!(replayed.doc.text.to_string(), "- [x] Call Sam");
+    }
+
+    #[test]
+    fn the_box_is_a_decoration() {
+        let mut s = doc("- [x] Pay▮ ¦ plain");
+        s.view.config.status_bar = false;
+        s.view.layout = Some(cn::OutlineLayout::default());
+        let f = cn::view(&s);
+        let row = f.to_text().lines().next().unwrap().to_string();
+        assert!(row.starts_with("  [x] Pay"), "{row:?}");
+        let x = (0..f.width).find(|&x| &*f.cell(x, 0).symbol == "[").unwrap();
+        assert_eq!(f.role_name(f.cell(x, 0).role), "thc.task.done");
+        assert_eq!(cn::view::hit(&s.doc, &s.view, x, 0), cn::view::Hit::Hang { block: MarkId(0), deco: Some("box".into()) });
     }
 }

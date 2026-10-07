@@ -296,8 +296,8 @@ fn a_served_engine_on_a_socket_and_read_only_mode() {
 #[test]
 fn headless_sessions_edit_select_and_save() {
     let dir = scratch("headless");
-    let file = dir.join("todo.md");
-    std::fs::write(&file, "- [ ] Pay rent\n- Buy milk\n").unwrap();
+    let file = dir.join("list.md");
+    std::fs::write(&file, "- Pay rent\n- Buy milk\n").unwrap();
     let mut mcp = Mcp::start(&dir, &[]);
     let open = mcp.ok("open", json!({"file": file, "outline": true}));
     assert_eq!(open["live"], false);
@@ -305,13 +305,13 @@ fn headless_sessions_edit_select_and_save() {
     let read = mcp.ok("read", json!({"session": s, "from_line": 2, "to_line": 2}));
     assert_eq!(read["text"], "- Buy milk"); // an outline buffer has no final line break
     // A headless engine has no person: keys and select use its own caret.
-    let e = mcp.ok("edit", json!({"session": s, "if_rev": rev(&read), "ops": [{"kind": "select", "from": {"line": 1, "col": 7}, "to": {"line": 1, "col": 10}}]}));
-    let e = mcp.ok("edit", json!({"session": s, "if_rev": rev(&e), "ops": [{"kind": "keys", "keys": "Send<c-t>"}]}));
-    assert_eq!(e["diff"]["new_lines"][0], "- [x] Send rent", "{e}");
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "- [ ] Pay rent\n- Buy milk\n");
+    let e = mcp.ok("edit", json!({"session": s, "if_rev": rev(&read), "ops": [{"kind": "select", "from": {"line": 1, "col": 3}, "to": {"line": 1, "col": 6}}]}));
+    let e = mcp.ok("edit", json!({"session": s, "if_rev": rev(&e), "ops": [{"kind": "keys", "keys": "Send"}]}));
+    assert_eq!(e["diff"]["new_lines"][0], "- Send rent", "{e}");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "- Pay rent\n- Buy milk\n");
     let saved = mcp.ok("save", json!({"session": s}));
     assert_eq!(saved["saved"], true);
-    assert_eq!(std::fs::read_to_string(&file).unwrap(), "- [x] Send rent\n- Buy milk\n");
+    assert_eq!(std::fs::read_to_string(&file).unwrap(), "- Send rent\n- Buy milk\n");
 
     // From text: no file to save.
     let t = mcp.ok("open", json!({"text": "abc"}))["session"].clone();

@@ -1,7 +1,7 @@
 //! What a host adds to the engine: named **commands**, **input rules** and a **decorator**.
 //!
 //! caretline edits text; what the text *means* is the host's. A host that wants a key to do
-//! something only it understands (turn a line into a task, cycle a status) registers a
+//! something only it understands (rewrite a line's prefix by its own rules) registers a
 //! command: a pure function from the document, the view and some JSON arguments to an
 //! [`Edit`]. [`Msg::Command`] runs it as one transaction and one undo step, so it is recorded
 //! in traces and replays wherever the same commands are registered. An input rule may take an
@@ -224,7 +224,7 @@ impl Edit {
 pub struct Deco {
     /// Drawn from the slot's left edge, clipped to its width.
     pub text: String,
-    /// A style name the host defines (`"box.done"`). The renderer reports it per cell; colours
+    /// A style name the host defines (`"badge.warm"`). The renderer reports it per cell; colours
     /// stay with the host.
     pub role: String,
     /// Reported by hit-testing when the slot is clicked.

@@ -211,7 +211,7 @@ pub struct Document {
     /// The changes applied to the text during the current message, for rebasing the other
     /// views. Emptied by every update.
     #[serde(skip)]
-    pub(crate) journal: Journal,
+    pub(crate) change_log: ChangeLog,
     /// Where the text changed since a host last asked ([`Document::take_touched`]).
     #[serde(skip)]
     pub(crate) touched: Touched,
@@ -399,7 +399,7 @@ impl Document {
             undo_floor: false,
             derived: OutlineCache::default(),
             edits: EditCount::default(),
-            journal: Journal::default(),
+            change_log: ChangeLog::default(),
             touched: Touched::all(),
             host: crate::host::Host::default(),
         };
@@ -601,7 +601,7 @@ impl From<StateInput> for State {
             undo_floor: input.undo_floor,
             derived: OutlineCache::default(),
             edits: EditCount::default(),
-            journal: Journal::default(),
+            change_log: ChangeLog::default(),
             touched: Touched::all(),
             host: crate::host::Host::default(),
         };
@@ -895,9 +895,9 @@ impl Touched {
         Touched { range: None, all: true }
     }
 
-    /// Notes a change applied to the text: the range so far is mapped through it, then
+    /// Records a change applied to the text: the range so far is mapped through it, then
     /// joined with what it changed (in the new text's chars).
-    pub(crate) fn note(&mut self, cs: &ChangeSet) {
+    pub(crate) fn record(&mut self, cs: &ChangeSet) {
         if !self.all && !cs.is_empty() {
             self.range = Some(changed_span(self.range, cs));
         }
@@ -955,10 +955,10 @@ impl Document {
 
 /// The text changes of the message being applied: not part of the value.
 #[derive(Debug, Clone, Default)]
-pub(crate) struct Journal(pub Vec<ChangeSet>);
+pub(crate) struct ChangeLog(pub Vec<ChangeSet>);
 
-impl PartialEq for Journal {
-    fn eq(&self, _: &Journal) -> bool {
+impl PartialEq for ChangeLog {
+    fn eq(&self, _: &ChangeLog) -> bool {
         true
     }
 }

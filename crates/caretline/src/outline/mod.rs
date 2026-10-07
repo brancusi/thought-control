@@ -5,8 +5,8 @@
 //!
 //! - **A block's first line** is `indent marker content`. `indent` is
 //!   [`OutlineConfig::indent`] spaces per depth. The marker is `- ` (or `* `, `+ `) for a
-//!   bullet, `- [c] ` for a task (`c` from the task vocabulary), `12. ` (or `12) `) for a
-//!   numbered item, or nothing for a paragraph. A paragraph's first line may start with a
+//!   bullet, `- [c] ` for a tagged bullet (`c` from [`OutlineConfig::tags`]), `12. ` (or
+//!   `12) `) for a numbered item, or nothing for a paragraph. A paragraph's first line may start with a
 //!   heading (`# `, `## `, `### `), a quote (`> `) or a code fence (three backticks).
 //! - **Every other line is a continuation** of the block above (a soft break inside it). A
 //!   continuation holds plain content, without indentation.
@@ -15,16 +15,15 @@
 //!   gets one in the same update, so typing `- ` at the start of a continuation line starts a
 //!   new block there. Inside a fence (from an opening fence line to the closing one) no marker
 //!   starts a block.
-//! - **Block identity** is the mark on its first line. Node ids, due dates and anything else a
-//!   host keeps per block are keyed by [`MarkId`].
+//! - **Block identity** is the mark on its first line. Anything a host keeps per block is
+//!   keyed by [`MarkId`], or carried as the mark's payload ([`MarkAttrs::data`]).
 //! - **The blank row before a block** is an attribute ([`MarkAttrs::gap`]), drawn as a
 //!   virtual row and never stored as text. Unset, it follows the defaults in
 //!   [`default_gap`].
 //!
-//! Shape (depth, kind, status) is a pure function of the text, the marks and the config:
-//! [`derive`]. The rules that edit outlines (Enter, Backspace at block edges, Tab, the task
-//! cycle, moving blocks, pasting Markdown) are in [`rules`]; Markdown in and out is in
-//! [`markdown`].
+//! Shape (depth, kind, tag) is a pure function of the text, the marks and the config:
+//! [`derive`]. The rules that edit outlines (Enter, Backspace at block edges, Tab, moving
+//! blocks, pasting Markdown) are in [`rules`]; Markdown in and out is in [`markdown`].
 
 pub mod markdown;
 pub mod rules;
@@ -37,30 +36,19 @@ use crate::helix::{RopeSlice};
 use crate::marks::{MarkAttrs, MarkId, Marks};
 use crate::state::{Document, State};
 
-/// One entry of a task vocabulary: the character between the brackets and its name.
-#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
-pub struct TaskMarker {
-    pub ch: char,
-    pub name: String,
-}
-
 /// How an outline document reads and edits its text.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OutlineConfig {
     /// Spaces per depth on a block's first line.
     pub indent: u8,
-    /// The characters a task's box may hold (`- [c] `), with their names.
-    pub task_markers: Vec<TaskMarker>,
-    /// The task cycle (⌃T): text → `[cycle[0]]` → `[cycle[1]]` → text. `cycle[1]` is "done".
-    pub cycle: [char; 2],
     /// A block whose whole content is one Markdown image (`![caption](path)`) is atomic: the
     /// caret never stops inside it, and reaching it selects it whole.
     pub atomic_images: bool,
     /// `12. ` and `12) ` start numbered items; Enter continues the number.
     pub numbered: bool,
-    /// Characters a bullet may carry as a one-character tag in brackets, `- [c] ` (GFM's
-    /// task-list syntax, among others). Empty: `[c]` is text. A tag means nothing to the
+    /// Characters a bullet may carry as a one-character tag in brackets, `- [c] ` (the bracket syntax
+    /// of GitHub-flavoured Markdown lists, among others). Empty: `[c]` is text. A tag means nothing to the
     /// engine: it is part of the marker (never a caret stop, drawn in the hang), Backspace at
     /// the content's start removes it before the bullet, and changing it is a text edit.
     #[serde(skip_serializing_if = "String::is_empty")]
@@ -72,11 +60,8 @@ pub struct OutlineConfig {
 
 impl Default for OutlineConfig {
     fn default() -> Self {
-        let m = |ch: char, name: &str| TaskMarker { ch, name: name.into() };
         OutlineConfig {
             indent: 2,
-            task_markers: vec![m(' ', "todo"), m('x', "done"), m('/', "doing"), m('w', "waiting"), m('-', "cancelled")],
-            cycle: [' ', 'x'],
             atomic_images: true,
             numbered: true,
             tags: String::new(),
@@ -86,10 +71,6 @@ impl Default for OutlineConfig {
 }
 
 impl OutlineConfig {
-    pub fn is_task_char(&self, c: char) -> bool {
-        self.task_markers.iter().any(|m| m.ch == c)
-    }
-
     /// Whether `c` may be a bullet's tag.
     pub fn is_tag(&self, c: char) -> bool {
         self.tags.contains(c)
@@ -105,8 +86,8 @@ impl OutlineConfig {
 #[serde(rename_all = "snake_case")]
 pub enum Kind {
     Para,
+    /// A list item: a bullet (tagged or not) or a numbered item.
     Bullet,
-    Task,
 }
 
 /// What a host draws in a block's hang (the gutter before its content).
@@ -116,7 +97,6 @@ pub enum Hang {
     None,
     Bullet,
     Number(u32),
-    Task(char),
     Heading(u8),
     Quote,
     Fence,
@@ -135,8 +115,6 @@ pub struct BlockInfo {
     pub line_count: usize,
     pub depth: u16,
     pub kind: Kind,
-    /// A task's box character.
-    pub status: Option<char>,
     /// A bullet's tag (`- [c] `, see [`OutlineConfig::tags`]): part of its marker.
     pub tag: Option<char>,
     /// Chars of indentation and marker on the first line: never a caret stop.
@@ -164,7 +142,7 @@ impl BlockInfo {
         self.first_line + self.line_count - 1
     }
 
-    /// A list item (bullet, numbered or task).
+    /// A list item (a bullet, tagged or not, or a numbered item).
     pub fn is_item(&self) -> bool {
         self.kind != Kind::Para
     }
@@ -240,7 +218,6 @@ impl Outline {
 pub(crate) struct Prefix {
     pub indent: usize,
     pub kind: Kind,
-    pub status: Option<char>,
     pub tag: Option<char>,
     pub hang: Hang,
     /// Chars of indentation plus marker.
@@ -252,7 +229,7 @@ pub(crate) struct Prefix {
 
 impl Prefix {
     fn fence_content() -> Prefix {
-        Prefix { indent: 0, kind: Kind::Para, status: None, tag: None, hang: Hang::None, len: 0, marker: false, fence: true }
+        Prefix { indent: 0, kind: Kind::Para, tag: None, hang: Hang::None, len: 0, marker: false, fence: true }
     }
 }
 
@@ -284,14 +261,11 @@ pub(crate) fn parse_str(line: &str, cfg: &OutlineConfig) -> Prefix {
 }
 
 fn parse_head(indent: usize, h: &[char], cfg: &OutlineConfig) -> Prefix {
-    let para = Prefix { indent, kind: Kind::Para, status: None, tag: None, hang: Hang::None, len: indent, marker: false, fence: false };
+    let para = Prefix { indent, kind: Kind::Para, tag: None, hang: Hang::None, len: indent, marker: false, fence: false };
     let at = |i: usize| h.get(i).copied();
     match (at(0), at(1)) {
         (Some('-' | '*' | '+'), Some(' ')) => {
             if at(2) == Some('[') && at(4) == Some(']') && at(5) == Some(' ') {
-                if let Some(c) = at(3).filter(|&c| cfg.is_task_char(c)) {
-                    return Prefix { kind: Kind::Task, status: Some(c), hang: Hang::Task(c), len: indent + 6, marker: true, ..para };
-                }
                 if let Some(c) = at(3).filter(|&c| cfg.is_tag(c)) {
                     return Prefix { kind: Kind::Bullet, tag: Some(c), hang: Hang::Bullet, len: indent + 6, marker: true, ..para };
                 }
@@ -376,7 +350,6 @@ pub fn derive(text: RopeSlice, marks: &Marks, cfg: &OutlineConfig) -> Outline {
                 line_count: 1,
                 depth,
                 kind: p.kind,
-                status: p.status,
                 tag: p.tag,
                 prefix_len: p.len.min(content_end - line_start),
                 indent: p.indent,
@@ -600,7 +573,6 @@ pub fn derive_from(prev: &Outline, prev_len: usize, (from, to): (usize, usize), 
                 line_count: 1,
                 depth,
                 kind: p.kind,
-                status: p.status,
                 tag: p.tag,
                 prefix_len: p.len.min(content_end - line_start),
                 indent: p.indent,
@@ -732,9 +704,6 @@ pub struct NewBlock {
     #[serde(default)]
     pub depth: u16,
     pub kind: Kind,
-    /// A task's box character.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub status: Option<char>,
     /// A bullet's tag (`- [c] `).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tag: Option<char>,
@@ -750,14 +719,13 @@ pub struct NewBlock {
 
 impl NewBlock {
     pub fn para(text: &str) -> NewBlock {
-        NewBlock { depth: 0, kind: Kind::Para, status: None, tag: None, text: text.into(), gap: None, mark: None }
+        NewBlock { depth: 0, kind: Kind::Para, tag: None, text: text.into(), gap: None, mark: None }
     }
 
     /// The block's lines as buffer text (prefix on the first line, `\n` between lines).
     pub fn to_lines(&self, cfg: &OutlineConfig) -> String {
         let indent = cfg.indent_str(self.depth);
         let marker = match self.kind {
-            Kind::Task => format!("- [{}] ", self.status.unwrap_or(cfg.cycle[0])),
             Kind::Bullet if numbered_marker(&self.text).is_some() => String::new(),
             Kind::Bullet if self.tag.is_some() => format!("- [{}] ", self.tag.unwrap_or(' ')),
             Kind::Bullet => "- ".into(),
@@ -792,7 +760,7 @@ mod tests {
             [
                 (0, Kind::Para, 0, 2),
                 (2, Kind::Bullet, 0, 1),
-                (3, Kind::Task, 1, 2),
+                (3, Kind::Bullet, 1, 2),
                 (5, Kind::Bullet, 0, 1),
                 (6, Kind::Para, 0, 1)
             ]
