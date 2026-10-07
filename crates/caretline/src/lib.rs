@@ -20,6 +20,7 @@
 //! exactly ([`trace`]). [`Session`] keeps one (state, revision, trace) and [`protocol`]
 //! answers JSON requests against it.
 
+pub mod diff;
 pub mod helix;
 pub mod keymap;
 pub mod layout;

@@ -23,6 +23,7 @@ pub const OPS: &[&str] = &[
     "hello",
     "state.get",
     "state.set",
+    "text.set",
     "history.get",
     "frame",
     "msgs",
@@ -144,11 +145,12 @@ struct Request {
     /// trace.get: every line kept, not just the current segment.
     #[serde(default)]
     all: bool,
-    /// msgs, keys, render, state.get, view.close: the view (0, the default, is the state's
-    /// own; others come from view.open).
+    /// msgs, keys, text.set, render, state.get, view.close: the view (0 is the state's own;
+    /// others come from view.open). Without it, msgs, keys and text.set go through the
+    /// client's own view when the server gives clients one (a live editor), else view 0.
     #[serde(default)]
     view: Option<u32>,
-    /// frame: the whole text to show.
+    /// frame: the whole text to show. text.set: the new text.
     #[serde(default)]
     text: Option<String>,
     /// frame: char ranges to draw in the selection's colour, `[start, end]`.
@@ -352,12 +354,27 @@ impl Session {
     /// state's clock), so typing runs and undo steps follow real time. The tick is an
     /// ordinary message: it is in the response, the events and the trace.
     pub fn handle_at(&mut self, line: &str, exec: Option<Executor<'_>>, clock_ms: Option<u64>) -> Handled {
+        self.handle_client(line, exec, clock_ms, None)
+    }
+
+    /// [`Session::handle_at`] for one client of a server where clients don't act through the
+    /// person's view (a live editor). `own` is the client's own view: a `msgs`, `keys` or
+    /// `text.set` request without a `view` goes through it, and the first such request opens
+    /// it (a copy of view 0, after the `if_rev` check) and stores its id in `own`. The caller
+    /// closes it when the client goes. With `own` absent, those requests go through view 0.
+    pub fn handle_client(
+        &mut self,
+        line: &str,
+        exec: Option<Executor<'_>>,
+        clock_ms: Option<u64>,
+        own: Option<&mut Option<u32>>,
+    ) -> Handled {
         let req: Request = match serde_json::from_str(line) {
             Ok(r) => r,
             Err(e) => return bad_line(line, e),
         };
         let id = req.id.clone();
-        match self.handle_request(req, exec, clock_ms) {
+        match self.handle_request(req, exec, clock_ms, own) {
             Ok(h) => h,
             Err(e) => Handled { response: error_line(id.as_ref(), &e), change: None, control: None },
         }
@@ -368,6 +385,7 @@ impl Session {
         req: Request,
         exec: Option<Executor<'_>>,
         clock_ms: Option<u64>,
+        own: Option<&mut Option<u32>>,
     ) -> Result<Handled, ProtoError> {
         let id = req.id.as_ref();
         let reply = |response: String| Handled { response, change: None, control: None };
@@ -433,12 +451,19 @@ impl Session {
                     control: None,
                 })
             }
+            "text.set" => {
+                check_rev(self.rev())?;
+                let text = req.text.as_deref().ok_or_else(|| err("bad_request", "text.set needs a text"))?;
+                let on = self.acting_view(req.view, own)?;
+                let applied: Vec<Msg> = self.set_text_on(on, text).into_iter().collect();
+                let rev = self.rev();
+                let response = to_line(id, serde_json::json!({ "rev": rev, "changed": !applied.is_empty(), "view": on, "msgs": applied }));
+                let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false, view: (on != 0).then_some(on) });
+                Ok(Handled { response, change, control: None })
+            }
             "msgs" | "keys" => {
                 check_rev(self.rev())?;
-                let on = req.view.unwrap_or(0);
-                if self.view(on).is_none() {
-                    return Err(no_view(on));
-                }
+                let on = self.acting_view(req.view, own)?;
                 if req.apply_effects && exec.is_none() {
                     return Err(err("unsupported", "this server returns effects; it doesn't perform them"));
                 }
@@ -478,6 +503,8 @@ impl Session {
                     #[serde(skip_serializing_if = "std::ops::Not::not")]
                     executed: bool,
                     msgs: &'a [Msg],
+                    /// The view the messages went through.
+                    view: u32,
                 }
                 let rev = self.rev();
                 let response = to_line(
@@ -487,9 +514,10 @@ impl Session {
                         effects: &effects,
                         executed: req.apply_effects,
                         msgs: &applied,
+                        view: on,
                     },
                 );
-                let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false, view: req.view.filter(|&v| v != 0) });
+                let change = (!applied.is_empty()).then_some(Change { rev, msgs: applied, state_set: false, view: (on != 0).then_some(on) });
                 Ok(Handled { response, change, control: None })
             }
             "render" => {
@@ -589,6 +617,31 @@ impl Session {
                 format!("unknown op {other:?}; known ops: {}", OPS.join(", ")),
             )),
         }
+    }
+}
+
+impl Session {
+    /// The view a writing request goes through: the one it names, else the client's own
+    /// (opened now when it has none), else view 0.
+    fn acting_view(&mut self, named: Option<u32>, own: Option<&mut Option<u32>>) -> Result<u32, ProtoError> {
+        let on = match (named, own) {
+            (Some(v), _) => v,
+            (None, Some(own)) => match *own {
+                Some(v) if self.view(v).is_some() => v,
+                _ => {
+                    let mut view = self.state().view.clone();
+                    view.status = None;
+                    let v = self.open_view(view);
+                    *own = Some(v);
+                    v
+                }
+            },
+            (None, None) => 0,
+        };
+        if self.view(on).is_none() {
+            return Err(no_view(on));
+        }
+        Ok(on)
     }
 }
 

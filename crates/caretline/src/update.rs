@@ -1000,6 +1000,7 @@ fn host_edit(state: &mut State, changes: Vec<(usize, usize, String)>, join: bool
         return;
     }
     let txn = Transaction::change(&state.doc.text, changes.into_iter().map(|(a, b, t)| (a, b, (!t.is_empty()).then(|| Tendril::from(t.as_str())))));
-    let selection = state.view.selection.clone().map(txn.changes());
+    // An edit by position, not at the caret: a caret where text goes in stays before it.
+    let selection = crate::views::map_elsewhere(state.view.selection.clone(), txn.changes());
     commit_with(state, txn.with_selection(selection), Step { kind: None, replaced: false, merge: join }, |_, _| {});
 }

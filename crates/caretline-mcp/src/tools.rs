@@ -523,7 +523,7 @@ impl Tools {
                     if new_body != body && s.engine.is_live() && self.config.announce {
                         let line = text::diff(&body, &new_body, 1).and_then(|d| d["first_line"].as_u64()).unwrap_or(1);
                         let status = format!("{}: edited line {line}", self.name());
-                        if let Ok(r) = s.engine.call(json!({"op": "msgs", "msgs": [{"msg": "show_status", "text": status}]})) {
+                        if let Ok(r) = s.engine.call(json!({"op": "msgs", "view": 0, "msgs": [{"msg": "show_status", "text": status}]})) {
                             s.mark_mine(&r);
                         }
                     }
@@ -618,8 +618,13 @@ impl Tools {
             let ch: Vec<Value> = changes.iter().map(|(a, b, t)| json!([a, b, fix(t)])).collect();
             json!({"msg": "edit", "changes": ch, "join": false})
         };
-        let view = s.agent_view.map(|v| v.0).unwrap_or(0);
-        let r = s.engine.call(json!({"op": "msgs", "msgs": [msg], "if_rev": rev, "view": view}));
+        // Through the agent's view, else the connection's own (a live editor gives each client
+        // one, so the person's caret is never the acting one), else view 0 (headless).
+        let mut req = json!({"op": "msgs", "msgs": [msg], "if_rev": rev});
+        if let Some((v, _, _)) = s.agent_view {
+            req["view"] = v.into();
+        }
+        let r = s.engine.call(req);
         let r = match r {
             Err(e) if e.kind == "stale" => return Err(ToolError::Msg(format!("stale: {}", e.message))),
             r => r?,
@@ -872,7 +877,7 @@ impl Tools {
         if !s.engine.is_live() && s.file.is_none() {
             return Err("this headless session was opened from text and has no file to save to".into());
         }
-        let r = s.engine.call(json!({"op": "msgs", "msgs": [{"msg": "save"}], "apply_effects": true}))?;
+        let r = s.engine.call(json!({"op": "msgs", "view": 0, "msgs": [{"msg": "save"}], "apply_effects": true}))?;
         s.mark_mine(&r);
         let msgs: Vec<&str> = r["msgs"].as_array().map(|m| m.iter().filter_map(|x| x["msg"].as_str()).collect()).unwrap_or_default();
         let failed = r["msgs"].as_array().and_then(|m| m.iter().find(|x| x["msg"] == "save_failed").map(|x| x["err"].clone()));

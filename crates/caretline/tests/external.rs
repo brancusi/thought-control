@@ -462,3 +462,21 @@ fn a_change_from_elsewhere_over_a_long_history() {
 fn seeds(default: u64) -> u64 {
     std::env::var("CARETLINE_EXT_SEEDS").ok().and_then(|s| s.parse().ok()).unwrap_or(default)
 }
+
+#[test]
+fn a_change_from_elsewhere_at_a_caret_goes_after_it() {
+    let mut doc = State::new("Hey there, \nnext\n", None, Viewport { width: 60, height: 5 }).doc;
+    let mut views = [View::new(Viewport { width: 60, height: 5 }), View::new(Viewport { width: 60, height: 5 })];
+    views[0].selection = Selection::point(11);
+    views[1].selection = Selection::single(4, 11); // "there, "
+    let ins = ExtChange::Replace { from: 11, to: 11, text: "\n- Agent note: safely.".into() };
+    update_doc(&mut doc, &mut views, 1, Msg::External { changes: vec![ins] });
+    assert_eq!(views[0].caret(), 11, "a caret at the insertion point stays before it");
+    let r = views[1].selection.primary();
+    assert_eq!((r.from(), r.to()), (4, 11), "a selection ending there keeps what it covered");
+    update_doc(&mut doc, &mut views, 0, Msg::InsertText { text: "w".into() });
+    assert_eq!(doc.text.to_string(), "Hey there, w\n- Agent note: safely.\nnext\n");
+    // Undo takes back only the person's typing.
+    update_doc(&mut doc, &mut views, 0, Msg::Undo);
+    assert_eq!(doc.text.to_string(), "Hey there, \n- Agent note: safely.\nnext\n");
+}

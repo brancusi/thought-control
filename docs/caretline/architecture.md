@@ -99,6 +99,16 @@ assert_eq!(views[1].caret(), 10); // still before "world"
 - **Changes from elsewhere** (`Msg::External`) act on the document, not through a view: every
   view is mapped through them, read-only ones included. See
   [Changes from elsewhere](#changes-from-elsewhere).
+- **Text someone else puts in at your caret goes after it.** When a change a view didn't make
+  inserts text exactly at that view's caret, the caret stays where it was (it *associates
+  before*), so a person typing at the end of a line keeps typing there while an agent inserts
+  a note at the same place. This holds for an edit through another view, a change from
+  elsewhere, and a host's edit by position (`Msg::Edit`, even through the view itself: it is
+  an edit at a place, not typing at the caret). A non-empty selection keeps covering what it
+  covered: text inserted at either end goes outside it, text inserted inside grows it. The
+  acting view's own typing still moves its caret past what it typed. One function does this
+  mapping (`views::map_elsewhere`); undo and redo are unchanged, and since the mapping is a
+  pure function of the changes, replay is too.
 
 `update(&mut state, msg)` is `update_doc(&mut state.doc, [&mut state.view], 0, msg)`, and
 `view(&state)` is `render(&state.doc, &state.view)`. `Session` keeps other views beside its
@@ -127,6 +137,12 @@ only the chars that differ, so carets in the unchanged part stay put. Then:
   an undo back to the save point is clean again and typing continues its undo step.
 
 The message is passive: it doesn't end a typing run or clear the status.
+
+Every view's caret maps through it by the rule above: text inserted exactly at a caret goes
+after it, and a selection keeps what it covered. `Session::set_text` (the protocol's
+`text.set`) builds this message from a whole new text: a line and then char diff keeps
+everything that didn't change, so a client can push its version of the document while
+someone types, without moving their caret or touching their undo.
 
 ### The history transform
 

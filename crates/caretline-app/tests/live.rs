@@ -213,9 +213,11 @@ fn a_running_editor_takes_pushed_state_and_messages() {
     let ev = watcher.line();
     assert_eq!((ev["rev"].as_u64(), ev["source"].as_str()), (Some(rev), Some("client")));
 
-    // The local user's keys interleave with pushed ones in one order.
+    // The local user's keys interleave with pushed ones in one order. The client wrote
+    // through its own view, so the person's caret stayed before what it put in.
+    assert_eq!(r["result"]["view"], 1, "{r}");
     pty.send(b"k");
-    pty.wait("the typed key", |s| s.contains("PUSHED kfirst line"));
+    pty.wait("the typed key", |s| s.contains("kPUSHED first line"));
     let ev = watcher.line();
     assert_eq!(ev["source"], "terminal");
     assert!(ev["rev"].as_u64().unwrap() > rev);
@@ -269,5 +271,128 @@ fn a_running_editor_takes_pushed_state_and_messages() {
     }
     assert!(!sock.exists(), "the socket is removed on exit");
     assert!(!dir.join("caretline").join(format!("{pid}.json")).exists());
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The view list's carets, by view id.
+fn carets(c: &mut Client) -> Vec<(u64, u64)> {
+    let r = c.ask(json!({"op": "view.list"}));
+    r["result"]["views"].as_array().unwrap().iter().map(|v| (v["view"].as_u64().unwrap(), v["caret"].as_u64().unwrap())).collect()
+}
+
+#[test]
+fn a_person_keeps_typing_while_a_client_pushes_text() {
+    let dir = PathBuf::from("/tmp").join(format!("clc-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let doc = dir.join("doc.md");
+    std::fs::write(&doc, "Hey there, \nnext\n").unwrap();
+    let sock = dir.join("ed.sock");
+    let trace = dir.join("t.jsonl");
+    let mut c = bin();
+    c.arg(&doc).arg("--listen").arg(&sock).arg("--trace").arg(&trace).arg("--no-mouse").env("TMPDIR", &dir);
+    let mut pty = Pty::spawn(c);
+    pty.wait("the editor", |s| s.contains("Hey there,") && s.contains("listening on"));
+    let mut client = Client::connect(&sock);
+    pty.send(b"\x05"); // ctrl-e: the end of the line
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while carets(&mut client)[0].1 != 11 {
+        assert!(Instant::now() < deadline, "the caret never reached the line's end");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+
+    // The person types a letter, and the client pushes text at and around their caret, as
+    // fast as it can: text.set and external messages, each against the rev it read.
+    let mut typed = String::new();
+    let mut pushes = 0;
+    for i in 0..150 {
+        let ch = (b'a' + (i % 26) as u8) as char;
+        if i % 3 == 0 {
+            pty.send(ch.to_string().as_bytes());
+            typed.push(ch);
+        }
+        for _attempt in 0..50 {
+            let got = client.ask(json!({"op": "state.get", "history": false}));
+            let rev = got["result"]["rev"].as_u64().unwrap();
+            let text = got["result"]["state"]["text"].as_str().unwrap().to_string();
+            let at = carets(&mut client)[0].1 as usize;
+            let chars: Vec<char> = text.chars().collect();
+            let at = match i % 4 {
+                0 | 1 => at,
+                2 => chars.len(),
+                _ => chars[at..].iter().position(|&c| c == '\n').map_or(chars.len(), |p| at + p + 1),
+            };
+            let note = format!("\n- note {i}");
+            let r = if i % 2 == 0 {
+                let mut new = chars.clone();
+                new.splice(at..at, note.chars());
+                client.ask(json!({"op": "text.set", "text": new.into_iter().collect::<String>(), "if_rev": rev}))
+            } else {
+                let change = json!({"change": "replace", "from": at, "to": at, "text": note});
+                client.ask(json!({"op": "msgs", "msgs": [{"msg": "external", "changes": [change]}], "if_rev": rev}))
+            };
+            if r.get("result").is_some() {
+                pushes += 1;
+                break;
+            }
+            assert_eq!(r["error"]["kind"], "stale", "{r}");
+        }
+    }
+    assert!(pushes >= 100, "{pushes} pushes");
+
+    // Every key landed, in one run on the person's line, with their caret at its end.
+    let mine = format!("Hey there, {typed}");
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let text = loop {
+        let got = client.ask(json!({"op": "state.get", "history": false}));
+        let text = got["result"]["state"]["text"].as_str().unwrap().to_string();
+        if text.contains(&mine) {
+            break text;
+        }
+        assert!(Instant::now() < deadline, "the person's typing isn't contiguous: {mine:?} in {text:?}");
+        std::thread::sleep(Duration::from_millis(20));
+    };
+    let start = text.find(&mine).unwrap();
+    assert_eq!(carets(&mut client)[0].1 as usize, text[..start + mine.len()].chars().count(), "the person's caret is at the end of their typing");
+    assert_eq!(text.matches("- note").count(), pushes, "every push landed once");
+
+    // The person's undo takes back their typing and none of the pushes.
+    let want = text.replacen(&mine, "Hey there, ", 1);
+    for _ in 0..typed.len() + 5 {
+        pty.send(b"\x1a"); // ctrl-z
+    }
+    let deadline = Instant::now() + Duration::from_secs(10);
+    loop {
+        let got = client.ask(json!({"op": "state.get", "history": false}));
+        if got["result"]["state"]["text"] == json!(want) {
+            break;
+        }
+        assert!(Instant::now() < deadline, "undo: {} != {want:?}", got["result"]["state"]["text"]);
+        std::thread::sleep(Duration::from_millis(20));
+    }
+
+    // The trace replays to the state the editor holds.
+    let got = client.ask(json!({"op": "state.get"}));
+    let replayed = bin().arg("--replay").arg(&trace).args(["--dump-state", "-"]).output().unwrap();
+    assert!(replayed.status.success(), "{}", String::from_utf8_lossy(&replayed.stderr));
+    let replayed: Value = serde_json::from_slice(&replayed.stdout).unwrap();
+    assert_eq!(replayed, got["result"]["state"]);
+
+    // caretline send set-text: one connection, its own view, the person's caret stays.
+    let before = carets(&mut client)[0].1;
+    let cur = client.ask(json!({"op": "state.get", "history": false}))["result"]["state"]["text"].as_str().unwrap().to_string();
+    let file = dir.join("new.md");
+    std::fs::write(&file, format!("{cur}tail from send\n")).unwrap();
+    let out = bin().args(["send", "--socket"]).arg(&sock).arg("set-text").arg(&file).output().unwrap();
+    assert!(out.status.success(), "{out:?}");
+    let now = client.ask(json!({"op": "state.get", "history": false}));
+    assert_eq!(now["result"]["state"]["text"], json!(format!("{cur}tail from send\n")));
+    // Send's view closes with its connection: view 0 and this client's own are left.
+    let deadline = Instant::now() + Duration::from_secs(10);
+    while carets(&mut client).len() > 2 {
+        assert!(Instant::now() < deadline, "send's view stayed open");
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    assert_eq!(carets(&mut client)[0].1, before);
     let _ = std::fs::remove_dir_all(&dir);
 }

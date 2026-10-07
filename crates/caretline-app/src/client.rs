@@ -15,7 +15,7 @@ use crate::hub::discovery_dir;
 #[command(
     name = "caretline send",
     about = "Send state-protocol requests to a running caretline and print the responses",
-    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get [no-history] | history.get | unsubscribe | trace.checkpoint\n  trace.get [all | since REV]\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-state FILE|-\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH] [state]  (streams events until interrupted; state: each with the state)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
+    after_help = "REQUEST is a JSON request, or one of:\n  hello | state.get [no-history] | history.get | unsubscribe | trace.checkpoint\n  trace.get [all | since REV]\n  render WxH [text|ansi|cells]\n  keys SCRIPT\n  msgs FILE|-|JSON\n  set-text FILE|-          (text.set: only what differs changes; carets stay put)\n  set-state FILE|-         (state.set: replaces everything, carets and undo too)\n  status TEXT              (a message in the editor's status bar)\n  subscribe [WxH] [state]  (streams events until interrupted; state: each with the state)\nWithout REQUEST, reads JSON requests from stdin, one per line.\n\nExamples:\n  caretline send --latest state.get\n  caretline send --latest render 80x24 --raw\n  caretline send --latest keys '<down>hello'\n  caretline send --latest set-text notes.md\n  caretline send --pid 4242 set-state s.json\n  caretline send --socket /tmp/cl.sock '{\"id\":1,\"op\":\"hello\"}'"
 )]
 struct SendArgs {
     /// The server's socket.
@@ -34,6 +34,11 @@ struct SendArgs {
     /// Perform the effects of pushed messages in the editor (saves, the clipboard).
     #[arg(long)]
     apply_effects: bool,
+    /// The view msgs, keys, set-text and render act through. In a live editor they go through
+    /// this connection's own view by default (it closes when send exits); `--view 0` acts
+    /// as the person at the keyboard, moving their caret.
+    #[arg(long, value_name = "N")]
+    view: Option<u32>,
     /// The request and its arguments.
     request: Vec<String>,
 }
@@ -90,7 +95,7 @@ fn size(s: &str) -> Result<(u16, u16), String> {
 }
 
 /// Turns the request words into a JSON request.
-fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
+fn build(words: &[String], apply_effects: bool, view: Option<u32>) -> Result<Value, String> {
     let op = words[0].as_str();
     let arg = |i: usize, what: &str| words.get(i).cloned().ok_or_else(|| format!("{op} needs {what}"));
     let mut req = match op {
@@ -130,12 +135,14 @@ fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
             let text = if src.trim_start().starts_with(['{', '[']) { src } else { read_arg(&src)? };
             json!({ "op": "msgs", "msgs": parse_msgs(&text)? })
         }
+        "set-text" | "text.set" => json!({ "op": "text.set", "text": read_arg(&arg(1, "a text file or -")?)? }),
         "set-state" | "state.set" => {
             let text = read_arg(&arg(1, "a state file or -")?)?;
             let state: Value = serde_json::from_str(&text).map_err(|e| format!("state: {e}"))?;
             json!({ "op": "state.set", "state": state })
         }
-        "status" => json!({ "op": "msgs", "msgs": [{ "msg": "show_status", "text": words[1..].join(" ") }] }),
+        // The status bar the person sees: view 0's.
+        "status" => json!({ "op": "msgs", "view": 0, "msgs": [{ "msg": "show_status", "text": words[1..].join(" ") }] }),
         "subscribe" => {
             let mut r = json!({ "op": "subscribe" });
             let mut rest: Vec<&str> = words[1..].iter().map(String::as_str).collect();
@@ -154,6 +161,10 @@ fn build(words: &[String], apply_effects: bool) -> Result<Value, String> {
     if apply_effects && matches!(req["op"].as_str(), Some("msgs" | "keys")) {
         req["apply_effects"] = true.into();
     }
+    if let Some(v) = view
+        && matches!(req["op"].as_str(), Some("msgs" | "keys" | "text.set" | "render" | "state.get")) {
+            req["view"] = v.into();
+        }
     Ok(req)
 }
 
@@ -200,7 +211,7 @@ pub fn main(argv: &[String]) -> Result<(), String> {
         return Ok(());
     }
 
-    let req = build(&args.request, args.apply_effects)?;
+    let req = build(&args.request, args.apply_effects, args.view)?;
     let streaming = req["op"] == "subscribe";
     writer.write_all(format!("{req}\n").as_bytes()).map_err(|e| e.to_string())?;
     if !streaming {
