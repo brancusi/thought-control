@@ -60,9 +60,11 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
     };
     let unit = raw.iter().filter_map(|l| item(l)).map(|(i, _, _)| i).find(|i| *i > 0).unwrap_or(2);
     let mut para: Vec<String> = Vec::new();
-    let flush = |para: &mut Vec<String>, out: &mut Vec<NewBlock>| {
+    // The indentation of the paragraph being read: an indented paragraph is nested.
+    let mut para_indent = 0usize;
+    let flush = |para: &mut Vec<String>, out: &mut Vec<NewBlock>, indent: usize| {
         if !para.is_empty() {
-            out.push(NewBlock::para(&para.join(" ")));
+            out.push(NewBlock { depth: (indent / unit) as u16, ..NewBlock::para(&para.join(" ")) });
             para.clear();
         }
     };
@@ -81,13 +83,13 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
         let l = raw[i].clone();
         let t = l.trim();
         if t.is_empty() {
-            flush(&mut para, &mut out);
+            flush(&mut para, &mut out, para_indent);
             last_indent = None;
             i += 1;
             continue;
         }
         if t.starts_with("```") {
-            flush(&mut para, &mut out);
+            flush(&mut para, &mut out, para_indent);
             let mut body = vec![t.to_string()];
             i += 1;
             while i < raw.len() {
@@ -102,7 +104,7 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
             continue;
         }
         if t.starts_with('|') {
-            flush(&mut para, &mut out);
+            flush(&mut para, &mut out, para_indent);
             let mut rows = Vec::new();
             while i < raw.len() && raw[i].trim().starts_with('|') {
                 rows.push(raw[i].trim().to_string());
@@ -113,7 +115,7 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
             continue;
         }
         if let Some((indent, marker, body)) = item(&l) {
-            flush(&mut para, &mut out);
+            flush(&mut para, &mut out, para_indent);
             let mut nb = NewBlock { depth: (indent / unit) as u16, kind: Kind::Bullet, status: None, text: body, gap: None, mark: None };
             for (p, c) in CHECKBOXES {
                 if let Some(rest) = nb.text.strip_prefix(p) {
@@ -141,22 +143,21 @@ pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
         }
         last_indent = None;
         if t.starts_with('#') || t.starts_with('>') || t == "---" || t == "***" {
-            flush(&mut para, &mut out);
+            flush(&mut para, &mut out, para_indent);
             out.push(NewBlock::para(t));
         } else {
+            if para.is_empty() {
+                para_indent = l.len() - l.trim_start().len();
+            }
             para.push(t.to_string());
         }
         i += 1;
     }
-    flush(&mut para, &mut out);
+    flush(&mut para, &mut out, para_indent);
     // Depth never jumps more than one below the item above.
+    // A paragraph is at most one below the block above too (it nests like any block).
     let mut prev: isize = -1;
     for b in out.iter_mut() {
-        if b.kind == Kind::Para {
-            b.depth = 0;
-            prev = -1;
-            continue;
-        }
         b.depth = b.depth.min((prev + 1) as u16);
         prev = b.depth as isize;
     }
@@ -182,7 +183,8 @@ pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String
     if parts.len() == 1 {
         return parts[0].1.clone();
     }
-    let base = parts.iter().filter(|(b, _)| b.kind != Kind::Para).map(|(b, _)| b.depth).min().unwrap_or(0);
+    // Depth relative to the shallowest block copied (a paragraph's children are indented under it).
+    let base = parts.iter().map(|(b, _)| b.depth).min().unwrap_or(0);
     let first = parts[0].0;
     let from_start = from <= first.content_start();
     let mut out = String::new();
@@ -193,13 +195,22 @@ pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String
             out.push('\n');
         }
         let with_marker = k > 0 || from_start;
+        let pad = "  ".repeat(b.depth.saturating_sub(base) as usize);
         if para {
-            if with_marker && matches!(b.hang, Hang::Heading(_) | Hang::Quote) {
-                out.push_str(&piece(b.start + b.indent, b.content_start()));
+            let mut rows = part.split('\n');
+            if with_marker {
+                out.push_str(&pad);
+                if matches!(b.hang, Hang::Heading(_) | Hang::Quote) {
+                    out.push_str(&piece(b.start + b.indent, b.content_start()));
+                }
             }
-            out.push_str(part);
+            out.push_str(rows.next().unwrap_or(""));
+            for r in rows {
+                out.push('\n');
+                out.push_str(&pad);
+                out.push_str(r);
+            }
         } else {
-            let pad = "  ".repeat(b.depth.saturating_sub(base) as usize);
             let marker = match (b.kind, b.hang, b.status) {
                 (Kind::Task, _, Some(c)) => format!("- [{c}] "),
                 (_, Hang::Number(_), _) => piece(b.start + b.indent, b.content_start()),

@@ -405,12 +405,26 @@ pub fn is_image(content: RopeSlice) -> bool {
 }
 
 /// A memo of the state's outline: derived data, never serialized, equal to any other.
+///
+/// After an edit it keeps the outline it had (for the old text) and where the text changed,
+/// so the next [`Document::blocks`] derives only around the change ([`derive_from`]).
 #[derive(Default)]
-pub struct OutlineCache(Mutex<Option<Arc<Outline>>>);
+pub struct OutlineCache(Mutex<Memo>);
+
+#[derive(Clone, Default)]
+struct Memo {
+    /// The outline of the current text and marks.
+    now: Option<Arc<Outline>>,
+    /// An outline of an earlier text, its length in chars, and the chars of the current text
+    /// that differ from it (`[from, to)`: the text before and after is the same).
+    before: Option<(Arc<Outline>, usize, Option<(usize, usize)>)>,
+    /// The length of the text `now` was derived from.
+    len: usize,
+}
 
 impl Clone for OutlineCache {
     fn clone(&self) -> Self {
-        OutlineCache(Mutex::new(self.0.lock().map(|g| g.clone()).unwrap_or(None)))
+        OutlineCache(Mutex::new(self.0.lock().map(|g| g.clone()).unwrap_or_default()))
     }
 }
 
@@ -427,17 +441,45 @@ impl std::fmt::Debug for OutlineCache {
 }
 
 impl OutlineCache {
+    /// Forget everything (the text was replaced, or repaired).
     pub fn clear(&mut self) {
-        *self.0.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        *self.memo() = Memo::default();
+    }
+
+    fn memo(&mut self) -> &mut Memo {
+        self.0.get_mut().unwrap_or_else(|e| e.into_inner())
+    }
+
+    /// The marks changed (not the text): the outline is derived again, around what changed.
+    pub(crate) fn marks_changed(&mut self) {
+        let m = self.memo();
+        if let Some(now) = m.now.take() {
+            m.before = Some((now, m.len, None));
+        }
+    }
+
+    /// The text changed by `cs` (applied to the text the memo describes).
+    pub(crate) fn edited(&mut self, cs: &crate::helix::ChangeSet) {
+        let m = self.memo();
+        if let Some(now) = m.now.take() {
+            m.before = Some((now, m.len, None));
+        }
+        if let Some((_, _, range)) = &mut m.before {
+            *range = Some(crate::state::changed_span(*range, cs));
+        }
     }
 
     fn get(&self) -> Option<Arc<Outline>> {
-        self.0.lock().ok().and_then(|g| g.clone())
+        self.0.lock().ok().and_then(|g| g.now.clone())
     }
 
-    fn put(&self, o: Arc<Outline>) {
+    fn before(&self) -> Option<(Arc<Outline>, usize, Option<(usize, usize)>)> {
+        self.0.lock().ok().and_then(|g| g.before.clone())
+    }
+
+    fn put(&self, o: Arc<Outline>, len: usize) {
         if let Ok(mut g) = self.0.lock() {
-            *g = Some(o);
+            *g = Memo { now: Some(o), before: None, len };
         }
     }
 }
@@ -447,16 +489,170 @@ impl Document {
     /// text and the marks, and remembered until they change.
     pub fn blocks(&self) -> Option<Arc<Outline>> {
         let cfg = self.outline.as_ref()?;
+        let lines = self.text.len_lines();
         if let Some(o) = self.derived.get() {
-            let lines = self.text.len_lines();
             if o.line_block.len() == lines && o.blocks.len() <= self.marks.len().max(1) + lines {
                 return Some(o);
             }
         }
-        let o = Arc::new(derive(self.text.slice(..), &self.marks, cfg));
-        self.derived.put(o.clone());
+        let text = self.text.slice(..);
+        let o = match self.derived.before() {
+            Some((prev, len, range)) => {
+                let range = range.unwrap_or((0, 0));
+                let o = derive_from(&prev, len, range, text, &self.marks, cfg).unwrap_or_else(|| derive(text, &self.marks, cfg));
+                #[cfg(debug_assertions)]
+                assert_eq!(o, derive(text, &self.marks, cfg), "the outline derived around a change is the whole derivation");
+                o
+            }
+            None => derive(text, &self.marks, cfg),
+        };
+        let o = Arc::new(o);
+        self.derived.put(o.clone(), self.text.len_chars());
         Some(o)
     }
+}
+
+/// [`derive`] again after an edit, from `prev` (the outline of a text `prev_len` chars long
+/// that differs from `text` only in `[from, to)` of `text`): the blocks before the change
+/// and after it are reused, shifted; the ones around it are derived. None: start over.
+///
+/// A block's identity and attributes are read from `marks` for every block (marks change
+/// without the text: a blank row set, a mark given to a new block).
+pub fn derive_from(prev: &Outline, prev_len: usize, (from, to): (usize, usize), text: RopeSlice, marks: &Marks, cfg: &OutlineConfig) -> Option<Outline> {
+    if prev.blocks.is_empty() || prev.line_block.is_empty() {
+        return None;
+    }
+    let len = text.len_chars();
+    let delta = len as isize - prev_len as isize;
+    let prev_lines = prev.line_block.len();
+    let dl = text.len_lines() as isize - prev_lines as isize;
+    let (from, to) = (from.min(len), to.min(len).max(from.min(len)));
+    // Start a block before the change's block (its end may move), outside any fence.
+    let mut j = prev.index_of_line(text.char_to_line(from).min(prev_lines - 1));
+    j = j.saturating_sub(1);
+    while j > 0 && prev.blocks[j].fence {
+        j -= 1;
+    }
+    let first = &prev.blocks[j];
+    let mut blocks: Vec<BlockInfo> = prev.blocks[..j].to_vec();
+    let mut line_block: Vec<u32> = prev.line_block[..first.first_line].to_vec();
+    let mut in_fence = false;
+    let mut line_start = first.start;
+    let mut tail: Option<(usize, usize)> = None;
+    let mut i = first.first_line;
+    let mut lines = text.lines_at(i);
+    let derived_from = j;
+    while let Some(line) = lines.next() {
+        let len_l = line.len_chars();
+        let content_end = line_start + len_l - line_ending_len(line);
+        let prefix = if in_fence { None } else { Some(parse_prefix(line, cfg)) };
+        let mark_here = marks.at(line_start).is_some();
+        let starts = i == 0 || mark_here || prefix.is_some_and(|p| p.marker);
+        // Past the change, at a block start outside a fence that the old outline also has
+        // here: the rest is the old outline, shifted.
+        if starts && !in_fence && line_start >= to && i > first.first_line {
+            let old_line = i as isize - dl;
+            if old_line >= 0 && (old_line as usize) < prev_lines {
+                let k = prev.index_of_line(old_line as usize);
+                let b = &prev.blocks[k];
+                if b.first_line == old_line as usize && b.start as isize == line_start as isize - delta && !b.fence {
+                    tail = Some((k, old_line as usize));
+                    break;
+                }
+            }
+        }
+        let mut opened = false;
+        if starts {
+            let p = prefix.unwrap_or_else(Prefix::fence_content);
+            let depth = (p.indent / cfg.indent.max(1) as usize) as u16;
+            if p.hang == Hang::Fence {
+                in_fence = true;
+                opened = true;
+            }
+            blocks.push(BlockInfo {
+                id: MarkId(u64::MAX),
+                start: line_start,
+                end: content_end,
+                first_line: i,
+                line_count: 1,
+                depth,
+                kind: p.kind,
+                status: p.status,
+                prefix_len: p.len.min(content_end - line_start),
+                indent: p.indent,
+                hang: p.hang,
+                fence: p.fence,
+                atomic: false,
+                gap: false,
+                attrs: BlockAttrs::default(),
+            });
+        } else if let Some(b) = blocks.last_mut() {
+            b.line_count += 1;
+            b.end = content_end;
+        }
+        if in_fence && !opened && starts_fence(line) {
+            in_fence = false;
+        }
+        line_block.push((blocks.len() - 1) as u32);
+        line_start += len_l;
+        i += 1;
+    }
+    let derived_to = blocks.len();
+    if let Some((k, old_line)) = tail {
+        let shift = |b: &BlockInfo| BlockInfo {
+            start: (b.start as isize + delta) as usize,
+            end: (b.end as isize + delta) as usize,
+            first_line: (b.first_line as isize + dl) as usize,
+            ..b.clone()
+        };
+        let base = blocks.len() as isize - k as isize;
+        blocks.extend(prev.blocks[k..].iter().map(shift));
+        line_block.extend(prev.line_block[old_line..].iter().map(|&x| (x as isize + base) as u32));
+    } else if line_block.len() != text.len_lines() {
+        return None;
+    }
+    // Identity and attributes from the marks; every mark starts a block.
+    let mut ms = marks.iter().peekable();
+    for b in blocks.iter_mut() {
+        if ms.peek().is_some_and(|m| m.pos < b.start) {
+            return None;
+        }
+        match ms.peek() {
+            Some(m) if m.pos == b.start => {
+                b.id = m.id;
+                b.attrs = m.attrs;
+                ms.next();
+            }
+            _ => {
+                // A block kept from before that started only by its mark, which is gone:
+                // it joins the block above (start over).
+                if b.first_line > 0 && b.hang == Hang::None && b.kind == Kind::Para {
+                    return None;
+                }
+                b.id = MarkId(u64::MAX);
+                b.attrs = BlockAttrs::default();
+            }
+        }
+    }
+    if ms.next().is_some() {
+        return None;
+    }
+    for i in 0..blocks.len() {
+        let gap = {
+            let (before, rest) = blocks.split_at(i);
+            let b = &rest[0];
+            match b.attrs.gap {
+                Some(g) if i > 0 => g,
+                _ => default_gap(before.last(), b),
+            }
+        };
+        let b = &mut blocks[i];
+        b.gap = gap;
+        if (derived_from..derived_to).contains(&i) && cfg.atomic_images && b.line_count == 1 && !b.fence {
+            b.atomic = is_image(text.slice(b.content_start()..b.end));
+        }
+    }
+    Some(Outline { blocks, line_block })
 }
 
 impl State {
@@ -477,6 +673,7 @@ impl State {
     /// Call after changing `text` or `marks` directly (not through `update`).
     pub fn outline_changed(&mut self) {
         self.doc.derived.clear();
+        self.doc.touch_all();
         if self.doc.outline.is_some() {
             mint_missing(&mut self.doc);
             rules::normalize(self, &self.view.selection.clone(), &crate::Msg::Tick { now_ms: self.doc.now_ms });
@@ -494,7 +691,7 @@ pub(crate) fn mint_missing(doc: &mut Document) -> bool {
     for pos in missing {
         doc.marks.mint(pos);
     }
-    doc.derived.clear();
+    doc.derived.marks_changed();
     true
 }
 
@@ -531,7 +728,7 @@ impl NewBlock {
 
     /// The block's lines as buffer text (prefix on the first line, `\n` between lines).
     pub fn to_lines(&self, cfg: &OutlineConfig) -> String {
-        let indent = if self.kind == Kind::Para { String::new() } else { cfg.indent_str(self.depth) };
+        let indent = cfg.indent_str(self.depth);
         let marker = match self.kind {
             Kind::Task => format!("- [{}] ", self.status.unwrap_or(cfg.cycle[0])),
             Kind::Bullet if numbered_marker(&self.text).is_some() => String::new(),

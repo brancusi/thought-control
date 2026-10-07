@@ -221,11 +221,13 @@ fn newline_at(state: &mut State, soft: bool, merge: bool) {
             m.mint(p + n);
         });
     }
-    // A paragraph.
+    // A paragraph. The paragraphs it makes keep its depth (a nested paragraph's indentation).
+    let pad = " ".repeat(b.indent);
+    let w = b.indent;
     if first && p == b.content_start() {
         // At its very start: a new empty paragraph above; the paragraph keeps its id.
         let start = b.start;
-        return edit(state, vec![(start, start, Some(le.clone()))], caret_at(p + n), merge, move |m, _| {
+        return edit(state, vec![(start, start, Some(format!("{pad}{le}")))], caret_at(p + w + n), merge, move |m, _| {
             m.mint(start);
         });
     }
@@ -234,20 +236,26 @@ fn newline_at(state: &mut State, soft: bool, merge: bool) {
         // one (an empty line here is dropped when more follows).
         if ls == lend && line < b.last_line() {
             let next = text.line_to_char(line + 1);
-            return edit(state, vec![(ls, next, None)], caret_at(ls), merge, move |m, _| {
+            return edit(state, vec![(ls, next, (w > 0).then(|| pad.clone()))], caret_at(ls + w), merge, move |m, _| {
                 m.mint(ls);
             });
         }
-        return edit(state, vec![], caret_at(ls), merge, move |m, _| {
+        let changes = if w > 0 { vec![(ls, ls, Some(pad.clone()))] } else { vec![] };
+        return edit(state, changes, caret_at(ls + w), merge, move |m, _| {
             m.mint(ls);
         });
     }
     if p == lend && line < b.last_line() {
         // At the end of a line with more below: the rest is a new paragraph, and the caret
         // sits on a new empty one between.
-        return edit(state, vec![(p, p, Some(le.clone()))], caret_at(p + n), merge, move |m, _| {
+        let next = text.line_to_char(line + 1);
+        let mut changes = vec![(p, p, Some(format!("{le}{pad}")))];
+        if w > 0 {
+            changes.push((next, next, Some(pad.clone())));
+        }
+        return edit(state, changes, caret_at(p + n + w), merge, move |m, _| {
             m.mint(p + n);
-            m.mint(p + 2 * n);
+            m.mint(next + n + w);
         });
     }
     soft_break(state)
@@ -491,19 +499,33 @@ fn nest(state: &mut State, delta: i32) -> Vec<Effect> {
     let cfg = state.doc.outline.clone().expect("outline");
     let text = state.doc.text.slice(..);
     let r = state.view.selection.primary();
+    let unit = cfg.indent.max(1) as usize;
+    // Tab on a later line of a paragraph: that line becomes a paragraph of its own, nested
+    // under it (every line typed under a paragraph can be its child).
+    if delta > 0 && r.is_empty() && state.view.selection.len() == 1 {
+        let p = r.head;
+        let b = o.block_at(text, p).clone();
+        let line = text.char_to_line(p);
+        if b.kind == Kind::Para && !b.fence && line != b.first_line {
+            let ls = text.line_to_char(line);
+            let pad = " ".repeat(b.indent + unit);
+            let w = pad.chars().count();
+            edit(state, vec![(ls, ls, Some(pad))], caret_at(p + w), false, move |m, _| {
+                m.mint(ls);
+            });
+            return Vec::new();
+        }
+    }
     let range = o.indices_between(text, r.from(), r.to());
-    let unit = cfg.indent.max(1) as i32;
-    // The depth of the last non-empty block above: an item nests at most one below it.
+    let unit = unit as i32;
+    // The depth of the last non-empty block above: a block nests at most one below it,
+    // whatever its kind and the kind of the block above.
     let mut above: Option<u16> = o.blocks[..*range.start()].iter().rev().find(|b| !b.is_empty()).map(|b| b.depth);
     let mut changes = Vec::new();
-    let mut paragraphs = 0;
-    let count = range.clone().count();
     for i in range {
         let b = &o.blocks[i];
         let mut depth = b.depth;
-        if b.kind == Kind::Para && (delta > 0 || b.depth == 0) {
-            paragraphs += 1;
-        } else if !b.fence {
+        if !b.fence {
             let max = above.map_or(0, |d| d as i32 + 1);
             let want = if delta > 0 {
                 if (b.depth as i32) < max { b.depth as i32 + 1 } else { b.depth as i32 }
@@ -525,13 +547,7 @@ fn nest(state: &mut State, delta: i32) -> Vec<Effect> {
         }
     }
     if changes.is_empty() {
-        let why = if paragraphs == count {
-            "paragraphs don't nest"
-        } else if delta > 0 {
-            "nothing to nest under"
-        } else {
-            "already at the top level"
-        };
+        let why = if delta > 0 { "nothing to nest under" } else { "already at the top level" };
         return notice(state, why);
     }
     let sel = mapped(state, &changes, Assoc::After);
@@ -870,7 +886,8 @@ fn paste_blocks(state: &mut State, blocks: &[NewBlock]) {
     let p = state.caret();
     let b = o.block_at(text, p).clone();
     let before_empty = p == b.content_start();
-    let base = if b.is_item() { b.depth } else { 0 };
+    // Pasted blocks nest from the caret's block's depth (whatever its kind).
+    let base = b.depth;
     let from = if before_empty { b.start } else { p };
     let _ = n;
     let mut body = String::new();
@@ -878,9 +895,7 @@ fn paste_blocks(state: &mut State, blocks: &[NewBlock]) {
     let mut line = 0;
     for (k, nb) in blocks.iter().enumerate() {
         let mut nb = nb.clone();
-        if nb.kind != Kind::Para {
-            nb.depth += base;
-        }
+        nb.depth += base;
         let piece = if k == 0 && !before_empty { nb.text.clone() } else { nb.to_lines(&cfg) };
         if k > 0 {
             body.push('\n');

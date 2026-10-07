@@ -48,6 +48,8 @@ pub fn update_doc(doc: &mut Document, views: &mut [View], acting: usize, msg: Ms
         r.view = acting;
     }
     if doc.edits.0 != edits {
+        // The acting view's folds drop with their blocks too (whatever path the edit took).
+        views[acting].folds.retain(|id| doc.marks.contains(*id));
         let journal = std::mem::take(&mut doc.journal.0);
         for (i, v) in views.iter_mut().enumerate() {
             if i != acting {

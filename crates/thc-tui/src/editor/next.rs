@@ -133,9 +133,7 @@ fn list_len(b: &BlockInfo) -> usize {
 /// A line as a block to insert.
 fn new_block(l: &Line, mark: Option<MarkId>, cfg: &OutlineConfig) -> NewBlock {
     let kind = cn_kind(l.kind());
-    // A paragraph nests by its indentation (the engine's own paragraphs don't).
-    let text = if l.kind() == Kind::Para && l.depth > 0 { format!("{}{}", " ".repeat(cfg.indent as usize * l.depth), l.text) } else { l.text.clone() };
-    NewBlock { depth: l.depth as u16, kind, status: (kind == cn::Kind::Task).then(|| status_char(cfg, l.status.as_deref())), text, gap: l.gap, mark }
+    NewBlock { depth: l.depth as u16, kind, status: (kind == cn::Kind::Task).then(|| status_char(cfg, l.status.as_deref())), text: l.text.clone(), gap: l.gap, mark }
 }
 
 /// The blank row before a line by default (the engine's rule, over thc's lines): a paragraph
@@ -635,7 +633,6 @@ impl Doc {
         match cmd {
             EditCmd::Undo => return Outcome::Nothing("nothing to undo"),
             EditCmd::Redo => return Outcome::Nothing("nothing to redo"),
-            EditCmd::Indent => return Outcome::Nothing("paragraphs don't nest · - makes a bullet"),
             _ => {}
         }
         match fx.into_iter().rev().find_map(|e| if let Effect::Notice { text } = e { Some(text) } else { None }) {

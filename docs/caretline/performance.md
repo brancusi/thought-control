@@ -110,11 +110,21 @@ trace; when states arrive faster than the terminal paints, the screen shows the 
 - **Frame shape.** A full `state.set` per frame parses the whole text and rebuilds the history.
   Fine at 1,000 frames/s, but the wrong shape for animation; see below.
 
+## Outline derivation
+
+After an edit the outline is derived again only around the change: the document keeps the
+outline it had and the chars that changed since, re-reads from the block before the change
+(outside any fence) until the text runs in step with the old outline again, and reuses the
+rest shifted. Block ids and attributes are read from the marks for every block. A change the
+reuse can't follow (a block that started only by its mark loses it, a mark on a reused line
+that isn't a block start) falls back to a whole derivation. Debug builds check every
+incremental result against the whole derivation. `Document::take_touched` gives a host the
+same changed range, so a host mirroring blocks re-reads only those.
+
 ## Known gaps
 
 | Gap | Impact | Plan |
 |---|---|---|
-| Outline blocks are re-derived on every edit | ≈ 1 ms per key at 5,000 blocks | make derivation incremental if pages approach 50,000 blocks |
 | No synchronized output | frames can tear in the terminal | wrap each repaint in synchronized-update mode (DEC 2026) |
 | Repaints follow input, not the display | wasted work past the display rate | coalesce to one paint per refresh; redraw changed cells only |
 

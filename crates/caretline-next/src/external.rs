@@ -135,7 +135,7 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
         ExtChange::SetGap { id, gap } => {
             block(*id)?;
             doc.marks.set_attrs(*id, BlockAttrs { gap: *gap });
-            doc.derived.clear();
+            doc.derived.marks_changed();
             Ok(None)
         }
         ExtChange::InsertBlock { after, block: nb } => {
@@ -207,9 +207,11 @@ fn edit(
     let cs = txn.changes().clone();
     let old = doc.text.clone();
     cs.apply(&mut doc.text);
+    doc.touched.note(&cs);
+    doc.derived.edited(&cs);
     doc.marks.map(old.slice(..), doc.text.slice(..), &cs);
     fix(&mut doc.marks, doc.text.slice(..));
-    doc.derived.clear();
+    doc.derived.marks_changed();
     if doc.outline.is_some() {
         crate::outline::mint_missing(doc);
     }
