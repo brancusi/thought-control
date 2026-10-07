@@ -4323,8 +4323,13 @@ mod render_tests {
         output.unwrap()
     }
 
+    /// On both editor engines.
     #[test]
     fn immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation() {
+        crate::editor::on_both_engines(immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation_on);
+    }
+
+    fn immutable_draw_returns_identical_cells_and_geometry_without_changing_presentation_on() {
         let (_scratch, vault) = crate::fuzz::scratch("immutable-render");
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
@@ -4386,8 +4391,13 @@ mod render_tests {
         assert_eq!(first, render(&app, size));
     }
 
+    /// On both editor engines.
     #[test]
     fn preparation_never_follows_scroll_until_the_viewport_message_is_updated() {
+        crate::editor::on_both_engines(preparation_never_follows_scroll_until_the_viewport_message_is_updated_on);
+    }
+
+    fn preparation_never_follows_scroll_until_the_viewport_message_is_updated_on() {
         let (_scratch, vault) = crate::fuzz::scratch("viewport-update");
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
@@ -4403,8 +4413,13 @@ mod render_tests {
         assert_eq!(followed, render(&app, (120, 40)));
     }
 
+    /// On both editor engines.
     #[test]
     fn changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges() {
+        crate::editor::on_both_engines(changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges_on);
+    }
+
+    fn changed_text_and_resized_areas_cannot_use_stale_document_byte_ranges_on() {
         let (_scratch, vault) = crate::fuzz::scratch("stale-document-layout");
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
@@ -4443,8 +4458,13 @@ mod render_tests {
         assert_eq!(render(&app, (100, 32)).list_height, 0);
     }
 
+    /// On both editor engines.
     #[test]
     fn attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files() {
+        crate::editor::on_both_engines(attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files_on);
+    }
+
+    fn attachment_inputs_are_vault_qualified_and_draw_does_not_reopen_files_on() {
         let (_a, va) = crate::fuzz::scratch("attachment-session-a");
         let (_b, vb) = crate::fuzz::scratch("attachment-session-b");
         crate::SNAPSHOT.with(|s| s.set(true));

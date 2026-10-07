@@ -1013,7 +1013,9 @@ impl Doc {
                     return String::new();
                 }
                 let fx = self.next_run(caretline_next::Msg::Copy);
-                fx.into_iter().find_map(|f| if let caretline_next::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default()
+                let text = fx.into_iter().find_map(|f| if let caretline_next::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default();
+                let Engine::Next(n) = &mut self.engine else { unreachable!() };
+                n.with_fields(text)
             }
         }
     }
