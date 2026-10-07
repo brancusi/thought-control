@@ -205,6 +205,10 @@ pub enum Cmd {
         /// Open on Log (recent changes).
         #[arg(long, conflicts_with_all = ["focus", "review"])]
         log: bool,
+        /// Record the UI trace (every key, click, tick and pushed state, as JSON lines) to FILE,
+        /// for `thc ui replay`.
+        #[arg(long, value_name = "FILE")]
+        trace: Option<std::path::PathBuf>,
     },
 }
 

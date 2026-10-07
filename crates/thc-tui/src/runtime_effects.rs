@@ -51,14 +51,6 @@ pub(crate) fn wall_clock() -> (u64, i32) {
     (utc.and_utc().timestamp_millis().max(0) as u64, offset)
 }
 
-/// Advance the UI's logical clock to the wall clock (the runtime's tick, before input).
-pub(crate) fn tick(app: &mut App) {
-    let (now_ms, offset) = wall_clock();
-    if now_ms != app.ui.now_ms || offset != app.ui.utc_offset_min {
-        app.ui.tick(now_ms, offset);
-    }
-}
-
 pub(crate) fn toggle_page_ids(app: &mut App) {
     dispatch(app, Msg::TogglePageIds { at: app.ui.now_ms });
 }

@@ -1118,7 +1118,10 @@ fn link_popup(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, c
     use ratatui::widgets::{Block, Borders, Clear};
     let Some((_, q)) = app.link_query() else { return };
     let th = app.theme;
-    let (m, create) = app.link_matches(&q);
+    // Matched against the store before drawing (overlay_snapshot.rs); a query typed since
+    // shows no rows until the next frame's preparation.
+    let Some((_, m, create)) = app.derived.data.overlay.link.as_ref().filter(|(lq, _, _)| *lq == q) else { return };
+    let (m, create) = (m.clone(), create.clone());
     let mut rows: Vec<(String, bool)> = m.iter().map(|(l, _)| (l.clone(), false)).collect();
     if let Some(c) = &create {
         rows.push((format!("+ new page \"{c}\""), true));

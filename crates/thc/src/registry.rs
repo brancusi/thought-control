@@ -126,6 +126,7 @@ pub const ALL: &[&Spec] = &[
     &crate::inspect::HISTORY,
     &crate::inspect::DIFF,
     &crate::ocr_cmd::SPEC,
+    &crate::ui_cmd::SPEC,
 ];
 
 pub fn find(name: &str) -> Option<&'static Spec> {

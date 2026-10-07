@@ -4250,11 +4250,21 @@ fn normal_areas(app: &App, area: Rect) -> [Rect; 6] {
     ]).areas(area)
 }
 
+// ---- runtime: frame preparation ------------------------------------------------------------
+// Everything below runs before the view: it reads the store and settings into `Derived` and
+// lets the caret pull its scroll into view. The view above it reads only App's state and
+// `Derived` (the purity test in session_tests.rs holds it to that).
+
 /// Runtime boundary: prepare inputs, update viewport, draw immutably, then accept output.
 /// Snapshot and interactive callers use exactly the same boundary.
 pub(crate) fn draw_app(f: &mut Frame, app: &mut App) {
     update_frame(app, f.area());
     app.render = draw(f, app);
+}
+
+/// Prepare layout at `area` and let the caret and list cursor pull their scroll into view.
+pub(crate) fn follow_frame(app: &mut App, area: Rect) {
+    update_frame(app, area);
 }
 
 fn update_frame(app: &mut App, area: Rect) {
