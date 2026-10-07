@@ -63,14 +63,18 @@ This repository has two editor engines. They are not the same thing.
 
 | Crate | What it is | Used by |
 |---|---|---|
-| [`caretline-next`](../../crates/caretline-next) | The new engine: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app` |
+| [`caretline-next`](../../crates/caretline-next) | The new engine: plain text on Helix's model, in the Elm architecture. **This documentation is about it.** | `caretline-app`, and `thc-tui` with `THC_EDITOR=next` |
 | [`caretline-app`](../../crates/caretline-app) | The `caretline` binary: the interactive editor and the headless tools | |
 | [`caretline`](../../crates/caretline) | The older engine: a block editor for Markdown (paragraphs, list items, tasks, folds, several views on one document) | thought-central's TUI (`thc-tui`) |
 
-caretline-next is meant to replace the older engine once the TUI adopts it. That hasn't
-happened yet. Today the TUI still runs on the older `caretline` crate. caretline-next now has
-a block model ([outline documents](outline.md)), folds and multiple views per document.
-The binary named `caretline` comes from `caretline-app`, which uses caretline-next, not from the crate named
+caretline-next is meant to replace the older engine once the TUI adopts it. caretline-next
+now has a block model ([outline documents](outline.md)), folds and multiple views per
+document. The TUI still runs on the older `caretline` crate by default. With
+`THC_EDITOR=next` it opens each page or journal day as one caretline-next outline document
+instead, behind the same editor API (`crates/thc-tui/src/editor`): thc's per-note save state
+is keyed by each block's mark, changes from the vault arrive as `external` changes, and saving
+makes the same block operations as before. The binary named `caretline` comes from
+`caretline-app`, which uses caretline-next, not from the crate named
 `caretline`.
 
 ## Where to go next

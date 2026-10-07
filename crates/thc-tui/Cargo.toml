@@ -16,5 +16,6 @@ toml.workspace = true
 libc.workspace = true
 thc-core = { path = "../thc-core" }
 caretline = { path = "../caretline" }
+caretline-next = { path = "../caretline-next" }
 unicode-width = "0.2"
 unicode-segmentation = "1"

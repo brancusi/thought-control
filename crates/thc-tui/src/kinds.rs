@@ -85,7 +85,6 @@ fn picture(term: &Terminal<TestBackend>) -> String {
     (0..b.area.height).map(|y| (0..b.area.width).map(|x| b[(x, y)].symbol().to_string()).collect::<String>().trim_end().to_string()).collect::<Vec<_>>().join("\n")
 }
 
-#[test]
 fn a_kind_change_never_moves_another_line() {
     let mut r = Rng(0x9E3779B97F4A7C15);
     let mut fails: Vec<String> = vec![];
@@ -159,4 +158,12 @@ fn a_kind_change_never_moves_another_line() {
         }
     }
     assert!(fails.is_empty(), "{} kind changes moved other lines; first 3:\n{}", fails.len(), fails.iter().take(3).cloned().collect::<Vec<_>>().join("\n\n"));
+}
+
+/// Every test here, once per engine (the old block engine, then caretline-next).
+mod both_engines {
+    #[test]
+    fn a_kind_change_never_moves_another_line() {
+        crate::editor::on_both_engines(super::a_kind_change_never_moves_another_line);
+    }
 }

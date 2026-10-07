@@ -104,7 +104,10 @@ impl Drop for Scratch {
 }
 
 pub(crate) fn scratch(tag: &str) -> (Scratch, Vault) {
-    let root = std::env::temp_dir().join(format!("thc-fuzz-{}-{tag}", std::process::id()));
+    // Unique per call: tests run in parallel, and some share a tag (`late1`, `final`).
+    static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let root = std::env::temp_dir().join(format!("thc-fuzz-{}-{n}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     thc_core::vault::init(&root.join("vault"), None, None).unwrap();
     let v = Vault::open(Paths { vault: root.join("vault"), cache: root.join("cache") }, Actor { kind: "human".into(), name: None }, "tui").unwrap();
@@ -302,6 +305,7 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
         }
         app.journal_date = app.today;
         app.set_view(View::Journal);
+        assert_eq!(app.doc.as_ref().map(|d| d.engine()), Some(crate::editor::engine_kind()), "the day opens on the engine under test");
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
         for (step, op) in ops.iter().enumerate() {
             // Only the caret moves: the notes' IDs, saved before, must not change.
@@ -410,7 +414,6 @@ fn shrink_with(mut ops: Vec<Op>, every: usize, late: Option<u64>) -> Vec<Op> {
     ops
 }
 
-#[test]
 fn fuzz_the_editor_keeps_the_vault_equal_to_the_buffer() {
     // Quiet panics while shrinking; the report below says what failed.
     let hook = std::panic::take_hook();
@@ -457,7 +460,6 @@ fn fuzz_the_editor_keeps_the_vault_equal_to_the_buffer() {
 }
 
 /// Found by the fuzz test (shrunk): replays that once failed.
-#[test]
 fn fuzz_regressions() {
     for ops in [
         vec![Op::Type("漢字"), Op::Select(KeyCode::Up), Op::TaskCycle, Op::TaskCycle, Op::Enter],
@@ -538,7 +540,6 @@ fn late_from(ops: &[Op], answer: Option<&[bool]>, plain: &[&str]) -> (Vec<Note>,
     (buf, held)
 }
 
-#[test]
 fn late_saves_never_roll_back_what_came_after() {
     let t = Op::TaskCycle;
     for ops in [
@@ -568,7 +569,6 @@ fn late_saves_never_roll_back_what_came_after() {
 
 /// cptrz: inline and delayed saves must complete saved plain notes, rather than merely
 /// agree with each other after both paths have rolled the completed status back to todo.
-#[test]
 fn late_task_cycles_complete_saved_plain_lines() {
     let t = Op::TaskCycle;
     let plain = ["alpha line", "bravo line", "charlie line"];
@@ -595,7 +595,6 @@ fn late_task_cycles_complete_saved_plain_lines() {
 
 /// The editor fuzz with the daemon's writer slow: results come back at random moments, so
 /// edits keep landing while a save is out.
-#[test]
 fn fuzz_with_late_saves() {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
@@ -842,7 +841,6 @@ fn shrink_sync(mut ops: Vec<SyncOp>) -> Vec<SyncOp> {
 /// Two devices editing the same day through the real editor, their logs crossing through a
 /// shim that delivers late, partly (a line cut mid-way) and out of order: both converge to the
 /// same store, today's day is one node, every buffer matches its vault, and no log line is bad.
-#[test]
 fn fuzz_two_devices_converge() {
     let hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(|_| {}));
@@ -870,7 +868,6 @@ fn fuzz_two_devices_converge() {
 }
 
 /// Found by the two-device soak (shrunk): replays that once failed.
-#[test]
 fn sync_regressions() {
     for (n, ops) in [
         vec![SyncOp::Edit(1, Op::Type("end.")), SyncOp::Edit(1, Op::TaskCycle), SyncOp::Edit(1, Op::Enter), SyncOp::Edit(1, Op::Type("🙂")), SyncOp::Edit(0, Op::Type("alpha")), SyncOp::Edit(0, Op::LeaveReturn), SyncOp::Deliver { from: 0, pct: 100 }, SyncOp::Edit(1, Op::Enter), SyncOp::Edit(1, Op::Select(KeyCode::Up)), SyncOp::Edit(0, Op::Type("🙂")), SyncOp::Deliver { from: 1, pct: 100 }, SyncOp::Edit(0, Op::LeaveReturn), SyncOp::Edit(0, Op::Move(KeyCode::Up)), SyncOp::Edit(0, Op::Enter), SyncOp::Edit(0, Op::Click(40, 9))],
@@ -923,7 +920,6 @@ fn sync_regressions() {
 /// tombstones only the descendants the deleting device knew, so the child survives. It's
 /// re-homed under the nearest live ancestor and flagged ≠ (moved here) on both devices, never
 /// in no outline (by design; daemon.md §4.0a).
-#[test]
 fn sync_orphan_under_concurrent_delete() {
     let ops = vec![SyncOp::Edit(1, Op::Paste("line a\nline b")), SyncOp::Edit(1, Op::Enter), SyncOp::Edit(1, Op::TaskCycle), SyncOp::Edit(0, Op::Type("two words")), SyncOp::Edit(0, Op::Marker("1. ")), SyncOp::Edit(0, Op::Move(KeyCode::Home)), SyncOp::Deliver { from: 0, pct: 100 }, SyncOp::Poll(1), SyncOp::Edit(1, Op::Tab), SyncOp::Edit(1, Op::Select(KeyCode::Up)), SyncOp::Edit(1, Op::Cut), SyncOp::Edit(0, Op::Type("end.")), SyncOp::Edit(1, Op::Undo), SyncOp::Edit(0, Op::Enter), SyncOp::Edit(0, Op::Select(KeyCode::Up)), SyncOp::Deliver { from: 0, pct: 60 }, SyncOp::Edit(1, Op::Type("🙂")), SyncOp::Edit(0, Op::Marker("[ ] ")), SyncOp::Edit(1, Op::Enter), SyncOp::Poll(1), SyncOp::Edit(1, Op::Select(KeyCode::Up))];
     if let Err(e) = run_sync(&ops, "orphan") {
@@ -934,8 +930,6 @@ fn sync_orphan_under_concurrent_delete() {
 /// Open (two-device soak, flaky: depends on the random ids): after moves on both devices the
 /// open document can show siblings in an older order than the vault's. The same notes, nothing
 /// lost; reopening shows the vault's order. Ignored until patch_doc reconciles order.
-#[test]
-#[ignore]
 fn sync_sibling_order_after_concurrent_moves() {
     for (n, ops) in [
         vec![SyncOp::Edit(1, Op::Paste("- one\n- [ ] two\n\nthird para")), SyncOp::Deliver { from: 1, pct: 100 }, SyncOp::Poll(0), SyncOp::Edit(1, Op::Enter), SyncOp::Edit(0, Op::Type("two words")), SyncOp::Edit(1, Op::Type("bé")), SyncOp::Edit(0, Op::Enter), SyncOp::Edit(0, Op::Enter), SyncOp::Edit(0, Op::MoveLine(true)), SyncOp::Edit(1, Op::LeaveReturn), SyncOp::Edit(1, Op::Move(KeyCode::Up)), SyncOp::Edit(0, Op::Undo), SyncOp::Edit(0, Op::Type("dash-y")), SyncOp::Edit(0, Op::LeaveReturn), SyncOp::Deliver { from: 0, pct: 100 }, SyncOp::Poll(1), SyncOp::Edit(1, Op::Enter)],
@@ -949,5 +943,54 @@ fn sync_sibling_order_after_concurrent_moves() {
         if let Err(e) = run_sync_with(&ops, &format!("order{n}"), true) {
             panic!("{e}");
         }
+    }
+}
+
+/// Every test here, once per engine (the old block engine, then caretline-next).
+mod both_engines {
+    #[test]
+    fn fuzz_the_editor_keeps_the_vault_equal_to_the_buffer() {
+        crate::editor::on_both_engines(super::fuzz_the_editor_keeps_the_vault_equal_to_the_buffer);
+    }
+
+    #[test]
+    fn fuzz_regressions() {
+        crate::editor::on_both_engines(super::fuzz_regressions);
+    }
+
+    #[test]
+    fn late_saves_never_roll_back_what_came_after() {
+        crate::editor::on_both_engines(super::late_saves_never_roll_back_what_came_after);
+    }
+
+    #[test]
+    fn late_task_cycles_complete_saved_plain_lines() {
+        crate::editor::on_both_engines(super::late_task_cycles_complete_saved_plain_lines);
+    }
+
+    #[test]
+    fn fuzz_with_late_saves() {
+        crate::editor::on_both_engines(super::fuzz_with_late_saves);
+    }
+
+    #[test]
+    fn fuzz_two_devices_converge() {
+        crate::editor::on_both_engines(super::fuzz_two_devices_converge);
+    }
+
+    #[test]
+    fn sync_regressions() {
+        crate::editor::on_both_engines(super::sync_regressions);
+    }
+
+    #[test]
+    fn sync_orphan_under_concurrent_delete() {
+        crate::editor::on_both_engines(super::sync_orphan_under_concurrent_delete);
+    }
+
+    #[test]
+    #[ignore]
+    fn sync_sibling_order_after_concurrent_moves() {
+        crate::editor::on_both_engines(super::sync_sibling_order_after_concurrent_moves);
     }
 }

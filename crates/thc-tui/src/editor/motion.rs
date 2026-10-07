@@ -45,7 +45,7 @@ impl Doc {
             C::Redo => return if self.redo() { O::Restored } else { O::Nothing("nothing to redo") },
             _ => {}
         }
-        let Doc { engine, view, wraps, .. } = self;
+        let Doc { engine: super::doc::Engine::Old(engine), view, wraps, .. } = self else { panic!("the old engine's motion") };
         let mut host = |lines: &[Line], v: &caretline::View<String>| stops_of(lines, &v.folds, wraps, width_of);
         let out = engine.apply_and_rebase_with(view, [], cmd, &mut host).expect("the main view edits");
         match (cmd, out) {
