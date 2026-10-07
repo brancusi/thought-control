@@ -7,6 +7,7 @@ import Icon from '../components/Icon.astro';
 import Loop from '../components/Loop.astro';
 import { getCollection } from 'astro:content';
 import { u } from '../lib/url';
+import { version } from '../lib/version';
 
 const features = (await getCollection('features')).sort((a, b) => a.data.order - b.data.order);
 const uses = (await getCollection('usecases')).sort((a, b) => a.data.order - b.data.order);
@@ -24,15 +25,25 @@ const session = [
   { t: 'thc review accept 1 · thc review revert 1', c: 'muted' },
 ];
 ---
-<Base title="thought-central" description="A notebook in your terminal, shared with your agents. Plain text, local-first, an append-only log. Notes, tasks, dates and reminders for people who live in a shell." tab="home">
+<Base title="Thought Control" description="Thought Control (thc) is a notebook in your terminal, shared with your agents. Plain text, local-first, an append-only log. Notes, tasks, dates and reminders for people who live in a shell." tab="home">
   <section class="hero">
-    <p class="eyebrow muted">thc · thought control</p>
-    <h1>A notebook in your terminal<span class="caret" aria-hidden="true"></span></h1>
-    <p class="lede">
-      Write in plain text. Capture from anywhere. <strong>Share it with your agents</strong>, who use
-      the same commands you do and sign everything they touch. It all lives on your machine, in an <strong>append-only log</strong> you can read, sync and rewind.
-    </p>
-    <Install />
+    <h1 class="wm" aria-label="Thought Control"><span class="w" aria-hidden="true"><span class="hi">TH</span><span class="x">OUGHT</span></span> <span class="w" aria-hidden="true"><span class="hi">C</span><span class="x">ONTROL</span></span></h1>
+    <div class="hero__row">
+      <div class="hero__main">
+        <p class="ransom" aria-label="Your thoughts. Under control."><span class="r1" aria-hidden="true">YOUR</span><span class="r2" aria-hidden="true">thoughts.</span><span class="r3" aria-hidden="true">UNDER</span><span class="r4" aria-hidden="true">control.</span></p>
+        <p class="lede">
+          <strong>A notebook in your terminal</strong>, shared with your agents. Write in plain text and capture from anywhere.
+          Your agents use the same <code>thc</code> commands you do and <strong>sign everything they touch</strong>. It all lives on
+          your machine, in an <strong>append-only log</strong> you can read, sync and rewind.
+        </p>
+        <Install />
+      </div>
+      <div class="label" aria-hidden="true">
+        <div class="label__top"><span>controlled</span><span>{version ? `v${version}` : 'for thoughts'}</span></div>
+        <div class="label__big">THC</div>
+        <div class="label__small">1 binary · no account<br />no cloud · plain text<br />side effects may include<br />a tidy inbox</div>
+      </div>
+    </div>
   </section>
 
   <section class="demo">
@@ -41,25 +52,64 @@ const session = [
   </section>
 
   <div class="sec"><span class="n">01</span> why</div>
-  <div class="grid why" style="grid-template-columns:repeat(auto-fill,minmax(min(100%,420px),1fr))">
-    <div class="cell"><Icon name="pen" /><h3>Plain text, with structure</h3><p>A page is a buffer you just type into. Markdown markers make tasks, lists and headings; the marker is the truth. No modes, no forms.</p></div>
-    <div class="cell"><Icon name="agent" /><h3>Agents as colleagues</h3><p><code>--json</code> everywhere, stable exit codes, idempotent keys, guarded writes. Every agent change is attributed and waits in a review lane.</p></div>
-    <div class="cell"><Icon name="history" /><h3>Nothing is ever overwritten</h3><p>One JSON line per change, per device. Undo anything, see any node's history, ask what a page looked like last Tuesday.</p></div>
-    <div class="cell"><Icon name="vault" /><h3>Yours, locally</h3><p>No account and no server. A vault is a folder: sync it with anything. Conflicts keep both versions, and you choose.</p></div>
+  <div class="why">
+    <div class="scrap" style="--tilt:-1.2deg"><span class="k">01 · writing</span><h3>Plain text, with structure</h3><p>A page is a buffer you just type into. Markdown markers make tasks, lists and headings; the marker is the truth. No modes, no forms. The editor runs on <a href="https://caretline.app">caretline</a>.</p></div>
+    <div class="scrap acid" style="--tilt:0.9deg"><span class="k">02 · agents</span><h3>Agents as colleagues</h3><p><code>--json</code> everywhere, stable exit codes, idempotent keys, guarded writes. Every agent change is signed and waits in a review lane.</p></div>
+    <div class="scrap bone" style="--tilt:-0.6deg"><span class="k">03 · the record</span><h3>Nothing is ever overwritten</h3><p>One JSON line per change, per device. Undo anything, see any note's history, ask what a page looked like last Tuesday.</p></div>
+    <div class="scrap" style="--tilt:0.8deg"><span class="k">04 · yours</span><h3>Yours, locally</h3><p>No account and no server. A vault is a folder: sync it with anything. Conflicts keep both versions, and you choose.</p></div>
   </div>
 
   <div class="sec"><span class="n">02</span> the loop</div>
   <Loop />
 
-  <div class="sec"><span class="n">03</span> a look around</div>
+  <div class="sec"><span class="n">03</span> agents</div>
+  <div class="agents">
+    <div class="agents__text">
+      <h2>You steer them.<br />They steer you.<br /><span class="hi">The log keeps score.</span></h2>
+      <p>Claude Code, Codex and your own scripts use the same <code>thc</code> you do. Every write carries its author, <code>◆ claude</code>, and waits in the review lane until you press <kbd>a</kbd> or <kbd>u</kbd>. Only a person can accept.</p>
+      <ul class="facts">
+        <li><b>Guarded writes.</b> <code>--expect status=todo</code> claims a task once; the second agent gets exit <code>4</code>.</li>
+        <li><b>A team on one board.</b> <code>thc team up</code> starts one agent per role; <code>thc next</code> hands out work in your order.</li>
+        <li><b>Taught once.</b> <code>thc setup claude --user</code> installs a skill generated from the binary.</li>
+      </ul>
+      <p class="more"><a href={u('docs/agents/')}>agents, in detail →</a></p>
+    </div>
+    <div class="agents__frame">
+      <span class="stamp agent" style="--tilt:-6deg">filed by agent</span>
+      <TuiFrame name="review" caption="The review lane: what an agent changed, waiting for a or u." />
+      <span class="stamp acid" style="--tilt:4deg">for review</span>
+    </div>
+  </div>
+
+  <div class="sec"><span class="n">04</span> contexts</div>
+  <div class="ctx">
+    <div>
+      <h2>See only what you're <span class="struck">cleared</span> here for.</h2>
+      <p>A context lays a saved view over everything you see: only <code>#work</code> while you're at work. The header names it the whole time it's on, so nothing is withheld without you knowing. It stays on this device and is never synced. <kbd>C</kbd> in the app, or <code>thc context work</code>.</p>
+      <p class="more"><a href={u('docs/views/')}>views and contexts →</a></p>
+    </div>
+    <div class="scrap ctx__sheet" style="--tilt:1.2deg" role="img" aria-label="An illustration: a list with the work items visible and the personal ones blacked out.">
+      <span class="k">today · context: work</span>
+      <ul>
+        <li><span class="box">[ ]</span> Review the migration PR <span class="t">#work</span></li>
+        <li><span class="redact">Call the landlord about the deposit</span></li>
+        <li><span class="box">[ ]</span> Send the invoice <span class="t">#work</span></li>
+        <li><span class="redact">Book the dentist</span></li>
+        <li><span class="box">[x]</span> Fix the flaky login test <span class="t">#work</span></li>
+      </ul>
+      <span class="stamp signal" style="--tilt:-7deg">withheld · 2</span>
+    </div>
+  </div>
+
+  <div class="sec"><span class="n">05</span> a look around</div>
   <div class="gallery">
     <TuiFrame name="today" caption="Today: overdue, due, scheduled and alerting, across every vault you use." />
     <TuiFrame name="link" caption="[[ links any page or day. A new title makes the page." />
     <TuiFrame name="leader" caption="space opens a which-key menu. Every key is in one table: F1, the palette and thc keys all read it." />
-    <TuiFrame name="review" caption="The review lane: what an agent changed, waiting for a or u." />
+    <TuiFrame name="tasks" caption="Tasks: everything open, grouped and in your order." />
   </div>
 
-  <div class="sec"><span class="n">04</span> everything it does</div>
+  <div class="sec"><span class="n">06</span> everything it does</div>
   <div class="grid g4">
     {features.map((f) => (
       <a class="cell" href={u(`features/#${f.id}`)}><Icon name={f.data.icon} /><h3>{f.data.title}</h3><p>{f.data.blurb}</p></a>
@@ -67,40 +117,80 @@ const session = [
   </div>
   <p class="more"><a href={u('features/')}>every feature, in detail →</a></p>
 
-  <div class="sec"><span class="n">05</span> how people use it</div>
+  <div class="sec"><span class="n">07</span> how people use it</div>
   <div class="grid">
     {uses.map((c) => (
       <a class="cell" href={u(`use-cases/#${c.id}`)}><Icon name={c.data.icon} /><h3>{c.data.title}</h3><p>{c.data.blurb}</p></a>
     ))}
   </div>
 
-  <div class="sec"><span class="n">06</span> start</div>
+  <div class="sec"><span class="n">08</span> start</div>
   <div class="start">
-    <pre class="ascii" aria-hidden="true">{`  ┌──────────────────────────┐
-  │  [•]  thought-central    │
-  │                          │
-  │  $ thc j▮                │
-  └──────────────────────────┘`}</pre>
-    <div>
-      <p class="lede">One line to install, then <code>thc j</code> and start typing. The <a href={u('docs/first-ten-minutes/')}>first ten minutes</a> walk you through the rest.</p>
-      <Install />
-    </div>
+    <h2 class="take">Take <span class="hi">control.</span></h2>
+    <p class="lede">One line to install, then <code>thc j</code> and start typing. The <a href={u('docs/first-ten-minutes/')}>first ten minutes</a> walk you through the rest.</p>
+    <Install />
   </div>
 </Base>
 
 <style>
-  .hero { padding: clamp(48px, 9vw, 110px) 0 40px; }
-  .eyebrow { font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; margin: 0 0 1.2rem; }
-  .hero h1 { font-size: clamp(32px, 6.4vw, 64px); letter-spacing: -0.03em; line-height: 1.05; max-width: 16ch; }
-  .hero h1 .caret { width: 0.5em; height: 0.9em; margin-left: 0.15em; vertical-align: -0.08em; }
-  .hero .lede { margin: 1.6rem 0 2rem; }
+  .hero { padding: clamp(36px, 6vw, 76px) 0 40px; }
+  .wm { font: 900 clamp(40px, 9.6vw, 132px)/0.9 var(--sans); font-stretch: 62%; letter-spacing: -0.02em; margin: 0 0 clamp(28px, 4vw, 48px);
+    display: flex; flex-wrap: wrap; gap: 0.12em 0.2em; text-transform: uppercase; }
+  .wm .w { white-space: nowrap; }
+  .wm .hi { color: var(--accent); }
+  .wm .x { display: inline-block; height: 0.74em; line-height: 0.74em; overflow: hidden; background: var(--redact); color: transparent; -webkit-text-fill-color: transparent; margin-left: 0.05em; user-select: none;
+    clip-path: polygon(0 5%, 25% 0, 55% 5%, 100% 1%, 98% 97%, 60% 100%, 20% 95%, 1% 100%); }
+  .hero__row { display: grid; grid-template-columns: minmax(0, 1fr) 250px; gap: 48px; align-items: end; }
+  .hero__main { display: flex; flex-direction: column; gap: 26px; min-width: 0; }
+  .hero .lede { margin: 0; }
   .hero .install { max-width: 860px; }
-  .demo { display: grid; gap: 20px; grid-template-columns: minmax(0, 1fr); margin-top: 24px; }
+  .hero .install-note { margin: -14px 0 0; }
+  .label { justify-self: end; transform: rotate(6deg); background: #ece8df; color: #0c0c0b; width: 240px; border: 2px solid #0c0c0b; outline: 2px solid #ece8df; margin-bottom: 40px; }
+  .label__top { display: flex; justify-content: space-between; padding: 6px 10px; border-bottom: 2px solid #0c0c0b; font: 600 10px var(--mono); text-transform: uppercase; letter-spacing: 0.04em; }
+  .label__big { font: 900 72px/0.9 var(--sans); font-stretch: 125%; padding: 10px 10px 4px; letter-spacing: -0.02em; }
+  .label__small { padding: 2px 10px 10px; font: 9.5px/1.6 var(--mono); }
+  :root[data-theme='light'] .label { outline-color: #0c0c0b; outline-offset: 3px; }
+  @media (max-width: 860px) { .hero__row { grid-template-columns: minmax(0, 1fr); } .label { justify-self: start; transform: rotate(-3deg); margin: 8px 0 0 6px; } }
+  .why { display: grid; gap: 30px 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 230px), 1fr)); }
+  .why .scrap h3 { margin: 12px 0 8px; font-size: 25px; font-stretch: 72%; font-weight: 900; line-height: 1.02; text-transform: uppercase; }
+  .why .scrap p { font-size: 15px; line-height: 1.55; margin: 0; }
+  .why .scrap code, .ctx__sheet code { background: none; border: 0; padding: 0; color: inherit; font-weight: 700; }
+  .demo { display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); margin-top: 32px; }
   @media (min-width: 1000px) { .demo { grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr); align-items: start; } }
-  .gallery { display: grid; gap: 20px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
-  .more { margin-top: 1rem; }
-  .more a { color: var(--muted); }
-  .start { display: grid; gap: 32px; grid-template-columns: minmax(0, 1fr); align-items: center; }
-  @media (min-width: 900px) { .start { grid-template-columns: auto minmax(0, 1fr); } }
-  .ascii { background: none; border: 0; color: var(--muted); font-size: 14px; padding: 0; margin: 0; }
+  .demo .tui { transform: rotate(0.4deg); }
+  .gallery { display: grid; gap: 34px 24px; grid-template-columns: repeat(auto-fit, minmax(min(100%, 460px), 1fr)); }
+  .more { margin-top: 1.2rem; font: 700 12.5px var(--sans); font-stretch: 115%; letter-spacing: 0.06em; text-transform: uppercase; }
+  .more a { color: var(--muted); text-decoration: none; }
+  .more a:hover { color: var(--accent); }
+  .hi { color: var(--accent); }
+
+  .agents { display: grid; gap: 40px; grid-template-columns: minmax(0, 1fr); align-items: center; }
+  @media (min-width: 980px) { .agents { grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr); } }
+  .agents h2 { margin: 0 0 1.2rem; font-size: clamp(32px, 4.4vw, 52px); }
+  .facts { list-style: none; padding: 0; margin: 1.4rem 0 0; display: grid; gap: 10px; }
+  .facts li { padding-left: 1.6ch; border-left: 4px solid var(--line); font-size: 15px; }
+  .facts b { color: var(--text); }
+  .agents__frame { position: relative; padding: 18px 0 24px; }
+  .agents__frame .stamp { position: absolute; z-index: 2; background: var(--bg); }
+  .agents__frame .stamp.agent { top: -8px; right: 6%; }
+  .agents__frame .stamp.acid { bottom: 0; left: 4%; }
+
+  .ctx { display: grid; gap: 40px; grid-template-columns: minmax(0, 1fr); align-items: center; }
+  @media (min-width: 900px) { .ctx { grid-template-columns: minmax(0, 1.1fr) minmax(0, 0.9fr); } }
+  .ctx h2 { margin: 0 0 1.2rem; font-size: clamp(32px, 4.4vw, 52px); }
+  .struck { position: relative; color: var(--muted); }
+  .struck::after { content: ''; position: absolute; left: -2%; right: -2%; top: 48%; height: 0.14em; background: var(--signal); transform: rotate(-3deg); }
+  .ctx__sheet ul { list-style: none; padding: 0; margin: 14px 0 0; font: 12.5px/2.1 var(--mono); }
+  .ctx__sheet li { max-width: none; }
+  .ctx__sheet .box { color: var(--paper-meta); margin-right: 0.6ch; }
+  .ctx__sheet .t { color: var(--paper-meta); }
+  .ctx__sheet .redact { background: #0c0c0b; }
+  .ctx__sheet .stamp { position: absolute; right: 18px; bottom: 16px; background: var(--paper); }
+  .ctx__sheet { padding-bottom: 54px; }
+
+  .start { display: flex; flex-direction: column; gap: 22px; align-items: flex-start; padding: 8px 0 0; }
+  .take { font-size: clamp(64px, 11vw, 150px); font-stretch: 62%; line-height: 0.82; margin: 0; }
+  .start .lede { margin: 0; }
+  .start .install { width: 100%; max-width: 860px; }
+  @media (prefers-reduced-motion: reduce) { .label, .demo .tui { transform: none; } }
 </style>

@@ -3,7 +3,8 @@
 #
 # Never touches a real vault: a scratch HOME, config and cache in a temp dir, seeded by
 # scripts/seed-sample.sh with the clock pinned and fixture ids, each vault served by its own
-# scratch daemon (never launchd). Output: src/renders/<name>-ember-{dark,light}.html.
+# scratch daemon (never launchd). Output: src/renders/<name>-{dark,light}.html, in the Thought Control themes
+# (redacted on ink, newsprint on paper; docs/design/thought-control.md §3.1).
 #
 # Usage (from web/):     npm run renders          uses ../../target/release/thc, else debug
 #                          THC=/path/to/thc npm run renders
@@ -51,10 +52,10 @@ done
 
 render() { # name vault size keys cursor(1|0) [env...]
   local name=$1 vault=$2 size=$3 keys=$4 cursor=$5; shift 5
-  for theme in ember-dark ember-light; do
-    env "$@" THC_VAULT="$S/$vault" THC_CACHE_DIR="$S/${vault}cache" THC_THEME=$theme THC_TUI_SNAPSHOT=$size \
+  for pair in redacted:dark newsprint:light; do
+    env "$@" THC_VAULT="$S/$vault" THC_CACHE_DIR="$S/${vault}cache" THC_THEME=${pair%%:*} THC_TUI_SNAPSHOT=$size \
       THC_TUI_SNAPSHOT_FORMAT=html THC_TUI_SNAPSHOT_CURSOR=$cursor THC_TUI_KEYS="$keys" "$THC" tui |
-      sed -n '/<pre>/,/<\/pre>/p' > "$OUT/$name-$theme.html"
+      sed -n '/<pre>/,/<\/pre>/p' > "$OUT/$name-${pair##*:}.html"
   done
 }
 
@@ -93,9 +94,9 @@ env HOME="$T/mhome" XDG_CACHE_HOME="$T/mxdg" THC_CONFIG_DIR="$T/mconfig" THC_VAU
 PIDS+=($!)
 for _ in $(seq 1 50); do multi env THC_VAULT="$T/mv/personal" "$THC" daemon status >/dev/null 2>&1 && break; sleep 0.1; done
 render_multi() { # name keys
-  for theme in ember-dark ember-light; do
-    (cd "$T/mhome" && multi env THC_THEME=$theme THC_TUI_SNAPSHOT=110x24 THC_TUI_SNAPSHOT_FORMAT=html \
-      THC_TUI_SNAPSHOT_CURSOR=0 THC_TUI_KEYS="$2" "$THC" tui) | sed -n '/<pre>/,/<\/pre>/p' > "$OUT/$1-$theme.html"
+  for pair in redacted:dark newsprint:light; do
+    (cd "$T/mhome" && multi env THC_THEME=${pair%%:*} THC_TUI_SNAPSHOT=110x24 THC_TUI_SNAPSHOT_FORMAT=html \
+      THC_TUI_SNAPSHOT_CURSOR=0 THC_TUI_KEYS="$2" "$THC" tui) | sed -n '/<pre>/,/<\/pre>/p' > "$OUT/$1-${pair##*:}.html"
   done
 }
 render_multi vaults  "1"
