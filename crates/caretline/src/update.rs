@@ -830,7 +830,7 @@ fn motion(state: &mut State, dir: Dir, by: By, extend: bool) {
         By::LineEnd | By::DocEnd => Dir::Forward,
         _ => dir,
     };
-    let page = state.text_rows().max(1) as isize;
+    let page = state.text_rows().saturating_sub(state.view.config.page_overlap as usize).max(1) as isize;
     let wrapped = Layout::new(state);
     let unwrapped = Layout::unwrapped(state);
     let text = wrapped.text();

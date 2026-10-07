@@ -64,11 +64,15 @@ pub struct ViewConfig {
     /// How the view scrolls to keep the caret in sight.
     #[serde(default, skip_serializing_if = "Follow::is_default")]
     pub follow: Follow,
+    /// Rows of the screen before a page motion that stay on screen after it, as context: a
+    /// page moves the text rows less this.
+    #[serde(default, skip_serializing_if = "is_zero_u16")]
+    pub page_overlap: u16,
 }
 
 impl Default for ViewConfig {
     fn default() -> Self {
-        ViewConfig { status_bar: true, scrolloff: 2, follow: Follow::Margin }
+        ViewConfig { status_bar: true, scrolloff: 2, follow: Follow::Margin, page_overlap: 0 }
     }
 }
 
@@ -537,6 +541,8 @@ pub struct ConfigInput {
     pub tab_width: Option<u16>,
     pub soft_wrap: Option<bool>,
     pub scrolloff: Option<u16>,
+    #[serde(default)]
+    pub page_overlap: Option<u16>,
     pub line_ending: Option<LineEnding>,
     pub status_bar: Option<bool>,
     pub follow: Option<Follow>,
@@ -580,6 +586,7 @@ impl From<StateInput> for State {
             status_bar: c.status_bar.unwrap_or(vd.status_bar),
             scrolloff: c.scrolloff.unwrap_or(vd.scrolloff),
             follow: c.follow.unwrap_or_default(),
+            page_overlap: c.page_overlap.unwrap_or(vd.page_overlap),
         };
         let history = input.history.unwrap_or_default();
         let saved_revision = input.saved_revision.unwrap_or(Some(history.current_revision()));
@@ -697,6 +704,8 @@ struct ConfigOut<'a> {
     status_bar: bool,
     #[serde(skip_serializing_if = "Follow::is_default")]
     follow: Follow,
+    #[serde(skip_serializing_if = "is_zero_u16")]
+    page_overlap: u16,
     #[serde(skip_serializing_if = "ExternalUndo::is_default")]
     external_undo: &'a ExternalUndo,
 }
@@ -775,6 +784,7 @@ impl State {
                 line_ending: d.config.line_ending,
                 status_bar: v.config.status_bar,
                 follow: v.config.follow,
+                page_overlap: v.config.page_overlap,
                 external_undo: &d.config.external_undo,
             },
             status: &v.status,
