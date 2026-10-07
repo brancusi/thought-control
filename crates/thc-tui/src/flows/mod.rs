@@ -56,6 +56,9 @@ pub enum Motion {
     /// The caret moves (an arrow, a click): the chrome stays, and the view scrolls only to keep
     /// the caret on screen.
     Caret,
+    /// Another writer's change lands (`thc add`, another device): the caret, the scroll and
+    /// the rows above the caret's note stay; the header's badges and the footer may say so.
+    Agent,
     /// Anything may change (navigation, overlays, the sidebar).
     Any,
 }
@@ -437,7 +440,7 @@ impl Flow {
 
     /// An agent adds a line to today's journal (`thc add`), and the TUI takes it in.
     pub fn agent_add(&mut self, text: &str) -> &mut Self {
-        self.run(&format!("agent adds {text:?}"), Motion::Any, vec![Msg::Fixture { fixture: crate::session::Fixture::Agent { text: text.to_string() } }])
+        self.run(&format!("agent adds {text:?}"), Motion::Agent, vec![Msg::Fixture { fixture: crate::session::Fixture::Agent { text: text.to_string() } }])
     }
 
     /// An agent pushes a state patch (`thc ui patch`).
@@ -448,7 +451,7 @@ impl Flow {
     /// Another device changes the text of the note whose text holds `line`.
     pub fn remote_edit(&mut self, line: &str, new_text: &str) -> &mut Self {
         let id = self.node_id(line);
-        self.run(&format!("remote edit {line:?}"), Motion::Any, vec![Msg::Fixture { fixture: crate::session::Fixture::Remote { id, text: new_text.to_string() } }])
+        self.run(&format!("remote edit {line:?}"), Motion::Agent, vec![Msg::Fixture { fixture: crate::session::Fixture::Remote { id, text: new_text.to_string() } }])
     }
 
     /// Any message, as a step.
@@ -709,7 +712,7 @@ impl Flow {
         let w = shot.buf.area.width;
         let main_r = shot.side_x.unwrap_or(w).min(before.side_x.unwrap_or(w));
         for y in 0..shot.buf.area.height {
-            if y >= b.y && y < b.y + b.height {
+            if y >= b.y && y < b.y + b.height || motion == Motion::Agent {
                 continue;
             }
             let (mut p, mut q) = (before.row(y, 0, main_r), shot.row(y, 0, main_r));
@@ -732,7 +735,7 @@ impl Flow {
         if before.scroll != shot.scroll && !at_edge(&shot) && !at_edge(before) {
             self.fail(desc, before, &format!("the view scrolled {:?} → {:?} with the caret mid-screen", before.scroll, shot.scroll));
         }
-        if motion == Motion::Typing && before.scroll == shot.scroll {
+        if matches!(motion, Motion::Typing | Motion::Agent) && before.scroll == shot.scroll {
             // Rows above the caret's note (a note's own rows reflow: a word may move up a row).
             let top = [before.caret_top, shot.caret_top].iter().flatten().copied().min();
             if let Some(cy) = top {
