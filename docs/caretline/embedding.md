@@ -397,6 +397,14 @@ recovered text, one undoable step), so the engine is the only place the document
 New blocks get node ids from an id pool the runtime fills before input: `update` stays pure
 (no clock, no randomness), so a session replays to the same ids.
 
+**7. The screen is the engine's view.** thc keeps no layout of its own. Each frame it gives the
+view its geometry (`OutlineLayout`: marks 2, hang 4, 4 per depth, its text column, and
+`extra_rows` for a meta that needs its own row or an image under its line), then draws the rows
+`view::render` returns: which rows show, the chars each holds, gaps and the caret's cell. It
+styles those chars itself (tokens, tags, links, the selection fill). A click goes through
+`view::hit`. Scrolling follows `ViewConfig` (`Follow::Typewriter` in Focus, two rows of
+`scrolloff`, `page_overlap` 2), and the wheel is `Msg::ScrollView`.
+
 ## As a process
 
 Spawn `caretline serve`, write JSON requests to its stdin and read one JSON response per
