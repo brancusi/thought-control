@@ -3,9 +3,9 @@ import Base from '../layouts/Base.astro';
 import Icon from '../components/Icon.astro';
 import { u } from '../lib/url';
 ---
-<Base title="Under the hood" description="How thc is built: an append-only event log, a pure replay, one primitive, and caretline, the editor engine with exact caret motion." tab="hood">
+<Base title="Under the hood" description="How Thought Control is built: an append-only event log, a pure replay, one primitive, and caretline, the editor engine with exact caret motion." tab="hood">
   <header class="page-head">
-    <p class="muted kicker">under the hood</p>
+    <p class="kicker"><span class="blk" aria-hidden="true"></span>under the hood</p>
     <h1>How it's built</h1>
     <p class="lede">One Rust binary. An append-only log as the truth, a database you can delete, and an editor engine with a test for every rule about where the caret goes. A longer write-up is coming. Here are the highlights.</p>
   </header>
@@ -38,7 +38,7 @@ import { u } from '../lib/url';
     <div class="cell"><Icon name="clock" /><h3>A pure replay</h3><p>State is a function of the events: clocks, randomness and timezones live only in the writer. Delete the database and <code>thc rebuild</code> replays it.</p></div>
     <div class="cell"><Icon name="sync" /><h3>Merges that converge</h3><p>A hybrid logical clock orders events across devices. The newest field wins; concurrent text edits keep both versions for you to choose.</p></div>
     <div class="cell"><Icon name="vault" /><h3>One primitive</h3><p>A page, a day, a task and a tag are all nodes. "Task" is a status, "reminder" is an alert: fewer kinds, fewer edge cases.</p></div>
-    <div class="cell"><Icon name="pen" /><h3>caretline, the editor</h3><p>A standalone Rust crate, in development and not yet published: a plain-text block editor with documents and views, Markdown in and out, and one layout map for drawing, clicks and motion. Every caret position belongs to exactly one row. It comes with a small example: a whole Markdown editor in the terminal, in about 160 lines on top of the engine.</p></div>
+    <div class="cell"><Icon name="pen" /><h3>caretline, the editor</h3><p>The editor engine, now its own Rust crate (<a href="https://caretline.app">caretline.app</a>, <code>cargo add caretline</code>): a plain-text block editor with documents and views, Markdown in and out, and one layout map for drawing, clicks and motion. Every caret position belongs to exactly one row. It comes with a small example: a whole Markdown editor in the terminal, in about 160 lines on top of the engine.</p></div>
     <div class="cell"><Icon name="bug" /><h3>Rules that run</h3><p>Caret motion is pure functions with invariants, checked over random documents, with golden examples written in a caret notation that reads like the docs.</p></div>
   </div>
 
@@ -52,14 +52,12 @@ Short one.
 ↓   Short one.  at `}<span class="accent">▮</span>{`Short`}</code></pre>
   <p class="muted">A golden test, as written: the caret at the start of a wrapped row, one <kbd>↓</kbd>, and where it must land. caretline runs 103 of these (22 for motion, 81 for editing), plus property tests over random documents: a motion without <kbd>⇧</kbd> never leaves a selection, cut then paste changes nothing, and changing a line into a task never moves another line.</p>
 
-  <p class="next">More soon: the full story of the data model and caretline. Meanwhile, the <a href={u('docs/philosophy/')}>philosophy</a> explains the why.</p>
+  <p class="next">More soon: the full story of the data model. caretline has <a href="https://caretline.app">its own site</a>, with docs and a playground. Meanwhile, the <a href={u('docs/philosophy/')}>philosophy</a> explains the why.</p>
 </Base>
 <style>
-  .page-head { padding: clamp(40px, 7vw, 80px) 0 32px; }
-  .kicker { font-size: 13px; letter-spacing: 0.1em; text-transform: uppercase; }
   .arch { margin: 0 0 3rem; }
   .arch svg { width: 100%; height: auto; display: block; }
   .art text.dim { fill: var(--dim); }
-  .fx { font-size: 14px; }
+  .fx { font-size: 13px; }
   .next { margin-top: 3rem; }
 </style>

@@ -1,12 +1,16 @@
 ---
-// Every page: the TUI header (tabs on a rule, the ember under the current one), the status-bar
-// footer, and the keyboard: 1–6 switch pages as in thc, ? shows the keys, t toggles the theme.
+// Every page: the short mark thc█ and the tabs on a rule (acid under the current one), the acid
+// footer with the wordmark, and the keyboard: 1–6 switch pages as in thc, ? shows the keys, t
+// toggles the theme. Brand: Thought Control v2 "Redacted".
+import '@fontsource-variable/archivo/standard.css';
+import '@fontsource-variable/martian-mono/standard.css';
+import '@fontsource/instrument-serif/latin-400-italic.css';
 import '@fontsource/ibm-plex-mono/400.css';
 import '@fontsource/ibm-plex-mono/400-italic.css';
 import '@fontsource/ibm-plex-mono/600.css';
 import '../styles/site.css';
 import { u } from '../lib/url';
-import { version } from '../lib/version';
+import { version, RELEASES } from '../lib/version';
 
 interface Props { title: string; description: string; tab?: string }
 const { title, description, tab } = Astro.props;
@@ -18,7 +22,9 @@ const tabs = [
   { k: '5', id: 'changelog', label: 'changelog', href: u('changelog/') },
   { k: '6', id: 'hood', label: 'under the hood', short: 'internals', href: u('under-the-hood/') },
 ];
-const full = title === 'thought-central' ? 'thought-central · a notebook in your terminal' : `${title} · thought-central`;
+const home = title === 'Thought Control';
+const full = home ? 'Thought Control · thc, a notebook in your terminal' : `${title} · Thought Control`;
+const canonical = new URL(Astro.url.pathname, Astro.site);
 ---
 <!doctype html>
 <html lang="en">
@@ -29,7 +35,14 @@ const full = title === 'thought-central' ? 'thought-central · a notebook in you
   <meta name="description" content={description} />
   <meta property="og:title" content={full} />
   <meta property="og:description" content={description} />
-  <meta name="theme-color" content="#1b1916" />
+  <meta property="og:site_name" content="Thought Control" />
+  <meta property="og:type" content="website" />
+  <meta property="og:url" content={canonical} />
+  <meta property="og:image" content={new URL(u('og.png'), Astro.site)} />
+  <meta name="twitter:card" content="summary_large_image" />
+  <link rel="canonical" href={canonical} />
+  <meta name="theme-color" content="#0c0c0b" media="(prefers-color-scheme: dark)" />
+  <meta name="theme-color" content="#ece8df" media="(prefers-color-scheme: light)" />
   <link rel="icon" href={u('favicon.svg')} type="image/svg+xml" />
   <script is:inline>
     try { const t = localStorage.getItem('thc-theme'); if (t) document.documentElement.dataset.theme = t; } catch {}
@@ -38,7 +51,7 @@ const full = title === 'thought-central' ? 'thought-central · a notebook in you
 <body>
   <header class="top wrap">
     <div class="top__row">
-      <a class="mark" href={u('')} aria-label="thought-central home"><span class="b">[</span><span class="d">•</span><span class="b">]</span> thought-central</a>
+      <a class="mark" href={u('')} aria-label="Thought Control home"><span class="m">thc<span class="blk" aria-hidden="true"></span></span><span class="n">Thought Control</span></a>
       <nav class="tabs" aria-label="Site">
         {tabs.map((t) => (
           <a href={t.href} data-key={t.k} aria-current={tab === t.id ? 'page' : undefined}><span class="k">{t.k}</span>{t.short ? <><span class="long">{t.label}</span><span class="short">{t.short}</span></> : t.label}</a>
@@ -53,14 +66,20 @@ const full = title === 'thought-central' ? 'thought-central · a notebook in you
     <slot />
   </main>
 
-  <footer class="bar wrap">
-    <div class="bar__row">
-      <span>thc {version && <span>{version}</span>} · local-first · plain text · <span class="live">for terminals</span></span>
-      <span><kbd>1</kbd>–<kbd>6</kbd> pages · <kbd>t</kbd> theme · <kbd>?</kbd> keys</span>
-    </div>
-    <div class="bar__row" style="margin-top:6px">
-      <span class="dim">macOS today. The CLI is the interface; the TUI drives it; agents use it too.</span>
-      <span><a href="https://github.com/brancusi/thought-control-releases/releases">releases</a></span>
+  <footer class="bar">
+    <div class="bar__in">
+      <div class="bar__mark">
+        <span class="bar__wm" role="img" aria-label="Thought Control"><span class="w">TH<span class="x">OUGHT</span></span><span class="w">C<span class="x">ONTROL</span></span></span>
+        <span class="bar__tag">A controlled substance for thoughts. A notebook in your terminal.</span>
+      </div>
+      <div class="bar__row">
+        <span>thc {version && <span>{version}</span>} · local-first · plain text · macOS today</span>
+        <nav aria-label="Elsewhere"><a href={RELEASES}>releases</a><a href="https://github.com/brancusi/thought-control">source</a><a href="https://caretline.app">caretline</a></nav>
+      </div>
+      <div class="bar__row">
+        <span class="dim">The CLI is the interface; the TUI drives it; agents use it too. Not affiliated with any agency, real or imagined.</span>
+        <span><kbd>1</kbd>–<kbd>6</kbd> pages · <kbd>t</kbd> theme · <kbd>?</kbd> keys</span>
+      </div>
     </div>
   </footer>
 
@@ -76,7 +95,7 @@ const full = title === 'thought-central' ? 'thought-central · a notebook in you
   </div>
 
   <script>
-    // The ember bar sits under the current tab, as in the TUI header.
+    // The acid bar sits under the current tab, as in the TUI header.
     const bar = document.querySelector<HTMLElement>('.rule__bar');
     const place = () => {
       const cur = document.querySelector<HTMLElement>('.tabs a[aria-current="page"]');
