@@ -1082,6 +1082,17 @@ mod soak_found {
         }
     }
 
+    /// ⌥↓ moved two notes; the second's predecessor (the first) moved, its own `after` didn't
+    /// change, so it wasn't moved and stayed where it was in the vault. A note after one the
+    /// save moves goes with it now (case 845).
+    #[test]
+    fn a_note_after_a_moved_one_moves_with_it() {
+        let ops = vec![Type("alpha"), Enter, Enter, Type("dash-y"), Marker("* "), Type("dash-y"), Enter, Type("x"), Marker("- "), Select(KeyCode::Up), Tab, LeaveReturn, Paste("- one\n- [ ] two\n\nthird para"), Select(KeyCode::Up), Move(KeyCode::Left), Paste("- one\n- [ ] two\n\nthird para"), Marker("[ ] "), Click(81, 11), Enter, MoveLine(false)];
+        if let Err(e) = run_with(&ops, 4, "soak845", Some(0xBADC_0FFE ^ 845)) {
+            panic!("{e}");
+        }
+    }
+
     #[test]
     fn late_move_and_edit_in_one_save_keeps_the_typing() {
         late_move_and_edit_in_one_save();
