@@ -49,6 +49,27 @@ pub fn ms(t: std::time::Instant) -> u64 {
     t.saturating_duration_since(epoch).as_millis() as u64
 }
 
+/// A note as the document reads it back from the vault, on the engine documents open on now:
+/// on caretline-next, saved text that starts with a list or task marker (`[x] done`, `- a`)
+/// reads as that kind. (Test-only: the fuzz compares a reopened document with what it meant.)
+#[cfg(test)]
+pub fn read_back(n: (Kind, usize, Option<String>, String)) -> (Kind, usize, Option<String>, String) {
+    if engine_kind() != EngineKind::Next {
+        return n;
+    }
+    let (kind, depth, status, text) = n;
+    let b: thc_core::outline::Block = serde_json::from_value(serde_json::json!({
+        "id": "x", "parent": null, "depth": depth, "kind": format!("{kind:?}").to_lowercase(),
+        "status": status, "text": text, "text_rev": "r",
+    }))
+    .expect("a block");
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 6).unwrap();
+    let d = Doc::new(Target::Journal { date: today }, None, &[b], today);
+    let l = &d.blocks()[0];
+    let status = if l.kind() == Kind::Task { l.status.clone() } else { None };
+    (l.kind(), l.depth, status, l.text.trim().to_string())
+}
+
 /// Which engine edits a document: the old block engine (the default) or caretline-next
 /// (`THC_EDITOR=next`), chosen when the document opens.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

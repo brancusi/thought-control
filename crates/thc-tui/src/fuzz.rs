@@ -360,7 +360,24 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
                     return Err(format!("step {step}: moving the caret changed the notes' IDs: {before:?} → {after:?}"));
                 }
             }
+            if std::env::var_os("THC_FUZZ_TRACE").is_some() {
+                if let Some(d) = app.doc.as_ref() {
+                    eprintln!("{step} {op:?} caret {:?}", d.caret());
+                    for l in d.blocks() {
+                        eprintln!("    {:?} {} {:?} {:?} {} saved={:?} remote={:?} new={} edited={}", l.kind(), l.depth, l.status, l.text, &l.id[..4], l.saved, l.remote_text, l.is_new, l.edited());
+                    }
+                }
+            }
             if step % every == every - 1 {
+                if std::env::var_os("THC_FUZZ_TRACE").is_some() {
+                    flush(&mut app);
+                    if let Some(d) = app.doc.as_ref() {
+                        eprintln!("{step} after flush; engine: {:?}", d.engine_text());
+                        for l in d.blocks() {
+                            eprintln!("    {:?} {} {:?} {:?} {} saved={:?} remote={:?} new={} edited={}", l.kind(), l.depth, l.status, l.text, &l.id[..4], l.saved, l.remote_text, l.is_new, l.edited());
+                        }
+                    }
+                }
                 check(&mut app).map_err(|e| format!("step {step}: {e}"))?;
             }
         }
@@ -374,6 +391,10 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
         app.journal_date = app.today;
         app.set_view(View::Journal);
         let again: Vec<(String, Note)> = buffer_notes(&app).into_iter().filter(|(id, _)| !skip.contains(id)).collect();
+        // caretline-next reads each note's text as Markdown: one whose saved text starts with a
+        // list or task marker reads back as that kind (the plan's R8, accepted). Compare what
+        // the text means.
+        let buf: Vec<(String, Note)> = buf.into_iter().map(|(id, n)| (id, crate::editor::read_back(n))).collect();
         if again != buf {
             return Err(format!("reopened, the document differs\nbefore: {buf:#?}\nafter: {again:#?}"));
         }
@@ -992,5 +1013,41 @@ mod both_engines {
     #[ignore]
     fn sync_sibling_order_after_concurrent_moves() {
         crate::editor::on_both_engines(super::sync_sibling_order_after_concurrent_moves);
+    }
+}
+
+
+/// Cases the long soak found (THC_FUZZ_CASES=400 THC_FUZZ_OPS=150), kept on both engines.
+#[cfg(test)]
+mod soak_found {
+    use super::Op::*;
+    use super::*;
+
+    /// A note moved and edited in one save, its result read late: the move's result (the note
+    /// before the edit) put the old text back, and the next save sent it.
+    fn late_move_and_edit_in_one_save() {
+        let ops = vec![Op::Type("🙂"), Op::Marker("- "), Op::Type("dash-y"), Op::Marker("- "), TaskCycle, TaskCycle, Op::MoveLine(true), Op::Type("🙂"), Op::Type("bé"), Op::Marker("- "), Op::Paste("line a\nline b"), Redo, Op::Remote(4), Redo, Redo, Op::Type("alpha"), Enter, Op::Type("🙂"), Op::Select(KeyCode::Left), Undo, Op::Type("漢字"), Op::Type("alpha"), Enter, Enter, Op::Type("x"), Bs, Op::Type("end."), Bs, Op::Type("dash-y"), Tab, Op::Type("🙂"), Op::Click(3, 13), Op::Type("🙂"), Op::Type("two words"), Undo, LeaveReturn, Tab, Enter, LeaveReturn, Op::Type("dash-y"), BackTab, Op::Move(KeyCode::End), Cut, Op::Click(23, 25), Op::Type("漢字"), Op::Type("alpha"), LeaveReturn, Bs, Op::Type("漢字"), Redo, Op::Click(10, 21), Op::Move(KeyCode::Right), Enter, Op::Click(74, 11), Op::Type("🙂"), TaskCycle, Bs, BackTab, BackTab, Op::Select(KeyCode::Up), Op::Type("bé"), Op::Select(KeyCode::Left), Enter, Op::MoveLine(false), Redo, Tab, Tab, Op::Type("漢字"), Tab, Redo, Bs, Op::Marker("[ ] "), Cut, Redo, Op::Paste("line a\nline b"), Op::Paste("line a\nline b"), Bs, Enter, Op::Type("end."), Tab, Bs, Redo, Enter, Undo, Cut, Enter, Op::Type("two words"), Op::Type("alpha"), Enter, Op::Select(KeyCode::Left), BackTab, Op::Select(KeyCode::Up), Undo, BackTab, Op::Type("alpha"), Enter];
+        if let Err(e) = run_with(&ops, 4, "soak100", Some(0xBADC_0FFE ^ 100)) {
+            panic!("{e}");
+        }
+    }
+
+    /// A bullet whose saved text starts with a task box reads back as a task on
+    /// caretline-next (R8): what it means is the same.
+    fn a_bullet_saved_as_a_box_reads_back_as_a_task() {
+        let ops = vec![Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Enter, Op::Paste("- [x] done item"), Op::Enter, Op::Type("漢字"), Op::Undo, Op::Undo, Op::TaskCycle, Op::Paste("- one\n- [ ] two\n\nthird para"), Op::Tab, Op::Click(33, 15), Op::Tab, Op::Paste("- [x] done item"), Op::MoveLine(false), Op::Tab, Op::Click(19, 16), Op::Enter, Op::Bs];
+        if let Err(e) = run(&ops, 4, "soak108") {
+            panic!("{e}");
+        }
+    }
+
+    #[test]
+    fn late_move_and_edit_in_one_save_keeps_the_typing() {
+        crate::editor::on_both_engines(late_move_and_edit_in_one_save);
+    }
+
+    #[test]
+    fn a_bullet_saved_as_a_box() {
+        crate::editor::on_both_engines(a_bullet_saved_as_a_box_reads_back_as_a_task);
     }
 }
