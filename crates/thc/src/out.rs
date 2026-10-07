@@ -146,7 +146,7 @@ impl Out {
             let t = store.render_text(&n.text);
             let first = t.lines().next().unwrap_or("").to_string();
             let more = if t.lines().count() > 1 { self.dim(" …") } else { String::new() };
-            if matches!(n.status.as_deref(), Some("done" | "cancelled")) { self.dim(&first) + &more } else { first + &more }
+            if matches!(n.status.as_deref(), Some("done" | "cancelled")) { self.dim(&first) + more.as_str() } else { first + more.as_str() }
         };
         let mut meta: Vec<String> = Vec::new();
         if let Some(m) = marker {

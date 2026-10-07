@@ -143,7 +143,7 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
             "⌘V" => {
                 let text = clip.clone();
                 if !text.contains('\n') {
-                    d.insert(&text);
+                    d.paste_line(&text);
                 } else {
                     d.paste(&text, false);
                 }
@@ -188,7 +188,6 @@ fn done() {
     assert!(fails.is_empty(), "\n{}", fails.join("\n"));
 }
 
-#[test]
 fn e1_to_e14_selection_collapse() {
     check("E1", "Hello ⟦wor▮⟧ld", &["←"], "Hello ▮world");
     check("E2", "Hello ⟦wor▮⟧ld", &["→"], "Hello wor▮ld");
@@ -205,7 +204,6 @@ fn e1_to_e14_selection_collapse() {
     done();
 }
 
-#[test]
 fn e15_to_e24_edits_with_a_selection() {
     check("E15", "Hello ⟦wor▮⟧ld", &["type X"], "Hello X▮ld");
     check("E16", "Hello ⟦wor▮⟧ld", &["⌫"], "Hello ▮ld");
@@ -220,7 +218,6 @@ fn e15_to_e24_edits_with_a_selection() {
     done();
 }
 
-#[test]
 fn e25_to_e32_word_and_line_deletes() {
     check("E25", "one two thr▮ee", &["⌥⌫"], "one two ▮ee");
     check("E26", "one two ▮three", &["⌥⌫"], "one ▮three");
@@ -232,7 +229,6 @@ fn e25_to_e32_word_and_line_deletes() {
     done();
 }
 
-#[test]
 fn e33_to_e43_the_clipboard() {
     check_clip("E33", "Hello ⟦wor▮⟧ld", &["⌘C"], "Hello ⟦wor▮⟧ld", "wor");
     check_clip("E34", "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam", &["⌘C"], "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam", "milk\n- [ ] Call ");
@@ -251,7 +247,6 @@ fn e33_to_e43_the_clipboard() {
     done();
 }
 
-#[test]
 fn e38_e39_e40_paste() {
     let mut clip = "X".to_string();
     let d = run("Hello ⟦wor▮⟧ld", &["⌘V"], &mut clip);
@@ -318,7 +313,6 @@ fn texts(d: &Doc) -> Vec<String> {
     d.blocks().iter().map(|l| l.text.clone()).collect()
 }
 
-#[test]
 fn editing_invariants_hold_on_random_documents() {
     let mut r = Rng(0xD1B54A32D192ED03);
     let w = |_: &Line| 72usize;
@@ -370,7 +364,7 @@ fn editing_invariants_hold_on_random_documents() {
             d.select_range(d0.anchor(), d0.caret());
             let clip = d.copy_text();
             if !clip.contains('\n') {
-                d.insert(&clip);
+                d.paste_line(&clip);
                 assert_eq!(texts(&d), texts(&d0), "EI8 case {case}: {}", render(&d0));
             }
         }
@@ -493,7 +487,6 @@ fn check_g(id: &str, before: &str, keys: &[&str], after: &str) -> Doc {
     d
 }
 
-#[test]
 fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     // E70: a line inside a paragraph: three notes, adjacent, the first keeps the id.
     let src70 = "First line⏎sec▮ond line⏎third line";
@@ -540,4 +533,42 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     assert_eq!(render_g(&d81), "First line⏎sec▮ond line⏎third line", "E81");
     assert_eq!(d81.blocks()[0].id, id, "E81: the upper note's id");
     done();
+}
+
+/// Every test here, once per engine (the old block engine, then caretline-next).
+mod both_engines {
+    #[test]
+    fn e1_to_e14_selection_collapse() {
+        crate::editor::on_both_engines(super::e1_to_e14_selection_collapse);
+    }
+
+    #[test]
+    fn e15_to_e24_edits_with_a_selection() {
+        crate::editor::on_both_engines(super::e15_to_e24_edits_with_a_selection);
+    }
+
+    #[test]
+    fn e25_to_e32_word_and_line_deletes() {
+        crate::editor::on_both_engines(super::e25_to_e32_word_and_line_deletes);
+    }
+
+    #[test]
+    fn e33_to_e43_the_clipboard() {
+        crate::editor::on_both_engines(super::e33_to_e43_the_clipboard);
+    }
+
+    #[test]
+    fn e38_e39_e40_paste() {
+        crate::editor::on_both_engines(super::e38_e39_e40_paste);
+    }
+
+    #[test]
+    fn editing_invariants_hold_on_random_documents() {
+        crate::editor::on_both_engines(super::editing_invariants_hold_on_random_documents);
+    }
+
+    #[test]
+    fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
+        crate::editor::on_both_engines(super::e70_to_e81_kind_changes_per_line_and_nothing_moves);
+    }
 }

@@ -292,7 +292,7 @@ pub fn paste(app: &mut App, text: &str) {
     }
     // One line: typed in as is, less what can't show in a line (a tab, a stray CR).
     if !text.contains('\n') && !text.contains('\r') {
-        d.insert(&text.replace('\t', "    "));
+        d.paste_line(&text.replace('\t', "    "));
         app.doc_after_key();
         return;
     }

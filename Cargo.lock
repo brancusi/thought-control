@@ -2214,6 +2214,7 @@ version = "0.9.65"
 dependencies = [
  "anyhow",
  "caretline",
+ "caretline-next",
  "chrono",
  "libc",
  "ratatui",

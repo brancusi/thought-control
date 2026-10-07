@@ -51,6 +51,9 @@ pub struct Line {
     pub conflict_with: Option<String>,
     /// The `gap` (writing.md §1) as last saved; the live one is the block's.
     pub saved_gap: Option<bool>,
+    /// The engine's mark for this line (caretline-next only): which block of the text it is.
+    /// None for a line the host just made, until the engine takes it in.
+    pub(super) mark: Option<u64>,
 }
 
 impl std::ops::Deref for Line {
@@ -105,6 +108,7 @@ impl Line {
             remote_shape: false,
             conflict_with: None,
             saved_gap: None,
+            mark: None,
         }
     }
 
@@ -278,9 +282,9 @@ pub struct Doc {
     pub target: Target,
     /// The document's root node (None: a journal day not created yet; its first save makes it).
     pub root: Option<String>,
-    /// The lines, pending deletes and undo: caretline's doc, whose rules edit it, shared by
-    /// every view of the page or day.
-    pub(super) engine: caretline::Doc<Line>,
+    /// The lines, pending deletes and undo: the engine's document, whose rules edit it, shared
+    /// by every view of the page or day.
+    pub(super) engine: Engine,
     /// Where you are in it: caret, selection, goal column, folds (the main column's view).
     pub(super) view: caretline::View<String>,
     /// The first visual row on screen.
@@ -288,7 +292,7 @@ pub struct Doc {
     /// Content changes the buffer doesn't make (remote text, a line added for typing).
     host_revision: u64,
     /// Each line as its last save left it (what the vault has); see `Doc::undo`.
-    last_saved: HashMap<String, Line>,
+    pub(super) last_saved: HashMap<String, Line>,
     pub(super) wraps: HashMap<(u64, usize), Vec<(usize, usize)>>,
 }
 
@@ -301,7 +305,11 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let view = caretline::View::new(caretline::Rect::default());
-        Doc { target, root, engine: caretline::Doc::new(lines), view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
+        let engine = match super::engine_kind() {
+            super::EngineKind::Old => Engine::Old(caretline::Doc::new(lines)),
+            super::EngineKind::Next => Engine::Next(Box::new(super::next::Next::load(lines))),
+        };
+        Doc { target, root, engine, view, scroll: 0, host_revision: 0, last_saved: HashMap::new(), wraps: HashMap::new() }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -330,30 +338,65 @@ impl Doc {
 
     /// The selection, ordered (start, end), when there is one.
     pub fn selection(&self) -> Option<(BlockPos, BlockPos)> {
-        self.engine.selection(&self.view).map(|(a, b)| (a.into(), b.into()))
+        match &self.engine {
+            Engine::Old(e) => e.selection(&self.view).map(|(a, b)| (a.into(), b.into())),
+            Engine::Next(_) => {
+                let a = self.view.anchor?;
+                let c = self.view.caret;
+                let ok = |p: Pos| self.lines().get(p.line).is_some_and(|l| p.byte <= l.text.len() && l.text.is_char_boundary(p.byte));
+                (a != c && ok(a) && ok(c)).then(|| if a < c { (a.into(), c.into()) } else { (c.into(), a.into()) })
+            }
+        }
     }
 
     /// Run caretline's buffer rules at the caret (what `Command` doesn't name). The main view
-    /// is never read-only.
+    /// is never read-only. The old engine only.
     pub(super) fn edit<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
-        self.engine.edit_at(&mut self.view, f).map(|(r, _)| r).expect("the main view edits")
+        let Engine::Old(e) = &mut self.engine else { panic!("the old engine's buffer") };
+        e.edit_at(&mut self.view, f).map(|(r, _)| r).expect("the main view edits")
     }
 
-    /// The buffer at the caret, reading or selecting.
+    /// The buffer at the caret, reading or selecting. The old engine only.
     pub(super) fn at<R>(&mut self, f: impl FnOnce(&mut Buffer<Line>) -> R) -> R {
-        self.engine.at(&mut self.view, f)
+        let Engine::Old(e) = &mut self.engine else { panic!("the old engine's buffer") };
+        e.at(&mut self.view, f)
+    }
+
+    /// A message for caretline-next through the main view, the vault's save state at hand.
+    pub(super) fn next_run(&mut self, msg: caretline_next::Msg) -> Vec<caretline_next::Effect> {
+        let Doc { engine: Engine::Next(n), view, last_saved, .. } = self else { panic!("caretline-next") };
+        n.run(view, last_saved, msg)
     }
 
     pub fn insert(&mut self, s: &str) {
-        self.edit(|b| b.insert(s));
+        match self.engine {
+            Engine::Old(_) => self.edit(|b| b.insert(s)),
+            Engine::Next(_) => {
+                self.next_run(caretline_next::Msg::InsertText { text: s.to_string() });
+            }
+        }
     }
 
     pub fn newline(&mut self) {
-        self.edit(|b| b.newline());
+        match self.engine {
+            Engine::Old(_) => self.edit(|b| b.newline()),
+            Engine::Next(_) => {
+                self.next_run(caretline_next::Msg::InsertNewline);
+            }
+        }
     }
 
     pub fn delete_selection(&mut self) -> bool {
-        self.edit(|b| b.delete_selection())
+        match self.engine {
+            Engine::Old(_) => self.edit(|b| b.delete_selection()),
+            Engine::Next(_) => {
+                if self.selection().is_none() {
+                    return false;
+                }
+                self.next_run(caretline_next::Msg::DeleteBackward);
+                true
+            }
+        }
     }
 
     pub(super) fn paste_lines(&mut self, pasted: Vec<(usize, Kind, Option<String>, String)>) {
@@ -363,37 +406,88 @@ impl Doc {
 
     /// A click on a task's box: its next status.
     pub fn task_box(&mut self, line: usize) -> &'static str {
-        self.edit(|b| b.task_box(line))
+        match self.engine {
+            Engine::Old(_) => self.edit(|b| b.task_box(line)),
+            Engine::Next(_) => {
+                let Some(l) = self.lines().get(line) else { return "" };
+                let (Some(mark), Kind::Task) = (l.mark, l.kind()) else { return "" };
+                let done = l.status.as_deref() == Some("done");
+                let ch = if done { ' ' } else { 'x' };
+                self.next_run(caretline_next::Msg::SetStatus { id: caretline_next::MarkId(mark), ch });
+                if done { "reopened" } else { "done" }
+            }
+        }
     }
 
     /// One undo step before the host puts lines in (recovered lines, an attachment).
     pub fn begin_undo_step(&mut self) {
-        self.edit(|b| b.begin_recovery());
+        match &mut self.engine {
+            Engine::Old(_) => self.edit(|b| b.begin_recovery()),
+            Engine::Next(n) => n.begin_undo_step(),
+        }
     }
 
-    /// A note patched in from elsewhere: undo leaves it.
+    /// A note patched in from elsewhere: undo leaves it. (caretline-next: every change from
+    /// elsewhere is outside the undo history already.)
     pub(super) fn mark_arrived(&mut self, id: &str) {
-        let id = id.to_string();
-        self.at(|b| b.mark_arrived(&id));
+        if let Engine::Old(_) = self.engine {
+            let id = id.to_string();
+            self.at(|b| b.mark_arrived(&id));
+        }
     }
 
     pub(super) fn select(&mut self, select: bool) {
-        self.at(|b| b.select(select));
+        match self.engine {
+            Engine::Old(_) => self.at(|b| b.select(select)),
+            Engine::Next(_) => {
+                if !select {
+                    self.view.anchor = None;
+                } else if self.view.anchor.is_none() {
+                    self.view.anchor = Some(self.view.caret);
+                }
+            }
+        }
     }
 
     /// A double-click: the word at `p`.
     pub fn select_word_at(&mut self, p: BlockPos) {
-        let p = p.into();
-        self.at(|b| b.select_word(p));
+        let p: Pos = p.into();
+        match self.engine {
+            Engine::Old(_) => self.at(|b| b.select_word(p)),
+            Engine::Next(_) => {
+                let pos = self.next_char_of(p);
+                self.next_run(caretline_next::Msg::SelectWordAt { pos });
+            }
+        }
     }
 
     /// A triple-click: the whole note at line `line`.
     pub fn select_block(&mut self, line: usize) {
-        self.at(|b| b.select_note(line));
+        match self.engine {
+            Engine::Old(_) => self.at(|b| b.select_note(line)),
+            Engine::Next(_) => {
+                if let Some(m) = self.lines().get(line).and_then(|l| l.mark) {
+                    self.next_run(caretline_next::Msg::SelectBlock { id: caretline_next::MarkId(m) });
+                }
+            }
+        }
     }
 
     pub fn selected_parts(&mut self) -> Vec<(usize, String)> {
-        self.at(|b| b.selected_parts())
+        match self.engine {
+            Engine::Old(_) => self.at(|b| b.selected_parts()),
+            Engine::Next(_) => {
+                let Some((s, e)) = self.selection() else { return Vec::new() };
+                (s.line..=e.line)
+                    .map(|i| {
+                        let t = &self.lines()[i].text;
+                        let a = if i == s.line { s.byte } else { 0 };
+                        let b = if i == e.line { e.byte } else { t.len() };
+                        (i, t[a.min(b)..b].to_string())
+                    })
+                    .collect()
+            }
+        }
     }
 
     pub fn undo_depth(&self) -> usize {
@@ -411,7 +505,10 @@ impl Doc {
 
     #[cfg(test)]
     pub fn gaps(&self) -> HashMap<String, bool> {
-        self.engine.gaps()
+        match &self.engine {
+            Engine::Old(e) => e.gaps(),
+            Engine::Next(_) => self.lines().iter().enumerate().map(|(i, l)| (l.id.clone(), self.effective_gap(i))).collect(),
+        }
     }
 
     /// How many lines nest under line `i`.
@@ -446,30 +543,115 @@ impl Doc {
 
     fn step(&mut self, f: fn(&mut Buffer<Line>) -> bool) -> bool {
         let last_saved = &self.last_saved;
-        self.engine
-            .edit_at(&mut self.view, |b| {
-                let pending: std::collections::HashSet<String> = b.deleted.iter().cloned().collect();
-                let here: std::collections::HashSet<String> = b.lines.iter().map(|l| l.id.clone()).collect();
-                if !f(b) {
-                    return false;
+        let Engine::Old(e) = &mut self.engine else { panic!("the old engine's undo") };
+        e.edit_at(&mut self.view, |b| {
+            let pending: std::collections::HashSet<String> = b.deleted.iter().cloned().collect();
+            let here: std::collections::HashSet<String> = b.lines.iter().map(|l| l.id.clone()).collect();
+            if !f(b) {
+                return false;
+            }
+            for l in b.lines.iter_mut().filter(|l| pending.contains(&l.id) && !here.contains(&l.id)) {
+                if let Some(s) = last_saved.get(&l.id) {
+                    copy_saved_state(l, s);
                 }
-                for l in b.lines.iter_mut().filter(|l| pending.contains(&l.id) && !here.contains(&l.id)) {
-                    if let Some(s) = last_saved.get(&l.id) {
-                        l.base = s.base.clone();
-                        l.saved = s.saved.clone();
-                        l.saved_parent = s.saved_parent.clone();
-                        l.saved_after = s.saved_after.clone();
-                        l.saved_kind = s.saved_kind;
-                        l.saved_status = s.saved_status.clone();
-                        l.saved_gap = s.saved_gap;
-                    }
-                    l.is_new = false;
-                    l.saving_since = None;
-                }
-                true
-            })
-            .map(|(r, _)| r)
-            .expect("the main view edits")
+                l.is_new = false;
+                l.saving_since = None;
+            }
+            true
+        })
+        .map(|(r, _)| r)
+        .expect("the main view edits")
+    }
+}
+
+/// A line's save state as its last save left it (a line coming back while its delete is
+/// pending).
+pub(super) fn copy_saved_state(l: &mut Line, s: &Line) {
+    l.base = s.base.clone();
+    l.saved = s.saved.clone();
+    l.saved_parent = s.saved_parent.clone();
+    l.saved_after = s.saved_after.clone();
+    l.saved_kind = s.saved_kind;
+    l.saved_status = s.saved_status.clone();
+    l.saved_gap = s.saved_gap;
+}
+
+/// The engine behind a document: the old block engine or caretline-next (`THC_EDITOR=next`).
+pub(super) enum Engine {
+    Old(caretline::Doc<Line>),
+    Next(Box<super::next::Next>),
+}
+
+impl Engine {
+    pub(super) fn rev(&self) -> u64 {
+        match self {
+            Engine::Old(e) => e.rev(),
+            Engine::Next(n) => n.rev(),
+        }
+    }
+
+    pub(super) fn lines(&self) -> &[Line] {
+        match self {
+            Engine::Old(e) => e.lines(),
+            Engine::Next(n) => &n.lines,
+        }
+    }
+
+    pub(super) fn lines_mut(&mut self) -> &mut Vec<Line> {
+        match self {
+            Engine::Old(e) => e.lines_mut(),
+            Engine::Next(n) => n.lines_mut(),
+        }
+    }
+
+    pub(super) fn deleted(&self) -> &[String] {
+        match self {
+            Engine::Old(e) => e.deleted(),
+            Engine::Next(n) => &n.deleted,
+        }
+    }
+
+    pub(super) fn deleted_mut(&mut self) -> &mut Vec<String> {
+        match self {
+            Engine::Old(e) => e.deleted_mut(),
+            Engine::Next(n) => &mut n.deleted,
+        }
+    }
+
+    pub(super) fn undo_depth(&self) -> usize {
+        match self {
+            Engine::Old(e) => e.undo_depth(),
+            Engine::Next(n) => n.undo_depth(),
+        }
+    }
+
+    pub(super) fn effective_gap(&self, i: usize) -> bool {
+        match self {
+            Engine::Old(e) => e.effective_gap(i),
+            Engine::Next(n) => n.effective_gap(i),
+        }
+    }
+
+    #[cfg(test)]
+    pub(super) fn default_gap(&self, i: usize) -> bool {
+        match self {
+            Engine::Old(e) => e.default_gap(i),
+            Engine::Next(n) => n.default_gap(i),
+        }
+    }
+
+    pub(super) fn changed_at(&self) -> Option<Instant> {
+        match self {
+            Engine::Old(e) => e.changed_at(),
+            Engine::Next(n) => n.changed_at,
+        }
+    }
+
+    pub(super) fn mark_committed(&mut self) {
+        match self {
+            Engine::Old(e) => e.mark_committed(),
+            Engine::Next(n) => n.changed_at = None,
+        }
     }
 }
 
@@ -748,7 +930,16 @@ impl Doc {
     /// the first note with its marker only when the selection includes the note's start, and
     /// every later note with its marker and indent. Empty: nothing selected.
     pub fn copy_text(&mut self) -> String {
-        self.engine.copy(&self.view)
+        match &mut self.engine {
+            Engine::Old(e) => e.copy(&self.view),
+            Engine::Next(_) => {
+                if self.selection().is_none() {
+                    return String::new();
+                }
+                let fx = self.next_run(caretline_next::Msg::Copy);
+                fx.into_iter().find_map(|f| if let caretline_next::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default()
+            }
+        }
     }
 }
 
@@ -765,8 +956,10 @@ pub fn markdown(parts: &[(&Line, &str)]) -> String {
 impl Doc {
     /// The wrap of line `i` at `w` columns, cached by (text, width).
     pub fn rows_of(&mut self, i: usize, w: usize) -> Vec<(usize, usize)> {
-        let Doc { engine, wraps, .. } = self;
-        rows(wraps, &engine.lines()[i], w)
+        match &mut self.engine {
+            Engine::Old(e) => rows(&mut self.wraps, &e.lines()[i], w),
+            Engine::Next(n) => n.rows_of(i, w, &mut self.wraps),
+        }
     }
 }
 
