@@ -387,6 +387,8 @@ impl Doc {
         self.engine.undo_depth()
     }
 
+    /// Whether a blank row comes before line `i` (tests: the engine draws it).
+    #[cfg(test)]
     pub fn effective_gap(&self, i: usize) -> bool {
         self.engine.effective_gap(i)
     }

@@ -647,7 +647,6 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     let rows = &prepared.rows;
     let th = app.theme;
     let h = body.height as usize;
-    render.doc_view_rows = h;
     let d = app.doc.as_ref().unwrap();
     let sel = d.selection();
     let left = left_edge(ctx, w);

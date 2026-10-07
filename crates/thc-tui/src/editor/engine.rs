@@ -250,6 +250,7 @@ impl Engine {
 
     /// Whether a blank row comes before line `i`: the engine's block, its gap as set or its
     /// kind's default.
+    #[cfg(test)]
     pub(super) fn effective_gap(&self, i: usize) -> bool {
         debug_assert!(!self.dirty, "the engine is read only once it has the host's changes");
         let o = self.st.doc.blocks().expect("an outline document");
