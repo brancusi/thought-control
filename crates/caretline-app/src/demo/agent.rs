@@ -225,11 +225,11 @@ pub(crate) fn spawn(socket: PathBuf, progress: Arc<Mutex<Progress>>) {
 /// landed, that the interleaved ones were refused and retried, and that the person's undo
 /// takes back only the person's text. Prints a JSON report.
 pub(crate) fn headless() -> Result<(), String> {
-    let state = super::initial_state(super::Kind::Agent, None, caretline_next::Viewport { width: 80, height: 24 });
+    let state = super::initial_state(super::Kind::Agent, None, caretline::Viewport { width: 80, height: 24 });
     let initial = state.doc.text.to_string();
     let socket = std::env::temp_dir().join(format!("caretline-demo-{}.sock", std::process::id()));
     let socket = if socket.as_os_str().len() > 100 { PathBuf::from(format!("/tmp/caretline-demo-{}.sock", std::process::id())) } else { socket };
-    let hub = crate::hub::Hub::new(caretline_next::Session::new(state), None);
+    let hub = crate::hub::Hub::new(caretline::Session::new(state), None);
     let (tx, rx) = std::sync::mpsc::channel();
     let listening = crate::hub::listen(&socket, tx)?;
     std::thread::spawn(move || crate::hub::serve(hub, rx, false));

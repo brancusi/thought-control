@@ -17,6 +17,19 @@ $ caretline --new-state notes.md --size 40x6 > s.json  # capture a state
 $ caretline --state s.json --keys '<d-down>Done.' --snapshot 40x6
 ```
 
+## Try it in one line
+
+```sh
+curl -fsSL https://caretline.app/install.sh | sh && caretline demo
+```
+
+A prebuilt binary for macOS or Linux, checked against its sha256 and installed to
+`~/.local/bin`, then a guided tour that teaches by doing. Two more demos:
+`caretline demo scenes` (ASCII animations running inside the editor) and `caretline demo agent`
+(a scripted agent co-editing beside you over the editor's socket). With Rust instead:
+`cargo install --git https://github.com/brancusi/thought-control caretline-app`.
+See the [Quickstart](quickstart.md).
+
 ## What it covers
 
 | Area | Status | Notes |

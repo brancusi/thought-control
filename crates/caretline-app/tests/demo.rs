@@ -222,7 +222,7 @@ fn the_tour_runs_live_dumps_and_replays() {
     pty.send(b" and more");
     pty.wait("typing", |s| s.contains("and more"));
     pty.send(b"\x04"); // Ctrl-D
-    pty.wait("the dump", |s| s.contains("state.json: "));
+    pty.wait("the dump", |s| s.contains("state.json · "));
     let dumped = std::fs::read_to_string(dir.join("state.json")).unwrap();
     assert!(dumped.contains("and more"));
     pty.send(b"\x10"); // Ctrl-P

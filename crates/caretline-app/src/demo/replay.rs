@@ -3,8 +3,8 @@
 
 use std::time::{Duration, Instant};
 
-use caretline_next::trace::{apply_with_views, OnView, TraceLine, ViewOpen};
-use caretline_next::{Frame, Msg, State, View};
+use caretline::trace::{apply_with_views, OnView, TraceLine, ViewOpen};
+use caretline::{Frame, Msg, State, View};
 
 /// The longest pause a replay keeps, and the longest a whole replay takes.
 const MAX_GAP: Duration = Duration::from_millis(400);
@@ -125,7 +125,7 @@ impl Replay {
     /// The replayed editor, with a status line saying so.
     pub fn frame(&self) -> Frame {
         let Some(state) = &self.state else {
-            return caretline_next::view(&State::new("", None, caretline_next::Viewport { width: 80, height: 24 }));
+            return caretline::view(&State::new("", None, caretline::Viewport { width: 80, height: 24 }));
         };
         let mut s = state.clone();
         s.view.status = Some(format!("▶ replay {}/{} · any key stops", self.applied, self.total));

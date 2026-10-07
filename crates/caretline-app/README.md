@@ -4,6 +4,21 @@ A terminal text editor for plain text and Markdown, built on the
 [`caretline`](../caretline/README.md) engine. Every state can be saved as JSON,
 reopened exactly, and every session replayed message by message.
 
+## Try it in one line
+
+```sh
+curl -fsSL https://caretline.app/install.sh | sh && caretline demo
+```
+
+A prebuilt binary for macOS or Linux, checked against its sha256 and installed to
+`~/.local/bin`, then a guided tour that teaches by doing. Two more demos:
+`caretline demo scenes` (ASCII animations running inside the editor) and `caretline demo agent`
+(a scripted agent co-editing beside you over the editor's socket). With Rust instead:
+`cargo install --git https://github.com/brancusi/thought-control caretline-app`.
+See the [Quickstart](../../docs/caretline/quickstart.md).
+
+From a checkout:
+
 ```sh
 cargo run -p caretline-app -- notes.md         # or, installed: caretline notes.md
 cargo install --locked --path crates/caretline-app

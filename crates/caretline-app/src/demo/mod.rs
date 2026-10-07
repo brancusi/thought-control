@@ -14,11 +14,11 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 
-use caretline_next::helix::Selection;
-use caretline_next::{Frame, Key, KeyCode, Msg, OutlineLayout, Session, State, Viewport};
+use caretline::helix::Selection;
+use caretline::{Frame, Key, KeyCode, Msg, OutlineLayout, Session, State, Viewport};
 use clap::Parser;
 
-use caretline_next::trace::TraceLine;
+use caretline::trace::TraceLine;
 
 use crate::hub::Hub;
 use crate::runtime::{self, dispatch_demo, Demo, KeyAction};
@@ -45,6 +45,11 @@ pub struct DemoArgs {
     /// Snapshot format.
     #[arg(long, default_value = "text", value_parser = ["text", "ansi"])]
     format: String,
+
+    /// With --snapshot: apply this key script first, as the person would type it (the
+    /// demo's own keys included), e.g. 'hi<down><c-t>'.
+    #[arg(long, value_name = "SCRIPT", requires = "snapshot")]
+    keys: Option<String>,
 
     /// Write the demo's files here instead of a new temporary directory.
     #[arg(long, value_name = "DIR")]
@@ -239,7 +244,7 @@ impl EditorDemo {
             match (0..i).rev().find(|&k| blocks[k].depth < depth && has_children(k)) {
                 Some(k) => i = k,
                 None => {
-                    self.status(hub, "⌃O folds an item with children: put the caret on one".into());
+                    self.status(hub, "⌃O folds an item that has children".into());
                     return;
                 }
             }
@@ -249,7 +254,7 @@ impl EditorDemo {
         let hidden = blocks[i + 1..].iter().take_while(|b| b.depth > depth).count();
         let folding = !state.view.folds.contains(&id);
         let text = if folding {
-            format!("folded: {hidden} item{} hidden in this view · ⌃O opens", if hidden == 1 { "" } else { "s" })
+            format!("folded {hidden} item{} · ⌃O opens", if hidden == 1 { "" } else { "s" })
         } else {
             "opened".to_string()
         };
@@ -263,9 +268,11 @@ impl EditorDemo {
         let lean = serde_json::to_string(&state.without_history()).map(|h| h.len()).unwrap_or(0);
         let history = json.len().saturating_sub(lean);
         let path = self.dir.join("state.json");
-        let text = match std::fs::write(&path, &json) {
+        // A headless snapshot has no directory: it measures, and writes nothing.
+        let written = if self.dir.as_os_str().is_empty() { Ok(()) } else { std::fs::write(&path, &json) };
+        let text = match written {
             Ok(()) => format!(
-                "state.json: {}, {} of it undo history · {} messages so far",
+                "state.json · {} · undo {} · {} msgs",
                 kb(json.len()),
                 kb(history),
                 hub.session.trace().iter().filter(|l| matches!(l, TraceLine::Msg(_) | TraceLine::On(_))).count()
@@ -370,7 +377,7 @@ fn editor_demo(args: &DemoArgs, kind: Kind) -> Result<(), String> {
     };
     if let Some(size) = &args.snapshot {
         let (w, h) = crate::parse_size(size)?;
-        let frame = first_frame(kind, w, h);
+        let frame = snapshot(kind, w, h, args.keys.as_deref())?;
         print!("{}", if args.format == "ansi" { frame.to_ansi() } else { frame.to_text() });
         return Ok(());
     }
@@ -400,7 +407,7 @@ fn editor_demo(args: &DemoArgs, kind: Kind) -> Result<(), String> {
             mouse: !args.no_mouse,
             listen,
             file: Some(&file),
-            trace_limit: caretline_next::session::DEFAULT_TRACE_LIMIT,
+            trace_limit: caretline::session::DEFAULT_TRACE_LIMIT,
             max_fps: 120,
             frame_clock: 0,
             stats: false,
@@ -411,8 +418,9 @@ fn editor_demo(args: &DemoArgs, kind: Kind) -> Result<(), String> {
     result
 }
 
-/// The demo's first frame, as the editor draws it at `w`x`h`.
-pub(crate) fn first_frame(kind: Kind, w: u16, h: u16) -> Frame {
+/// The demo's frame at `w`x`h`, as the editor draws it after `keys` (its first frame
+/// without), headless. A replay (⌃P) shows at its start.
+pub(crate) fn snapshot(kind: Kind, w: u16, h: u16, keys: Option<&str>) -> Result<Frame, String> {
     let mut demo = EditorDemo {
         kind,
         dir: PathBuf::new(),
@@ -430,11 +438,28 @@ pub(crate) fn first_frame(kind: Kind, w: u16, h: u16) -> Frame {
         view.viewport = Viewport { width: w, height: rows };
         view.status = None;
         let id = hub.session.open_view(view);
-        hub.session.apply_on(id, Msg::Move { dir: caretline_next::Dir::Forward, by: caretline_next::By::DocEnd, extend: false });
+        hub.session.apply_on(id, Msg::Move { dir: caretline::Dir::Forward, by: caretline::By::DocEnd, extend: false });
         hub.session.apply_on(id, Msg::ShowStatus { text: agent::CONNECTING.into() });
     }
     demo.after(&mut hub);
-    runtime::compose(&hub, rows)
+    for item in caretline::parse_keys(keys.unwrap_or(""))? {
+        match item {
+            caretline::keymap::ScriptItem::Key(key) => {
+                if let KeyAction::Pass = demo.key(&mut hub, &key) {
+                    let outline = hub.session.state().doc.outline.is_some();
+                    if let Some(msg) = caretline::keymap_for(outline, &key) {
+                        dispatch_demo(&mut hub, vec![msg]);
+                    }
+                }
+            }
+            caretline::keymap::ScriptItem::Wait(ms) => {
+                let now_ms = hub.session.state().doc.now_ms + ms;
+                dispatch_demo(&mut hub, vec![Msg::Tick { now_ms }]);
+            }
+        }
+        demo.after(&mut hub);
+    }
+    Ok(demo.overlay().unwrap_or_else(|| runtime::compose(&hub, rows)))
 }
 
 /// For tests: whether `dir` holds what a demo wrote.
@@ -472,7 +497,7 @@ mod tests {
         let mut hub = Hub::new(Session::new(state), None);
         let mut demo = EditorDemo { kind: Kind::Tour, dir: dir.clone(), hint: None, replay: None, generation: 0, agent: Default::default() };
         demo.after(&mut hub);
-        let ctrl_key = |c| Key { code: KeyCode::Char(c), mods: caretline_next::Mods { ctrl: true, ..Default::default() } };
+        let ctrl_key = |c| Key { code: KeyCode::Char(c), mods: caretline::Mods { ctrl: true, ..Default::default() } };
 
         // Fold: the caret on "Put the caret on this line…".
         let text = hub.session.state().doc.text.to_string();
@@ -486,7 +511,7 @@ mod tests {
         // Dump.
         demo.key(&mut hub, &ctrl_key('d'));
         assert!(wrote(&dir, "state.json"));
-        assert!(hub.session.state().view.status.as_deref().unwrap().starts_with("state.json: "));
+        assert!(hub.session.state().view.status.as_deref().unwrap().starts_with("state.json · "));
 
         // Replay: runs to the end and finds the identical state.
         dispatch_demo(&mut hub, vec![Msg::InsertText { text: "hello".into() }]);

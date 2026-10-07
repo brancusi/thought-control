@@ -274,14 +274,14 @@ pub fn compose(hub: &Hub, pane_rows: u16) -> Frame {
 }
 
 /// [`compose`] for a state and its other views.
-pub fn compose_state(state: &State, views: &[(u32, caretline_next::View)], pane_rows: u16) -> Frame {
-    let top = caretline_next::view(state);
+pub fn compose_state(state: &State, views: &[(u32, caretline::View)], pane_rows: u16) -> Frame {
+    let top = caretline::view(state);
     let Some((_, v)) = views.first().filter(|_| pane_rows > 0) else { return top };
     let mut s = State::from_parts(state.doc.clone(), v.clone());
     if (s.view.viewport.width, s.view.viewport.height) != (top.width, pane_rows) {
-        caretline_next::update(&mut s, Msg::Resize { width: top.width, height: pane_rows });
+        caretline::update(&mut s, Msg::Resize { width: top.width, height: pane_rows });
     }
-    let mut pane = caretline_next::view(&s);
+    let mut pane = caretline::view(&s);
     if let Some((x, y)) = pane.cursor.take() {
         let i = y as usize * pane.width as usize + x as usize;
         if let Some(cell) = pane.cells.get_mut(i) {

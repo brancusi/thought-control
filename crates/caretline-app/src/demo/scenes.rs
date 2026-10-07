@@ -20,7 +20,7 @@ use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use caretline_next::{Key, KeyCode, Session, State, Viewport};
+use caretline::{Key, KeyCode, Session, State, Viewport};
 use serde_json::{json, Value};
 
 use super::agent::Conn;
@@ -501,7 +501,7 @@ pub fn main(args: &DemoArgs) -> Result<(), String> {
 }
 
 /// The first scene a moment in, as the editor draws it at `w`x`h`.
-fn first_frame(name: &str, count: usize, fps: u32, w: u16, h: u16) -> caretline_next::Frame {
+fn first_frame(name: &str, count: usize, fps: u32, w: u16, h: u16) -> caretline::Frame {
     let mut session = Session::new(State::new("", None, Viewport { width: w, height: h }));
     let rows = (h as usize).saturating_sub(1).max(1);
     let mut sc = scene(name).expect("a known scene");
