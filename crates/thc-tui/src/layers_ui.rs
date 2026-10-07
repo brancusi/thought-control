@@ -334,29 +334,27 @@ fn off(m: &mut cl::AnchorMap, key: &str, o: cl::Off) {
 /// scoped to a view (caretline's view-scoped anchors replace this order when they land).
 fn editors<'a>(app: &'a App, render: &RenderOutput) -> Vec<(String, cl::FrameResolver<'a>)> {
     let mut out = Vec::new();
-    if let (Some(p), Some(d), Some(_)) =
-        (app.derived.doc.as_ref(), app.doc.as_ref(), render.doc_view)
-    {
+    let sidebar = app.ui.focus == crate::app::Focus::Sidebar;
+    if let (Some(p), Some(d), Some((vx, vy, vw, vh))) = (app.derived.doc.as_ref(), app.doc.as_ref(), render.doc_view) {
         if p.current(app) {
-            out.push((
-                "main".to_string(),
-                cl::FrameResolver::new(&p.frame)
-                    .at(p.frame_at.0, p.frame_at.1)
-                    .with_doc(d.cn_doc()),
-            ));
+            let r = cl::FrameResolver::new(&p.frame).id("main").at(p.frame_at.0, p.frame_at.1).clip(cl::Rect::new(vx, vy, vw, vh)).with_doc(d.cn_doc());
+            out.push(("main".to_string(), if sidebar { r } else { r.focused() }));
         }
     }
     if let Some(sb) = app.derived.sidebar.as_ref() {
         for (i, pp) in sb.panels.iter().enumerate() {
-            let (Some(f), Some(at)) = (pp.frame.as_ref(), pp.frame_at) else {
+            let (Some(f), Some(at), Some(v)) = (pp.frame.as_ref(), pp.frame_at, pp.view) else {
                 continue;
             };
-            let r = cl::FrameResolver::new(f).at(at.0, at.1);
-            let r = match app.panel_doc(&pp.key) {
-                Some(d) => r.with_doc(d.cn_doc()),
-                None => r,
-            };
-            out.push((format!("panel:{i}"), r));
+            let id = format!("panel:{i}");
+            let mut r = cl::FrameResolver::new(f).id(&id).at(at.0, at.1).clip(rect(v));
+            if let Some(d) = app.panel_doc(&pp.key) {
+                r = r.with_doc(d.cn_doc());
+            }
+            if sidebar && app.ui.sidebar.focused.as_ref() == Some(&pp.key) {
+                r = r.focused();
+            }
+            out.push((id, r));
         }
     }
     out

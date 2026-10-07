@@ -1,19 +1,19 @@
  [*] acme   Today   Inbox 3   Tasks   Pages   Journal   Search   Log                                                      Wed Oct 7 - 10:00
 -----------------------------=======--------------------------------------------------------------------------------------------------------
  q> status:open sort:due                                                                                                            6 tasks
+                                                                                                                   +- @ claude ------------+
+  id         task                                         due               sched       pri    where          by   | Start here            |
+> 7x3rj  [ ] Buy groceries                                tomorrow          —           —      —              you  | Due Friday, and the   |
+  rrft8  [ ] Finish the sign-up flow                      fri               —           high   P Launch plan  you<-+ invites wait on it.   |
+  mxzq1  [ ] Write the getting-started guide              mon               —           —      P Launch plan  you  | Two screens left:     |
+  frjjs  [ ] Book the dentist                             tue               —           —      —              you  | plan and payment.     |
+  atmev  [ ] Send the invites                             Oct 16            —           —      P Launch plan  you  +-----------------------+
+  1chbt  [ ] Renew the passport                           —                 —           —      —              you
 
-  id         task                                         due               sched       pri    where          by
-> 7x3rj  [ ] Buy groceries                                tomorrow          —           —      —              you
-  rrft8  [ ] Finish the sign-up flow                      fri               —           high   P Launch plan  you
-  mxzq1  [ ] Write the getting-started guide              mon               —           — ^    P Launch plan  you
-  frjjs  [ ] Book the dentist                             tue               —           — |    —              you
-  atmev  [ ] Send the invites                             Oct 16            —           — |    P Launch plan  you
-  1chbt  [ ] Renew the passport                           —                 —           — |    —              you
-                                                                                        +-+------------------------------------- @ claude -+
- saved  1 open status:open  2 this week status:open due<=+7d  3 waiting status:waiting s| Start here                                       |
-                                                                                        | Due Friday, and the invites wait on it. Two      |
-                                                                                        | screens left: plan and payment.                  |
-                                                                                        +--------------------------------------------------+
+ saved  1 open status:open  2 this week status:open due<=+7d  3 waiting status:waiting sort:updated-  +2 more                    f then 1-5
+
+
+
 
 
 

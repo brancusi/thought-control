@@ -120,7 +120,7 @@ impl LayerState {
         self.stack.layers.iter().any(|l| {
             l.anchor
                 .iter()
-                .any(|a| matches!(a, cl::Anchor::Text { .. }))
+                .any(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }))
         })
     }
 
@@ -218,6 +218,11 @@ pub fn anchor_from(v: &Value) -> Result<Vec<cl::Anchor>, cl::Refusal> {
 /// The short anchor forms.
 pub fn parse_short(s: &str) -> Option<cl::Anchor> {
     let s = s.trim();
+    // `…@main`, `…@panel:2`: a text, block or caret anchor in that view only.
+    if let Some((a, view)) = s.rsplit_once('@').filter(|(a, v)| !v.is_empty() && !a.starts_with("row:") && !a.starts_with("ui:") && !a.starts_with("action:")) {
+        let inner = parse_short(a)?;
+        return matches!(inner, cl::Anchor::Text { .. } | cl::Anchor::Block(_) | cl::Anchor::Caret).then(|| cl::Anchor::scoped(view, inner));
+    }
     if s == "caret" {
         return Some(cl::Anchor::Caret);
     }
@@ -530,6 +535,8 @@ mod tests {
             Some(cl::Anchor::Text { from: 4, to: 9 })
         );
         assert_eq!(parse_short("caret"), Some(cl::Anchor::Caret));
+        assert_eq!(parse_short("text:4..9@panel:2"), Some(cl::Anchor::scoped("panel:2", cl::Anchor::Text { from: 4, to: 9 })));
+        assert_eq!(parse_short("row:a@b"), Some(cl::Anchor::Host { kind: "row".into(), key: "a@b".into() }));
         assert_eq!(parse_short("nope:x"), None);
         assert_eq!(parse_short("row:"), None);
     }

@@ -441,9 +441,8 @@ fn input_for(cmd: &clap::Command) -> Value {
 /// `thc ui` socket's layer and document-view ops (`ui`).
 pub fn proto_schema() -> Value {
     let mut v = daemon_proto_schema();
-    // Additive: the TUI socket's layer ops (caretline-layers' `ops::schema()` joins this when
-    // it lands).
-    v["ui"] = json!({"layer_ops": thc_tui::layers::schema(), "doc_ops": ["doc.view.open", "doc.view.close", "doc.msgs", "doc.text.set"]});
+    // Additive: the TUI socket's layer ops: thc's, and caretline-layers' own request schemas.
+    v["ui"] = json!({"layer_ops": thc_tui::layers::schema(), "caretline_layer_ops": caretline_layers::ops::schema(), "doc_ops": ["doc.view.open", "doc.view.close", "doc.msgs", "doc.text.set"]});
     v
 }
 

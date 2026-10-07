@@ -10,6 +10,8 @@ name = "thc"
 path = "src/main.rs"
 
 [dependencies]
+# LOCAL-ONLY path dependency (see the root Cargo.toml patch): `thc schema --proto`.
+caretline-layers = { path = "../../../.caretline-for-thc/crates/caretline-layers", default-features = false }
 tempfile = "3"
 anyhow.workspace = true
 chrono.workspace = true
