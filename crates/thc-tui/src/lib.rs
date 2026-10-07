@@ -17,6 +17,8 @@ mod input_snapshot;
 mod update;
 pub mod ui_state;
 mod session;
+mod ui_proto;
+mod ui_server;
 mod script;
 mod runtime_effects;
 mod data_snapshot;
@@ -169,7 +171,22 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
             session.app.error(format!("can't write the trace: {e}"));
         }
     }
-    let result = event_loop(&mut terminal, &mut session);
+    // The UI protocol (docs/ui-protocol.md): `thc ui` finds this TUI by its discovery file.
+    let mut server = if std::env::var_os("THC_TUI_NO_LISTEN").is_some() {
+        None
+    } else {
+        let real = session.app.vault.origin.as_ref().map_or(session.app.vault.paths.vault.clone(), |o| o.vault.clone());
+        match ui_server::Server::start(&session.app.ui.vault_name, &real) {
+            Ok(s) => Some(s),
+            Err(e) => {
+                session.app.info(format!("thc ui can't reach this TUI: {e}"));
+                None
+            }
+        }
+    };
+    session.announcing = server.is_some();
+    let result = event_loop(&mut terminal, &mut session, &mut server);
+    drop(server);
     let mut app = session.app;
     let _ = terminal.backend_mut().cursor_bar(false);
     if kitty {
@@ -420,7 +437,7 @@ fn wants_bar(app: &App) -> bool {
         || matches!(app.overlay, Some(app::Overlay::Palette { .. } | app::Overlay::Finder { .. } | app::Overlay::Move { .. } | app::Overlay::Capture { .. }))
 }
 
-fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut session::Session) -> Result<()> {
+fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut session::Session, server: &mut Option<ui_server::Server>) -> Result<()> {
     use session::Msg;
     let mut last_poll = Instant::now();
     let mut last_keys_poll = Instant::now();
@@ -446,6 +463,14 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if let Some(path) = session.app.switch_to.take() {
             switch_vault(&mut session.app, &path);
             session.checkpoint();
+            if let Some(s) = server.as_mut() {
+                let real = session.app.vault.origin.as_ref().map_or(session.app.vault.paths.vault.clone(), |o| o.vault.clone());
+                s.readvertise(&session.app.ui.vault_name, &real);
+            }
+        }
+        // Protocol requests that arrived while the last frame was drawn.
+        if let Some(s) = server.as_mut() {
+            s.pump(session);
         }
         if last_keys_poll.elapsed() >= Duration::from_millis(500) {
             last_keys_poll = Instant::now();
@@ -538,10 +563,26 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         // A which-key popup due soon wakes the loop for it (keymap.md §5.1).
         let wait = crate::keymap::popup_wait(app).map_or(Duration::from_millis(250), |w| w.min(Duration::from_millis(250)));
         // (Interrupted because the terminal went away: the check above, next frame.)
-        let ready = match event::poll(wait) {
-            Err(_) if HANGUP.load(std::sync::atomic::Ordering::SeqCst) => false,
-            r => r?,
+        // With the protocol on, the wait is cut into short polls so a request is answered
+        // within ~10 ms, without drawing more frames.
+        let until = Instant::now() + wait;
+        let ready = loop {
+            let step = if server.is_some() { Duration::from_millis(10) } else { wait };
+            let left = until.saturating_duration_since(Instant::now());
+            let r = match event::poll(step.min(left)) {
+                Err(_) if HANGUP.load(std::sync::atomic::Ordering::SeqCst) => false,
+                r => r?,
+            };
+            if r {
+                break true;
+            }
+            if server.as_mut().is_some_and(|s| s.ready()) || left.is_zero() {
+                break false;
+            }
         };
+        if let Some(s) = server.as_mut() {
+            s.pump(session);
+        }
         if ready {
             session.tick_wall();
             let mut first = true;
@@ -584,6 +625,9 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                     break;
                 }
             }
+        }
+        if let Some(s) = server.as_mut() {
+            s.announce(session, "terminal");
         }
         let app = &mut session.app;
         app.doc_tick();
@@ -857,6 +901,14 @@ pub fn ui_replay(vault: Vault, trace: &str, size: Option<(u16, u16)>, format: &s
     let mut s = headless(vault, size.unwrap_or((100, 30)))?;
     session::replay(&mut s, trace, size, format, every).map_err(|e| anyhow::anyhow!("{e}"))
 }
+
+/// `thc ui ls`: the running TUIs that answer the protocol, newest first (their discovery files).
+pub fn ui_sessions() -> Vec<serde_json::Value> {
+    ui_server::sessions()
+}
+
+/// The UI protocol's version.
+pub const UI_PROTO: u32 = ui_proto::PROTO;
 
 /// `thc ui state --default`: the state a fresh TUI on this vault starts with.
 pub fn ui_default_state(vault: Vault) -> Result<serde_json::Value> {
