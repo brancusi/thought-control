@@ -139,7 +139,22 @@ more seeds for a longer hunt.
 | opening the sidebar | 30 ms |
 | the wheel, PgDn, ↓ | 4 ms |
 
-on a 300-line and a 5,000-line page, and typing beside an open panel. They're ignored by
+on a 300-line and a 5,000-line page, and typing beside an open panel. On an M-series Mac,
+quiet, 2026-10-08 (p50 / p99, ms):
+
+| Step | 300 lines | 5,000 lines |
+|---|---|---|
+| typing (near the top) | 0.56 / 0.63 | 1.44 / 1.61 |
+| typing at the page's end | | 2.01 / 2.22 |
+| typing beside a panel | 0.56 / 0.66 | 1.45 / 1.61 |
+| opening the page | 2.3 / 2.6 | 37.6 / 78.7 |
+| opening the sidebar beside it | 0.8 / 1.1 | 1.9 / 4.9 |
+| the page itself opened beside | 1.6 / 1.9 | **28.0 / 33.2** (vw384) |
+| the wheel | 0.43 / 0.50 | 0.53 / 0.65 |
+| PgDn, ↓ | 0.62 / 0.71 | 0.63 / 0.70 |
+
+`flows::perf::diag_split` splits a keystroke's time (the frame's preparation, the key's
+handling, caretline's insert, the draw). They're ignored by
 default (a debug build is far slower): `cargo test --release -p thc-tui flows::perf --
 --ignored --nocapture --test-threads=1` prints p50, p99 and the slowest steps, and fails on a
 p99 over budget. A test whose ignore reason starts with a task id is over budget now. The

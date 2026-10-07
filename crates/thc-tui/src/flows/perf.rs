@@ -61,13 +61,13 @@ fn perf_typing_300_lines() {
 }
 
 #[test]
-#[ignore = "vw384 perf over budget: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_typing_5000_lines() {
     typing(Size::Huge, "typing, 5,000-line page");
 }
 
 #[test]
-#[ignore = "vw384 perf over budget: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_typing_5000_lines_deep() {
     let mut over = Vec::new();
     // Far down the page: the layout above the caret mustn't be redone per key.
@@ -79,7 +79,7 @@ fn perf_typing_5000_lines_deep() {
 }
 
 #[test]
-#[ignore = "vw384 perf over budget: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_typing_beside_a_panel() {
     let mut over = Vec::new();
     for size in [Size::Long, Size::Huge] {
