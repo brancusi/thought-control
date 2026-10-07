@@ -146,6 +146,11 @@ pub struct DocView {
     pub caret: Option<Caret>,
     pub scroll: ScrollAnchor,
     pub folds: Vec<String>,
+    /// Scrolled away from the caret (the wheel, a scrollbar): the view stays where it was put
+    /// instead of following the caret back into sight (zszv1), as `doc_scroll_free` does for
+    /// the main view.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub scroll_free: bool,
 }
 
 /// A list panel's state (§8.2).
