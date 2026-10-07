@@ -300,9 +300,83 @@ fn cut_blocks_pasted_elsewhere_keep_their_ids_and_blank_rows() {
     keys(&mut s, "<c-x>");
     assert_eq!(show(&s), "- ▮c");
     assert_eq!(ids(&s), [2]);
-    // At the end: a new item, then Enter again ends the list on an empty paragraph.
+    // At the end: a new item, then Enter again ends the list on an empty paragraph, which the
+    // pasted blocks replace.
     keys(&mut s, "<d-down><cr><cr><c-v>");
-    assert_eq!(ids(&s), [2, 0, 1, 3], "{}", show(&s));
+    assert_eq!(show(&s), "- c ¦ - a ¦ - b▮");
+    assert_eq!(ids(&s), [2, 0, 1]);
+}
+
+const WEEKEND: &str = "- [ ] Friday\n- [ ] Saturday\n  - [ ] Fix the bike chain\n  - [x] Farmers market\n    - [ ] Buy peaches\n- Notes\n";
+
+/// Selects blocks `a..b` whole, as Shift-↓ from a content start does: from block `a`'s content
+/// start to block `b`'s content start.
+fn select_blocks(s: &mut State, a: usize, b: usize) {
+    let o = s.blocks().unwrap();
+    s.view.selection = Selection::single(o.blocks[a].content_start(), o.blocks[b].content_start());
+}
+
+#[test]
+fn whole_blocks_cut_and_pasted_into_an_empty_item_replace_it() {
+    let mut s = markdown::load(WEEKEND, None, Viewport { width: 60, height: 12 }, OutlineConfig::default());
+    let before = ids(&s);
+    select_blocks(&mut s, 1, 5);
+    let fx = keys(&mut s, "<c-x>");
+    assert_eq!(clip(&fx).as_deref(), Some("- [ ] Saturday\n  - [ ] Fix the bike chain\n  - [x] Farmers market\n    - [ ] Buy peaches"));
+    assert_eq!(s.doc.text.to_string(), "- [ ] Friday\n- Notes", "the lines go whole: no empty item is left");
+    // At "Notes": End, Enter (a new empty bullet), paste.
+    keys(&mut s, "<down><end><cr><c-v>");
+    assert_eq!(
+        s.doc.text.to_string(),
+        "- [ ] Friday\n- Notes\n- [ ] Saturday\n  - [ ] Fix the bike chain\n  - [x] Farmers market\n    - [ ] Buy peaches",
+        "the blocks keep their kinds and statuses, and replace the empty item"
+    );
+    let after = ids(&s);
+    assert_eq!(&after[2..], &before[1..5], "a cut and paste keeps the ids");
+    keys(&mut s, "<c-z>");
+    assert_eq!(s.doc.text.to_string(), "- [ ] Friday\n- Notes\n- ", "one undo step");
+}
+
+#[test]
+fn whole_blocks_pasted_at_an_items_end_follow_it_as_siblings() {
+    let mut s = markdown::load(WEEKEND, None, Viewport { width: 60, height: 12 }, OutlineConfig::default());
+    // Copy "Farmers market" and its child (depth 1), paste at the end of "Friday" (depth 0).
+    select_blocks(&mut s, 3, 5);
+    keys(&mut s, "<c-c>");
+    let friday_end = s.blocks().unwrap().blocks[0].end;
+    s.view.selection = Selection::point(friday_end);
+    keys(&mut s, "<c-v>");
+    assert_eq!(
+        s.doc.text.to_string(),
+        "- [ ] Friday\n- [x] Farmers market\n  - [ ] Buy peaches\n- [ ] Saturday\n  - [ ] Fix the bike chain\n  - [x] Farmers market\n    - [ ] Buy peaches\n- Notes"
+    );
+    // At the end of an item with children, they follow its whole subtree, at its depth.
+    let mut s = markdown::load(WEEKEND, None, Viewport { width: 60, height: 12 }, OutlineConfig::default());
+    select_blocks(&mut s, 0, 1);
+    keys(&mut s, "<c-c>");
+    let o = s.blocks().unwrap();
+    s.view.selection = Selection::point(o.blocks[3].end); // "Farmers market", depth 1
+    keys(&mut s, "<c-v>");
+    assert_eq!(
+        s.doc.text.to_string(),
+        "- [ ] Friday\n- [ ] Saturday\n  - [ ] Fix the bike chain\n  - [x] Farmers market\n    - [ ] Buy peaches\n  - [ ] Friday\n- Notes"
+    );
+    // The copies got new ids; nothing else changed id.
+    let all = ids(&s);
+    let mut unique = all.clone();
+    unique.sort();
+    unique.dedup();
+    assert_eq!(unique.len(), all.len());
+}
+
+#[test]
+fn whole_blocks_pasted_inside_text_join_it_as_markdown_does() {
+    let mut s = markdown::load(WEEKEND, None, Viewport { width: 60, height: 12 }, OutlineConfig::default());
+    select_blocks(&mut s, 2, 3);
+    keys(&mut s, "<c-c>");
+    s.view.selection = Selection::point(s.blocks().unwrap().blocks[5].content_start() + 2); // "No|tes"
+    keys(&mut s, "<c-v>");
+    assert!(s.doc.text.to_string().ends_with("- NoFix the bike chaintes"), "{:?}", s.doc.text.to_string());
 }
 
 #[test]

@@ -783,6 +783,22 @@ fn insert_blocks(state: &mut State, after: Option<MarkId>, blocks: &[NewBlock]) 
 }
 
 fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effect>> {
+    let own = text.is_none_or(|t| state.doc.clipboard.is_own(&update::normalize_line_endings(t, "\n")));
+    if own && !plain {
+        if let Some(fx) = paste_whole(state) {
+            return Some(fx);
+        }
+        // Whole blocks elsewhere (inside a block's text): as Markdown blocks.
+        if state.doc.clipboard.blocks && single(state).is_some() {
+            if let Some(md) = state.doc.clipboard.external.clone() {
+                let (blocks, _) = markdown::parse_markdown(&md, false);
+                if !blocks.is_empty() {
+                    paste_blocks(state, &blocks);
+                    return Some(Vec::new());
+                }
+            }
+        }
+    }
     let text = text?;
     let text = update::normalize_line_endings(text, "\n");
     if state.doc.clipboard.is_own(&text) || !text.contains('\n') {
@@ -867,6 +883,9 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
         return None;
     }
     let o = state.blocks()?;
+    if let Some((i0, i1)) = whole_blocks(state, &o, r) {
+        return Some(copy_blocks(state, &o, i0, i1, cut));
+    }
     let text = state.doc.text.slice(..);
     let raw = text.slice(r.from()..r.to()).to_string();
     let md = markdown::to_markdown(state, &o, r.from(), r.to());
@@ -883,8 +902,136 @@ fn copy(state: &mut State, cut: bool) -> Option<Vec<Effect>> {
             .collect();
     }
     let external = (md != raw).then(|| md.clone());
-    state.doc.clipboard = Clipboard { text: raw, external, marks };
+    state.doc.clipboard = Clipboard { text: raw, external, marks, blocks: false };
     Some(vec![Effect::ClipboardSet { text: md }])
+}
+
+/// Whether a selection takes whole blocks: from a block's content start to the end of a later
+/// block, or to the start (or content start) of a block after it (as Shift-↓ from a content
+/// start selects). Returns the first and last block taken.
+fn whole_blocks(state: &State, o: &Outline, r: Range) -> Option<(usize, usize)> {
+    let text = state.doc.text.slice(..);
+    let i0 = o.index_at(text, r.from());
+    let first = &o.blocks[i0];
+    if r.from() < first.start || r.from() > first.content_start() || first.atomic {
+        return None;
+    }
+    let j = o.index_at(text, r.to());
+    let b = &o.blocks[j];
+    if j > i0 && (r.to() == b.start || r.to() == b.content_start()) {
+        return Some((i0, j - 1));
+    }
+    (j > i0 && r.to() == b.end).then_some((i0, j))
+}
+
+/// Copies (or cuts) blocks `i0..=i1` whole: their lines, markers and indentation included,
+/// so a paste puts them back as blocks. A cut takes their lines out and keeps their ids in
+/// the register.
+fn copy_blocks(state: &mut State, o: &Outline, i0: usize, i1: usize, cut: bool) -> Vec<Effect> {
+    let (first, last) = (o.blocks[i0].clone(), o.blocks[i1].clone());
+    let le = le(state);
+    let text = state.doc.text.slice(..);
+    let lines = text.slice(first.start..last.end).to_string();
+    let raw = format!("{lines}{le}");
+    let md = markdown::to_markdown(state, o, first.content_start(), last.end);
+    let n = i1 - i0 + 1;
+    state.view.status = Some(format!("{} {}", if cut { "cut" } else { "copied" }, plural(n, "block")));
+    let mut marks = Vec::new();
+    if cut {
+        // The lines go with one line break: the one after them, or the one before the last
+        // line of the document.
+        let (from, to) = match o.blocks.get(i1 + 1) {
+            Some(next) => (first.start, next.start),
+            None if first.first_line > 0 => (line_end(text, first.first_line - 1), last.end),
+            None => (0, last.end),
+        };
+        let caret = from.min(text.len_chars() - (to - from));
+        let txn = Transaction::change(&state.doc.text, [(from, to, None)].into_iter()).with_selection(caret_at(caret));
+        let removed = update::commit_with(state, txn, Step::default(), |_, _| {});
+        marks = removed
+            .iter()
+            .filter(|m| first.start <= m.pos && m.pos <= last.end)
+            .map(|m| ClipMark { offset: m.pos - first.start, id: m.id, attrs: m.attrs })
+            .collect();
+    }
+    state.doc.clipboard = Clipboard { text: raw, external: Some(md.clone()), marks, blocks: true };
+    vec![Effect::ClipboardSet { text: md }]
+}
+
+/// Pastes whole blocks from the register at the caret, when the caret is on an empty item
+/// (the blocks take its place), at a block's content start (they go before it) or at the
+/// end of a block (they follow its subtree as siblings). Their own kinds and statuses stay; their depths move to the target's; a cut's
+/// ids come back. `None` when the caret is elsewhere.
+fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
+    let clip = state.doc.clipboard.clone();
+    let r = single(state)?;
+    if !clip.blocks || !r.is_empty() {
+        return None;
+    }
+    let o = state.blocks()?;
+    let cfg = state.doc.outline.clone()?;
+    let text = state.doc.text.slice(..);
+    let i = o.index_at(text, r.head);
+    let b = o.blocks[i].clone();
+    let empty = b.is_empty() && r.head == b.content_start();
+    let before = !empty && r.head == b.content_start();
+    if !empty && !before && r.head != b.end {
+        return None;
+    }
+    // The register's blocks, re-indented to the target's depth.
+    let reg = crate::helix::Rope::from(clip.text.trim_end_matches(['\n', '\r']));
+    let ro = crate::outline::derive(reg.slice(..), &Marks::new(), &cfg);
+    let base = ro.blocks.iter().filter(|x| x.is_item()).map(|x| x.depth).min().unwrap_or(0);
+    let target = if b.is_item() { b.depth } else { 0 };
+    let unit = cfg.indent.max(1) as usize;
+    let mut body_lines: Vec<String> = Vec::new();
+    let mut line_offsets: Vec<usize> = Vec::new(); // each register line's start in the register
+    let mut at = 0usize;
+    for (k, line) in reg.lines().enumerate() {
+        line_offsets.push(at);
+        at += line.len_chars();
+        let s = line.to_string();
+        let s = s.trim_end_matches(['\n', '\r']).to_string();
+        let blk = ro.block_of_line(k);
+        if blk.first_line == k && blk.is_item() {
+            let depth = (blk.depth as isize - base as isize + target as isize).max(0) as usize;
+            body_lines.push(format!("{}{}", " ".repeat(depth * unit), &s[blk.indent.min(s.len())..]));
+        } else {
+            body_lines.push(s);
+        }
+    }
+    let le = le(state);
+    let body = body_lines.join(&le);
+    let reg_line = |offset: usize| line_offsets.partition_point(|&s| s <= offset).saturating_sub(1);
+    let carried: Vec<(usize, ClipMark)> = clip.marks.iter().map(|c| (reg_line(c.offset), *c)).collect();
+    let (from, to, ins, first_line) = if empty {
+        (b.start, b.end, body, b.first_line)
+    } else if before {
+        (b.start, b.start, format!("{body}{le}"), b.first_line)
+    } else {
+        let end = o.blocks[o.subtree_end(i) - 1].clone();
+        (end.end, end.end, format!("{le}{body}"), end.last_line() + 1)
+    };
+    let caret = from + ins.chars().count() - if before { le.chars().count() } else { 0 };
+    let own = empty.then_some(b.id);
+    edit(state, vec![(from, to, Some(ins))], caret_at(caret), false, move |m, new| {
+        // The emptied item's id stays on the first pasted line unless the register brings one.
+        let lead = carried.iter().any(|(l, _)| *l == 0);
+        if let Some(id) = own {
+            if let Some(mk) = m.remove(id) {
+                if !lead {
+                    let _ = m.insert(Mark { pos: from, ..mk });
+                }
+            }
+        }
+        for (l, c) in carried {
+            let pos = new.line_to_char(first_line + l);
+            if m.at(pos).is_none() && !m.contains(c.id) {
+                let _ = m.insert(Mark { pos, id: c.id, attrs: c.attrs });
+            }
+        }
+    });
+    Some(Vec::new())
 }
 
 // ---------------------------------------------------------------------------------------

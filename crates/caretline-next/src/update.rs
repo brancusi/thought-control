@@ -251,7 +251,7 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
                     Some(r) => carried(&removed, r.from(), r.to()),
                     None => Vec::new(),
                 };
-                state.doc.clipboard = Clipboard { text: text.clone(), external: None, marks };
+                state.doc.clipboard = Clipboard { text: text.clone(), external: None, marks, blocks: false };
                 effects.push(Effect::ClipboardSet { text });
             } else {
                 state.view.status = Some("nothing selected".into());
@@ -488,6 +488,7 @@ pub(crate) fn commit_with(
         revision: state.doc.history.current_revision(),
         at_ms: now,
         chars: so_far + changed,
+        view: 0,
     });
     removed
 }

@@ -423,6 +423,9 @@ pub struct Clipboard {
     /// `text`. A paste of exactly this text is a paste of the register.
     pub external: Option<String>,
     pub marks: Vec<ClipMark>,
+    /// Whole blocks of an outline (their lines with markers and indentation, ending in a line
+    /// break): a paste puts them in as blocks of their own.
+    pub blocks: bool,
 }
 
 impl Clipboard {
@@ -438,13 +441,13 @@ impl Clipboard {
 
 impl From<&str> for Clipboard {
     fn from(text: &str) -> Clipboard {
-        Clipboard { text: text.to_string(), external: None, marks: Vec::new() }
+        Clipboard { text: text.to_string(), external: None, marks: Vec::new(), blocks: false }
     }
 }
 
 impl From<String> for Clipboard {
     fn from(text: String) -> Clipboard {
-        Clipboard { text, external: None, marks: Vec::new() }
+        Clipboard { text, external: None, marks: Vec::new(), blocks: false }
     }
 }
 
@@ -470,15 +473,17 @@ enum ClipboardRepr {
         external: Option<String>,
         #[serde(default)]
         marks: Vec<ClipMark>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        blocks: bool,
     },
 }
 
 impl Serialize for Clipboard {
     fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
-        if self.marks.is_empty() && self.external.is_none() {
+        if self.marks.is_empty() && self.external.is_none() && !self.blocks {
             ClipboardRepr::Text(self.text.clone()).serialize(s)
         } else {
-            ClipboardRepr::Full { text: self.text.clone(), external: self.external.clone(), marks: self.marks.clone() }
+            ClipboardRepr::Full { text: self.text.clone(), external: self.external.clone(), marks: self.marks.clone(), blocks: self.blocks }
                 .serialize(s)
         }
     }
@@ -488,7 +493,7 @@ impl<'de> Deserialize<'de> for Clipboard {
     fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Clipboard, D::Error> {
         Ok(match ClipboardRepr::deserialize(d)? {
             ClipboardRepr::Text(text) => Clipboard::from(text),
-            ClipboardRepr::Full { text, external, marks } => Clipboard { text, external, marks },
+            ClipboardRepr::Full { text, external, marks, blocks } => Clipboard { text, external, marks, blocks },
         })
     }
 }
@@ -560,7 +565,7 @@ mod tests {
         assert_eq!(serde_json::to_string(&c).unwrap(), "\"abc\"");
         let back: Clipboard = serde_json::from_str("\"abc\"").unwrap();
         assert_eq!(back, c);
-        let full = Clipboard { text: "a\nb".into(), external: None, marks: vec![ClipMark { offset: 2, id: MarkId(4), attrs: BlockAttrs::default() }] };
+        let full = Clipboard { text: "a\nb".into(), external: None, marks: vec![ClipMark { offset: 2, id: MarkId(4), attrs: BlockAttrs::default() }], blocks: false };
         let json = serde_json::to_string(&full).unwrap();
         assert_eq!(serde_json::from_str::<Clipboard>(&json).unwrap(), full);
     }
