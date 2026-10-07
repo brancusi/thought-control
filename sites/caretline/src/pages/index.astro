@@ -1,0 +1,302 @@
+---
+import { Code } from 'astro:components';
+import Base from '../layouts/Base.astro';
+import Field from '../components/Field.astro';
+import FieldBoot from '../components/FieldBoot.astro';
+import Install from '../components/Install.astro';
+import Playground from '../components/Playground.astro';
+import { ONE_LINER, REPO, CRATE, DOCS_RS } from '../lib/site';
+
+const scenes = [
+  { scene: 'warp', title: 'warp field', rate: '1,674', note: 'star field', wide: true },
+  { scene: 'donut', title: 'shaded torus', rate: '923', note: 'donut.c' },
+  { scene: 'cube', title: 'wireframe cube', rate: '1,346', note: '' },
+  { scene: 'tunnel', title: 'XOR tunnel', rate: '835', note: 'every cell, every frame' },
+  { scene: 'plasma', title: 'plasma', rate: null, note: 'new for the web' },
+  { scene: 'fire', title: 'cellular fire', rate: '1,194', note: '' },
+  { scene: 'rain', title: 'matrix rain', rate: null, note: 'new for the web' },
+];
+
+const pieces = [
+  { k: 'State', t: 'State', d: 'Everything that decides the screen: text, selections, scroll, viewport, the undo tree, the clock. Plain data that round-trips through JSON.' },
+  { k: 'Msg', t: 'Msg', d: 'Every input: an edit, a motion, a click, a resize, a clock tick, the result of a save. Each one has a JSON form.' },
+  { k: 'update', t: 'update(&mut State, Msg) → Vec<Effect>', d: 'The only place state changes. Pure: no I/O, no clock, no randomness. Work for the outside world comes back as effects.' },
+  { k: 'view', t: 'view(&State) → Frame', d: 'A grid of cells and the caret’s cell. Pure, so the same state always draws the same frame.' },
+];
+
+const uses = [
+  {
+    id: 'agents', title: 'Agents editing beside people',
+    body: 'Attach to the editor a person is using and drive it over JSON lines. Every result carries a rev; pass if_rev and a write only lands if nothing changed since you read. Events say whether a change came from the terminal or a client.',
+    lang: 'console',
+    code: `$ caretline notes.md --listen          # a person edits here
+$ caretline send keys '<d-down>from another shell'
+$ caretline send '{"op":"msgs","msgs":[{"msg":"undo"}],"if_rev":0}'
+{"error":{"kind":"stale","message":"rev is 12, the request expected 0"}}`,
+  },
+  {
+    id: 'replay', title: 'Replay and time travel',
+    body: 'A trace is a state line followed by every message, clock ticks included. Replaying it gives the identical state and the identical frame, so a bug report can be the session itself.',
+    lang: 'console',
+    code: `$ caretline send trace.get all --raw > live.jsonl
+$ caretline --replay live.jsonl --snapshot 80x24`,
+  },
+  {
+    id: 'tests', title: 'Snapshot testing',
+    body: 'Because update and view are pure, a test is data: a state, some keys, the expected result. No terminal, no timing, no mocks. Goldens write the selection inline.',
+    lang: 'rust',
+    code: `#[test]
+fn e01_left_collapses_to_start() {
+    golden("Hello ⟦wor▮⟧ld", "<left>", "Hello ▮world");
+}`,
+  },
+  {
+    id: 'embed', title: 'Embedding in a TUI',
+    body: 'caretline owns the editing rules; you own the loop, the terminal, files and the clipboard. Turn input into a Msg, call update, perform the effects, copy view’s cells to the screen. No terminal crate inside.',
+    lang: 'rust',
+    code: `let msg = keymap(&key).unwrap();          // a key → a Msg
+let effects = update(&mut state, msg);     // pure
+for fx in effects { run(fx) }              // files, clipboard, quit
+draw(view(&state));                        // a grid of cells`,
+  },
+  {
+    id: 'outline', title: 'Outliners and notes',
+    body: 'Outline documents read the text as blocks: paragraphs, bullets, numbered items and tasks. Each block keeps an id through every edit, undo and redo, and cut and paste, so a host can hang its own data on it.',
+    lang: 'text',
+    code: `text                          marks         block
+───────────────────────────   ───────────   ─────────────────────
+- [ ] Pay the deposit         1 @ line 2    1  task ' ', depth 0
+  - ask Ana about her desk    2 @ line 3    2  bullet, depth 1`,
+  },
+];
+
+// From docs/caretline/performance.md: release builds on an Apple-silicon Mac.
+const perf = [
+  { v: '1.6 µs', l: 'one edit, in process' },
+  { v: '13.4 µs', l: 'one edit over the socket' },
+  { v: '202 ms', l: 'load 1,000,000 lines (82 MB)' },
+  { v: '1.4 ms', l: 'a keystroke with 10,000 carets' },
+  { v: '72,000', l: 'characters a second, live redraw' },
+  { v: '0.13 ms', l: 'render an 80×24 frame' },
+];
+
+const compare = [
+  { q: 'The whole editor serializes to one value', cl: 'yes', w: 'no', c: 'part', s: 'no' },
+  { q: 'Undo history, viewport and clock included', cl: 'yes', w: 'no', c: 'part', s: 'no' },
+  { q: 'Every input is a recorded message', cl: 'yes', w: 'no', c: 'part', s: 'part' },
+  { q: 'Exact replay of a session, built in', cl: 'yes', w: 'no', c: 'no', s: 'no' },
+  { q: 'Drive a live session from another process', cl: 'yes', w: 'no', c: 'no', s: 'yes' },
+  { q: 'Runs in a terminal', cl: 'yes', w: 'yes', c: 'no', s: 'yes' },
+];
+const mark = { yes: '●', part: '◐', no: '○' } as const;
+const word = { yes: 'yes', part: 'partly', no: 'no' } as const;
+
+const tour = `// The pieces, end to end (docs/caretline/architecture.md)
+use caretline_next::{keymap, update, view, Key, KeyCode, State, Viewport};
+
+let mut state = State::new("hi", None, Viewport { width: 20, height: 3 });
+let msg = keymap(&Key::plain(KeyCode::End)).unwrap();   // Move { forward, line_end }
+let effects = update(&mut state, msg);                   // no effects for a motion
+assert!(effects.is_empty());
+assert_eq!(view(&state).cursor, Some((2, 0)));          // the caret is after "hi"`;
+---
+<Base description={ONE_LINER}>
+  <main>
+    <section class="hero">
+      <div class="wrap">
+        <Field scene="warp" cols={132} rows={30} title="caretline" label="The word CARETLINE, lit like a selection, with stars streaming past it in ASCII" class="hero__field" speed={0.9} still={3.1} />
+        <div class="hero__copy">
+          <h1>The text editor<br /> as a state machine.<span class="caret-bar" aria-hidden="true"></span></h1>
+          <div class="hero__side">
+            <p class="hero__lede">{ONE_LINER}</p>
+            <Install />
+            <p class="hero__links"><a href={CRATE}>crates.io/crates/caretline</a><span class="dim">·</span><a href={DOCS_RS}>docs.rs/caretline</a><span class="dim">·</span><span class="dim">0.1.0, MIT + MPL-2.0</span></p>
+            <div class="hero__cta">
+              <a class="btn btn--lit" href="/docs/">Read the docs</a>
+              <a class="btn" href="#frames">See the frames</a>
+              <a class="btn" href="#engine">Try the engine</a>
+              <a class="btn" href={REPO}>GitHub</a>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="frames">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">frames</span>
+          <h2>Every keystroke, replayable. Every frame, too.</h2>
+          <p>To find the engine's ceiling, a script pushed full-screen ASCII animations into a live caretline editor: each frame a whole new state, 122×64 cells, with the brightest cells sent as selections. The engine applied between 835 and 1,674 full states a second. The terminal paints 60. These are the same scenes, ported to your browser and drawn on a frame clock.</p>
+        </div>
+        <div class="gallery">
+          {scenes.map((s) => (
+            <div class:list={['gallery__item', s.wide && 'gallery__item--wide']}>
+              <Field scene={s.scene} cols={s.wide ? 120 : 60} rows={s.wide ? 20 : 22} title={s.title} minCell={3.9} fixedRows />
+              <p class="gallery__note">
+                {s.rate ? <><b>{s.rate}</b> states/s, live editor</> : <span class="dim">{s.note}</span>}
+              </p>
+            </div>
+          ))}
+        </div>
+        <p class="aside">Unthrottled <code>state.set</code> requests over the socket, Apple-silicon Mac, release build. All scenes interleaved ran at 1,155 a second. Busier frames, with more selection ranges, are slower. <a href="/docs/performance/">The numbers</a></p>
+      </div>
+    </section>
+
+    <section class="section" id="engine">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">one state</span>
+          <h2>The whole editor is one state.</h2>
+          <p>State in, message in, state out. <code>update</code> is the only place state changes and it reads no clock. <code>view</code> turns the state into a grid of cells. Below is the real engine, compiled to WebAssembly and running in this page. Click the frame and type, then drag the scrubber back.</p>
+        </div>
+        <Playground />
+        <ol class="pieces">
+          {pieces.map((p) => (
+            <li><code class="pieces__t">{p.t}</code><p>{p.d}</p></li>
+          ))}
+        </ol>
+        <div class="tour"><Code code={tour} lang="rust" theme="css-variables" /></div>
+      </div>
+    </section>
+
+    <section class="section" id="uses">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">uses</span>
+          <h2>Edit together: you, your scripts, your agents.</h2>
+          <p>One engine, driven the same way by a keyboard, a test, a script or a model. What that makes easy:</p>
+        </div>
+        <div class="uses">
+          {uses.map((u) => (
+            <article class="use" id={u.id}>
+              <div class="use__text"><h3>{u.title}</h3><p>{u.body}</p></div>
+              <div class="use__code"><Code code={u.code} lang={u.lang as any} theme="css-variables" /></div>
+            </article>
+          ))}
+        </div>
+      </div>
+    </section>
+
+    <section class="section" id="compare">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">compare</span>
+          <h2>How it compares.</h2>
+          <p>caretline puts Helix's editing model (a rope, multi-range selections, transactions, an undo tree, grapheme-correct motion and soft wrap) inside a strict Elm architecture. Against the usual ways to get an editor into a program:</p>
+        </div>
+        <div class="table-wrap">
+          <table class="cmp">
+            <thead><tr><th scope="col"></th><th scope="col">caretline</th><th scope="col">A textarea widget</th><th scope="col">A browser editor core</th><th scope="col">An editor run as a server</th></tr></thead>
+            <tbody>
+              {compare.map((r) => (
+                <tr>
+                  <th scope="row">{r.q}</th>
+                  {[r.cl, r.w, r.c, r.s].map((v, i) => <td class:list={['cmp__v', `is-${v}`, i === 0 && 'is-us']}><span aria-hidden="true">{mark[v as keyof typeof mark]}</span> {word[v as keyof typeof word]}</td>)}
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+        <p class="aside">Not there yet: syntax highlighting, search, multiple buffers, keys that add cursors, IME and bidirectional text. Multi-range selections work in the engine; no key creates them yet. The protocol's socket transport is Unix-only. <a href="/docs/">What it covers</a></p>
+      </div>
+    </section>
+
+    <section class="section" id="performance">
+      <div class="wrap">
+        <div class="section__head">
+          <span class="label">performance</span>
+          <h2>The engine is never the bottleneck.</h2>
+          <p>Document size barely matters: a million-line document edits and scrolls as fast as a hundred-line one. The real ceilings are how fast the terminal paints and how fast a client can produce input.</p>
+        </div>
+        <dl class="perf">
+          {perf.map((p) => (<div><dt>{p.l}</dt><dd>{p.v}</dd></div>))}
+        </dl>
+        <p class="aside">Release builds on an Apple-silicon Mac. <code>caretline bench</code> reproduces the engine and protocol numbers. <a href="/docs/performance/">Every figure, and where the limits are</a></p>
+      </div>
+    </section>
+
+    <section class="section outro">
+      <div class="wrap outro__grid">
+        <div>
+          <h2>Start with one state.</h2>
+          <p class="muted">Add the crate, build a <code>State</code>, send it messages. Or run <code>caretline serve</code> and talk to it from any language.</p>
+        </div>
+        <div class="outro__links">
+          <Install />
+          <nav class="outro__docs" aria-label="Docs">
+            <a href="/docs/architecture/">Architecture</a><a href="/docs/api/">Rust API</a><a href="/docs/messages/">Messages</a>
+            <a href="/docs/protocol/">Protocol</a><a href="/docs/embedding/">Embedding</a><a href="/docs/testing/">Testing</a>
+            <a href={DOCS_RS}>docs.rs</a><a href={CRATE}>crates.io</a>
+          </nav>
+        </div>
+      </div>
+    </section>
+  </main>
+  <FieldBoot />
+</Base>
+
+<style>
+  .hero { padding-top: var(--s-8); }
+  .hero__field { border-color: var(--rule); }
+  .hero__copy { display: grid; gap: var(--s-8); grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); align-items: end; padding-top: var(--s-12); }
+  @media (max-width: 56rem) { .hero__copy { grid-template-columns: minmax(0, 1fr); } }
+  .hero h1 { font-size: var(--t-hero); letter-spacing: -0.035em; line-height: 1.05; font-weight: 500; }
+  .hero__side { display: grid; gap: var(--s-6); min-width: 0; }
+  .hero__lede { color: var(--muted); font-size: var(--t-md); line-height: 1.55; max-width: 44ch; }
+  .hero__links { display: flex; flex-wrap: wrap; gap: 0.3rem 0.6rem; margin-top: calc(var(--s-6) * -0.5); font: 400 var(--t-xs)/1.5 var(--font-mono); color: var(--muted); }
+  .hero__links a { color: var(--muted); }
+  .hero__cta { display: flex; flex-wrap: wrap; gap: var(--s-3); }
+  .hero .install { justify-self: start; }
+
+  .pieces { list-style: none; padding: 0; margin: var(--s-12) 0 0; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-6); border-top: 1px solid var(--rule); padding-top: var(--s-6); }
+  @media (max-width: 60rem) { .pieces { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 34rem) { .pieces { grid-template-columns: minmax(0, 1fr); } }
+  .pieces li { display: grid; gap: var(--s-2); align-content: start; }
+  .pieces__t { font-size: var(--t-sm); color: var(--ink); }
+  .pieces p { color: var(--muted); font-size: var(--t-sm); }
+  .tour { margin-top: var(--s-8); }
+
+  .gallery { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: var(--s-6) var(--s-4); align-items: stretch; }
+  .gallery__item { grid-template-rows: 1fr auto; }
+  .gallery__item :global(.term) { display: flex; flex-direction: column; }
+  .gallery__item :global(.term__body) { flex: 1; display: flex; align-items: center; background: var(--field-bg); }
+  .gallery__item--wide { grid-column: span 2; }
+  @media (max-width: 60rem) { .gallery { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  @media (max-width: 34rem) { .gallery { grid-template-columns: minmax(0, 1fr); } .gallery__item--wide { grid-column: auto; } }
+  .gallery__item { display: grid; gap: var(--s-2); min-width: 0; }
+  .gallery__item :global(.term) { margin: 0; }
+  .gallery__note { font: 400 var(--t-xs)/1.5 var(--font-mono); color: var(--muted); font-variant-numeric: tabular-nums; }
+  .gallery__note b { color: var(--lit); font-weight: 500; }
+  .aside { margin-top: var(--s-6); color: var(--dim); font-size: var(--t-sm); max-width: var(--measure); }
+
+  .uses { display: grid; border-top: 1px solid var(--rule); }
+  .use { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.25fr); gap: var(--s-8); padding-block: var(--s-8); border-bottom: 1px solid var(--rule); }
+  @media (max-width: 52rem) { .use { grid-template-columns: minmax(0, 1fr); gap: var(--s-4); } }
+  .use__text { display: grid; gap: var(--s-3); align-content: start; }
+  .use h3 { font-size: var(--t-md); }
+  .use p { color: var(--muted); }
+  .use__code { min-width: 0; }
+
+  .cmp th[scope='row'] { font: 400 var(--t-sm)/1.45 var(--font-sans); color: var(--ink); text-transform: none; letter-spacing: 0; white-space: normal; min-width: 14rem; }
+  .cmp thead th { white-space: normal; min-width: 7rem; }
+  .cmp__v { font-family: var(--font-mono); font-size: var(--t-xs); white-space: nowrap; }
+  .cmp__v.is-yes { color: var(--yes); }
+  .cmp__v.is-part { color: var(--part); }
+  .cmp__v.is-no { color: var(--no); }
+  .cmp__v.is-us { background: var(--lit-wash); padding-left: 0.6rem; }
+  .cmp thead th:nth-child(2) { color: var(--lit); padding-left: 0.6rem; }
+
+  .perf { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); margin: 0; border-top: 1px solid var(--rule-strong); }
+  @media (max-width: 52rem) { .perf { grid-template-columns: repeat(2, minmax(0, 1fr)); } }
+  .perf > div { padding: var(--s-6) var(--s-4) var(--s-6) 0; border-bottom: 1px solid var(--rule); display: grid; gap: var(--s-2); }
+  .perf dt { color: var(--muted); font-size: var(--t-sm); order: 2; }
+  .perf dd { margin: 0; font: 500 var(--t-xl)/1 var(--font-mono); letter-spacing: -0.03em; font-variant-numeric: tabular-nums; }
+
+  .outro__grid { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: var(--s-8); align-items: end; border-top: 1px solid var(--rule-strong); padding-top: var(--s-12); }
+  @media (max-width: 52rem) { .outro__grid { grid-template-columns: minmax(0, 1fr); } }
+  .outro h2 { font-size: var(--t-xl); margin-bottom: var(--s-3); }
+  .outro__links { display: grid; gap: var(--s-6); min-width: 0; }
+  .outro__docs { display: flex; flex-wrap: wrap; gap: var(--s-2) var(--s-4); font: 400 var(--t-sm)/1.6 var(--font-mono); }
+  .outro__docs a { color: var(--muted); }
+</style>

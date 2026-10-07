@@ -1,0 +1,105 @@
+---
+import Base from './Base.astro';
+import { DOCS, docHref } from '../lib/docs';
+import { REPO, CRATE, DOCS_RS } from '../lib/site';
+
+interface Props { title: string; description: string; id: string; headings?: { depth: number; slug: string; text: string }[]; source?: string }
+const { title, description, id, headings = [], source } = Astro.props;
+const groups = [...new Set(DOCS.map((d) => d.group))];
+const i = DOCS.findIndex((d) => d.id === id);
+const prev = i > 0 ? DOCS[i - 1] : null;
+const next = i >= 0 && i < DOCS.length - 1 ? DOCS[i + 1] : null;
+const toc = headings.filter((h) => h.depth === 2);
+---
+<Base title={title} description={description} nav="docs">
+  <link slot="head" rel="stylesheet" href="/pagefind/pagefind-ui.css" />
+  <div class="wrap docs">
+    <aside class="docs__side" aria-label="Docs">
+      <div class="search" id="search" data-search></div>
+      <nav class="docs__nav">
+        {groups.map((g) => (
+          <div class="docs__group">
+            <p class="docs__group-title">{g}</p>
+            <ul>
+              {DOCS.filter((d) => d.group === g).map((d) => (
+                <li><a href={docHref(d.slug)} aria-current={d.id === id ? 'page' : undefined}>{d.title}</a></li>
+              ))}
+            </ul>
+          </div>
+        ))}
+        <div class="docs__group">
+          <p class="docs__group-title">Reference</p>
+          <ul><li><a href={DOCS_RS}>API on docs.rs ↗</a></li><li><a href={CRATE}>crates.io ↗</a></li><li><a href={REPO}>Source on GitHub ↗</a></li></ul>
+        </div>
+      </nav>
+    </aside>
+    <article class="docs__main prose" data-pagefind-body>
+      <slot />
+      <nav class="docs__pager" aria-label="Previous and next" data-pagefind-ignore>
+        {prev ? <a href={docHref(prev.slug)}><span class="dim">previous</span>{prev.title}</a> : <span></span>}
+        {next && <a class="next" href={docHref(next.slug)}><span class="dim">next</span>{next.title}</a>}
+      </nav>
+      {source && <p class="docs__edit" data-pagefind-ignore><a href={`${REPO}/blob/main/docs/caretline/${source}`}>This page on GitHub: docs/caretline/{source}</a></p>}
+    </article>
+    {toc.length > 1 && (
+      <aside class="docs__toc" aria-label="On this page">
+        <p class="docs__group-title">On this page</p>
+        <ul>{toc.map((h) => <li><a href={`#${h.slug}`}>{h.text}</a></li>)}</ul>
+      </aside>
+    )}
+  </div>
+  <script is:inline src="/pagefind/pagefind-ui.js"></script>
+  <script is:inline>
+    (function () {
+      if (window.PagefindUI && document.querySelector('[data-search]')) {
+        new PagefindUI({ element: '#search', showSubResults: true, showImages: false, resetStyles: false, translations: { placeholder: 'Search the docs' } });
+      }
+      // Mermaid diagrams render in the browser, themed from the page's tokens.
+      const blocks = document.querySelectorAll('pre.mermaid, pre[data-language="mermaid"], code.language-mermaid');
+      if (!blocks.length) return;
+      const css = getComputedStyle(document.documentElement);
+      const v = function (n) { return css.getPropertyValue(n).trim(); };
+      import('https://cdn.jsdelivr.net/npm/mermaid@11.4.1/dist/mermaid.esm.min.mjs').then(function (m) {
+        const mermaid = m.default;
+        mermaid.initialize({ startOnLoad: false, theme: 'base', fontFamily: v('--font-mono'), themeVariables: {
+          background: v('--void'), primaryColor: v('--panel'), primaryTextColor: v('--ink'), primaryBorderColor: v('--rule-strong'),
+          lineColor: v('--dim'), secondaryColor: v('--raise'), tertiaryColor: v('--panel'), fontSize: '13px' } });
+        const nodes = [];
+        blocks.forEach(function (b) {
+          const pre = b.tagName === 'CODE' ? b.parentElement : b;
+          const div = document.createElement('div');
+          div.className = 'mermaid';
+          div.textContent = pre.textContent;
+          pre.replaceWith(div);
+          nodes.push(div);
+        });
+        mermaid.run({ nodes: nodes });
+      }).catch(function () {});
+    })();
+  </script>
+</Base>
+
+<style>
+  .docs { display: grid; grid-template-columns: 14rem minmax(0, 1fr) 12rem; gap: var(--s-12); padding-block: var(--s-8) var(--s-16); align-items: start; }
+  @media (max-width: 78rem) { .docs { grid-template-columns: 13rem minmax(0, 1fr); } .docs__toc { display: none; } }
+  @media (max-width: 52rem) { .docs { grid-template-columns: minmax(0, 1fr); gap: var(--s-6); } }
+  .docs__side, .docs__toc { position: sticky; top: 4.5rem; max-height: calc(100vh - 5.5rem); overflow: auto; font: 400 var(--t-sm)/1.5 var(--font-mono); }
+  @media (max-width: 52rem) { .docs__side { position: static; max-height: none; } }
+  .docs__nav { display: grid; gap: var(--s-6); margin-top: var(--s-6); }
+  @media (max-width: 52rem) { .docs__nav { grid-template-columns: repeat(auto-fit, minmax(10rem, 1fr)); gap: var(--s-4); } }
+  .docs__group-title { font-size: var(--t-xs); letter-spacing: 0.12em; text-transform: uppercase; color: var(--dim); margin-bottom: var(--s-2); }
+  .docs__side ul, .docs__toc ul { list-style: none; margin: 0; padding: 0; display: grid; gap: 0.15rem; }
+  .docs__side a, .docs__toc a { display: block; text-decoration: none; color: var(--muted); padding: 0.15rem 0.5rem; border-left: 2px solid transparent; }
+  .docs__side a:hover, .docs__toc a:hover { color: var(--ink); }
+  .docs__side a[aria-current='page'] { color: var(--ink); border-left-color: var(--lit); background: var(--lit-wash); }
+  .docs__toc a { font-size: var(--t-xs); }
+  .docs__pager { display: flex; justify-content: space-between; gap: var(--s-4); margin-top: var(--s-16); padding-top: var(--s-6); border-top: 1px solid var(--rule); font-family: var(--font-mono); font-size: var(--t-sm); }
+  .docs__pager a { display: grid; gap: 0.2rem; text-decoration: none; }
+  .docs__pager .next { text-align: right; }
+  .docs__edit { margin-top: var(--s-6); font: 400 var(--t-xs)/1.5 var(--font-mono); color: var(--dim); }
+  .docs__edit a { color: var(--dim); }
+
+  /* the search box (Pagefind UI), in the page's tokens */
+  .search { --pagefind-ui-scale: 0.72; --pagefind-ui-primary: var(--lit); --pagefind-ui-text: var(--ink); --pagefind-ui-background: var(--panel); --pagefind-ui-border: var(--rule-strong); --pagefind-ui-tag: var(--raise); --pagefind-ui-border-width: 1px; --pagefind-ui-border-radius: 2px; --pagefind-ui-font: var(--font-mono); }
+  .docs__side :global(.pagefind-ui__drawer) { background: var(--panel); border: 1px solid var(--rule-strong); padding: 0 0.75rem; margin-top: 0.5rem; }
+</style>

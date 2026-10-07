@@ -1,0 +1,12 @@
+{
+  // caretline.app on Cloudflare: static assets only. Build first, then deploy from this
+  // directory with this config: npm run build && npx wrangler deploy --config ./wrangler.jsonc
+  "name": "caretline",
+  "compatibility_date": "2026-10-01",
+  "workers_dev": true,
+  "assets": { "directory": "./dist", "not_found_handling": "404-page" },
+  "routes": [
+    { "pattern": "caretline.app", "custom_domain": true },
+    { "pattern": "www.caretline.app", "custom_domain": true }
+  ]
+}

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" width="64" height="64" role="img" aria-label="caretline">
+  <title>caretline</title>
+  <rect width="64" height="64" rx="12" fill="#08090D"/>
+  <polygon points="42.17,27.8 60.83,23 57.98,16.6 41.93,27.25" fill="#DCDFE8"/>
+  <polygon points="22.32,37.24 4.27,43.97 7.77,50.03 22.62,37.76" fill="#DCDFE8"/>
+  <polygon points="43.3,41.87 51.68,52.1 55.22,47.89 43.68,41.41" fill="#DCDFE8"/>
+  <polygon points="20.7,22.13 12.32,11.9 8.78,16.11 20.32,22.59" fill="#DCDFE8"/>
+  <rect x="27" y="11" width="10" height="42" fill="#A396FF"/>
+</svg>

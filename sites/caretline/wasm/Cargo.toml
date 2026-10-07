@@ -1,0 +1,24 @@
+# The caretline engine compiled to WebAssembly for the site's playground.
+# Its own workspace, so the repo's workspace never builds it.
+[package]
+name = "caretline-wasm"
+version = "0.1.0"
+edition = "2021"
+publish = false
+license = "MIT AND MPL-2.0"
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+caretline-next = { path = "../../../crates/caretline-next" }
+
+[profile.release]
+opt-level = "s"
+lto = true
+codegen-units = 1
+panic = "abort"
+strip = true
+
+[workspace]
