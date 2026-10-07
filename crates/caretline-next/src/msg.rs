@@ -154,6 +154,14 @@ pub enum Msg {
     Unfold { id: MarkId },
     ToggleFold { id: MarkId },
 
+    /// A host's own edit of the text, as one undo step (`join`: folded into the last step,
+    /// with the edit before it): `[from, to)` replaced by `text`, in chars of the current
+    /// text, ranges in order and apart. Recovered text, for example, that one undo takes back.
+    Edit {
+        changes: Vec<(usize, usize, String)>,
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        join: bool,
+    },
     /// Changes from elsewhere (another device, a daemon, an agent), applied in order to the
     /// document outside the undo history: every view is mapped through them, and undo never
     /// takes them back (see docs/caretline/messages.md#external-changes). Passive: it
@@ -208,6 +216,7 @@ impl Msg {
                 | Msg::SetStatus { .. }
                 | Msg::MoveBlock { .. }
                 | Msg::InsertBlocks { .. }
+                | Msg::Edit { .. }
         )
     }
 }

@@ -265,6 +265,12 @@ For each line:
   narrow for that, deep blocks stop indenting where their content would get fewer than
   `min_column` columns.
 - **Continuation lines** use the same column and width.
+- **Content wraps as prose:** between words at whitespace only, a word moving to the next row
+  whole unless it's longer than a row (then it breaks at the row's end). When there's a cell
+  right of the column, a word may fill the row exactly: the space after it stays on that row
+  (past the column, unseen), and the next row starts with the next word, so a row never starts
+  with a space. The caret after such a word sits in that cell. (A plain document keeps Helix's
+  wrapping.)
 - **A fence doesn't wrap.** A long line in it scrolls sideways on its own while the caret is on
   it; the other lines stay put.
 - **A gapped block** has a blank row before it; **`extra_rows`** add rows after it. Neither is

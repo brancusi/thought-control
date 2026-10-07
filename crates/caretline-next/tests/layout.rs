@@ -343,7 +343,8 @@ fn every_block_shows_on_its_own_rows_after_its_hang_at_any_width() {
                 // Fully visible rows show all their chars (a row too narrow is clipped).
                 let room = w as usize - x;
                 if own.chars().count() < room && own.is_ascii() {
-                    assert_eq!(shown, own, "{ctx}: row {y}");
+                    // (A space after a word that fills the row hangs past the column, unseen.)
+                    assert_eq!(shown.trim_end(), own.trim_end(), "{ctx}: row {y}");
                 }
                 if !own.is_empty() {
                     assert_eq!(cells[x].char_idx, Some(chars.start as u32), "{ctx}: row {y} doesn't start at its column");

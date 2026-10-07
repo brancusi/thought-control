@@ -158,6 +158,9 @@ pub struct TextFormat {
     pub wrap_indicator_highlight: Option<Highlight>,
     pub viewport_width: u16,
     pub soft_wrap_at_text_width: bool,
+    /// (caretline) Whitespace after a word that reaches the row's end stays on that row, past
+    /// the width, instead of starting the next row: the next row starts with the next word.
+    pub hang_spaces: bool,
 }
 
 // test implementation is basically only used for testing or when softwrap is always disabled
@@ -172,6 +175,7 @@ impl Default for TextFormat {
             viewport_width: 17,
             wrap_indicator_highlight: None,
             soft_wrap_at_text_width: false,
+            hang_spaces: false,
         }
     }
 }
@@ -418,6 +422,17 @@ impl<'t> DocumentFormatter<'t> {
         loop {
             let mut col = self.visual_pos.col + word_width;
             let char_pos = self.char_pos + word_chars;
+            // (caretline) A space at the row's end hangs past it (`hang_spaces`).
+            if self.text_fmt.hang_spaces
+                && col >= self.text_fmt.viewport_width as usize
+                && self
+                    .peek_grapheme(col, char_pos)
+                    .is_some_and(|g| g.is_whitespace() && !g.is_newline() && !g.is_eof())
+            {
+                let grapheme = self.next_grapheme(col, char_pos).expect("peeked");
+                self.word_buf.push(grapheme);
+                return;
+            }
             match col.cmp(&(self.text_fmt.viewport_width as usize)) {
                 // The EOF char and newline chars are always selectable in helix. That means
                 // that wrapping happens "too-early" if a word fits a line perfectly. This
@@ -435,8 +450,10 @@ impl<'t> DocumentFormatter<'t> {
                             .peek_grapheme(col, char_pos)
                             .is_some_and(|grapheme| grapheme.is_newline() || grapheme.is_eof()) => {
                 }
-                Ordering::Equal if word_width > self.text_fmt.max_wrap as usize => return,
-                Ordering::Greater if word_width > self.text_fmt.max_wrap as usize => {
+                // (caretline) With `hang_spaces`, a word that started at the row's start can't
+                // move to a fresh row: it breaks here.
+                Ordering::Equal if word_width > self.text_fmt.max_wrap as usize || (self.text_fmt.hang_spaces && self.visual_pos.col == 0) => return,
+                Ordering::Greater if word_width > self.text_fmt.max_wrap as usize || (self.text_fmt.hang_spaces && self.visual_pos.col == 0) => {
                     self.peeked_grapheme = self.word_buf.pop();
                     return;
                 }
@@ -459,7 +476,9 @@ impl<'t> DocumentFormatter<'t> {
                 self.indent_level = None;
             }
 
-            let is_word_boundary = grapheme.is_word_boundary();
+            // (caretline) Prose (`hang_spaces`) breaks between words at whitespace only, as a
+            // text editor does; code breaks after any non-word character, as Helix does.
+            let is_word_boundary = if self.text_fmt.hang_spaces { grapheme.is_whitespace() } else { grapheme.is_word_boundary() };
             word_width += grapheme.width();
             self.word_buf.push(grapheme);
 

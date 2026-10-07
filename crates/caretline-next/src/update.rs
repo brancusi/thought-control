@@ -218,6 +218,7 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         Msg::Fold { id } => crate::views::fold(state, id, Some(true)),
         Msg::Unfold { id } => crate::views::fold(state, id, Some(false)),
         Msg::ToggleFold { id } => crate::views::fold(state, id, None),
+        Msg::Edit { changes, join } => host_edit(state, changes, join),
         // `update` and `update_doc` apply it to the document and every view.
         Msg::External { .. } => {}
         Msg::SelectAll => {
@@ -984,4 +985,21 @@ fn scroll_view(state: &mut State, rows: i32) {
 /// The text a copy would put on the clipboard, if anything is selected.
 pub fn selection_text(state: &State) -> Option<String> {
     selected_text(state)
+}
+
+/// [`Msg::Edit`]: a host's edit as one undo step. Ranges out of order, overlapping or past
+/// the end are refused with a status message.
+fn host_edit(state: &mut State, changes: Vec<(usize, usize, String)>, join: bool) {
+    let len = state.doc.text.len_chars();
+    let ok = changes.iter().all(|&(a, b, _)| a <= b && b <= len) && changes.windows(2).all(|w| w[0].1 <= w[1].0);
+    if !ok {
+        state.view.status = Some("an edit out of range was skipped".into());
+        return;
+    }
+    if changes.is_empty() {
+        return;
+    }
+    let txn = Transaction::change(&state.doc.text, changes.into_iter().map(|(a, b, t)| (a, b, (!t.is_empty()).then(|| Tendril::from(t.as_str())))));
+    let selection = state.view.selection.clone().map(txn.changes());
+    commit_with(state, txn.with_selection(selection), Step { kind: None, replaced: false, merge: join }, |_, _| {});
 }

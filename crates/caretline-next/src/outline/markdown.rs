@@ -171,6 +171,12 @@ const CHECKBOXES: [(&str, char); 6] = [("[ ] ", ' '), ("[x] ", 'x'), ("[X] ", 'x
 /// content start), then every later block with its marker and indentation, a blank line
 /// around paragraphs and none between list items. Soft breaks are line breaks.
 pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String {
+    to_markdown_with(state, o, from, to, &|_| None)
+}
+
+/// [`to_markdown`] with a host's text after each block's first line (across blocks): fields
+/// a host keeps per block outside the text (a due date, a priority), written back as tokens.
+pub fn to_markdown_with(state: &State, o: &Outline, from: usize, to: usize, suffix: &dyn Fn(crate::marks::MarkId) -> Option<String>) -> String {
     let text = state.doc.text.slice(..);
     let piece = |a: usize, b: usize| text.slice(a..b.max(a)).to_string().replace("\r\n", "\n");
     let parts: Vec<(&BlockInfo, String)> = o
@@ -205,6 +211,7 @@ pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String
                 }
             }
             out.push_str(rows.next().unwrap_or(""));
+            out.push_str(&suffix(b.id).unwrap_or_default());
             for r in rows {
                 out.push('\n');
                 out.push_str(&pad);
@@ -222,6 +229,7 @@ pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String
                 out.push_str(&marker);
             }
             out.push_str(rows.next().unwrap_or(""));
+            out.push_str(&suffix(b.id).unwrap_or_default());
             for r in rows {
                 out.push('\n');
                 out.push_str(&pad);
