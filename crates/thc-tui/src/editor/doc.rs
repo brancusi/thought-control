@@ -447,7 +447,7 @@ impl Doc {
         let (Some(mark), Kind::Task) = (l.mark, l.kind()) else { return "" };
         let done = l.status.as_deref() == Some("done");
         let ch = if done { ' ' } else { 'x' };
-        self.next_run(caretline::Msg::SetStatus { id: caretline::MarkId(mark), ch });
+        self.next_run(caretline::Msg::Command { name: super::tasks::SET_STATUS.into(), args: serde_json::json!({ "id": mark, "status": ch.to_string() }) });
         if done { "reopened" } else { "done" }
     }
 

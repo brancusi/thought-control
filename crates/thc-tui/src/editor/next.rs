@@ -19,13 +19,14 @@
 //! the mirror and makes the same `BlockOp`s.
 
 use super::doc::{Doc, HostView, Line, Pos, copy_saved_state, new_id};
+use super::tasks;
 use super::{EditCmd, Motion, Outcome};
 use caretline as cn;
 use cn::helix::Selection;
 use cn::layout::{Layout, RowPos};
 use cn::marks::Mark;
 use cn::outline::{BlockInfo, Hang, NewBlock, OutlineConfig};
-use cn::{BlockAttrs, By, Dir, Effect, ExtChange, MarkId, Msg, OutlineLayout, Viewport};
+use cn::{MarkAttrs, By, Dir, Effect, ExtChange, MarkId, Msg, OutlineLayout, Viewport};
 use std::collections::{HashMap, HashSet};
 use thc_core::outline::Kind;
 
@@ -82,36 +83,24 @@ pub(crate) struct Next {
     row_layouts: Vec<(u64, usize, Layout)>,
 }
 
-/// thc's outline: two spaces per depth, its task vocabulary, the ⌃T cycle, whole-line images.
+/// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
+/// whole-line images.
 fn cfg() -> &'static OutlineConfig {
     static CFG: std::sync::OnceLock<OutlineConfig> = std::sync::OnceLock::new();
-    CFG.get_or_init(OutlineConfig::default)
+    CFG.get_or_init(tasks::config)
 }
 
-fn cn_kind(k: Kind) -> cn::Kind {
-    match k {
-        Kind::Para => cn::Kind::Para,
-        Kind::Bullet => cn::Kind::Bullet,
-        Kind::Task => cn::Kind::Task,
-    }
-}
-
-fn thc_kind(k: cn::Kind) -> Kind {
-    match k {
-        cn::Kind::Para => Kind::Para,
+/// A block's thc kind: a tagged bullet is a task.
+fn thc_kind(b: &BlockInfo) -> Kind {
+    match b.kind {
+        _ if tasks::is_task(b) => Kind::Task,
         cn::Kind::Bullet => Kind::Bullet,
-        cn::Kind::Task => Kind::Task,
+        _ => Kind::Para,
     }
 }
 
-/// A task's box character for a thc status (`todo` → ' ', `done` → 'x', …).
-fn status_char(cfg: &OutlineConfig, status: Option<&str>) -> char {
-    status.and_then(|s| cfg.task_markers.iter().find(|m| m.name == s)).map_or(cfg.cycle[0], |m| m.ch)
-}
-
-/// A thc status for a task's box character.
-fn status_name(cfg: &OutlineConfig, ch: Option<char>) -> &str {
-    ch.and_then(|c| cfg.task_markers.iter().find(|m| m.ch == c)).map_or("todo", |m| m.name.as_str())
+fn status_char(_: &OutlineConfig, status: Option<&str>) -> char {
+    tasks::status_char(status)
 }
 
 /// `12. ` or `12) ` at the start: a numbered item keeps its number as text.
@@ -136,15 +125,19 @@ fn block_text(l: &Line, cfg: &OutlineConfig) -> String {
 /// A number, heading or quote marker is thc's text.
 fn list_len(b: &BlockInfo) -> usize {
     match (b.kind, b.hang) {
-        (cn::Kind::Task, _) | (cn::Kind::Bullet, Hang::Bullet) => b.prefix_len,
+        (cn::Kind::Bullet, Hang::Bullet) => b.prefix_len,
         _ => b.indent.min(b.end - b.start),
     }
 }
 
 /// A line as a block to insert.
 fn new_block(l: &Line, mark: Option<MarkId>, cfg: &OutlineConfig) -> NewBlock {
-    let kind = cn_kind(l.kind());
-    NewBlock { depth: l.depth as u16, kind, status: (kind == cn::Kind::Task).then(|| status_char(cfg, l.status.as_deref())), text: l.text.clone(), gap: l.gap, mark }
+    let (kind, tag) = match l.kind() {
+        Kind::Task => (cn::Kind::Bullet, Some(status_char(cfg, l.status.as_deref()))),
+        Kind::Bullet => (cn::Kind::Bullet, None),
+        Kind::Para => (cn::Kind::Para, None),
+    };
+    NewBlock { depth: l.depth as u16, kind, status: None, tag, text: l.text.clone(), gap: l.gap, mark }
 }
 
 /// The blank row before a line by default (the engine's rule, over thc's lines): a paragraph
@@ -195,9 +188,10 @@ impl Next {
         st.view.config.status_bar = false;
         st.view.layout = Some(OutlineLayout::default());
         st.doc.outline = Some(cfg.clone());
+        st.doc.set_host(tasks::host());
         let marks = lines.iter_mut().zip(starts).enumerate().map(|(i, (l, pos))| {
             l.mark = Some(i as u64);
-            Mark { pos, id: MarkId(i as u64), attrs: BlockAttrs { gap: l.gap } }
+            Mark { pos, id: MarkId(i as u64), attrs: MarkAttrs::gap(l.gap) }
         });
         let _ = st.doc.marks.insert_all(marks.collect());
         st.outline_changed();
@@ -285,7 +279,8 @@ impl Next {
     #[allow(dead_code)]
     pub(super) fn from_value(v: serde_json::Value) -> Result<Next, String> {
         let field = |k: &str| v.get(k).cloned().ok_or_else(|| format!("no {k}"));
-        let st = cn::State::from_json(&field("state")?.to_string()).map_err(|e| e.to_string())?;
+        let mut st = cn::State::from_json(&field("state")?.to_string()).map_err(|e| e.to_string())?;
+        st.doc.set_host(tasks::host());
         let lines: Vec<Line> = serde_json::from_value(field("lines")?).map_err(|e| e.to_string())?;
         let deleted: Vec<String> = serde_json::from_value(field("deleted")?).map_err(|e| e.to_string())?;
         let graveyard: Vec<(u64, Line)> = serde_json::from_value(field("graveyard")?).map_err(|e| e.to_string())?;
@@ -697,11 +692,11 @@ impl Next {
 }
 
 /// A line's shape and text from its block.
-fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope, cfg: &OutlineConfig) {
-    let kind = thc_kind(b.kind);
+fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope, _: &OutlineConfig) {
+    let kind = thc_kind(b);
     let was = l.kind();
     if kind == Kind::Task {
-        let st = status_name(cfg, b.status);
+        let st = tasks::status_name(b.tag);
         if l.status.as_deref() != Some(st) {
             l.status = Some(st.to_string());
         }
@@ -757,7 +752,7 @@ impl Doc {
             EditCmd::KillToStart => vec![Msg::DeleteToLineStart],
             EditCmd::Indent => vec![Msg::Indent],
             EditCmd::Outdent => vec![Msg::Outdent],
-            EditCmd::TaskCycle => vec![Msg::TaskCycle],
+            EditCmd::TaskCycle => vec![Msg::Command { name: tasks::TASK_CYCLE.into(), args: serde_json::Value::Null }],
             EditCmd::MoveLine(n) => (0..n.unsigned_abs()).map(|_| Msg::MoveBlock { dir: if n < 0 { b } else { f } }).collect(),
             EditCmd::SelectAll => vec![Msg::SelectAll],
             EditCmd::Undo => vec![Msg::Undo],
@@ -788,10 +783,10 @@ impl Doc {
             fx.extend(self.next_run(m));
         }
         let changed = self.next_mut().st.doc.rev != rev;
-        if fx.iter().any(|e| matches!(e, Effect::Completed { .. })) {
+        if fx.iter().any(|e| matches!(e, Effect::Host { name, .. } if name == tasks::COMPLETED)) {
             return Outcome::Completed;
         }
-        if fx.iter().any(|e| matches!(e, Effect::Restored)) {
+        if changed && matches!(cmd, EditCmd::Undo | EditCmd::Redo) {
             return Outcome::Restored;
         }
         if changed {
@@ -811,7 +806,7 @@ impl Doc {
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
     /// How many notes, and how many images were left out.
     pub(super) fn next_paste(&mut self, text: &str, plain: bool) -> (usize, usize) {
-        let (blocks, images) = cn::outline::markdown::parse_markdown(text, plain);
+        let (blocks, images) = cn::outline::markdown::parse_markdown_with(text, plain, cfg());
         let text = Some(text.to_string());
         self.next_run(if plain { Msg::PastePlain { text } } else { Msg::Paste { text } });
         (blocks.len(), images)
