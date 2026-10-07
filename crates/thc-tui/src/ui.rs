@@ -66,7 +66,7 @@ fn draw_rail(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         let num = if count > 0 { count.to_string() } else { String::new() };
         let name_w = w.saturating_sub(2 + num.len() + 1);
         let name = truncate_str(&label, name_w, g.ellipsis);
-        let pad = w.saturating_sub(1 + crate::doc::width(&name) + num.len() + 1);
+        let pad = w.saturating_sub(1 + crate::text::width(&name) + num.len() + 1);
         let mark = if current { Span::styled("▌", th.s(Token::Accent)) } else { Span::raw(" ") };
         lines.push(Line::from(vec![
             mark,
@@ -80,11 +80,11 @@ fn draw_rail(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     // The last row opens the rest: the Pages list, or the ⌃O finder for any day (navigation.md §3).
     {
         let (label, action) = if page { (format!(" all pages: {total} "), "go.pages") } else { (" any day: ⌃O ".to_string(), "finder.open") };
-        let side = w.saturating_sub(crate::doc::width(&label)) / 2;
+        let side = w.saturating_sub(crate::text::width(&label)) / 2;
         let row = Line::from(vec![
             Span::styled("─".repeat(side), th.s(Token::Line)),
             Span::styled(label.clone(), th.s(Token::Muted)),
-            Span::styled("─".repeat(w.saturating_sub(side + crate::doc::width(&label))), th.s(Token::Line)),
+            Span::styled("─".repeat(w.saturating_sub(side + crate::text::width(&label))), th.s(Token::Line)),
         ]);
         let y = area.y + lines.len() as u16;
         if y < area.y + area.height {
@@ -3626,7 +3626,7 @@ fn draw_recipe(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, 
         .iter()
         .enumerate()
         .map(|(i, s)| {
-            let cut = |t: &str, width: usize| -> Vec<String> { caretline::wrap(t, width.max(4)).into_iter().map(|(a, b)| t[a..b].trim_end().to_string()).collect() };
+            let cut = |t: &str, width: usize| -> Vec<String> { crate::text::wrap(t, width.max(4)).into_iter().map(|(a, b)| t[a..b].trim_end().to_string()).collect() };
             (cut(&s.query, qw), cut(r.readings.get(i).map(String::as_str).unwrap_or(""), rw))
         })
         .collect();

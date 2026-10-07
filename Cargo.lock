@@ -2179,7 +2179,6 @@ name = "thc-core"
 version = "0.9.65"
 dependencies = [
  "anyhow",
- "caretline",
  "chrono",
  "image",
  "libc",
