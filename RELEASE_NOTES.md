@@ -1,3 +1,8 @@
+**0.10.1**
+
+- **Fixed: moving two lines down with ⌥↓ could leave the second one in its old place** after the save. Lines now keep the order you see.
+- **Fixed: emptying a line of nothing but line breaks could join it to the line above.**
+
 **0.10.0**
 
 - **A new editor engine under every page and day.** Writing now runs on caretline, the engine thc's editor was moved onto. Typing, moving around, undo, copy and paste work as before; the old engine is gone.
