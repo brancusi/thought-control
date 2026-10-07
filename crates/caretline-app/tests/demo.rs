@@ -42,7 +42,8 @@ fn demo_help_lists_the_demos() {
 fn each_demo_draws_its_first_frame_headless() {
     let tour = run(&["demo", "--snapshot", "80x24"]);
     assert!(tour.contains("Welcome to caretline"), "{tour}");
-    assert!(tour.lines().last().unwrap().contains("1/6 · "), "the hint names step 1:\n{tour}");
+    assert!(tour.lines().last().unwrap().contains("1/11 · "), "the hint names step 1:\n{tour}");
+    assert!(!tour.contains("[ ]"), "no task syntax in the tour");
     assert_eq!(tour, run(&["demo", "tour", "--snapshot", "80x24"]));
 
     let agent = run(&["demo", "agent", "--snapshot", "80x30"]);
@@ -218,7 +219,7 @@ fn the_tour_runs_live_dumps_and_replays() {
     let tmp = scratch("tour");
     let dir = tmp.join("files");
     let mut pty = spawn_demo(&["demo", "--dir", dir.to_str().unwrap()], &tmp);
-    pty.wait("the first hint", |s| s.contains("1/6 · "));
+    pty.wait("the first hint", |s| s.contains("1/11 · "));
     pty.send(b" and more");
     pty.wait("typing", |s| s.contains("and more"));
     pty.send(b"\x04"); // Ctrl-D

@@ -4,7 +4,7 @@ The agent is a separate client on this editor's socket, speaking the same JSON-l
 
 ## Yours
 
-Type here while the agent works. Make a list, tick a task with ⌃T, then press ⌃Z: undo only takes back your edits, never the agent's.
+Type here while the agent works: a few lines, a list, anything. Then press ⌃Z: undo only takes back your edits, never the agent's.
 
 - 
 

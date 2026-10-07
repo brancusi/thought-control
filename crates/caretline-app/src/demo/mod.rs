@@ -143,46 +143,50 @@ pub(crate) fn initial_state(kind: Kind, path: Option<String>, viewport: Viewport
     state
 }
 
-/// The tour's steps: for each `## N ·` section, whether its `Done` box is still open.
-pub(crate) fn tour_steps(text: &str) -> Vec<(u32, bool)> {
-    let mut steps: Vec<(u32, bool)> = Vec::new();
-    for line in text.lines() {
-        if let Some(rest) = line.strip_prefix("## ")
-            && let Some(n) = rest.split(' ').next().and_then(|n| n.parse().ok())
+/// The tour section the caret is in: the number of the last `## N ·` heading at or above
+/// `line` (0 above the first, `None` after the closing paragraph), and how many there are.
+pub(crate) fn tour_section(text: &str, line: usize) -> (Option<u32>, u32) {
+    let mut current = Some(0);
+    let mut total = 0;
+    for (i, l) in text.lines().enumerate() {
+        if let Some(rest) = l.strip_prefix("## ")
+            && let Some(n) = rest.split(' ').next().and_then(|n| n.parse::<u32>().ok())
         {
-            steps.push((n, false));
-            continue;
-        }
-        let t = line.trim_start();
-        if let (Some(last), Some(rest)) = (steps.last_mut(), t.strip_prefix("- ["))
-            && let Some(content) = rest.get(3..)
-            && content.starts_with("Done")
-        {
-            last.1 = rest.starts_with(' ');
+            total = total.max(n);
+            if i <= line {
+                current = Some(n);
+            }
+        } else if l.starts_with("That's the tour") && i <= line {
+            current = None;
         }
     }
-    steps
+    (current, total)
 }
 
-/// The status bar's hint: the first step whose box is open.
-pub(crate) fn tour_hint(text: &str) -> String {
-    let steps = tour_steps(text);
-    let total = steps.len();
-    match steps.iter().find(|s| s.1) {
-        Some((n, _)) => {
-            let what = match n {
-                1 => "type past the edge, then ↓ and ⌃T to tick",
-                2 => "⌃T makes a task · Tab ⇧Tab nest · ⌥↑ ⌥↓ move",
-                3 => "⇧→ selects · type over it · ⌃Z undo · ⌃Y redo",
-                4 => "⌃O on the item folds it · ⌃O again opens",
-                5 => "⌃D dumps the whole editor as JSON",
-                6 => "⌃P replays your session from the start",
-                _ => "try it, then ⌃T ticks the box",
-            };
-            format!("{n}/{total} · {what}")
-        }
-        None => "tour done ✦ next: caretline demo scenes / demo agent".into(),
-    }
+/// The status bar's hint for the section the caret is in. `mark` is the caret's block's
+/// mark (shown in the marks section).
+pub(crate) fn tour_hint(text: &str, line: usize, mark: Option<u64>) -> String {
+    let (section, total) = tour_section(text, line);
+    let Some(n) = section else { return "tour done ✦ next: caretline demo agent".into() };
+    let what = match n {
+        0 => "↓ to start: the status bar follows the caret".to_string(),
+        1 => "type past the edge: lines wrap at words".into(),
+        2 => "⌥← ⌥→ by word · ↑ ↓ by row, keeping the column".into(),
+        3 => "⇧ + arrow selects · ⇧⌥ by word · Esc collapses".into(),
+        4 => "⌃N adds a caret below · type · Esc for one".into(),
+        5 => "type over a selection · ⌃Z undo · ⌃Y redo".into(),
+        6 => "Tab ⇧Tab indent · ⌥↑ ⌥↓ move with children".into(),
+        7 => "⌃O folds the lines under the caret's item".into(),
+        8 => match mark {
+            Some(m) => format!("mark #{m} · ⌥↑ it, cut it, undo: the # stays"),
+            None => "every block keeps its mark through edits".into(),
+        },
+        9 => "⌃G opens a second view below · ⌃G closes it".into(),
+        10 => "⌃D dumps the whole editor as JSON".into(),
+        11 => "⌃P replays your session from the start".into(),
+        _ => "↓ for the next step".into(),
+    };
+    if n == 0 { what } else { format!("{n}/{total} · {what}") }
 }
 
 /// What the agent thread reports, for the status bar.
@@ -208,7 +212,16 @@ struct EditorDemo {
 impl EditorDemo {
     fn hint(&self, hub: &Hub) -> String {
         match self.kind {
-            Kind::Tour => tour_hint(&hub.session.state().doc.text.to_string()),
+            Kind::Tour => {
+                let state = hub.session.state();
+                let caret = state.view.caret();
+                let line = state.doc.text.char_to_line(caret.min(state.doc.text.len_chars()));
+                let mark = state.blocks().and_then(|o| {
+                    let i = o.index_at(state.doc.text.slice(..), caret);
+                    o.blocks.get(i).map(|b| b.id.0)
+                });
+                tour_hint(&state.doc.text.to_string(), line, mark)
+            }
             Kind::Agent => {
                 let p = self.agent.lock().map(|p| p.clone()).unwrap_or_default();
                 if let Some(e) = p.error {
@@ -261,6 +274,44 @@ impl EditorDemo {
         dispatch_demo(hub, vec![Msg::ToggleFold { id }, Msg::ShowStatus { text }]);
     }
 
+    /// ⌃N: another caret on the row below the last one, in the same column.
+    fn caret_below(&self, hub: &mut Hub) {
+        let mut state = hub.session.state().clone();
+        let text = &state.doc.text;
+        let ranges = state.view.selection.ranges().to_vec();
+        let Some(last) = ranges.iter().max_by_key(|r| r.head) else { return };
+        let line = text.char_to_line(last.head);
+        if line + 1 >= text.len_lines() {
+            self.status(hub, "no row below".into());
+            return;
+        }
+        let col = last.head - text.line_to_char(line);
+        let next = text.line(line + 1);
+        let len = next.len_chars() - if next.chars().last() == Some('\n') { 1 } else { 0 };
+        let pos = text.line_to_char(line + 1) + col.min(len);
+        let primary = state.view.selection.primary_index();
+        let mut all: caretline::helix::SmallVec<[caretline::helix::Range; 1]> = ranges.into_iter().collect();
+        all.push(caretline::helix::Range::point(pos));
+        let n = all.len();
+        state.view.selection = Selection::new(all, primary);
+        state.view.status = Some(format!("{n} carets · type · Esc for one"));
+        hub.session.set_state(state);
+    }
+
+    /// ⌃G: a second view of the document, drawn below, or closes it.
+    fn toggle_view(&self, hub: &mut Hub) {
+        if let Some((id, _)) = hub.session.views().first() {
+            let id = *id;
+            hub.session.close_view(id);
+            self.status(hub, "one view again".into());
+            return;
+        }
+        let mut view = hub.session.state().view.clone();
+        view.status = Some("view 1 · the same document, its own caret and scroll".into());
+        hub.session.open_view(view);
+        self.status(hub, "a second view below · type here, watch it there".into());
+    }
+
     /// ⌃D: the whole editor as JSON, written next to the document.
     fn dump(&self, hub: &mut Hub) {
         let state = hub.session.state();
@@ -305,8 +356,20 @@ impl Demo for EditorDemo {
             self.status(hub, format!("replay stopped after {n} messages"));
             return KeyAction::Consumed;
         }
+        // Esc with several carets keeps one, the primary.
+        if key.code == KeyCode::Esc && !key.mods.ctrl && !key.mods.alt && !key.mods.cmd && !key.mods.shift {
+            let sel = &hub.session.state().view.selection;
+            if sel.ranges().len() > 1 && sel.ranges().iter().all(|r| r.anchor == r.head) {
+                let mut state = hub.session.state().clone();
+                state.view.selection = Selection::point(sel.primary().head);
+                hub.session.set_state(state);
+                return KeyAction::Consumed;
+            }
+        }
         match ctrl(key) {
             Some('o') => self.toggle_fold(hub),
+            Some('n') => self.caret_below(hub),
+            Some('g') => self.toggle_view(hub),
             Some('d') => self.dump(hub),
             Some('p') => {
                 let pane = hub.session.views().first().map(|(_, v)| v.viewport.height).unwrap_or(0);
@@ -353,7 +416,7 @@ impl Demo for EditorDemo {
     }
 
     fn pane_rows(&self, hub: &Hub, height: u16) -> u16 {
-        if self.kind == Kind::Agent && !hub.session.views().is_empty() { pane_rows(height) } else { 0 }
+        if hub.session.views().is_empty() { 0 } else { pane_rows(height) }
     }
 
     fn overlay(&self) -> Option<Frame> {
@@ -459,6 +522,11 @@ pub(crate) fn snapshot(kind: Kind, w: u16, h: u16, keys: Option<&str>) -> Result
         }
         demo.after(&mut hub);
     }
+    // A view opened by the keys (⌃G) takes the bottom of the terminal, as it would live.
+    let rows = if hub.session.views().is_empty() { 0 } else { pane_rows(h) };
+    if hub.session.state().view.viewport.height != h - rows {
+        dispatch_demo(&mut hub, vec![Msg::Resize { width: w, height: h - rows }]);
+    }
     Ok(demo.overlay().unwrap_or_else(|| runtime::compose(&hub, rows)))
 }
 
@@ -473,12 +541,14 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_tour_hint_follows_the_open_boxes() {
-        assert!(tour_hint(TOUR).starts_with("1/6 · "), "{}", tour_hint(TOUR));
-        let one = TOUR.replacen("- [ ] Done", "- [x] Done", 1);
-        assert!(tour_hint(&one).starts_with("2/6 · "));
-        let all = TOUR.replace("- [ ] Done", "- [x] Done");
-        assert!(tour_hint(&all).starts_with("tour done"));
+    fn the_tour_hint_follows_the_caret() {
+        let line = |needle: &str| TOUR.lines().position(|l| l.contains(needle)).unwrap();
+        assert!(tour_hint(TOUR, 0, None).starts_with("↓ to start"));
+        assert!(tour_hint(TOUR, line("just start typing"), None).starts_with("1/11 · "));
+        assert!(tour_hint(TOUR, line("- one pear"), None).starts_with("4/11 · ⌃N"));
+        assert!(tour_hint(TOUR, line("Hold on to me"), Some(7)).contains("#7"));
+        assert!(tour_hint(TOUR, line("That's the tour"), None).starts_with("tour done"));
+        assert!(!TOUR.contains("[ ]") && !TOUR.contains("⌃T"), "the tour shows no tasks");
     }
 
     #[test]
@@ -507,6 +577,26 @@ mod tests {
         hub.session.set_state(s);
         assert!(matches!(demo.key(&mut hub, &ctrl_key('o')), KeyAction::Consumed));
         assert_eq!(hub.session.state().view.folds.len(), 1, "folded");
+
+        // A second view, and closing it.
+        demo.key(&mut hub, &ctrl_key('g'));
+        assert_eq!(hub.session.views().len(), 1);
+        demo.key(&mut hub, &ctrl_key('g'));
+        assert!(hub.session.views().is_empty());
+
+        // Carets: two more below "one apple", then Esc for one.
+        let at = text[..text.find("one apple").unwrap()].chars().count();
+        let mut s = hub.session.state().clone();
+        s.view.selection = Selection::point(at);
+        hub.session.set_state(s);
+        demo.key(&mut hub, &ctrl_key('n'));
+        demo.key(&mut hub, &ctrl_key('n'));
+        assert_eq!(hub.session.state().view.selection.ranges().len(), 3);
+        dispatch_demo(&mut hub, vec![Msg::InsertText { text: "two ".into() }]);
+        assert_eq!(hub.session.state().doc.text.to_string().matches("two one").count(), 3);
+        let esc = Key { code: KeyCode::Esc, mods: Default::default() };
+        demo.key(&mut hub, &esc);
+        assert_eq!(hub.session.state().view.selection.ranges().len(), 1);
 
         // Dump.
         demo.key(&mut hub, &ctrl_key('d'));
