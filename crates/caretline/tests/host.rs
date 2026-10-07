@@ -207,7 +207,7 @@ fn decorations_draw_in_the_hang_and_gutter_by_role_and_hit_reports_them() {
     assert!(cells.contains("test.diamond") && cells.contains("test.deep"), "{cells}");
     let ids: Vec<MarkId> = s.blocks().unwrap().blocks.iter().map(|b| b.id).collect();
     assert_eq!(hit(&s.doc, &s.view, x, y), Hit::Hang { block: ids[0], deco: Some("diamond".into()) });
-    assert_eq!(hit(&s.doc, &s.view, 0, 1), Hit::Marks { block: ids[1], deco: None });
+    assert_eq!(hit(&s.doc, &s.view, 0, 1), Hit::Gutter { block: ids[1], deco: None });
 }
 
 #[test]
@@ -220,7 +220,7 @@ fn without_a_decorator_plain_glyphs_are_the_layouts_choice() {
 }
 
 fn tagged() -> OutlineConfig {
-    OutlineConfig { tags: "ab".into(), new_tag: Some('a'), task_markers: Vec::new(), ..OutlineConfig::default() }
+    OutlineConfig { tags: "ab".into(), new_tag: Some('a'), ..OutlineConfig::default() }
 }
 
 #[test]

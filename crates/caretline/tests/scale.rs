@@ -91,9 +91,9 @@ fn typing_in_a_5000_block_outline() {
     use caretline::OutlineConfig;
     let mut md = String::new();
     for i in 0..5000 {
-        md.push_str(&format!("- [ ] item number {i} with some words\n"));
+        md.push_str(&format!("- [a] item number {i} with some words\n"));
     }
-    let base = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig::default());
+    let base = markdown::load(&md, None, Viewport { width: 100, height: 40 }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() });
     let keys = if cfg!(debug_assertions) { 20 } else { 400 };
     // Without and with the outline layout (markers in a hang, a column per depth).
     for layout in [None, Some(caretline::OutlineLayout::default())] {

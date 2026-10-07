@@ -22,14 +22,14 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     if state.view.read_only && msg.edits() {
         return vec![Effect::Refused];
     }
-    state.doc.journal.0.clear();
+    state.doc.change_log.0.clear();
     let effects = step(state, msg);
-    state.doc.journal.0.clear();
+    state.doc.change_log.0.clear();
     effects
 }
 
 /// One message through one view: everything `update` does, without the read-only check.
-/// The text changes it made are left in the document's journal for the caller to rebase
+/// The text changes it made are left in the document's changes for the caller to rebase
 /// other views with.
 pub(crate) fn step(state: &mut State, msg: Msg) -> Vec<Effect> {
     let mut effects = Vec::new();
@@ -82,9 +82,6 @@ pub(crate) fn step(state: &mut State, msg: Msg) -> Vec<Effect> {
         let now = caret_block(state);
         if now != prev_block {
             effects.push(Effect::BlockLeft { from: prev_block, to: now });
-        }
-        if matches!(msg, Msg::Undo | Msg::Redo) && state.view.status.is_none() {
-            effects.push(Effect::Restored);
         }
         if !state.view.config.status_bar && state.view.status != status {
             if let Some(text) = state.view.status.clone() {
@@ -210,8 +207,6 @@ fn plain(state: &mut State, msg: Msg, effects: &mut Vec<Effect>) {
         Msg::PastePlain { text } => plain(state, Msg::Paste { text }, effects),
         Msg::Indent
         | Msg::Outdent
-        | Msg::TaskCycle
-        | Msg::SetStatus { .. }
         | Msg::MoveBlock { .. }
         | Msg::SelectBlock { .. }
         | Msg::InsertBlocks { .. } => {
@@ -414,9 +409,9 @@ pub(crate) fn commit_with(
     if text_changed {
         txn.apply(&mut state.doc.text);
         state.view.wrap.edited(txn.changes());
-        state.doc.touched.note(txn.changes());
+        state.doc.touched.record(txn.changes());
         state.doc.derived.edited(txn.changes());
-        state.doc.journal.0.push(txn.changes().clone());
+        state.doc.change_log.0.push(txn.changes().clone());
     }
     let removed = state.doc.marks.map(old_text.slice(..), state.doc.text.slice(..), txn.changes());
     let naive = state.doc.marks.clone();
@@ -679,9 +674,9 @@ fn apply_history(state: &mut State, txn: &Transaction, rev: usize, undo: bool) {
     let old = state.doc.text.clone();
     txn.apply(&mut state.doc.text);
     state.view.wrap.edited(txn.changes());
-    state.doc.touched.note(txn.changes());
+    state.doc.touched.record(txn.changes());
     state.doc.derived.edited(txn.changes());
-    state.doc.journal.0.push(txn.changes().clone());
+    state.doc.change_log.0.push(txn.changes().clone());
     state.doc.edits.0 = state.doc.edits.0.wrapping_add(1);
     state.fit_mark_log();
     state.doc.derived.marks_changed();

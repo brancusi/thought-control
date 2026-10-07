@@ -12,7 +12,7 @@ fn main() {
     // 1. A state: the text, an optional file path (where `save` writes) and a viewport.
     let start = State::new(
         "hello world\n",
-        Some("notes.md".into()),
+        Some("draft.md".into()),
         Viewport {
             width: 30,
             height: 4,
@@ -46,7 +46,7 @@ fn main() {
                 Effect::ClipboardSet { text } => println!("effect: copy {text:?} to the clipboard"),
                 Effect::WriteFile { path, .. } => println!("effect: write {path}"),
                 Effect::Quit => println!("effect: quit"),
-                // Outline documents also report notices, completed tasks and block changes.
+                // Outline documents also report notices and block changes; host commands their own.
                 other => println!("effect: {other:?}"),
             }
         }

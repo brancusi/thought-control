@@ -30,15 +30,13 @@ pub enum ExtChange {
     /// New content for a block: its lines after the marker (`\n` for soft breaks). The
     /// marker and indentation stay.
     ReplaceContent { id: MarkId, text: String },
-    /// A block's depth, kind and task status: its indentation and list marker are rewritten
-    /// (a number, heading or quote marker stays, as content).
+    /// A block's depth, kind and tag: its indentation and list marker are rewritten (a
+    /// number, heading or quote marker stays, as content).
     SetShape {
         id: MarkId,
         #[serde(default)]
         depth: u16,
         kind: Kind,
-        #[serde(default, skip_serializing_if = "Option::is_none")]
-        status: Option<char>,
         /// A bullet's tag (`- [c] `).
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tag: Option<char>,
@@ -78,28 +76,28 @@ pub(crate) fn apply(doc: &mut Document, views: &mut [View], msg: Msg) -> Vec<Eff
     let Msg::External { changes } = msg else { return Vec::new() };
     let mut effects = Vec::new();
     let tops = crate::views::tops(doc, views);
-    let mut journal: Vec<ChangeSet> = Vec::new();
+    let mut applied: Vec<ChangeSet> = Vec::new();
     let mut marks_changed = false;
     for change in &changes {
         match one(doc, change) {
-            Ok(Some(cs)) => journal.push(cs),
+            Ok(Some(cs)) => applied.push(cs),
             Ok(None) => marks_changed = true,
             Err(why) => effects.push(Effect::Notice { text: format!("a change from elsewhere was skipped: {why}") }),
         }
     }
-    if journal.is_empty() && !marks_changed {
+    if applied.is_empty() && !marks_changed {
         return effects;
     }
     doc.edits.0 = doc.edits.0.wrapping_add(1);
     doc.rev += 1;
-    if let Some(remote) = journal.iter().cloned().reduce(|a, b| a.compose(b)) {
+    if let Some(remote) = applied.iter().cloned().reduce(|a, b| a.compose(b)) {
         match doc.config.external_undo {
             ExternalUndo::Transform => transform_history(doc, &remote),
             ExternalUndo::Barrier => barrier(doc),
         }
     }
     for (i, v) in views.iter_mut().enumerate() {
-        crate::views::rebase(doc, v, &journal, tops[i]);
+        crate::views::rebase(doc, v, &applied, tops[i]);
     }
     doc.dirty = doc.compute_dirty();
     effects
@@ -139,16 +137,16 @@ fn one(doc: &mut Document, change: &ExtChange) -> Result<Option<ChangeSet>, Stri
             let keep = Some((b.id, b.start, b.attrs.clone()));
             Ok(Some(edit(doc, vec![least(text, b.content_start(), b.end, lines(content))], move |m, _| keep_mark(m, keep))))
         }
-        ExtChange::SetShape { id, depth, kind, status, tag } => {
+        ExtChange::SetShape { id, depth, kind, tag } => {
             let b = block(*id)?;
             // The indentation and list marker; a number, heading or quote marker is content.
             let list = match (b.kind, b.hang) {
-                (Kind::Task, _) | (Kind::Bullet, Hang::Bullet) => b.prefix_len,
+                (Kind::Bullet, Hang::Bullet) => b.prefix_len,
                 _ => b.indent,
             };
             let line_end = crate::helix::line_ending::line_end_char_index(&text, b.first_line);
             let rest = text.slice(b.start + list..line_end).to_string();
-            let nb = NewBlock { depth: *depth, kind: *kind, status: *status, tag: *tag, text: rest.clone(), gap: None, mark: None };
+            let nb = NewBlock { depth: *depth, kind: *kind, tag: *tag, text: rest.clone(), gap: None, mark: None };
             let full = nb.to_lines(&cfg);
             let prefix = full[..full.len() - rest.len()].to_string();
             Ok(Some(edit(doc, vec![(b.start, b.start + list, prefix)], |_, _| {})))
@@ -237,7 +235,7 @@ fn edit(
     let cs = txn.changes().clone();
     let old = doc.text.clone();
     cs.apply(&mut doc.text);
-    doc.touched.note(&cs);
+    doc.touched.record(&cs);
     doc.derived.edited(&cs);
     doc.marks.map(old.slice(..), doc.text.slice(..), &cs);
     fix(&mut doc.marks, doc.text.slice(..));

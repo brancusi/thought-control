@@ -168,8 +168,8 @@ fn perform(effect: &Effect, quit: &mut bool) -> Option<Msg> {
             *quit = true;
             None
         }
-        // Notices only come with the status bar off; the rest (completed, restored,
-        // block_left, refused and any later kinds) are for hosts that keep their own data.
+        // Notices only come with the status bar off; the rest (block_left, refused, host and
+        // any later kinds) are for hosts that keep their own data.
         _ => None,
     }
 }

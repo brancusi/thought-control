@@ -8,10 +8,10 @@ use caretline::{update, update_doc, view, By, Dir, MarkId, Msg, OutlineConfig, O
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-const TRIP: &str = "# Lisbon trip\n\nBooked the flat in Lisbon.\nIt faces the river.\n\n- [ ] Pay the deposit\n  - ask Ana about her desk\n- [ ] Book flights\n- [x] Renew passport\n\n![boiler label](files/boiler.png)\n\n1. Pack\n2. Leave\n";
+const TRIP: &str = "# Lisbon trip\n\nBooked the flat in Lisbon.\nIt faces the river.\n\n- [a] Pay the deposit\n  - ask Ana about her desk\n- [a] Book flights\n- [b] Renew passport\n\n![boiler label](files/boiler.png)\n\n1. Pack\n2. Leave\n";
 
 fn laid_out(md: &str, w: u16, h: u16) -> State {
-    let mut s = markdown::load(md, None, Viewport { width: w, height: h }, OutlineConfig::default());
+    let mut s = markdown::load(md, None, Viewport { width: w, height: h }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() });
     s.view.config.status_bar = false;
     s.view.layout = Some(OutlineLayout { hang_glyphs: true, ..Default::default() });
     update(&mut s, Msg::Resize { width: w, height: h });
@@ -28,7 +28,7 @@ fn markers_move_to_the_hang_and_depths_get_columns() {
     let f = view(&s);
     assert_eq!(
         f.to_text(),
-        "  #   Lisbon trip\n\n      Booked the flat in Lisbon.\n      It faces the river.\n\n  [ ] Pay the deposit\n      •   ask Ana about her desk\n  [ ] Book flights\n  [x] Renew passport\n\n      ![boiler label](files/boiler.png)\n\n  1.  Pack\n  2.  Leave\n\n\n"
+        "  #   Lisbon trip\n\n      Booked the flat in Lisbon.\n      It faces the river.\n\n  [a] Pay the deposit\n      •   ask Ana about her desk\n  [a] Book flights\n  [b] Renew passport\n\n      ![boiler label](files/boiler.png)\n\n  1.  Pack\n  2.  Leave\n\n\n"
     );
     // The hang's cells say so, and text cells carry their char.
     assert_eq!(f.cell(2, 5).role, Role::Hang);
@@ -82,7 +82,7 @@ fn extra_rows_follow_a_block_and_are_never_caret_stops() {
 fn hit_tells_hang_marks_gap_and_text() {
     let s = laid_out(TRIP, 50, 16);
     let ids = ids(&s);
-    assert_eq!(hit(&s.doc, &s.view, 0, 5), Hit::Marks { block: ids[2], deco: None });
+    assert_eq!(hit(&s.doc, &s.view, 0, 5), Hit::Gutter { block: ids[2], deco: None });
     assert_eq!(hit(&s.doc, &s.view, 3, 5), Hit::Hang { block: ids[2], deco: None });
     assert_eq!(hit(&s.doc, &s.view, 9, 5), Hit::Text { pos: s.doc.text.line_to_char(3) + 9 });
     assert_eq!(hit(&s.doc, &s.view, 9, 1), Hit::Gap { block: ids[1] });
@@ -95,7 +95,7 @@ fn hit_tells_hang_marks_gap_and_text() {
 
 #[test]
 fn vertical_motion_keeps_the_screen_column_across_depths() {
-    let mut s = laid_out("- [ ] alpha beta\n  - nested text here\n- gamma delta\n", 60, 10);
+    let mut s = laid_out("- [a] alpha beta\n  - nested text here\n- gamma delta\n", 60, 10);
     s.view.selection = Selection::point(6 + 8); // "alpha be|ta", screen x 14
     update(&mut s, Msg::Move { dir: Dir::Forward, by: By::VisualLine, extend: false });
     let f = view(&s);
@@ -114,7 +114,7 @@ fn folds_belong_to_the_view() {
     // The caret is in the child; folding its parent moves it to the parent's end.
     views[0].selection = Selection::point(doc.text.line_to_char(4) + 6);
     update_doc(&mut doc, &mut views, 0, Msg::Fold { id: pay });
-    assert_eq!(views[0].caret(), doc.text.line_to_char(3) + "- [ ] Pay the deposit".len());
+    assert_eq!(views[0].caret(), doc.text.line_to_char(3) + "- [a] Pay the deposit".len());
     let a = render(&doc, &views[0]).to_text();
     let b = render(&doc, &views[1]).to_text();
     assert!(!a.contains("ask Ana"), "view 0 hides the child:\n{a}");
@@ -144,7 +144,7 @@ fn folds_belong_to_the_view() {
 
 #[test]
 fn folds_hide_rows_without_a_layout_too() {
-    let mut s = markdown::load("- a\n  - b\n  - c\n- d\n", None, Viewport { width: 20, height: 6 }, OutlineConfig::default());
+    let mut s = markdown::load("- a\n  - b\n  - c\n- d\n", None, Viewport { width: 20, height: 6 }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() });
     let a = ids(&s)[0];
     update(&mut s, Msg::Fold { id: a });
     assert_eq!(view(&s).to_text().lines().take(2).collect::<Vec<_>>(), ["- a", "- d"]);
@@ -212,7 +212,7 @@ fn random_editing_in_a_laid_out_view() {
                     Msg::Tick { now_ms: step }
                 }
                 14 => Msg::Resize { width: rng.random_range(14..70), height: rng.random_range(3..20) },
-                _ => Msg::TaskCycle,
+                _ => Msg::Outdent,
             };
             update(&mut s, msg.clone());
             let ctx = format!("seed {seed} step {step} {msg:?}");
@@ -256,9 +256,9 @@ fn the_layout_survives_json() {
 // ---------------------------------------------------------------------------------------
 // Wide views: the content column stops at `column`, the frame doesn't
 
-const LISBON: &str = "# Lisbon trip\n\n- [ ] Before we go\n  - [ ] Pay the deposit\n  - [ ] Book flights\n  - [x] Renew passport\n- [ ] In Lisbon\n  - [ ] Tram 28 early\n- Packing\n  - Linen shirts\n";
+const LISBON: &str = "# Lisbon trip\n\n- [a] Before we go\n  - [a] Pay the deposit\n  - [a] Book flights\n  - [b] Renew passport\n- [a] In Lisbon\n  - [a] Tram 28 early\n- Packing\n  - Linen shirts\n";
 
-const LISBON_FRAME: &str = "  #   Lisbon trip\n\n  [ ] Before we go\n      [ ] Pay the deposit\n      [ ] Book flights\n      [x] Renew passport\n  [ ] In Lisbon\n      [ ] Tram 28 early\n  •   Packing\n      •   Linen shirts\n\n";
+const LISBON_FRAME: &str = "  #   Lisbon trip\n\n  [a] Before we go\n      [a] Pay the deposit\n      [a] Book flights\n      [b] Renew passport\n  [a] In Lisbon\n      [a] Tram 28 early\n  •   Packing\n      •   Linen shirts\n\n";
 
 /// Views wider than the content column (78 = marks 2 + hang 4 + column 72) once drew every
 /// row with the column's width as the row stride, so rows slid into each other.
@@ -269,9 +269,9 @@ fn the_same_outline_at_narrow_exact_and_wide_widths() {
         assert_eq!(view(&s).to_text(), LISBON_FRAME, "at width {w}");
     }
     // A long item wraps at its column, whatever the view's width past it.
-    let long = "- [ ] one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen\n- next\n";
+    let long = "- [a] one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen\n- next\n";
     let at = |w: u16| view(&laid_out(long, w, 4)).to_text();
-    let expected = "  [ ] one two three four five six seven eight nine ten eleven twelve thirteen\n      fourteen fifteen\n  •   next\n\n";
+    let expected = "  [a] one two three four five six seven eight nine ten eleven twelve thirteen\n      fourteen fifteen\n  •   next\n\n";
     for w in [79u16, 80, 120, 200] {
         assert_eq!(at(w), expected, "at width {w}");
     }
@@ -293,7 +293,7 @@ fn random_outline(rng: &mut StdRng) -> String {
         let text = text.join(" ");
         md.push_str(&match rng.random_range(0..5) {
             0 => format!("{text}\n\n"),
-            1 => format!("{pad}- [ ] {text}\n"),
+            1 => format!("{pad}- [a] {text}\n"),
             2 => format!("{pad}{}. {text}\n", rng.random_range(1..30)),
             3 => format!("## {text}\n\n"),
             _ => format!("{pad}- {text}\n"),
@@ -351,7 +351,7 @@ fn every_block_shows_on_its_own_rows_after_its_hang_at_any_width() {
                 }
             }
             if *first && x < w as usize {
-                let from = x.saturating_sub(g.hang as usize).max(g.marks as usize).min(x);
+                let from = x.saturating_sub(g.hang as usize).max(g.gutter as usize).min(x);
                 for c in &cells[from..x] {
                     assert_eq!(c.role, Role::Hang, "{ctx}: row {y}'s hang");
                 }

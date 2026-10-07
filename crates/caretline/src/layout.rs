@@ -23,17 +23,18 @@ use crate::state::{Config, Document, Follow, Scroll, State, View};
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct OutlineLayout {
-    /// Columns before everything, for marks a host draws (a conflict sign, a flash).
-    pub marks: u16,
+    /// Columns before everything: the gutter, where a decoration's `gutter` text goes.
+    #[serde(alias = "marks")]
+    pub gutter: u16,
     /// Columns per depth.
     pub indent: u16,
-    /// Columns of the hang: the bullet, number, task box or heading sign before the content.
+    /// Columns of the hang, before the content: where a block's marker glyph or decoration goes.
     pub hang: u16,
     /// The wrap width of depth-0 content (`min(72, available)` is a good choice).
     pub column: u16,
     /// The narrowest a nested block's content wraps at.
     pub min_column: u16,
-    /// Rows a host draws after a block (its fields on their own row, an inline image).
+    /// Rows a host draws after a block (anything of its own: an inline image, a form).
     #[serde(skip_serializing_if = "BTreeMap::is_empty")]
     pub extra_rows: BTreeMap<MarkId, u16>,
     /// Draw a plain glyph in each hang (`•`, `1.`, `[ ]`, `#`), for a host that draws none.
@@ -43,7 +44,7 @@ pub struct OutlineLayout {
 
 impl Default for OutlineLayout {
     fn default() -> Self {
-        OutlineLayout { marks: 2, indent: 4, hang: 4, column: 72, min_column: 20, extra_rows: BTreeMap::new(), hang_glyphs: false }
+        OutlineLayout { gutter: 2, indent: 4, hang: 4, column: 72, min_column: 20, extra_rows: BTreeMap::new(), hang_glyphs: false }
     }
 }
 
@@ -841,7 +842,7 @@ impl Layout {
 /// indenting where their content would have fewer than `min_column` columns (or the whole
 /// view, when it is narrower).
 pub(crate) fn block_x(g: &OutlineLayout, d: usize, width: u16) -> usize {
-    let x = g.marks as usize + d * g.indent as usize + g.hang as usize;
+    let x = g.gutter as usize + d * g.indent as usize + g.hang as usize;
     let keep = (g.min_column as usize).min(width as usize);
     x.min((width as usize).saturating_sub(keep))
 }

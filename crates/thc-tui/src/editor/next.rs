@@ -137,7 +137,7 @@ fn new_block(l: &Line, mark: Option<MarkId>, cfg: &OutlineConfig) -> NewBlock {
         Kind::Bullet => (cn::Kind::Bullet, None),
         Kind::Para => (cn::Kind::Para, None),
     };
-    NewBlock { depth: l.depth as u16, kind, status: None, tag, text: l.text.clone(), gap: l.gap, mark }
+    NewBlock { depth: l.depth as u16, kind, tag, text: l.text.clone(), gap: l.gap, mark }
 }
 
 /// The blank row before a line by default (the engine's rule, over thc's lines): a paragraph
@@ -646,7 +646,7 @@ impl Next {
             Some(k) => k,
             None => {
                 let mut view = cn::View::new(Viewport { width: 4000, height: 1 });
-                view.layout = Some(OutlineLayout { marks: 0, hang: 0, indent: 0, column: w.min(3000) as u16, min_column: 1, ..OutlineLayout::default() });
+                view.layout = Some(OutlineLayout { gutter: 0, hang: 0, indent: 0, column: w.min(3000) as u16, min_column: 1, ..OutlineLayout::default() });
                 self.row_layouts.push((rev, w, Layout::of(&self.st.doc, &view)));
                 self.row_layouts.len() - 1
             }
@@ -806,7 +806,7 @@ impl Doc {
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
     /// How many notes, and how many images were left out.
     pub(super) fn next_paste(&mut self, text: &str, plain: bool) -> (usize, usize) {
-        let (blocks, images) = cn::outline::markdown::parse_markdown_with(text, plain, cfg());
+        let (blocks, images) = cn::outline::markdown::parse_markdown(text, plain, cfg());
         let text = Some(text.to_string());
         self.next_run(if plain { Msg::PastePlain { text } } else { Msg::Paste { text } });
         (blocks.len(), images)

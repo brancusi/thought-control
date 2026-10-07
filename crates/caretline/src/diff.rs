@@ -181,7 +181,7 @@ mod tests {
     #[test]
     fn finds_the_least_changes() {
         assert!(changes("same", "same").is_empty());
-        assert_eq!(changes("Hey there, \nnext\n", "Hey there, \n- note\nnext\n"), vec![(12, 12, "- note\n".into())]);
+        assert_eq!(changes("Hey there, \nnext\n", "Hey there, \n- line\nnext\n"), vec![(12, 12, "- line\n".into())]);
         // Two changes far apart stay two changes: a caret between them is left alone.
         let old = "one\ntwo\nthree\nfour\nfive\n";
         let new = "ONE\ntwo\nthree\nfour\nfive!\n";

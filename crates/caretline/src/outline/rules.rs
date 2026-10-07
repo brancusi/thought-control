@@ -1,5 +1,5 @@
-//! The outline's editing rules: what Enter, Backspace, Delete, Tab, the task cycle, moving
-//! blocks, copy and paste do in an outline document, and the caret invariant.
+//! The outline's editing rules: what Enter, Backspace, Delete, Tab, moving blocks, copy and
+//! paste do in an outline document, and the caret invariant.
 //!
 //! Each rule is one Transaction and one undo step, with explicit mark edits where the plain
 //! mapping isn't the rule (a paragraph split off, two paragraphs joined, blocks moved). After
@@ -33,8 +33,6 @@ pub(crate) fn update(state: &mut State, msg: &Msg) -> Option<Vec<Effect>> {
         Msg::KillLine => forward(state, Fwd::Line),
         Msg::Indent => Some(nest(state, 1)),
         Msg::Outdent => Some(nest(state, -1)),
-        Msg::TaskCycle => Some(task_cycle(state)),
-        Msg::SetStatus { id, ch } => Some(set_status(state, *id, *ch)),
         Msg::MoveBlock { dir } => Some(move_block(state, *dir)),
         Msg::SelectBlock { id } => Some(select_block(state, *id)),
         Msg::InsertBlocks { after, blocks } => Some(insert_blocks(state, *after, blocks)),
@@ -120,7 +118,7 @@ fn marker_of(text: RopeSlice, b: &BlockInfo) -> String {
     text.slice(b.start + b.indent..b.content_start()).to_string()
 }
 
-/// The marker for the item after `b` (Enter): the same bullet, the next number, a task open.
+/// The marker for the item after `b` (Enter): the same bullet, the next number, the new tag.
 fn next_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
     let cfg = state.doc.outline.as_ref().expect("outline");
     let m = marker_of(text, b);
@@ -129,21 +127,16 @@ fn next_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
             let delim = m.chars().find(|c| *c == '.' || *c == ')').unwrap_or('.');
             format!("{}{delim} ", n + 1)
         }
-        (Kind::Task, _) => format!("{} [{}] ", m.chars().next().unwrap_or('-'), cfg.cycle[0]),
         _ if b.tag.is_some() => continued_tag(cfg, &m),
         _ => m,
     }
 }
 
-/// The marker for a new empty item like `b` (an open task, the same bullet or number).
+/// The marker for a new empty item like `b` (the same bullet or number, the new tag).
 fn empty_marker(state: &State, text: RopeSlice, b: &BlockInfo) -> String {
     let cfg = state.doc.outline.as_ref().expect("outline");
     let m = marker_of(text, b);
-    match b.kind {
-        Kind::Task => format!("{} [{}] ", m.chars().next().unwrap_or('-'), cfg.cycle[0]),
-        _ if b.tag.is_some() => continued_tag(cfg, &m),
-        _ => m,
-    }
+    if b.tag.is_some() { continued_tag(cfg, &m) } else { m }
 }
 
 /// The marker after a tagged bullet `m` (`- [c] `): the same bullet with the config's new tag,
@@ -279,9 +272,7 @@ fn newline_at(state: &mut State, soft: bool, merge: bool) {
 fn type_text(state: &mut State, typed: &str) -> Option<Vec<Effect>> {
     let r = single(state)?;
     let o = state.blocks()?;
-    let Some(i) = focused_atomic(&o, state.doc.text.slice(..), &r) else {
-        return task_shorthand(state, &o, r, typed);
-    };
+    let i = focused_atomic(&o, state.doc.text.slice(..), &r)?;
     if typed.is_empty() || typed.contains(['\n', '\r']) {
         return None;
     }
@@ -293,37 +284,6 @@ fn type_text(state: &mut State, typed: &str) -> Option<Vec<Effect>> {
     edit(state, vec![(b.end, b.end, Some(format!("{le}{typed}")))], caret_at(caret), false, |m, _| {
         m.mint(at);
     });
-    Some(Vec::new())
-}
-
-/// A bare task box typed at the start of a paragraph's line (`[ ] `, `[x] `, `[] `) is
-/// shorthand for a task: it becomes `- [c] `, and that line a task (on a later line, a new
-/// block). One step, the typed space included.
-fn task_shorthand(state: &mut State, o: &Outline, r: Range, typed: &str) -> Option<Vec<Effect>> {
-    if !r.is_empty() || !typed.ends_with(' ') || typed.contains(['\n', '\r']) {
-        return None;
-    }
-    let cfg = state.doc.outline.clone()?;
-    let text = state.doc.text.slice(..);
-    let p = r.head;
-    let b = o.block_at(text, p);
-    if !b.is_plain_para() {
-        return None;
-    }
-    let line = text.char_to_line(p);
-    let ls = text.line_to_char(line);
-    let indent = if line == b.first_line { b.indent } else { 0 };
-    let before: String = text.slice(ls + indent.min(p - ls)..p).chars().chain(typed.chars()).collect();
-    let inner = before.strip_prefix('[')?.strip_suffix("] ")?;
-    let ch = match inner.chars().count() {
-        0 => cfg.cycle[0],
-        1 => inner.chars().next().filter(|&c| cfg.is_task_char(c))?,
-        _ => return None,
-    };
-    let from = ls + indent.min(p - ls);
-    let ins = format!("- [{ch}] ");
-    let caret = from + ins.chars().count();
-    edit(state, vec![(from, p, Some(ins))], caret_at(caret), false, |_, _| {});
     Some(Vec::new())
 }
 
@@ -387,16 +347,15 @@ fn backward(state: &mut State, how: Back) -> Option<Vec<Effect>> {
     Some(Vec::new())
 }
 
-/// Backspace at a block's content start: the marker goes a step at a time (a task becomes a
-/// bullet, a bullet or heading a paragraph), and a paragraph joins the block above.
+/// Backspace at a block's content start: the marker goes a step at a time (a tag goes, then
+/// the bullet; a heading or number makes a paragraph), and a paragraph joins the block above.
 fn backspace_at_start(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
     let b = o.blocks[i].clone();
     let text = state.doc.text.slice(..);
     if b.prefix_len > 0 {
-        let (from, to) = match b.kind {
-            Kind::Task => (b.start + b.indent + 2, b.content_start()),
-            _ if b.tag.is_some() => (b.start + b.indent + 2, b.content_start()),
-            _ => (b.start, b.content_start()),
+        let (from, to) = match b.tag {
+            Some(_) => (b.start + b.indent + 2, b.content_start()),
+            None => (b.start, b.content_start()),
         };
         edit(state, vec![(from, to, None)], caret_at(from), false, |_, _| {});
         return Vec::new();
@@ -569,145 +528,6 @@ fn nest(state: &mut State, delta: i32) -> Vec<Effect> {
 }
 
 // ---------------------------------------------------------------------------------------
-// The task cycle
-
-#[derive(Clone, Copy, PartialEq, Eq)]
-enum Cycle {
-    Open(char),
-    Done(char),
-    Text,
-}
-
-fn task_cycle(state: &mut State) -> Vec<Effect> {
-    let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let cfg = state.doc.outline.clone().expect("outline");
-    let rope = state.doc.text.clone();
-    let text = rope.slice(..);
-    let r = state.view.selection.primary();
-    let (fi, li) = (o.index_at(text, r.from()), o.index_at(text, r.to()));
-    let b = o.blocks[fi].clone();
-    if fi == li && b.kind == Kind::Para && !b.fence && b.line_count > 1 {
-        return split_for_task(state, &o, fi);
-    }
-    let target = match (b.kind, b.status) {
-        (Kind::Task, Some(c)) if c == cfg.cycle[1] => Cycle::Text,
-        (Kind::Task, _) => Cycle::Done(cfg.cycle[1]),
-        _ => Cycle::Open(cfg.cycle[0]),
-    };
-    let mut changes: Vec<(usize, usize, Option<String>)> = Vec::new();
-    let mut completed = Vec::new();
-    for i in fi..=li {
-        let b = &o.blocks[i];
-        if b.fence {
-            continue;
-        }
-        let at = b.start + b.indent;
-        match target {
-            Cycle::Open(c) | Cycle::Done(c) => {
-                if matches!(target, Cycle::Done(_)) && b.status != Some(c) {
-                    completed.push(b.id);
-                }
-                match b.kind {
-                    Kind::Para => changes.push((at, at, Some(format!("- [{c}] ")))),
-                    Kind::Bullet => changes.push((at, b.content_start(), Some(format!("- [{c}] ")))),
-                    Kind::Task if b.status != Some(c) => changes.push((at + 3, at + 4, Some(c.to_string()))),
-                    Kind::Task => {}
-                }
-            }
-            Cycle::Text => {
-                if b.kind != Kind::Para {
-                    changes.push((b.start, b.content_start(), None));
-                }
-            }
-        }
-    }
-    // Back to text next to a paragraph with no blank row between: it joins it (the reverse of
-    // a split). Never across a blank row.
-    let mut joins: Vec<MarkId> = Vec::new();
-    if target == Cycle::Text && r.is_empty() {
-        let joinable = |x: &BlockInfo| x.is_plain_para() && x.depth == 0;
-        if fi > 0 && joinable(&o.blocks[fi - 1]) && !b.gap {
-            joins.push(b.id);
-        }
-        if let Some(c) = o.blocks.get(fi + 1) {
-            if joinable(c) && !c.gap {
-                joins.push(c.id);
-            }
-        }
-    }
-    if changes.is_empty() && joins.is_empty() {
-        return Vec::new();
-    }
-    state.view.status = Some(match target {
-        Cycle::Open(_) => "task",
-        Cycle::Done(_) => "done",
-        Cycle::Text => "text",
-    }
-    .into());
-    let sel = mapped(state, &changes, Assoc::After);
-    edit(state, changes, sel, false, move |m, _| {
-        for id in joins {
-            m.remove(id);
-        }
-    });
-    completed.into_iter().map(|id| Effect::Completed { id }).collect()
-}
-
-/// The task cycle inside a multi-line paragraph: each selected line becomes its own task, and
-/// the lines before and after stay paragraphs. The piece holding the first line keeps the
-/// paragraph's id; the new pieces sit right against it (no blank row).
-fn split_for_task(state: &mut State, o: &Outline, i: usize) -> Vec<Effect> {
-    let cfg = state.doc.outline.clone().expect("outline");
-    let b = o.blocks[i].clone();
-    let text = state.doc.text.slice(..);
-    let r = state.view.selection.primary();
-    let (ka, kb) = (text.char_to_line(r.from()), text.char_to_line(r.to()));
-    let marker = format!("- [{}] ", cfg.cycle[0]);
-    let mut changes = Vec::new();
-    for k in ka..=kb {
-        let at = if k == b.first_line { b.start + b.indent } else { text.line_to_char(k) };
-        changes.push((at, at, Some(marker.clone())));
-    }
-    let after = (kb < b.last_line()).then_some(kb + 1);
-    let first = b.first_line;
-    let sel = mapped(state, &changes, Assoc::After);
-    state.view.status = Some("task".into());
-    edit(state, changes, sel, false, move |m, new| {
-        let tight = MarkAttrs::gap(Some(false));
-        for k in (ka..=kb).chain(after) {
-            if k != first {
-                m.mint_with(new.line_to_char(k), tight.clone());
-            }
-        }
-    });
-    Vec::new()
-}
-
-fn set_status(state: &mut State, id: MarkId, ch: char) -> Vec<Effect> {
-    let Some(o) = state.blocks() else { return notice(state, "only in outline documents") };
-    let cfg = state.doc.outline.clone().expect("outline");
-    let Some(b) = o.get(id).cloned() else { return notice(state, "no such block") };
-    if b.kind != Kind::Task {
-        return notice(state, "not a task");
-    }
-    if !cfg.is_task_char(ch) {
-        return notice(state, &format!("'{ch}' isn't a task state"));
-    }
-    if b.status == Some(ch) {
-        return Vec::new();
-    }
-    let at = b.start + b.indent + 3;
-    let changes = vec![(at, at + 1, Some(ch.to_string()))];
-    let sel = mapped(state, &changes, Assoc::After);
-    edit(state, changes, sel, false, |_, _| {});
-    if ch == cfg.cycle[1] {
-        vec![Effect::Completed { id }]
-    } else {
-        Vec::new()
-    }
-}
-
-// ---------------------------------------------------------------------------------------
 // Moving blocks
 
 fn move_block(state: &mut State, dir: Dir) -> Vec<Effect> {
@@ -853,7 +673,7 @@ fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effec
         // Whole blocks elsewhere (inside a block's text): as Markdown blocks.
         if state.doc.clipboard.blocks && single(state).is_some() {
             if let Some(md) = state.doc.clipboard.external.clone() {
-                let (blocks, _) = markdown::parse_markdown_with(&md, false, state.doc.outline.as_ref().expect("outline"));
+                let (blocks, _) = markdown::parse_markdown(&md, false, state.doc.outline.as_ref().expect("outline"));
                 if !blocks.is_empty() {
                     paste_blocks(state, &blocks);
                     return Some(Vec::new());
@@ -868,7 +688,7 @@ fn paste(state: &mut State, text: Option<&str>, plain: bool) -> Option<Vec<Effec
         return None;
     }
     single(state)?;
-    let (blocks, images) = markdown::parse_markdown_with(&text, plain, state.doc.outline.as_ref().expect("outline"));
+    let (blocks, images) = markdown::parse_markdown(&text, plain, state.doc.outline.as_ref().expect("outline"));
     if blocks.is_empty() {
         return Some(notice(state, &format!("left out {}", plural(images, "image"))));
     }
@@ -1023,7 +843,7 @@ fn copy_blocks(state: &mut State, o: &Outline, i0: usize, i1: usize, cut: bool) 
 
 /// Pastes whole blocks from the register at the caret, when the caret is on an empty item
 /// (the blocks take its place), at a block's content start (they go before it) or at the
-/// end of a block (they follow its subtree as siblings). Their own kinds and statuses stay; their depths move to the target's; a cut's
+/// end of a block (they follow its subtree as siblings). Their own kinds and tags stay; their depths move to the target's; a cut's
 /// ids come back. `None` when the caret is elsewhere.
 fn paste_whole(state: &mut State) -> Option<Vec<Effect>> {
     let clip = state.doc.clipboard.clone();
@@ -1245,7 +1065,7 @@ pub(crate) enum Pins {
     /// A key at the caret (typing, Backspace, Delete): if the caret's block changes kind or
     /// depth, it and the block after it keep their blank rows.
     Near { id: MarkId, shape: (Kind, u16), gaps: Vec<(MarkId, bool)> },
-    /// Tab, Shift-Tab, the task cycle: every block keeps its blank row.
+    /// Tab, Shift-Tab, a host command's `keep_gaps`: every block keeps its blank row.
     All(Vec<(MarkId, bool)>),
 }
 
@@ -1266,7 +1086,7 @@ pub(crate) fn pins_for(state: &State, msg: &Msg) -> Option<Pins> {
             let gaps = o.blocks[i..(i + 2).min(o.blocks.len())].iter().map(|b| (b.id, b.gap)).collect();
             Some(Pins::Near { id: b.id, shape: (b.kind, b.depth), gaps })
         }
-        Msg::Indent | Msg::Outdent | Msg::TaskCycle => Some(Pins::All(o.blocks.iter().map(|b| (b.id, b.gap)).collect())),
+        Msg::Indent | Msg::Outdent => Some(Pins::All(o.blocks.iter().map(|b| (b.id, b.gap)).collect())),
         _ => None,
     }
 }

@@ -1,10 +1,10 @@
 {
-  "text": "# Lisbon trip\nBooked the flat in Lisbon.\nIt faces the river.\n- [ ] Pay the deposit\n  - ask Ana about her desk\n    - [x] Call Ana\n- [x] Renew passport\n- [ ] Book flights\n![boiler label](files/boiler.png)\n1. Pack\n2. Leave",
+  "text": "# Lisbon trip\nBooked the flat in Lisbon.\nIt faces the river.\n- Pay the deposit\n  - ask Ana about her desk\n    - Call Ana\n- Renew passport\n- Book flights\n![boiler label](files/boiler.png)\n1. Pack\n2. Leave",
   "selection": {
     "ranges": [
       {
-        "anchor": 147,
-        "head": 147,
+        "anchor": 135,
+        "head": 135,
         "old_visual_position": null
       }
     ],
@@ -51,23 +51,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 109
+                "Retain": 105
               },
               {
                 "Insert": "\n  - "
               },
               {
-                "Retain": 91
+                "Retain": 83
               }
             ],
-            "len": 200,
-            "len_after": 205
+            "len": 188,
+            "len_after": 193
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 114,
-                "head": 114,
+                "anchor": 110,
+                "head": 110,
                 "old_visual_position": null
               }
             ],
@@ -78,23 +78,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 109
+                "Retain": 105
               },
               {
                 "Delete": 5
               },
               {
-                "Retain": 91
+                "Retain": 83
               }
             ],
-            "len": 205,
-            "len_after": 200
+            "len": 193,
+            "len_after": 188
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 109,
-                "head": 109,
+                "anchor": 105,
+                "head": 105,
                 "old_visual_position": null
               }
             ],
@@ -110,23 +110,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 114
+                "Retain": 106
               },
               {
-                "Insert": "Call Ana"
+                "Insert": "  "
               },
               {
-                "Retain": 91
+                "Retain": 87
               }
             ],
-            "len": 205,
-            "len_after": 213
+            "len": 193,
+            "len_after": 195
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 122,
-                "head": 122,
+                "anchor": 112,
+                "head": 112,
                 "old_visual_position": null
               }
             ],
@@ -137,23 +137,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 114
+                "Retain": 106
               },
               {
-                "Delete": 8
+                "Delete": 2
               },
               {
-                "Retain": 91
+                "Retain": 87
               }
             ],
-            "len": 213,
-            "len_after": 205
+            "len": 195,
+            "len_after": 193
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 114,
-                "head": 114,
+                "anchor": 110,
+                "head": 110,
                 "old_visual_position": null
               }
             ],
@@ -169,23 +169,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 110
+                "Retain": 112
               },
               {
-                "Insert": "  "
+                "Insert": "Call Ana"
               },
               {
-                "Retain": 103
+                "Retain": 83
               }
             ],
-            "len": 213,
-            "len_after": 215
+            "len": 195,
+            "len_after": 203
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 124,
-                "head": 124,
+                "anchor": 120,
+                "head": 120,
                 "old_visual_position": null
               }
             ],
@@ -196,23 +196,23 @@
           "changes": {
             "changes": [
               {
-                "Retain": 110
+                "Retain": 112
               },
               {
-                "Delete": 2
+                "Delete": 8
               },
               {
-                "Retain": 103
+                "Retain": 83
               }
             ],
-            "len": 215,
-            "len_after": 213
+            "len": 203,
+            "len_after": 195
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 122,
-                "head": 122,
+                "anchor": 112,
+                "head": 112,
                 "old_visual_position": null
               }
             ],
@@ -223,161 +223,31 @@
       },
       {
         "parent": 3,
-        "last_child": 5,
-        "transaction": {
-          "changes": {
-            "changes": [
-              {
-                "Retain": 114
-              },
-              {
-                "Insert": "- [ ] "
-              },
-              {
-                "Delete": 2
-              },
-              {
-                "Retain": 99
-              }
-            ],
-            "len": 215,
-            "len_after": 219
-          },
-          "selection": {
-            "ranges": [
-              {
-                "anchor": 128,
-                "head": 128,
-                "old_visual_position": null
-              }
-            ],
-            "primary_index": 0
-          }
-        },
-        "inversion": {
-          "changes": {
-            "changes": [
-              {
-                "Retain": 114
-              },
-              {
-                "Insert": "- "
-              },
-              {
-                "Delete": 6
-              },
-              {
-                "Retain": 99
-              }
-            ],
-            "len": 219,
-            "len_after": 215
-          },
-          "selection": {
-            "ranges": [
-              {
-                "anchor": 124,
-                "head": 124,
-                "old_visual_position": null
-              }
-            ],
-            "primary_index": 0
-          }
-        },
-        "timestamp": 0
-      },
-      {
-        "parent": 4,
-        "last_child": 6,
-        "transaction": {
-          "changes": {
-            "changes": [
-              {
-                "Retain": 117
-              },
-              {
-                "Insert": "x"
-              },
-              {
-                "Delete": 1
-              },
-              {
-                "Retain": 101
-              }
-            ],
-            "len": 219,
-            "len_after": 219
-          },
-          "selection": {
-            "ranges": [
-              {
-                "anchor": 128,
-                "head": 128,
-                "old_visual_position": null
-              }
-            ],
-            "primary_index": 0
-          }
-        },
-        "inversion": {
-          "changes": {
-            "changes": [
-              {
-                "Retain": 117
-              },
-              {
-                "Insert": " "
-              },
-              {
-                "Delete": 1
-              },
-              {
-                "Retain": 101
-              }
-            ],
-            "len": 219,
-            "len_after": 219
-          },
-          "selection": {
-            "ranges": [
-              {
-                "anchor": 128,
-                "head": 128,
-                "old_visual_position": null
-              }
-            ],
-            "primary_index": 0
-          }
-        },
-        "timestamp": 0
-      },
-      {
-        "parent": 5,
         "last_child": null,
         "transaction": {
           "changes": {
             "changes": [
               {
-                "Retain": 129
+                "Retain": 121
               },
               {
-                "Insert": "- [x] Renew passport\n- [ ] Book flights\n"
+                "Insert": "- Renew passport\n- Book flights\n"
               },
               {
-                "Delete": 40
+                "Delete": 32
               },
               {
                 "Retain": 50
               }
             ],
-            "len": 219,
-            "len_after": 219
+            "len": 203,
+            "len_after": 203
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 147,
-                "head": 147,
+                "anchor": 135,
+                "head": 135,
                 "old_visual_position": null
               }
             ],
@@ -388,29 +258,29 @@
           "changes": {
             "changes": [
               {
-                "Retain": 129
+                "Retain": 121
               },
               {
-                "Insert": "- [ ] Book flights\n- [x] Renew passport\n"
+                "Insert": "- Book flights\n- Renew passport\n"
               },
               {
-                "Delete": 40
+                "Delete": 32
               },
               {
                 "Retain": 50
               }
             ],
-            "len": 219,
-            "len_after": 219
+            "len": 203,
+            "len_after": 203
           },
           "selection": {
             "ranges": [
               {
-                "anchor": 166,
-                "head": 166,
+                "anchor": 150,
+                "head": 150,
                 "old_visual_position": [
                   0,
-                  18
+                  14
                 ]
               }
             ],
@@ -420,7 +290,7 @@
         "timestamp": 0
       }
     ],
-    "current": 6
+    "current": 4
   },
   "saved_revision": 0,
   "saving": null,
@@ -451,31 +321,31 @@
         "id": 2
       },
       {
-        "pos": 83,
+        "pos": 79,
         "id": 3
       },
       {
-        "pos": 110,
+        "pos": 106,
         "id": 9
       },
       {
-        "pos": 129,
+        "pos": 121,
         "id": 5
       },
       {
-        "pos": 150,
+        "pos": 138,
         "id": 4
       },
       {
-        "pos": 169,
+        "pos": 153,
         "id": 6
       },
       {
-        "pos": 203,
+        "pos": 187,
         "id": 7
       },
       {
-        "pos": 211,
+        "pos": 195,
         "id": 8
       }
     ],
@@ -487,7 +357,7 @@
       "redo": {
         "set": [
           {
-            "pos": 110,
+            "pos": 106,
             "id": 9
           }
         ]
@@ -495,17 +365,15 @@
     },
     {},
     {},
-    {},
-    {},
     {
       "undo": {
         "set": [
           {
-            "pos": 129,
+            "pos": 121,
             "id": 4
           },
           {
-            "pos": 148,
+            "pos": 136,
             "id": 5
           }
         ]
@@ -513,11 +381,11 @@
       "redo": {
         "set": [
           {
-            "pos": 129,
+            "pos": 121,
             "id": 5
           },
           {
-            "pos": 150,
+            "pos": 138,
             "id": 4
           }
         ]
@@ -526,33 +394,8 @@
   ],
   "outline": {
     "indent": 2,
-    "task_markers": [
-      {
-        "ch": " ",
-        "name": "todo"
-      },
-      {
-        "ch": "x",
-        "name": "done"
-      },
-      {
-        "ch": "/",
-        "name": "doing"
-      },
-      {
-        "ch": "w",
-        "name": "waiting"
-      },
-      {
-        "ch": "-",
-        "name": "cancelled"
-      }
-    ],
-    "cycle": [
-      " ",
-      "x"
-    ],
     "atomic_images": true,
     "numbered": true
-  }
+  },
+  "doc_rev": 11
 }

@@ -1,6 +1,8 @@
 //! Several views of one document: they share the text, marks and undo; an edit through one
 //! rebases the others; a read-only view is refused every edit; folds belong to a view.
 
+mod common;
+
 use caretline::helix::graphemes::ensure_grapheme_boundary_prev;
 use caretline::helix::Selection;
 use caretline::outline::markdown;
@@ -10,11 +12,13 @@ use caretline::{
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 
-const SAMPLE: &str = "First line of a paragraph\nand its second line\n\n- a bullet\n  - [ ] a task under it\n\nLast, with ünïcode 漢字 and 🙂\n";
+const SAMPLE: &str = "First line of a paragraph\nand its second line\n\n- a bullet\n  - [a] a tagged item under it\n\nLast, with ünïcode 漢字 and 🙂\n";
 
 /// The sample outline as one document, and a view of it at `w`x`h`.
 fn sample() -> Document {
-    markdown::load(SAMPLE, None, Viewport { width: 60, height: 20 }, OutlineConfig::default()).doc
+    let mut doc = markdown::load(SAMPLE, None, Viewport { width: 60, height: 20 }, common::tagged_cfg()).doc;
+    doc.set_host(common::retag_host());
+    doc
 }
 
 fn at(w: u16, h: u16) -> View {
@@ -77,7 +81,7 @@ fn random_msg(rng: &mut StdRng, doc: &Document) -> Msg {
         9 => Msg::KillLine,
         10 => Msg::Indent,
         11 => Msg::Outdent,
-        12 => Msg::TaskCycle,
+        12 => common::retag(),
         13 => Msg::MoveBlock { dir },
         14 => Msg::Move { dir, by: By::VisualLine, extend: false },
         15 => Msg::Move { dir, by: By::Word, extend: true },
@@ -165,7 +169,7 @@ fn a_read_only_view_is_refused_every_edit_and_still_moves() {
         Msg::DeleteToLineStart,
         Msg::Indent,
         Msg::Outdent,
-        Msg::TaskCycle,
+        common::retag(),
         Msg::MoveBlock { dir: Dir::Forward },
         Msg::Undo,
         Msg::Redo,
@@ -335,10 +339,10 @@ fn typing_in_a_big_doc_with_two_views() {
     let mut md = String::new();
     for i in 0..5000 {
         let pad = if i % 7 == 3 { "  " } else { "" };
-        let marker = if i % 9 == 0 { "- [ ] " } else { "- " };
+        let marker = if i % 9 == 0 { "- [a] " } else { "- " };
         md.push_str(&format!("{pad}{marker}the quick brown fox jumps over a lazy dog\n"));
     }
-    let base = markdown::load(&md, None, Viewport { width: 120, height: 40 }, OutlineConfig::default()).doc;
+    let base = markdown::load(&md, None, Viewport { width: 120, height: 40 }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() }).doc;
     let keys = if cfg!(debug_assertions) { 20 } else { 300 };
     let mut per_key = Vec::new();
     for n in [1, 2] {
@@ -372,7 +376,7 @@ fn typing_in_a_big_doc_with_two_views() {
 #[test]
 fn the_same_messages_give_the_same_documents() {
     let run = || {
-        let mut doc = markdown::load("- \n", None, Viewport { width: 40, height: 10 }, OutlineConfig::default()).doc;
+        let mut doc = markdown::load("- \n", None, Viewport { width: 40, height: 10 }, OutlineConfig { tags: "abc".into(), new_tag: Some('a'), ..OutlineConfig::default() }).doc;
         let mut views = [at(40, 10), at(30, 6)];
         views[0].selection = Selection::point(2);
         for (now, i, msg) in [

@@ -152,7 +152,6 @@ pub fn keymap(key: &Key) -> Option<Msg> {
 /// | Key | Msg |
 /// |---|---|
 /// | `Tab` / `Shift-Tab` | `indent` / `outdent` |
-/// | `Ctrl-T` | `task_cycle` |
 /// | `Shift-Enter`, `Ctrl-J` | `soft_break` |
 /// | `Alt-↑` / `Alt-↓` | `move_block` |
 /// | `Ctrl-↑` / `Ctrl-↓` | `move` by `block` (Shift extends) |
@@ -167,7 +166,6 @@ pub fn outline_keymap(key: &Key) -> Option<Msg> {
         KeyCode::BackTab => return Some(Msg::Outdent),
         KeyCode::Enter if m.shift && !(m.ctrl || m.alt || m.cmd) => return Some(Msg::SoftBreak),
         KeyCode::Char(c) if m.ctrl && !m.cmd && !m.alt => match c.to_ascii_lowercase() {
-            't' => return Some(Msg::TaskCycle),
             'j' => return Some(Msg::SoftBreak),
             _ => {}
         },

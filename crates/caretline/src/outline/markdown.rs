@@ -6,13 +6,11 @@ use crate::outline::{default_gap, derive, numbered_marker, parse_str, BlockInfo,
 use crate::state::{State, Viewport};
 
 /// Markdown read as blocks: paragraphs (their lines joined), `-` `*` `+` bullets nested by
-/// their first indent, numbered items, `- [ ]` tasks (a bare `[ ] ` too), headings, quotes
+/// their first indent, numbered items, tagged bullets `- [c] ` when `c` is one of the config's
+/// tags (a bare `[c] ` line too), headings, quotes
 /// and rules as one-line paragraphs, and fences, tables and front matter as one paragraph
 /// with its line breaks. Images are left out and counted. `plain`: a paragraph per block of
 /// lines, line breaks kept, nothing read as a list.
-pub fn parse_markdown(input: &str, plain: bool) -> (Vec<NewBlock>, usize) {
-    parse_markdown_with(input, plain, &OutlineConfig::default())
-}
 
 /// A bullet's tag at the start of `rest` (`[c] `, with `c` in `cfg.tags`; GFM's `[X]` reads as
 /// `[x]` when only `x` is a tag): the tag and the chars it takes.
@@ -34,10 +32,7 @@ fn tag_at(rest: &str, cfg: &OutlineConfig) -> Option<char> {
     }
 }
 
-/// [`parse_markdown`] for a document's config: with [`OutlineConfig::tags`] set, `- [c] `
-/// (and a bare `[c] ` line) is a tagged bullet.
-pub fn parse_markdown_with(input: &str, plain: bool, cfg: &OutlineConfig) -> (Vec<NewBlock>, usize) {
-    let legacy = !cfg.task_markers.is_empty();
+pub fn parse_markdown(input: &str, plain: bool, cfg: &OutlineConfig) -> (Vec<NewBlock>, usize) {
     let text = input.replace("\r\n", "\n").replace('\r', "\n");
     let mut raw: Vec<String> = text.split('\n').map(|l| l.replace('\t', "    ")).collect();
     while raw.last().is_some_and(|l| l.trim().is_empty()) {
@@ -78,7 +73,7 @@ pub fn parse_markdown_with(input: &str, plain: bool, cfg: &OutlineConfig) -> (Ve
         if let Some(b) = rest.strip_prefix("- ").or_else(|| rest.strip_prefix("* ")).or_else(|| rest.strip_prefix("+ ")) {
             return Some((indent, "-".into(), b.to_string()));
         }
-        if (legacy && CHECKBOXES.iter().any(|(p, _)| rest.starts_with(p))) || tag_at(rest, cfg).is_some() {
+        if tag_at(rest, cfg).is_some() {
             return Some((indent, "-".into(), rest.to_string()));
         }
         let n = numbered_marker(rest)?;
@@ -142,22 +137,12 @@ pub fn parse_markdown_with(input: &str, plain: bool, cfg: &OutlineConfig) -> (Ve
         }
         if let Some((indent, marker, body)) = item(&l) {
             flush(&mut para, &mut out, para_indent);
-            let mut nb = NewBlock { depth: (indent / unit) as u16, kind: Kind::Bullet, status: None, tag: None, text: body, gap: None, mark: None };
-            for (p, c) in CHECKBOXES.into_iter().filter(|_| legacy) {
-                if let Some(rest) = nb.text.strip_prefix(p) {
-                    nb.kind = Kind::Task;
-                    nb.status = Some(c);
-                    nb.text = rest.to_string();
-                    break;
-                }
+            let mut nb = NewBlock { depth: (indent / unit) as u16, kind: Kind::Bullet, tag: None, text: body, gap: None, mark: None };
+            if let Some(c) = tag_at(&nb.text, cfg) {
+                nb.tag = Some(c);
+                nb.text = nb.text.chars().skip(4).collect();
             }
-            if nb.kind == Kind::Bullet {
-                if let Some(c) = tag_at(&nb.text, cfg) {
-                    nb.tag = Some(c);
-                    nb.text = nb.text[4..].to_string();
-                }
-            }
-            if nb.kind == Kind::Bullet && marker != "-" {
+            if marker != "-" {
                 nb.text = format!("{marker} {}", nb.text);
             }
             out.push(nb);
@@ -196,8 +181,6 @@ pub fn parse_markdown_with(input: &str, plain: bool, cfg: &OutlineConfig) -> (Ve
     (out, images)
 }
 
-const CHECKBOXES: [(&str, char); 6] = [("[ ] ", ' '), ("[x] ", 'x'), ("[X] ", 'x'), ("[/] ", '/'), ("[-] ", '-'), ("[w] ", 'w')];
-
 /// The selection `[from, to)` as Markdown (a copy). Inside one block: its plain text. Across
 /// blocks: the first block's text from `from` (with its marker only when `from` is its
 /// content start), then every later block with its marker and indentation, a blank line
@@ -206,8 +189,8 @@ pub fn to_markdown(state: &State, o: &Outline, from: usize, to: usize) -> String
     to_markdown_with(state, o, from, to, &|_| None)
 }
 
-/// [`to_markdown`] with a host's text after each block's first line (across blocks): fields
-/// a host keeps per block outside the text (a due date, a priority), written back as tokens.
+/// [`to_markdown`] with a host's text after each block's first line (across blocks): what a
+/// host keeps per block outside the text, written back into the copy.
 pub fn to_markdown_with(state: &State, o: &Outline, from: usize, to: usize, suffix: &dyn Fn(crate::marks::MarkId) -> Option<String>) -> String {
     let text = state.doc.text.slice(..);
     let piece = |a: usize, b: usize| text.slice(a..b.max(a)).to_string().replace("\r\n", "\n");
@@ -250,10 +233,9 @@ pub fn to_markdown_with(state: &State, o: &Outline, from: usize, to: usize, suff
                 out.push_str(r);
             }
         } else {
-            let marker = match (b.kind, b.hang, b.status) {
-                (Kind::Task, _, Some(c)) => format!("- [{c}] "),
-                _ if b.tag.is_some() => format!("- [{}] ", b.tag.unwrap_or(' ')),
-                (_, Hang::Number(_), _) => piece(b.start + b.indent, b.content_start()),
+            let marker = match (b.hang, b.tag) {
+                (_, Some(c)) => format!("- [{c}] "),
+                (Hang::Number(_), _) => piece(b.start + b.indent, b.content_start()),
                 _ => "- ".into(),
             };
             let mut rows = part.split('\n');
@@ -276,12 +258,11 @@ pub fn to_markdown_with(state: &State, o: &Outline, from: usize, to: usize, suff
     out.strip_suffix('\n').unwrap_or(&out).to_string()
 }
 
-/// The continuation indent of a block in a Markdown file: past an item's marker (for a task,
-/// past its `- `), or the paragraph's indentation.
+/// The continuation indent of a block in a Markdown file: past an item's marker (for a tagged
+/// bullet, past its `- `), or the paragraph's indentation.
 fn continuation_indent(b: &BlockInfo) -> usize {
     match b.kind {
         Kind::Para => b.indent,
-        Kind::Task => b.indent + 2,
         Kind::Bullet if b.tag.is_some() => b.indent + 2,
         Kind::Bullet => b.prefix_len,
     }
@@ -346,7 +327,6 @@ pub fn from_file(md: &str, cfg: &OutlineConfig) -> (String, Vec<(usize, bool)>) 
             out.push(raw.to_string());
             cont = match p.kind {
                 Kind::Para => p.indent,
-                Kind::Task => p.indent + 2,
                 Kind::Bullet if p.tag.is_some() => p.indent + 2,
                 Kind::Bullet => p.len,
             };
@@ -389,31 +369,42 @@ pub fn load(md: &str, path: Option<String>, viewport: Viewport, cfg: OutlineConf
 mod tests {
     use super::*;
 
+    fn tagged() -> OutlineConfig {
+        OutlineConfig { tags: " x".into(), ..OutlineConfig::default() }
+    }
+
     #[test]
     fn paste_reads_an_outline() {
-        let (blocks, images) = parse_markdown("Intro line\ncontinued\n\n- one\n  - [ ] two\n- [x] three\n1. first\n![x](y.png)\n", false);
+        let md = "Intro line\ncontinued\n\n- one\n  - [ ] two\n- [x] three\n1. first\n![x](y.png)\n";
+        let (blocks, images) = parse_markdown(md, false, &tagged());
         assert_eq!(images, 1);
-        let shape: Vec<(u16, Kind, Option<char>, &str)> = blocks.iter().map(|b| (b.depth, b.kind, b.status, b.text.as_str())).collect();
+        let shape: Vec<(u16, Kind, Option<char>, &str)> = blocks.iter().map(|b| (b.depth, b.kind, b.tag, b.text.as_str())).collect();
         assert_eq!(
             shape,
             [
                 (0, Kind::Para, None, "Intro line continued"),
                 (0, Kind::Bullet, None, "one"),
-                (1, Kind::Task, Some(' '), "two"),
-                (0, Kind::Task, Some('x'), "three"),
+                (1, Kind::Bullet, Some(' '), "two"),
+                (0, Kind::Bullet, Some('x'), "three"),
                 (0, Kind::Bullet, None, "1. first"),
             ]
         );
+        // Without tags, a bracket is text.
+        let (blocks, _) = parse_markdown(md, false, &OutlineConfig::default());
+        assert_eq!((blocks[2].tag, blocks[2].text.as_str()), (None, "[ ] two"));
     }
 
     #[test]
     fn a_file_round_trips() {
         let md = "# Trip\n\nBooked the flat.\nIt faces the river.\n\n- [ ] Pay the deposit\n  - ask about the desk\n    on two lines\n- [x] Book flights\n\n```\n- not a list\n\n```\n";
-        let s = load(md, None, Viewport { width: 80, height: 24 }, OutlineConfig::default());
-        assert_eq!(to_file(&s), md);
-        let o = s.blocks().unwrap();
-        let kinds: Vec<Kind> = o.blocks.iter().map(|b| b.kind).collect();
-        assert_eq!(kinds, [Kind::Para, Kind::Para, Kind::Task, Kind::Bullet, Kind::Task, Kind::Para]);
-        assert_eq!(o.blocks[3].line_count, 2, "the continuation line belongs to its item");
+        for cfg in [tagged(), OutlineConfig::default()] {
+            let s = load(md, None, Viewport { width: 80, height: 24 }, cfg.clone());
+            assert_eq!(to_file(&s), md);
+            let o = s.blocks().unwrap();
+            let kinds: Vec<Kind> = o.blocks.iter().map(|b| b.kind).collect();
+            assert_eq!(kinds, [Kind::Para, Kind::Para, Kind::Bullet, Kind::Bullet, Kind::Bullet, Kind::Para]);
+            assert_eq!(o.blocks[3].line_count, 2, "the continuation line belongs to its item");
+            assert_eq!(o.blocks[2].tag.is_some(), !cfg.tags.is_empty());
+        }
     }
 }
