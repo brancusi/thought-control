@@ -17,8 +17,12 @@ fn jump_to_a_page_with_ctrl_o_and_type() {
 }
 ```
 
-Run them with `cargo test -p thc-tui flows::` (about 30 s in a debug build). A failing flow
+Run them with `cargo test -p thc-tui flows::` (about 20 s in a debug build). A failing flow
 prints its name, the step, what broke and the frames before and after, with row numbers.
+
+Scratch vaults and their replay copies go under the system temp dir. If it has grown huge
+(tens of thousands of entries make every `mkdir` there slow, and the suite takes minutes),
+point the run elsewhere: `TMPDIR=/private/tmp/thc-flows cargo test -p thc-tui flows::`.
 
 ## How a flow runs
 
@@ -29,7 +33,8 @@ the logical clock to today 10:00. `flow_with(name, Size::Long | Size::Huge, (w, 
 
 Each step:
 
-1. moves the logical clock on (`pace`, 60 ms by default; `pace(0)` types in a burst);
+1. moves the logical clock on (`pace`, 60 ms by default; `pace(0)` types in a burst; a `Tick`
+   goes out once a second's worth has built up);
 2. applies its messages through `Session::apply`, the one door every input takes;
 3. draws a frame into one long-lived emulated terminal (`emu.rs`), as the live loop draws
    frame after frame, then runs the runtime's after-frame work (the save of a line just left)
@@ -106,8 +111,17 @@ A flow that fails on a product bug is filed on the board (¶ Issues) and marked
 `#[ignore = "<task short id>"]`, so the suite stays green and the ignored flows are the to-do
 list: `cargo test -p thc-tui flows:: -- --ignored --skip perf` runs them. When a bug only
 spoils one check of an otherwise useful flow, the flow steps around it narrowly instead:
-`.known("q93zh", Known::Rail)` leaves the left rail out of the restore check. Remove the
-`.known(…)` or the `#[ignore]` with the fix.
+`.known("q93zh", Known::Rail)` leaves the left rail out of the restore check, and
+`.known("02pjq", Known::Restore)` skips the restore check. Remove the `.known(…)` or the
+`#[ignore]` with the fix.
+
+## The monkey
+
+`flows/monkey.rs` walks a page at random from a fixed seed (typing with wide characters, Enter,
+Tab, Backspace, caret keys, selections, undo, clicks on the page's rows, the wheel, idling,
+resizes), every invariant checked after every step. A failure names the seed and the step;
+the same seed walks the same way. `THC_FLOW_SEEDS=50 cargo test -p thc-tui flows::monkey` walks
+more seeds for a longer hunt.
 
 ## Budgets
 
