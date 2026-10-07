@@ -31,7 +31,8 @@ pub enum Token {
     AccentTint,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Mode {
     Ansi { no_color: bool },
     Truecolor { dark: bool },
@@ -41,14 +42,16 @@ pub enum Mode {
 
 /// The colour set a truecolor or 256-colour theme draws with: ember, or redacted (dark) and
 /// newsprint (light). Status meanings are the same in both; the grounds and the accent move.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Palette {
     #[default]
     Ember,
     Redacted,
 }
 
-#[derive(Clone, Copy, Debug)]
+/// Serializable: a UI trace records the theme its frames were drawn in (session.rs `env`).
+#[derive(Clone, Copy, Debug, serde::Serialize, serde::Deserialize)]
 pub struct Theme {
     pub mode: Mode,
     pub palette: Palette,
@@ -60,7 +63,8 @@ pub struct Theme {
 }
 
 /// A vault's accent (vaults.md §10.1). Ember is the home vault's, always.
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
 pub enum Accent {
     #[default]
     Ember,
