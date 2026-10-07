@@ -6,6 +6,9 @@ architecture. `State` serializes to JSON and back without loss, `update(&mut Sta
 Vec<Effect>` is pure and deterministic, and `view(&State) -> Frame` is a pure cell grid. No
 terminal I/O and no ratatui.
 
+`Session` wraps a state with a revision counter and the trace of everything applied, and
+answers the [state protocol](../caretline-app/PROTOCOL.md) in process (`Session::handle`).
+
 The terminal front end is [`caretline-app`](../caretline-app/README.md).
 
 ## Documentation

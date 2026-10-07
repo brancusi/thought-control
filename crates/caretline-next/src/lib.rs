@@ -17,12 +17,15 @@
 //! - [`keymap`](keymap::keymap) is a pure function from a key to an optional message.
 //!
 //! So a session is its initial state plus its messages, and replaying them reproduces it
-//! exactly ([`trace`]).
+//! exactly ([`trace`]). [`Session`] keeps one (state, revision, trace) and [`protocol`]
+//! answers JSON requests against it.
 
 pub mod helix;
 pub mod keymap;
 pub mod layout;
 pub mod msg;
+pub mod protocol;
+pub mod session;
 pub mod state;
 pub mod trace;
 pub mod update;
@@ -30,6 +33,7 @@ pub mod view;
 
 pub use keymap::{keymap, parse_keys, script_to_msgs, Key, KeyCode, Mods};
 pub use msg::{By, Dir, Effect, Msg};
+pub use session::Session;
 pub use state::{Config, Scroll, State, Viewport};
 pub use update::{replay, update};
 pub use view::{view, Frame};

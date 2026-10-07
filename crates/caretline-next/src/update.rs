@@ -15,7 +15,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
     let mut effects = Vec::new();
     let passive = matches!(
         msg,
-        Msg::Tick { .. } | Msg::Resize { .. } | Msg::Saved | Msg::SaveFailed { .. }
+        Msg::Tick { .. }
+            | Msg::Resize { .. }
+            | Msg::Saved
+            | Msg::SaveFailed { .. }
+            | Msg::ShowStatus { .. }
     );
     if !passive {
         state.status = None;
@@ -200,6 +204,11 @@ pub fn update(state: &mut State, msg: Msg) -> Vec<Effect> {
         }
         Msg::Tick { now_ms } => {
             state.now_ms = now_ms;
+        }
+        Msg::ShowStatus { text } => {
+            // One line: a newline would break the status bar.
+            let line = text.lines().next().unwrap_or("").to_string();
+            state.status = (!line.is_empty()).then_some(line);
         }
     }
 

@@ -200,6 +200,7 @@ dependencies = [
  "caretline-next",
  "clap",
  "crossterm",
+ "libc",
  "ratatui",
  "serde_json",
 ]

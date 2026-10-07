@@ -4,6 +4,9 @@
 //! the pure `update`, performs the effects it returns (file writes, the clipboard), and
 //! draws `view`'s frame. Headless modes replay messages or key scripts and print frames.
 
+mod bench;
+mod client;
+mod hub;
 mod runtime;
 
 use std::fs;
@@ -19,7 +22,7 @@ use clap::Parser;
     name = "caretline",
     version,
     about = "A terminal text editor with serializable state and exact replay",
-    after_help = "Examples:\n  caretline notes.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)"
+    after_help = "Examples:\n  caretline notes.md\n  caretline --new-state notes.md > s.json\n  caretline --state s.json --keys 'hello<cr>' --snapshot 80x24\n  caretline --state s.json --msgs m.jsonl --snapshot 80x24 --format ansi\n  caretline notes.md --trace t.jsonl   (then: caretline --replay t.jsonl --snapshot 80x24)\n\nState protocol (see PROTOCOL.md):\n  caretline notes.md --listen          serve it from the running editor\n  caretline serve [FILE] [--socket P]  a headless engine on stdio or a socket\n  caretline send --latest state.get    a client (render WxH, keys S, msgs F, set-state F)\n  caretline bench                      protocol benchmarks"
 )]
 struct Args {
     /// The file to edit (created on first save if it doesn't exist).
@@ -72,6 +75,75 @@ struct Args {
     /// Don't capture the mouse (keeps the terminal's own text selection).
     #[arg(long)]
     no_mouse: bool,
+
+    /// Interactive: also serve the state protocol on a Unix socket (default
+    /// $TMPDIR/caretline-<pid>.sock), advertised in $TMPDIR/caretline/<pid>.json.
+    /// Put FILE before this flag, or it is read as the socket path.
+    #[arg(long, value_name = "PATH", num_args = 0..=1, default_missing_value = "")]
+    listen: Option<String>,
+}
+
+/// `caretline serve`: a headless engine speaking the state protocol.
+#[derive(Parser, Debug)]
+#[command(
+    name = "caretline serve",
+    about = "Serve the state protocol (JSON lines) on stdin/stdout, or on a Unix socket",
+    after_help = "Examples:\n  echo '{\"op\":\"hello\"}' | caretline serve notes.md\n  caretline serve --state s.json --socket /tmp/cl.sock\n\nSee crates/caretline-app/PROTOCOL.md."
+)]
+struct ServeArgs {
+    /// The document to load (empty when it doesn't exist).
+    file: Option<String>,
+    /// Start from this saved state (JSON).
+    #[arg(long, value_name = "STATE.json")]
+    state: Option<String>,
+    /// The viewport for a new state.
+    #[arg(long, value_name = "WxH", default_value = "80x24")]
+    size: String,
+    /// Listen on this Unix socket (many clients) instead of stdin/stdout.
+    #[arg(long, value_name = "PATH")]
+    socket: Option<String>,
+    /// Append the initial state and every change to this trace (JSON Lines).
+    #[arg(long, value_name = "TRACE.jsonl")]
+    trace: Option<String>,
+}
+
+fn serve(args: ServeArgs) -> Result<(), String> {
+    let (width, height) = parse_size(&args.size)?;
+    let mut state = match &args.state {
+        Some(path) => State::from_json(&read_input(path)?).map_err(|e| format!("{path}: {e}"))?,
+        None => match &args.file {
+            Some(path) => State::new(&read_file_or_empty(path)?, Some(path.clone()), Viewport { width, height }),
+            None => State::new("", None, Viewport { width, height }),
+        },
+    };
+    if let (Some(path), Some(_)) = (&args.file, &args.state) {
+        state.path = Some(path.clone());
+    }
+    let trace = match &args.trace {
+        Some(p) => Some(
+            fs::OpenOptions::new()
+                .create(true)
+                .append(true)
+                .open(p)
+                .map_err(|e| format!("{p}: {e}"))?,
+        ),
+        None => None,
+    };
+    let hub = hub::Hub::new(caretline_next::Session::new(state), trace);
+    let (tx, rx) = std::sync::mpsc::channel();
+    match &args.socket {
+        Some(path) => {
+            let _listening = hub::listen(std::path::Path::new(path), tx)?;
+            hub::serve(hub, rx, false);
+        }
+        None => {
+            let writer = hub::spawn_stdio(&tx);
+            drop(tx);
+            hub::serve(hub, rx, true);
+            let _ = writer.join();
+        }
+    }
+    Ok(())
 }
 
 fn parse_size(s: &str) -> Result<(u16, u16), String> {
@@ -108,6 +180,13 @@ fn read_file_or_empty(path: &str) -> Result<String, String> {
 }
 
 fn run() -> Result<(), String> {
+    let argv: Vec<String> = std::env::args().collect();
+    match argv.get(1).map(String::as_str) {
+        Some("serve") => return serve(ServeArgs::parse_from(argv[1..].iter())),
+        Some("send") => return client::main(&argv[2..]),
+        Some("bench") => return bench::main(&argv[2..]),
+        _ => {}
+    }
     let args = Args::parse();
 
     if let Some(path) = &args.new_state {
@@ -147,7 +226,22 @@ fn run() -> Result<(), String> {
         || args.keys.is_some()
         || args.replay.is_some();
     if !headless {
-        return runtime::run_interactive(state, args.trace.as_deref(), !args.no_mouse);
+        let listen = args.listen.as_ref().map(|p| {
+            if p.is_empty() {
+                hub::default_socket_path()
+            } else {
+                std::path::PathBuf::from(p)
+            }
+        });
+        return runtime::run_interactive(
+            state,
+            runtime::Interactive {
+                trace: args.trace.as_deref(),
+                mouse: !args.no_mouse,
+                listen,
+                file: args.file.as_deref(),
+            },
+        );
     }
 
     let mut out = io::stdout().lock();

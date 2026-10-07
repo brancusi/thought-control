@@ -3,6 +3,7 @@
 
 use crate::helix::doc_formatter::DocumentFormatter;
 use crate::helix::graphemes::{grapheme_width, Grapheme};
+use crate::helix::Tendril;
 use crate::layout::Layout;
 use crate::state::State;
 use unicode_segmentation::UnicodeSegmentation;
@@ -19,8 +20,9 @@ pub enum Role {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Cell {
-    /// The grapheme drawn here. Empty for the second cell of a wide grapheme.
-    pub symbol: String,
+    /// The grapheme drawn here. Empty for the second cell of a wide grapheme. Stored inline
+    /// (no allocation) for anything up to 23 bytes.
+    pub symbol: Tendril,
     pub role: Role,
 }
 
@@ -74,12 +76,12 @@ impl Frame {
             return;
         }
         self.cells[row + x] = Cell {
-            symbol: symbol.to_string(),
+            symbol: Tendril::from(symbol),
             role,
         };
         for cx in x + 1..x + w {
             self.cells[row + cx] = Cell {
-                symbol: String::new(),
+                symbol: Tendril::new(),
                 role,
             };
         }
@@ -93,7 +95,7 @@ impl Frame {
             if cx + w > limit {
                 break;
             }
-            self.put(cx, y, &printable(g), w, role);
+            self.put(cx, y, printable(g), w, role);
             cx += w;
         }
         cx
@@ -158,12 +160,12 @@ pub fn display_width(g: &str) -> usize {
 
 /// Control characters would drive the terminal, and zero-width clusters would take no
 /// cell where the layout gives them one; both draw as a placeholder.
-fn printable(g: &str) -> String {
+fn printable(g: &str) -> &str {
     use unicode_width::UnicodeWidthStr;
     if g.chars().any(|c| c.is_control()) || UnicodeWidthStr::width(g) == 0 {
-        "\u{FFFD}".to_string()
+        "\u{FFFD}"
     } else {
-        g.to_string()
+        g
     }
 }
 
@@ -230,7 +232,7 @@ pub fn view(state: &State) -> Frame {
                     if g.source.is_eof() {
                         continue;
                     }
-                    frame.put(x, y, &printable(s), w, role);
+                    frame.put(x, y, printable(s), w, role);
                 }
             }
         }
