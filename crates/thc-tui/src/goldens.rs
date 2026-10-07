@@ -125,7 +125,7 @@ fn run(before: &str, keys: &[&str], clip: &mut String) -> Doc {
             _ => None,
         };
         if let Some(c) = cmd {
-            d.run_command(c, &w, 20);
+            d.run_command(c);
             continue;
         }
         match *k {
@@ -319,12 +319,12 @@ fn editing_invariants_hold_on_random_documents() {
         // EI1: a motion without ⇧ leaves no selection. EI2: with ⇧ the anchor never moves.
         let mut d = random_doc(&mut r);
         let m = motions[r.below(motions.len())];
-        d.run_command(&format!("move.{m}"), &w, 20);
+        d.run_command(&format!("move.{m}"));
         assert!(d.selection().is_none(), "EI1 case {case}: {m:?} left a selection: {}", render(&d));
         let mut d = random_doc(&mut r);
         let before_anchor = d.anchor().unwrap_or(d.caret());
         let had = d.selection().is_some();
-        d.run_command(&format!("select.{m}"), &w, 20);
+        d.run_command(&format!("select.{m}"));
         assert_eq!(d.anchor().unwrap_or(before_anchor), before_anchor, "EI2 case {case}: {m:?}");
         let _ = had;
         // EI4: copy changes nothing.
@@ -341,7 +341,7 @@ fn editing_invariants_hold_on_random_documents() {
                     let mut d = random_doc(&mut Rng(0));
                     d.set_blocks(d0.blocks().to_vec());
                     d.select_range(d0.anchor(), d0.caret());
-                    d.run_command(c, &w, 20);
+                    d.run_command(c);
                     texts(&d)
                 })
                 .collect();
@@ -374,22 +374,22 @@ fn editing_invariants_hold_on_random_documents() {
             match r.below(6) {
                 0 => d.insert("z"),
                 1 => {
-                    d.run_command("edit.backspace", &w, 20);
+                    d.run_command("edit.backspace");
                 }
                 2 => {
-                    d.run_command("edit.newline", &w, 20);
+                    d.run_command("edit.newline");
                 }
                 3 => {
-                    d.run_command("edit.delete_forward", &w, 20);
+                    d.run_command("edit.delete_forward");
                 }
                 4 => {
-                    d.run_command("edit.delete_word", &w, 20);
+                    d.run_command("edit.delete_word");
                 }
                 _ => d.insert("yy"),
             }
         }
         for _ in 0..n {
-            d.run_command("history.undo", &w, 20);
+            d.run_command("history.undo");
         }
         let (lines0, caret0, sel0) = start.clone();
         let (lines1, caret1, sel1) = state(&d);
@@ -398,11 +398,11 @@ fn editing_invariants_hold_on_random_documents() {
         // EI12: ⌘A then ⌫ leaves one empty note, and ⌘Z restores everything.
         let mut d = random_doc(&mut r);
         let start = state(&d);
-        d.run_command("select.all", &w, 20);
+        d.run_command("select.all");
         let selected = state(&d);
-        d.run_command("edit.backspace", &w, 20);
+        d.run_command("edit.backspace");
         assert!(d.blocks().len() == 1 && d.blocks()[0].text.is_empty(), "EI12 case {case}: {}", render(&d));
-        d.run_command("history.undo", &w, 20);
+        d.run_command("history.undo");
         assert_eq!(state(&d).0, start.0, "EI12 case {case}: ⌘Z restores the text");
         assert_eq!(state(&d), selected, "EI12 case {case}: and the selection");
     }
@@ -464,7 +464,7 @@ fn run_g(before: &str, keys: &[&str]) -> Doc {
             }
             other => panic!("unknown key {other}"),
         };
-        d.run_command(c, &w, 20);
+        d.run_command(c);
     }
     d
 }
@@ -501,13 +501,13 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     check_g("E70", src70, &["⌃T"], "First line ¦ [ ] sec▮ond line ¦ third line");
     let mut d70 = run_g(src70, &[]);
     let id0 = d70.blocks()[0].id.clone();
-    d70.run_command("thc.task_cycle", &|_: &Line| 72usize, 20);
+    d70.run_command("thc.task_cycle");
     assert_eq!(d70.blocks()[0].id, id0, "E70: the first piece keeps the id");
     assert!(d70.blocks()[1].is_new && d70.blocks()[2].is_new, "E70: the other pieces are new notes");
     // E71: the first line: the task keeps the id.
     let mut d71 = run_g("fir▮st⏎second", &[]);
     let id = d71.blocks()[0].id.clone();
-    d71.run_command("thc.task_cycle", &|_: &Line| 72usize, 20);
+    d71.run_command("thc.task_cycle");
     assert_eq!(render_g(&d71), "[ ] fir▮st ¦ second", "E71");
     assert_eq!(d71.blocks()[0].id, id, "E71: the task keeps the id");
     // E72: each selected line its own task.
@@ -526,8 +526,8 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     let mut d78 = run_g(src70, &[]);
     let id = d78.blocks()[0].id.clone();
     let w = |_: &Line| 72usize;
-    d78.run_command("thc.task_cycle", &w, 20);
-    d78.run_command("history.undo", &w, 20);
+    d78.run_command("thc.task_cycle");
+    d78.run_command("history.undo");
     assert_eq!(render_g(&d78), src70, "E78");
     assert_eq!(d78.blocks()[0].id, id, "E78: the id");
     // E79: deleting the marker: a paragraph, no gap added.
@@ -535,9 +535,9 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     // E81: back to text joins the neighbours it touches: the reverse of E70.
     let mut d81 = run_g(src70, &[]);
     let id = d81.blocks()[0].id.clone();
-    d81.run_command("thc.task_cycle", &w, 20);
-    d81.run_command("thc.task_cycle", &w, 20);
-    d81.run_command("thc.task_cycle", &w, 20);
+    d81.run_command("thc.task_cycle");
+    d81.run_command("thc.task_cycle");
+    d81.run_command("thc.task_cycle");
     assert_eq!(render_g(&d81), "First line⏎sec▮ond line⏎third line", "E81");
     assert_eq!(d81.blocks()[0].id, id, "E81: the upper note's id");
     done();

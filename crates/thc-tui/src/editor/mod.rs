@@ -11,7 +11,7 @@
 //! - **Reading:** [`Doc::blocks`], [`Doc::caret_block`], [`Doc::caret`],
 //!   [`Doc::anchor`], [`Doc::selection`], [`Doc::caret_anchor`], [`Doc::place_anchor`],
 //!   [`Doc::is_folded`], [`Doc::hidden_by_fold`], [`Doc::effective_gap`], [`Doc::descendants`],
-//!   [`Doc::rows_of`], [`Doc::revision`], [`Doc::undo_depth`], [`Doc::selected_parts`],
+//!   [`Doc::frame`], [`Doc::hit`], [`Doc::revision`], [`Doc::undo_depth`], [`Doc::selected_parts`],
 //!   [`Doc::copy_text`].
 //! - **Caret and selection:** [`Doc::set_caret`], [`Doc::select_range`],
 //!   [`Doc::clear_selection`], [`Doc::click`], [`Doc::drag`], [`Doc::select_word_at`],
@@ -31,9 +31,11 @@ mod doc;
 mod engine;
 mod patch;
 mod tasks;
+mod view;
 
 pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
 pub use tasks::TASK_CYCLE;
+pub use view::{DocFrame, DocHit, DocRow, ViewGeometry, depth_column, HANG, INDENT, MARKS};
 
 use thc_core::outline::Kind;
 
