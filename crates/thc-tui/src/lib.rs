@@ -583,6 +583,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         // frame, not one per key (jank: lag on held keys).
         // A which-key popup due soon wakes the loop for it (keymap.md §5.1).
         let wait = crate::keymap::popup_wait(app).map_or(Duration::from_millis(250), |w| w.min(Duration::from_millis(250)));
+        // A drag held on the view's edge repeats on the clock: wake for it.
+        let wait = session.held_drag_in().map_or(wait, |ms| wait.min(Duration::from_millis(ms.max(1))));
         // (Interrupted because the terminal went away: the check above, next frame.)
         // With the protocol on, the wait is cut into short polls so a request is answered
         // within ~10 ms, without drawing more frames.
@@ -651,6 +653,9 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                     break;
                 }
             }
+        }
+        if !ready && session.held_drag_in().is_some() {
+            session.tick_wall();
         }
         if let Some(s) = server.as_mut() {
             s.announce(session, "terminal");

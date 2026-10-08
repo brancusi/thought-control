@@ -222,3 +222,37 @@ fn clicks_on_many_places_in_a_wrapped_paragraph() {
     }
     f.done();
 }
+
+/// A drag held on the view's last row keeps going: each tick of the clock (50 ms apart) scrolls
+/// one row and the selection follows; the release ends it. The ticks are messages, so the
+/// trace replays the same scroll (Session::held_drag).
+#[test]
+fn a_drag_held_at_the_bottom_edge_scrolls_a_row_per_tick() {
+    use crate::session::{Mouse, MouseKind};
+    let mut f = flow_with("a drag held at the bottom edge", Size::Long, (120, 30));
+    f.keys("<c-o>Long Page<cr><c-home>").pace(0);
+    let r = f.shot.doc_view.unwrap();
+    let rows: Vec<u16> = f.s.app.render.doc_hits.iter().map(|h| h.y).collect();
+    let (top, bottom) = (*rows.iter().min().unwrap(), *rows.iter().filter(|y| **y < r.y + r.height).max().unwrap());
+    let x = r.x + 6;
+    let m = |kind, y| Msg::Mouse { mouse: Mouse { kind, x, y, mods: String::new(), clicks: Some(1) } };
+    f.msg("press", Motion::Caret, m(MouseKind::Down, top));
+    f.msg("drag to the last row", Motion::Any, m(MouseKind::Drag, bottom));
+    let scroll0 = f.s.app.doc.as_ref().unwrap().scroll();
+    let line0 = f.s.app.doc.as_ref().unwrap().caret().line;
+    for i in 1..=5u64 {
+        let now = f.s.app.ui.now_ms + 50;
+        f.msg("a tick, held", Motion::Any, Msg::Tick { now_ms: now, utc_offset_min: f.s.app.ui.utc_offset_min });
+        let d = f.s.app.doc.as_ref().unwrap();
+        assert_eq!(d.scroll(), scroll0 + i as usize, "tick {i}: one row a tick");
+    }
+    let d = f.s.app.doc.as_ref().unwrap();
+    assert!(d.caret().line > line0 && d.selection().is_some(), "the selection followed the scroll");
+    // Released: the ticks scroll no more.
+    f.msg("release", Motion::Any, m(MouseKind::Up, bottom));
+    let s = f.s.app.doc.as_ref().unwrap().scroll();
+    let now = f.s.app.ui.now_ms + 200;
+    f.msg("a tick, released", Motion::Any, Msg::Tick { now_ms: now, utc_offset_min: f.s.app.ui.utc_offset_min });
+    assert_eq!(f.s.app.doc.as_ref().unwrap().scroll(), s);
+    f.done();
+}

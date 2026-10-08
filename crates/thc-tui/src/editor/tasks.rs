@@ -35,11 +35,10 @@ pub const COMPLETED: &str = "thc.completed";
 /// thc's outline: two spaces per depth, its statuses as tags, a new item after a task an open
 /// task, whole-line images.
 pub fn config() -> OutlineConfig {
-    OutlineConfig {
-        tags: STATUSES.iter().map(|(c, _)| *c).collect(),
-        new_tag: Some(OPEN),
-        ..OutlineConfig::default()
-    }
+    let mut c = OutlineConfig::default();
+    c.tags = STATUSES.iter().map(|(c, _)| *c).collect();
+    c.new_tag = Some(OPEN);
+    c
 }
 
 /// The host every thc document runs with.
@@ -329,7 +328,7 @@ mod tests {
             _ => head,
         };
         s.view.selection = Selection::single(anchor, head);
-        update(&mut s, Msg::Resize { width: 80, height: 24 });
+        update(&mut s, Msg::resize(80, 24));
         s
     }
 

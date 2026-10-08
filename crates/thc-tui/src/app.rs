@@ -752,6 +752,8 @@ impl App {
             scroll_drag: false,
             doc_scroll_free: false,
             drag_from: None,
+            drag_at: None,
+            drag_ms: 0,
             history: history,
             scope_override: load_scopes(&vault_cache),
             click_link: None,

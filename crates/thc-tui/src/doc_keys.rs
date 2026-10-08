@@ -399,19 +399,31 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         }
         // A drag selects by grapheme across rows, lines and notes.
         MouseEventKind::Drag(MouseButton::Left) => {
-            let (Some(from), Some((line, byte, _))) = (app.drag_from, crate::doc_ui::hit(app, m.column, m.row)) else { return app.drag_from.is_some() };
-            let to = BlockPos { line, byte };
-            // A press on a link that moves off it is a drag, not a click (the link isn't followed).
-            if app.click_link.is_some_and(|p| p != to) {
+            let Some(from) = app.drag_from else { return false };
+            let Some((vx, vy, vw, vh)) = app.render.doc_view else { return true };
+            // A press on a link that moves off it is a drag, not a click (the link isn't
+            // followed): the selection starts where it was pressed.
+            if let Some(p) = app.click_link {
+                if crate::doc_ui::hit(app, m.column, m.row).is_some_and(|(line, byte, _)| BlockPos { line, byte } == p) {
+                    return true;
+                }
                 app.click_link = None;
+                app.doc.as_mut().unwrap().click(from, false);
             }
-            if app.click_link.is_none() {
-                app.doc.as_mut().unwrap().drag(from, to);
-            }
+            // The pointer as a cell of the view: above it is its first row, below it one past
+            // its last. The engine extends the selection there, and on the first or last text
+            // row scrolls a row to bring in more (the runtime repeats a held drag at an edge:
+            // cmd_click::Pointer).
+            let col = m.column.saturating_sub(vx).min(vw.saturating_sub(1));
+            let row = if m.row < vy { 0 } else { (m.row - vy).min(vh) };
+            app.doc.as_mut().unwrap().drag_to(col, row);
+            app.ui.drag_at = Some((m.column, m.row));
+            app.ui.drag_ms = app.ui.now_ms;
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
             let dragged = app.drag_from.take().is_some();
+            app.ui.drag_at = None;
             if let Some(p) = app.click_link.take() {
                 let title = crate::doc_app::link_at(&app.doc.as_ref().unwrap().blocks()[p.line].text, p.byte);
                 match title {
@@ -474,4 +486,31 @@ fn dropped_file(text: &str) -> Option<std::path::PathBuf> {
     let unescaped = t.replace("\\ ", " ");
     let p = std::path::PathBuf::from(unescaped.strip_prefix("file://").unwrap_or(&unescaped));
     (p.is_absolute() && p.is_file()).then_some(p)
+}
+
+/// How far the held pointer is on or past the edge of the view it drags in (0: on its first or
+/// last row; 1: a row past it…), or None: inside it, or no drag held.
+pub fn drag_edge(app: &App) -> Option<u16> {
+    app.drag_from?;
+    let (_, y) = app.ui.drag_at?;
+    let (vy, vh) = match app.panel_pointer.as_ref() {
+        Some(k) => app.render.panel_views.iter().find(|(p, _)| p == k).map(|(_, r)| (r.y, r.height))?,
+        None => app.render.doc_view.map(|(_, vy, _, vh)| (vy, vh))?,
+    };
+    if vh == 0 {
+        return None;
+    }
+    let last = vy + vh - 1;
+    if y <= vy {
+        Some(vy - y)
+    } else if y >= last {
+        Some(y - last)
+    } else {
+        None
+    }
+}
+
+/// The wait between repeats of a drag held on an edge: 50 ms on it, shorter the further past.
+pub fn drag_repeat_ms(edge: u16) -> u64 {
+    (50 / (1 + edge as u64)).max(10)
 }
