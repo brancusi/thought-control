@@ -227,6 +227,15 @@ struct After {
 /// The document laid out by the engine in a view `w` wide and `h` high: the rows on screen
 /// (blank spacer rows included), the caret's cell, the lines whose meta has its own row, and
 /// (all rows, the first on screen) for the scrollbar.
+/// The open document's view in an area `w` wide and `h` high, before the rows its notes draw
+/// after them (`layout`).
+pub(crate) fn view_geometry(app: &App, w: usize, h: u16) -> ViewGeometry {
+    let ctx = DocContext::from_app(app);
+    let left = left_edge(ctx, w);
+    let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
+    ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, app.screen_width, app.detail_shows(), 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter }
+}
+
 fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize)) {
     let ctx = DocContext::from_app(app);
     let left = left_edge(ctx, w);
@@ -235,8 +244,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     let attachments = &app.derived.attachments;
     let sw = app.screen_width;
     let detail = app.detail_shows();
-    let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
-    let mut g = ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, sw, detail, 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter };
+    let mut g = view_geometry(app, w, h);
     let pending = app.doc_pending_scroll.take();
     let d = app.doc.as_mut().unwrap();
     d.set_view(&g);

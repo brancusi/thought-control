@@ -4334,6 +4334,31 @@ fn update_frame(app: &mut App, area: Rect) {
     if let Some(viewport) = viewport { crate::runtime_effects::dispatch(app, crate::update::Msg::ViewportPrepared(viewport)); }
 }
 
+/// The open document's view geometry were a sidebar column open beside it at this screen
+/// size (the main area narrower, the rail and detail pane as they'd be): what idle time lays
+/// the page out for ahead (`App::prewarm`). None: no document, or no column at this size.
+pub(crate) fn doc_geometry_beside(app: &mut App, area: Rect) -> Option<crate::editor::ViewGeometry> {
+    if app.doc.is_none() || app.focus_mode || area.width < 60 || area.height < 24 {
+        return None;
+    }
+    let crate::sidebar::Layout::Column { width: s } = crate::sidebar::layout_at(&app.ui.sidebar, area.width) else { return None };
+    let saved = (app.sidebar_col, app.screen_width, app.term_width);
+    app.sidebar_col = Some(s);
+    app.term_width = area.width;
+    app.screen_width = area.width.saturating_sub(s + 2);
+    let content = normal_areas(app, area)[3];
+    let content = Rect { width: app.screen_width, ..content };
+    let content = match split_width(app, app.screen_width) {
+        Some(width) => Rect { width, ..content },
+        None => content,
+    };
+    let rail = crate::doc_ui::RAIL_W as u16;
+    let content = if app.rail_shows() && content.width >= rail + 60 { Rect { x: content.x + rail, width: content.width - rail, ..content } } else { content };
+    let g = crate::doc_ui::view_geometry(app, content.width as usize, content.height);
+    (app.sidebar_col, app.screen_width, app.term_width) = saved;
+    Some(g)
+}
+
 fn prepare_frame(app: &mut App, area: Rect) {
     let placement = if area.width < 60 || area.height < 24 { None } else { crate::sidebar_ui::placement(app, area.width) };
     app.sidebar_col = match placement {

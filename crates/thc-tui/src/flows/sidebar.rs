@@ -281,3 +281,17 @@ fn type_in_a_panel_then_back_to_main_keeps_both_carets() {
         .expect_at(text("Compost by the XZfence").in_side())
         .done();
 }
+
+#[test]
+fn a_page_laid_out_ahead_sums_as_laid_out_fresh() {
+    // Idle time lays the page out at the sidebar's width ahead (a cache); opening a panel beside
+    // it then sums exactly the rows a fresh layout would.
+    let mut f = flow_with("a page laid out ahead for a panel", Size::Long, (140, 36));
+    f.keys("<c-o>Long Page<cr>");
+    while f.s.app.prewarm_step(ratatui::layout::Rect::new(0, 0, 140, 36), std::time::Duration::from_millis(2)) {}
+    f.keys("<m-:>aside today").keys("<cr>").expect_panels(1);
+    f.expect("the rows agree", |s| s.app.doc.as_ref().unwrap().row_index_agrees());
+    f.keys("<m-s>").type_text("x").keys("<m-s>").keys("<c-home>").type_text("y");
+    f.expect("still", |s| s.app.doc.as_ref().unwrap().row_index_agrees());
+    f.done();
+}
