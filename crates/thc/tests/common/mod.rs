@@ -22,10 +22,12 @@ pub fn root() -> &'static Path {
             Command::new("chmod").arg("+x").arg(&p).status().unwrap();
         }
         // The clipboard is a file here (clipboard()): no test ever reads or writes the real one.
+        // A test that runs beside others gives its thc its own (THC_TEST_CLIPBOARD, see
+        // clipboard_at): two pty tests sharing this one clobbered each other under load.
         let clip = r.join("clipboard.txt");
-        for (tool, body) in [("pbcopy", "cat > \"{c}\""), ("wl-copy", "cat > \"{c}\""), ("pbpaste", "cat \"{c}\" 2>/dev/null"), ("wl-paste", "cat \"{c}\" 2>/dev/null"), ("xclip", "case \"$*\" in *-o*) cat \"{c}\" 2>/dev/null;; *) cat > \"{c}\";; esac")] {
+        for (tool, body) in [("pbcopy", "cat > \"$c\""), ("wl-copy", "cat > \"$c\""), ("pbpaste", "cat \"$c\" 2>/dev/null"), ("wl-paste", "cat \"$c\" 2>/dev/null"), ("xclip", "case \"$*\" in *-o*) cat \"$c\" 2>/dev/null;; *) cat > \"$c\";; esac")] {
             let p = r.join("shims").join(tool);
-            std::fs::write(&p, format!("#!/bin/sh\n{}\n", body.replace("{c}", &clip.display().to_string()))).unwrap();
+            std::fs::write(&p, format!("#!/bin/sh\nc=\"${{THC_TEST_CLIPBOARD:-{}}}\"\n{body}\n", clip.display())).unwrap();
             Command::new("chmod").arg("+x").arg(&p).status().unwrap();
         }
         r
@@ -65,6 +67,11 @@ pub fn thc() -> Command {
     let mut c = Command::new(env!("CARGO_BIN_EXE_thc"));
     sandbox(&mut c);
     c
+}
+
+/// What a thc run with `THC_TEST_CLIPBOARD=<file>` last copied.
+pub fn clipboard_at(file: &Path) -> String {
+    std::fs::read_to_string(file).unwrap_or_default()
 }
 
 /// What a sandboxed thc last copied (the pbcopy shim's file).

@@ -212,3 +212,17 @@ fn jump_to_a_page_and_type_right_away() {
     // The owner's first wish: jump, type, and the words land in a note of their own.
     flow("jump to a page and type at once").keys("<c-o>Q4 Plan<cr>").type_text("hello").expect_line("Goals for the quarter").expect_line("hello").done();
 }
+
+/// 5mx4q: after Enter in Search (no caret in the prompt), a digit is a view key, not text.
+#[test]
+fn a_digit_after_a_search_goes_to_that_view() {
+    flow("search, Enter, then 4")
+        .keys("6")
+        .expect_view(View::Search)
+        .keys("pla<cr>")
+        .expect("the query kept", |s| s.app.search_terms == "pla")
+        .keys("4")
+        .expect_view(View::Pages)
+        .expect("the query untouched", |s| s.app.search_terms == "pla")
+        .done();
+}

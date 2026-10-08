@@ -198,7 +198,7 @@ exit 0
 
     /// Exactly one daemon alive, and it's the one answering: its status.
     fn wait_one(&self) -> Value {
-        let deadline = Instant::now() + Duration::from_secs(10);
+        let deadline = Instant::now() + Duration::from_secs(30); // load-tolerant: an upper bound only
         loop {
             let a = self.alive();
             let st = self.status();
