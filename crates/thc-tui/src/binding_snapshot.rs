@@ -13,7 +13,12 @@ pub(crate) struct BindingSnapshot {
     pub help: Vec<(&'static str, Vec<(String, String)>)>,
 }
 
-pub(crate) fn capture(app: &App) -> BindingSnapshot {
+pub(crate) fn capture(app: &mut App) -> BindingSnapshot {
+    if app.in_panel.is_none() && app.ui.focus == crate::app::Focus::Sidebar {
+        if let Some(key) = app.ui.sidebar.active_key().filter(|k| k.kind.is_doc()) {
+            if let Some(snapshot) = app.with_panel(&key, capture) { return snapshot; }
+        }
+    }
     let footer = crate::keymap::footer(app, &crate::keymap::footer_ctxs(app));
     let prefix = crate::keymap::prefix_footer(app);
     let continuations = prefix.as_ref().map(|(_, hints)| hints.clone()).unwrap_or_default();

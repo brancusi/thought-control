@@ -50,6 +50,12 @@ pub(crate) fn capture(app: &mut App) {
             texts.push(line.text.clone());
         }
     }
+    for key in app.panel_keys() {
+        if let Some((d, _)) = app.panel_doc_mut(&key) {
+            texts.push(d.caret_block().text.clone());
+        }
+        app.main_view_current();
+    }
     if let Some((_, input)) = &app.prompt {
         texts.push(input.buf.clone());
     }

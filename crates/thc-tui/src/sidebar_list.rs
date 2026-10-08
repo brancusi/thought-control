@@ -191,6 +191,10 @@ pub fn key(app: &mut App, pk: &PanelKey, k: KeyEvent) -> bool {
             }
             crate::sidebar_app::Deferred::Aside(k) => app.open_aside(k, false),
             crate::sidebar_app::Deferred::Follow(t) => app.follow_in_main(&t),
+            crate::sidebar_app::Deferred::Compare(id) => {
+                app.selected = Some(id);
+                app.open_compare();
+            }
         }
     }
     if wrote {

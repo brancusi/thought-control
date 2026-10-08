@@ -69,8 +69,16 @@ is there. The main groups are:
 
 The main view's editor pane (the same component a sidebar panel runs) owns `doc_write`,
 `doc_parked`, `doc_line_id`, `doc_vsel`, `doc_footer_cur`, `doc_announce`, `link_open`,
-`link_sel`, `last_drop`, `near_miss`, `drag_from`, `drag_at`, `drag_ms` and `click_link`. They
-are written next to each other; JSON key order carries no meaning.
+`link_sel`, `last_drop`, `near_miss`, `drag_from`, `drag_at`, `drag_ms`, `click_link` and
+`save_after_frame` (omitted when false). They are written next to each other; JSON key order
+carries no meaning.
+
+Document panels keep this same editor state at `sidebar.open[i].view.editor`, plus `caret`,
+`scroll`, `scroll_free`, `fresh_end`, `caret_new` and `caret_tail`. These are additive v1 fields;
+older states without `editor` still open at the top, parked. A new empty caret line and a
+saved note's trailing blank space restore just as in main. An agent cannot change the focused
+panel's editor state; caret/scroll patches still use the panel's view adapter. Every pane's
+pending line-leave save is serviced after the frame, not just main's.
 
 What's **not** in the state:
 
@@ -83,9 +91,8 @@ What's **not** in the state:
 - **Runtime handles:** the vault connection, channels, terminal capabilities, the last frame's
   hit regions and the image protocol. They live beside the state, not in it.
 
-Within `ui_state_version` 1 the state only gains fields. Panels that don't exist yet (the
-sidebar's stack of pages) arrive as new fields, and a client that doesn't know them can ignore
-them.
+Within `ui_state_version` 1 the state only gains fields. The sidebar's stack and panel editor
+fields are additive; a client that doesn't know them can ignore them.
 
 ### Writing a state
 
@@ -441,7 +448,9 @@ The TUI (`crates/thc-tui`) splits into the parts the Elm architecture names:
   the editor, mouse mode) and feeds results back as messages.
 - **Derived data:** `derived.rs` and the `*_snapshot.rs` files, filled from the vault before
   each frame.
-- **View:** `ui.rs`, `doc_ui.rs` and `node_row.rs`. They draw from the state and derived data
+- **View:** `ui.rs`, `editor_pane/view.rs` (also exported through `doc_ui.rs`) and `node_row.rs`.
+  Main and document panels use one body layout/draw/popup component, with per-view caret,
+  selection, geometry, hit targets and scroll. They draw from the state and derived data
   only. A test fails if they reach the store, a clock, the environment, a file or a process.
 - **Protocol:** `ui_proto.rs` (requests) and `ui_server.rs` (socket, discovery, subscribers).
 
@@ -455,10 +464,12 @@ still run the older way, inside `Session::apply`, with the vault in reach:
   from `keymap.rs` and `input.rs`). They read and write the store directly and set state
   around it. They're still single messages in the trace and replay deterministically on the
   same vault, but they aren't `update` functions yet.
-- **The document's key path:** `doc_keys.rs` and `doc_app.rs` drive the editor model and save
-  through the writer thread on `App`. Its clock is `UiState::now_ms`, so typing runs and idle
-  saves replay, but new lines' ids are minted by the runtime as they're needed and aren't in
-  the trace.
+- **The shared document's key path:** `editor_pane/update.rs` (exported through `doc_keys.rs`)
+  and `doc_app.rs` drive the editor model and save through the writer thread on `App`.
+  `with_panel` is a scoped runtime document/view borrow, not a separate editor implementation;
+  navigation effects run in the host after the borrow, never against main's document identity.
+  Its clock is `UiState::now_ms`, so typing runs and idle saves replay, but new lines' ids are
+  minted by the runtime as they're needed and aren't in the trace.
 - **Background work in the terminal loop:** the daemon's pushes (`drain_live`), the update
   check, the registry check and the in-place update's progress (`drain_update`) still run as
   runtime code on `App`. What they change in the state is caught between frames and recorded

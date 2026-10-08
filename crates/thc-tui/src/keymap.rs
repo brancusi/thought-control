@@ -832,7 +832,7 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
         if let Some(k) = app.ui.sidebar.active_key().filter(|k| !k.kind.is_doc()) {
             return vec![Ctx::Sidebar, Ctx::of_view(crate::sidebar_list::view_of(&k).0)];
         }
-        return vec![Ctx::Sidebar];
+        return if app.in_panel.is_some() && app.main.link_open { vec![Ctx::Link] } else { vec![Ctx::Sidebar, Ctx::Write] };
     }
     if app.doc.is_some() {
         return vec![if app.main.link_open { Ctx::Link } else { Ctx::Write }];

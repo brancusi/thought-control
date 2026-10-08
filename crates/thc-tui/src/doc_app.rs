@@ -809,7 +809,7 @@ impl App {
                 self.say_why_moved(&now);
             }
             // The keystroke reaches the screen first; the save runs right after the frame.
-            self.doc_save_after_frame = true;
+            self.main.save_after_frame = true;
         }
     }
 
@@ -828,7 +828,7 @@ impl App {
     /// (the session records that as a `frame` message, so a replay saves there too).
     pub fn after_frame(&mut self) -> bool {
         let panels = if self.in_panel.is_none() { self.panels_after_frame() } else { false };
-        if !std::mem::take(&mut self.doc_save_after_frame) {
+        if !std::mem::take(&mut self.main.save_after_frame) {
             return panels;
         }
         self.save_doc(false);

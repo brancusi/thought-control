@@ -356,7 +356,10 @@ impl Doc {
             self.lines_mut().pop();
             self.fresh_end = None;
         }
-        if !self.lines().get(at).is_some_and(empty) {
+        // An unsaved caret line and a remembered fresh end are distinct stops, even when
+        // reload initially supplied only the fresh end at this position.
+        let is_fresh = self.fresh_end.as_deref() == self.lines().get(at).map(|l| l.id.as_str());
+        if !self.lines().get(at).is_some_and(empty) || keep_fresh_end && is_fresh {
             let mut l = Line::new(depth, kind, "");
             l.id = self.take_id();
             self.lines_mut().insert(at, l);

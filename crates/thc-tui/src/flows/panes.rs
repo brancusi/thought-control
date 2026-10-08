@@ -223,7 +223,6 @@ fn parity_ctrl_t_cycles_a_task() {
 }
 
 #[test]
-#[ignore = "s81zk"]
 fn parity_ctrl_end_then_type() {
     // ⌃End goes to the fresh line after the notes in any pane (fresh_end is per view).
     parity("⌃End then type").run(|f| {
@@ -239,7 +238,6 @@ fn parity_esc() {
 }
 
 #[test]
-#[ignore = "m1dv4"]
 fn parity_link_popup() {
     parity("[[Gar, ↓, Enter").run(|f| {
         f.click_caret(doc_at("Last line of the plan", 21)).type_text(" [[Gar").keys("<down>").keys("<cr>");
@@ -261,7 +259,6 @@ fn parity_undo_and_redo() {
 }
 
 #[test]
-#[ignore = "patd3"]
 fn parity_click_the_box() {
     parity("click a task's box").run(|f| {
         let at = task_box(f, "Draft the budget");
@@ -300,12 +297,45 @@ fn parity_another_writer_while_typing() {
 }
 
 #[test]
-#[ignore = "0425z"]
 fn parity_restore_on_a_new_line() {
     // The flow's restore check (done) brings back an empty, unsaved caret line in either pane.
     parity("restore on a new line").run(|f| {
         f.click_caret(doc_at("Last line of the plan", 21)).type_text("\n");
     });
+}
+
+#[test]
+fn parity_link_popup_mouse_insert() {
+    parity("[[ popup mouse insert").run(|f| {
+        f.click_caret(doc_at("Last line of the plan", 21)).type_text(" [[Gar");
+        f.click(At::Target(|t| matches!(t, crate::ui::Click::LinkRow(0)), "link popup row"));
+        f.expect_caret_after("[[Garden]]");
+    });
+}
+
+#[test]
+fn panel_popup_stays_on_screen_in_drawer_and_replace() {
+    for width in [100, 80] {
+        let mut f = flow_in("popup in narrow panel", Where::Panel);
+        f.resize(width, 36).keys("<c-end>").type_text("[[Gar");
+        let rows: Vec<_> = f.s.app.render.panel_targets.iter().flat_map(|(_, ts)| ts).filter(|t| matches!(t.what, crate::ui::Click::LinkRow(_))).collect();
+        assert!(!rows.is_empty());
+        assert!(rows.iter().all(|t| t.x1 <= width && t.y < 36));
+        f.click(At::Target(|t| matches!(t, crate::ui::Click::LinkRow(0)), "narrow link popup row"));
+        f.expect_caret_after("[[Garden]]").done();
+    }
+}
+
+#[test]
+fn a_focused_panels_editor_state_is_not_agent_controlled() {
+    let mut f = flow_in("panel editor belongs to the person", Where::Panel);
+    f.click_caret(doc_at("Grow the newsletter", 19)).type_text("!");
+    let mut state = f.s.app.ui.to_json();
+    state["sidebar"]["open"][0]["view"]["editor"]["doc_parked"] = serde_json::json!(true);
+    let before = f.s.app.ui.clone();
+    assert!(f.s.apply(Msg::SetState { state, actor: Some("test-agent".into()) }).is_err());
+    assert_eq!(f.s.app.ui, before);
+    f.done();
 }
 
 // ---- bug repros ------------------------------------------------------------------------------
@@ -318,7 +348,6 @@ fn q4_with_garden() -> Flow {
 }
 
 #[test]
-#[ignore = "3j9d3"]
 fn esc_from_a_panel_with_a_stale_popup_keeps_the_main_view() {
     // The `[[` popup's flag outlives its query (`]]` closed the link): Esc skipped the
     // sidebar's chords and ran the main view's `doc.done` against main's origin, with the
@@ -363,7 +392,6 @@ fn a_render_at_another_size_leaves_a_panels_scroll() {
 }
 
 #[test]
-#[ignore = "5hpqy"]
 fn a_panel_saves_the_line_it_left_after_the_frame() {
     // In the main view, leaving a line saves it after the next frame (not at idle); a panel
     // saves the same way.

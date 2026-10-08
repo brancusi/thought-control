@@ -378,6 +378,7 @@ impl Session {
         let _ = self.app.reload();
         // Whether the document was just arrived at is the state's (reload arrives afresh).
         self.app.ui.main.parked = parked;
+        self.app.restore_panel_views();
         // The rail's order is the state's: reload, arriving at a document from no document,
         // ordered it afresh (q93zh).
         if frozen.is_some() && self.app.ui.rail_frozen != frozen {
@@ -488,6 +489,15 @@ impl Session {
                 _ => {}
             }
         }
+        if self.app.ui.focus == crate::app::Focus::Sidebar {
+            if let Some(k) = self.app.ui.sidebar.active_key() {
+                let old = self.app.panel_editor(&k);
+                let new = s.sidebar.get(&k).and_then(|p| p.doc_view()).and_then(|v| v.editor.as_ref());
+                if new.is_some() && new != old {
+                    return Err("sidebar.view.editor: the focused editor belongs to the person".into());
+                }
+            }
+        }
         Ok(())
     }
 
@@ -580,7 +590,7 @@ impl Session {
     /// message, as before: the step's line carries its data, the patch its look.
     pub fn runtime(&mut self, msg: Msg) {
         // Nothing waits for this frame (most keys): nothing to run or record, and no state read.
-        if matches!(msg, Msg::Frame) && !self.app.doc_save_after_frame {
+        if matches!(msg, Msg::Frame) && !self.app.main.save_after_frame && !self.app.panel_keys().iter().any(|k| self.app.panel_editor(k).is_some_and(|e| e.save_after_frame)) {
             return;
         }
         // Anything still unrecorded is recorded first, apart from the step.
@@ -697,17 +707,17 @@ impl Session {
     fn held_drag(&mut self) {
         let Some(edge) = crate::doc_keys::drag_edge(&self.app) else { return };
         let ui = &self.app.ui;
-        if ui.now_ms.saturating_sub(ui.main.drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
+        if ui.now_ms.saturating_sub(self.app.pointer_editor().drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
             return;
         }
-        let Some((x, y)) = ui.main.drag_at else { return };
+        let Some((x, y)) = self.app.pointer_editor().drag_at else { return };
         self.mouse(Mouse { kind: MouseKind::Drag, x, y, mods: String::new(), clicks: None });
     }
 
     /// When the held drag next repeats (the runtime wakes for it), if one is held on an edge.
     pub fn held_drag_in(&self) -> Option<u64> {
         let edge = crate::doc_keys::drag_edge(&self.app)?;
-        Some((self.app.ui.main.drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
+        Some((self.app.pointer_editor().drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
     }
 
     /// Double and triple clicks: another left press within 400 ms (logical clock) on the same
@@ -760,8 +770,12 @@ impl Session {
             // makes that panel the active one, and focus stays where the person had it.
             if !crate::sidebar::policy::AGENTS_MOVE_FOCUS {
                 new.focus = self.app.ui.focus;
-                if new.focus == crate::app::Focus::Sidebar && !new.sidebar.has_panels() {
-                    new.focus = crate::app::Focus::List;
+                if new.focus == crate::app::Focus::Sidebar {
+                    if let Some(k) = self.app.ui.sidebar.focused.clone().filter(|k| new.sidebar.get(k).is_some()) {
+                        new.sidebar.focused = Some(k);
+                    } else if !new.sidebar.has_panels() {
+                        new.focus = crate::app::Focus::List;
+                    }
                 }
             }
             // `opened_by` is the TUI's: a panel the agent added is its; the rest keep theirs.
@@ -770,15 +784,26 @@ impl Session {
                     Some(old) => old.opened_by.clone(),
                     None => Some(a.to_string()),
                 };
+                if let (Some(old), Some(mut view)) = (stack_before.get(&p.key()).and_then(|p| p.doc_view()), p.doc_view().cloned()) {
+                    if view.editor.is_none() { view.editor = old.editor.clone(); p.set_doc_view(view); }
+                }
             }
         }
         let app = &mut self.app;
         app.history_tick(false);
+        let desired_panels = new.sidebar.open.clone();
         let doc = new.document.clone();
         let doc_changed = changed.iter().any(|f| f == "document");
         app.ui = new;
         rehydrate(app);
         let _ = app.reload();
+        for desired in desired_panels {
+            if let (Some(mut view), Some(p)) = (desired.doc_view().cloned(), app.ui.sidebar.get_mut(&desired.key())) {
+                if view.editor.is_none() { view.editor = p.doc_view().and_then(|v| v.editor.clone()); }
+                p.set_doc_view(view);
+            }
+        }
+        app.restore_panel_views();
         if let (true, Some(ds)) = (doc_changed, doc) {
             if let Some(d) = self.app.doc.as_mut() {
                 if !ds.caret_id.is_empty() {
@@ -829,6 +854,7 @@ impl Session {
         if self.app.ui.document != doc {
             self.app.ui.document = doc;
         }
+        self.app.sync_panel_views();
         // The engine's view keeps whether it was scrolled freely; the state records it.
         let free = self.app.doc.as_ref().is_some_and(|d| d.scroll_free());
         if self.app.ui.doc_scroll_free != free {
@@ -842,7 +868,19 @@ impl Session {
         if w == 0 || h == 0 {
             return Err("a size is at least 1x1".into());
         }
-        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| (d.scroll(), d.scroll_free())), self.app.render.clone());
+        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| d.view_snapshot()), self.app.render.clone());
+        let main_pin = self.app.caret_pin.clone();
+        let pending = self.app.doc_pending_scroll;
+        let geometry = (self.app.screen_width, self.app.term_width, self.app.sidebar_col, self.app.sidebar_over);
+        let mut panels = Vec::new();
+        for k in self.app.panel_keys() {
+            if let Some((d, _)) = self.app.panel_doc_mut(&k) {
+                let view = d.view_snapshot();
+                panels.push((k, view));
+            }
+            self.app.main_view_current();
+        }
+        let pins: Vec<_> = self.app.panels.iter().map(|(k, rt)| (k.clone(), rt.slot.caret_pin.clone(), rt.slot.pending_scroll)).collect();
         let mut term = ratatui::Terminal::new(crate::quiet::Snap { inner: ratatui::backend::TestBackend::new(w, h), visible: false }).map_err(|e| e.to_string())?;
         term.draw(|f| crate::ui::draw_app(f, &mut self.app)).map_err(|e| e.to_string())?;
         let buf = term.backend().inner.buffer().clone();
@@ -854,9 +892,19 @@ impl Session {
         };
         if (w, h) != self.size {
             self.app.ui = saved.0;
-            if let (Some(d), Some((s, free))) = (self.app.doc.as_mut(), saved.1) {
-                d.set_scroll(s, free);
+            if let (Some(d), Some(view)) = (self.app.doc.as_mut(), saved.1) {
+                d.restore_view_snapshot(view);
             }
+            for (k, view) in panels {
+                if let Some((d, _)) = self.app.panel_doc_mut(&k) { d.restore_view_snapshot(view); }
+                self.app.main_view_current();
+            }
+            for (k, pin, pending) in pins {
+                if let Some(rt) = self.app.panels.get_mut(&k) { rt.slot.caret_pin = pin; rt.slot.pending_scroll = pending; }
+            }
+            self.app.caret_pin = main_pin;
+            self.app.doc_pending_scroll = pending;
+            (self.app.screen_width, self.app.term_width, self.app.sidebar_col, self.app.sidebar_over) = geometry;
             self.app.render = saved.2;
         }
         let out = match format {

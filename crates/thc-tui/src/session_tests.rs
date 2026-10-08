@@ -223,6 +223,7 @@ fn the_view_reads_no_store_clock_environment_or_file() {
     let files = [
         ("ui.rs", view_part(include_str!("ui.rs"), "// ---- runtime: frame preparation")),
         ("doc_ui.rs", view_part(include_str!("doc_ui.rs"), "#[cfg(test)]")),
+        ("editor_pane/view.rs", view_part(include_str!("editor_pane/view.rs"), "#[cfg(test)]")),
         ("node_row.rs", view_part(include_str!("node_row.rs"), "#[cfg(test)]")),
     ];
     let mut found = Vec::new();

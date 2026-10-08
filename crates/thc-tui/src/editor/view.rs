@@ -76,6 +76,15 @@ pub enum DocHit {
 }
 
 impl Doc {
+    /// Snapshot just this view for non-mutating measurement and temporary headless renders.
+    pub(crate) fn view_snapshot(&self) -> cn::state::View {
+        self.engine.state().view.clone()
+    }
+
+    pub(crate) fn restore_view_snapshot(&mut self, view: cn::state::View) {
+        self.engine.state_mut().view = view;
+    }
+
     /// Lay the document out in a view of this geometry. The view follows the caret (unless it
     /// was scrolled freely).
     pub fn set_view(&mut self, g: &ViewGeometry) {
@@ -97,6 +106,16 @@ impl Doc {
         } else {
             cn::layout::ensure_caret_visible(st);
         }
+    }
+
+    /// An inactive pane gets its final geometry but never follows its caret as a side
+    /// effect of another pane taking height. Keep its semantic top row and free-scroll mode.
+    pub(crate) fn set_view_unfocused(&mut self, g: &ViewGeometry) {
+        let old = self.engine.state().view.clone();
+        self.set_view(g);
+        let view = &mut self.engine.state_mut().view;
+        view.scroll = old.scroll;
+        view.free = old.free;
     }
 
     /// Lay the notes out ahead at geometry `g` (another width: the sidebar's, before it opens),
