@@ -62,6 +62,8 @@ pub enum DocRow {
 pub struct DocFrame {
     pub rows: Vec<DocRow>,
     pub cursor: Option<(u16, u16)>,
+    /// The same engine frame consumed by overlay text/block/caret anchors.
+    pub cn: cn::Frame,
 }
 
 /// What a click at a cell of the view hits.
@@ -206,7 +208,7 @@ impl Doc {
                 _ => DocRow::Past,
             })
             .collect();
-        DocFrame { rows, cursor: frame.cursor }
+        DocFrame { rows, cursor: frame.cursor, cn: frame }
     }
 
     /// What a click at cell (`col`, `row`) of the view hits. A blank row, or one a note draws

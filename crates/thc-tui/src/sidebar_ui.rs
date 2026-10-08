@@ -48,6 +48,10 @@ pub struct PreparedPanel {
     pub more_y: Option<u16>,
     /// A list panel's rows on screen: (y, row index).
     pub rows: Vec<(u16, usize)>,
+    /// Overlay compatibility aliases, copied from the one shared editor preparation.
+    pub frame: Option<caretline::Frame>,
+    pub frame_at: Option<(u16, u16)>,
+    pub line_rows: Vec<(u16, u16, u16, String)>,
 }
 
 /// The sidebar, laid out for one frame.
@@ -301,6 +305,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         let mut caret = None;
         let mut more_y = None;
         let mut list_rows_at = Vec::new();
+        let mut line_rows = Vec::new();
         if !folded && body_h > 0 {
             let m = &measures[i];
             if let Some(why) = app.panels.get(key).and_then(|rt| rt.problem.clone()) {
@@ -317,7 +322,9 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
                     } else { None };
                     crate::editor_pane::view::prepare(a, r);
                     a.derived.data.overlay.link = main_link;
-                    a.derived.doc.take()
+                    let prepared = a.derived.doc.take();
+                    if let (Some(p), Some(doc)) = (prepared.as_ref(), a.doc.as_ref()) { line_rows = p.line_rows(doc); }
+                    prepared
                 }).flatten();
                 if let Some(p) = editor.as_mut() { p.popup_bounds(area); }
                 view = editor.as_ref().map(|p| p.view_rect());
@@ -340,7 +347,9 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
             }
         }
         y = body_y + body.len() as u16;
-        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, editor, caret, more_y, rows: list_rows_at });
+        let frame = editor.as_ref().map(|p| p.frame.clone());
+        let frame_at = editor.as_ref().map(|p| p.frame_at);
+        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, editor, caret, more_y, rows: list_rows_at, frame, frame_at, line_rows });
         // A blank row between panels.
         y += 1;
     }

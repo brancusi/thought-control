@@ -243,7 +243,7 @@ fn pane_focused(app: &App) -> bool {
     }
 }
 
-fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize)) {
+fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize), caretline::Frame, usize) {
     let ctx = DocContext::from_app(app);
     let left = left_edge(ctx, w);
     let app_vault = app.vault.paths.vault.clone();
@@ -253,7 +253,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     let detail = app.in_panel.is_none() && app.detail_shows();
     let mut g = view_geometry(app, w, h);
     let pending = app.doc_pending_scroll.take();
-    let focused = pane_focused(app) || app.in_panel.is_none();
+    let focused = pane_focused(app);
     let d = app.doc.as_mut().unwrap();
     if focused { d.set_view(&g); } else { d.set_view_unfocused(&g); }
     // Whether the meta gets its own row follows the saved meta, never the live chip: lines
@@ -319,7 +319,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
         })
         .collect();
     let own = after.iter().filter(|(_, a)| a.meta_row).map(|(&i, _)| i).collect();
-    (rows, f.cursor, own, d.scroll_rows())
+    (rows, f.cursor, own, d.scroll_rows(), f.cn, left)
 }
 
 impl Row {
@@ -622,6 +622,9 @@ pub struct PreparedDoc {
     folds: std::collections::HashSet<String>,
     chip: Option<String>,
     link: Option<(String, Vec<(String, String)>, Option<String>)>,
+    /// Shared engine-frame seams consumed by the teaching overlay, not another layout.
+    pub frame: caretline::Frame,
+    pub frame_at: (u16, u16),
 }
 
 pub(crate) fn prepare(app: &mut App, area: Rect) {
@@ -657,7 +660,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
     };
     let head_h = (header.len() as u16).min(area.height);
     let body = Rect { y: area.y + head_h, height: area.height.saturating_sub(head_h), ..area };
-    let (mut rows, mut cursor, mut own_meta, mut scroll) = layout(app, w, body.height);
+    let (mut rows, mut cursor, mut own_meta, mut scroll, mut frame, mut left) = layout(app, w, body.height);
     // The caret line stays on its screen row when the geometry changes under it (the sidebar
     // opens or closes, the rail comes or goes, the terminal resizes): the view scrolls by what
     // the reflow moved it (interaction.md §2.2).
@@ -672,7 +675,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         if same_place && follows && now_y != pin.y && pin.y >= body.y && pin.y < body.bottom() {
             let top = d.scroll() as isize + now_y as isize - pin.y as isize;
             app.doc.as_mut().unwrap().set_scroll(top.max(0) as usize, false);
-            (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
+            (rows, cursor, own_meta, scroll, frame, left) = layout(app, w, body.height);
         }
     }
     if pane_focused(app) { app.caret_pin = cursor.map(|(_, row)| CaretPin { y: body.y + row, ..here }); }
@@ -684,7 +687,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
     let link = app.main.link_open.then(|| app.link_query()).flatten().and_then(|(_, q)| {
         app.derived.data.overlay.link.as_ref().filter(|(query, _, _)| *query == q).cloned()
     });
-    app.derived.doc = Some(PreparedDoc { area, revision: source_revision(app), doc_revision: d.revision(), rows, cursor, own_meta, scroll, header, days, body, crumb, ctx, popup_area: area, caret, selection, folds, chip, link });
+    app.derived.doc = Some(PreparedDoc { area, revision: source_revision(app), doc_revision: d.revision(), rows, cursor, own_meta, scroll, header, days, body, crumb, ctx, popup_area: area, caret, selection, folds, chip, link, frame, frame_at: (body.x + left as u16, body.y) });
 }
 
 /// Where the main view's caret was drawn, for the next layout (`prepare`): its document and
@@ -828,6 +831,20 @@ pub(crate) fn natural_rows(app: &mut App, width: u16, cap: usize) -> usize {
 }
 
 impl PreparedDoc {
+    pub fn current(&self, app: &App) -> bool { self.revision == source_revision(app) }
+
+    /// Visible line anchors from this exact shared layout, in screen coordinates.
+    pub(crate) fn line_rows(&self, doc: &crate::editor::Doc) -> Vec<(u16, u16, u16, String)> {
+        self.rows.iter().enumerate().filter_map(|(dy, row)| {
+            if row.blank || row.meta_row || row.image.is_some() { return None; }
+            let line = doc.blocks().get(row.line)?;
+            let tx = (self.frame_at.0 as usize + MARKS + line.depth * 4 + HANG).min(u16::MAX as usize) as u16;
+            let x0 = if row.first { tx.saturating_sub(HANG as u16) } else { tx };
+            let start = if row.first { row.shown.max(marker_len(line)) } else { row.shown }.min(row.end);
+            Some((self.body.y + dy as u16, x0, tx - x0 + (width(&line.text[start..row.end]) as u16).max(1), line.id.clone()))
+        }).collect()
+    }
+
     pub(crate) fn popup_bounds(&mut self, area: Rect) { self.popup_area = area; }
     pub(crate) fn view_rect(&self) -> Rect {
         let left = left_edge(self.ctx, self.area.width as usize) as u16;

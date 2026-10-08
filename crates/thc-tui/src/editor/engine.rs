@@ -87,6 +87,9 @@ pub(crate) struct Engine {
     /// edit through one maps every other one (`caretline::update_doc`).
     others: Vec<(u32, cn::View)>,
     current: u32,
+    /// Composed changes for document-wide text anchors, only while tracking is enabled.
+    changes: Option<cn::ChangeSet>,
+    pub(super) track: bool,
 }
 
 /// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
@@ -175,6 +178,8 @@ impl Engine {
             pool: IdPool::default(),
             others: Vec::new(),
             current: 0,
+            changes: None,
+            track: false,
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -208,6 +213,8 @@ impl Engine {
         self.flush();
         &mut self.st
     }
+
+    pub(super) fn cn_doc(&self) -> &cn::Document { &self.st.doc }
 
     pub(super) fn rev(&self) -> u64 {
         self.st.doc.rev.wrapping_add(self.host_rev)
@@ -557,23 +564,34 @@ impl Engine {
     /// One message through the current view, every other view of the document mapped
     /// through what it changed (in a stable order by id, so a typing run stays one view's).
     fn step(&mut self, msg: Msg) -> Vec<Effect> {
-        if self.others.is_empty() {
-            return cn::update(&mut self.st, msg);
+        let (fx, cs) = self.step_changes(msg);
+        if let (true, Some(cs)) = (self.track, cs) {
+            self.changes = Some(match self.changes.take() {
+                Some(prev) => prev.compose(cs),
+                None => cs,
+            });
         }
+        fx
+    }
+
+    pub(super) fn take_changes(&mut self) -> Option<cn::ChangeSet> {
+        self.flush();
+        self.changes.take()
+    }
+
+    fn step_changes(&mut self, msg: Msg) -> (Vec<Effect>, Option<cn::ChangeSet>) {
+        if self.others.is_empty() { return cn::update_with_changes(&mut self.st, msg); }
         let mut all: Vec<(u32, cn::View)> = std::mem::take(&mut self.others);
         all.push((self.current, std::mem::take(&mut self.st.view)));
         all.sort_by_key(|(id, _)| *id);
         let acting = all.iter().position(|(id, _)| *id == self.current).unwrap_or(0);
         let (ids, mut views): (Vec<u32>, Vec<cn::View>) = all.into_iter().unzip();
-        let fx = cn::update_doc(&mut self.st.doc, &mut views, acting, msg);
+        let r = cn::update_doc_with_changes(&mut self.st.doc, &mut views, acting, msg);
         for (id, v) in ids.into_iter().zip(views) {
-            if id == self.current {
-                self.st.view = v;
-            } else {
-                self.others.push((id, v));
-            }
+            if id == self.current { self.st.view = v; }
+            else { self.others.push((id, v)); }
         }
-        fx
+        r
     }
 
     /// The view messages act through, and the one `state()` shows.

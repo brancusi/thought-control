@@ -452,6 +452,9 @@ The TUI (`crates/thc-tui`) splits into the parts the Elm architecture names:
   Main and document panels use one body layout/draw/popup component, with per-view caret,
   selection, geometry, hit targets and scroll. They draw from the state and derived data
   only. A test fails if they reach the store, a clock, the environment, a file or a process.
+  Overlay consumers use that same prepared engine frame (`PreparedDoc.frame/frame_at`);
+  document panels expose compatible frame and line-anchor aliases from the shared layout,
+  not a second renderer. The document adapter can track composed text changes across views.
 - **Protocol:** `ui_proto.rs` (requests) and `ui_server.rs` (socket, discovery, subscribers).
 
 ### What isn't pure yet

@@ -359,6 +359,27 @@ fn a_focused_panels_editor_state_is_not_agent_controlled() {
 // ---- bug repros ------------------------------------------------------------------------------
 
 /// Q4 Plan in main with Garden beside it.
+#[test]
+fn overlay_frames_and_line_anchors_come_from_the_shared_panel_body() {
+    let mut f = q4_with_garden();
+    f.keys("<m-s>");
+    let app = &f.s.app;
+    for p in &app.derived.sidebar.as_ref().unwrap().panels {
+        let Some(editor) = p.editor.as_ref() else { continue };
+        assert_eq!(p.frame_at, Some(editor.frame_at));
+        assert_eq!(p.frame.as_ref().unwrap().cursor, editor.frame.cursor);
+        let hits = &app.render.panel_hits.iter().find(|(k, _)| *k == p.key).unwrap().1;
+        let doc = app.panel_doc(&p.key).unwrap();
+        assert!(!p.line_rows.is_empty());
+        for (y, x, _, id) in &p.line_rows {
+            let hit = hits.iter().find(|h| h.y == *y).expect("anchor is on a drawn row");
+            assert_eq!(*x, if hit.first { hit.hang_x } else { hit.text_x });
+            assert_eq!(*id, doc.blocks()[hit.line].id);
+        }
+    }
+    f.done();
+}
+
 fn q4_with_garden() -> Flow {
     let mut f = flow("Q4 Plan, Garden beside");
     f.keys("<c-o>Q4 Plan<cr>").shift_click(text("Garden").in_doc()).expect_panels(1);
