@@ -354,10 +354,15 @@ impl App {
             Some(Target::Page { .. }) => {
                 let pages = s.nodes_where(&format!("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0 AND {} ORDER BY n.title COLLATE NOCASE", thc_core::views::HIDDEN_SQL), &[]).unwrap_or_default();
                 let mut open: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                if let Ok(mut st) = s.conn.prepare(
-                    "WITH RECURSIVE t(id, root) AS (SELECT id, id FROM nodes WHERE parent IS NULL AND title IS NOT NULL AND is_tag = 0 AND deleted = 0 \
-                     UNION ALL SELECT n.id, t.root FROM nodes n JOIN t ON n.parent = t.id WHERE n.deleted = 0) \
-                     SELECT t.root, count(*) FROM t JOIN nodes x ON x.id = t.id WHERE x.status IN ('todo','doing','waiting') GROUP BY t.root",
+                // Each open task climbs to its page (not every page walked down to its tasks: the
+                // whole vault on every open, a third of opening a 5,000-line page, vw384). A
+                // deleted node on the way stops the climb, as it stopped the walk down (UNION, not
+                // UNION ALL: a parent loop, which the store shouldn't have, still ends).
+                if let Ok(mut st) = s.conn.prepare_cached(
+                    "WITH RECURSIVE up(task, cur) AS (SELECT id, id FROM nodes WHERE status IN ('todo','doing','waiting') AND deleted = 0 \
+                     UNION SELECT up.task, n.parent FROM up JOIN nodes n ON n.id = up.cur WHERE n.parent IS NOT NULL AND n.deleted = 0) \
+                     SELECT r.id, count(*) FROM up JOIN nodes r ON r.id = up.cur \
+                     WHERE r.parent IS NULL AND r.title IS NOT NULL AND r.is_tag = 0 AND r.deleted = 0 GROUP BY r.id",
                 ) {
                     if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
                         for (id, n) in rows.flatten() {
@@ -463,6 +468,7 @@ impl App {
     }
 
     fn open_doc(&mut self, target: Target) {
+        self.doc_pending_scroll = None;
         let same = |a: &Target, b: &Target| match (a, b) {
             (Target::Page { id: x, .. }, Target::Page { id: y, .. }) => x == y,
             (a, b) => a == b,
@@ -475,7 +481,7 @@ impl App {
             if let Some(mut d) = self.adopt_panel_doc(&target) {
                 if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
                     if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, false) {
-                        d.set_scroll(scroll.min(i), false);
+                        self.doc_pending_scroll = Some((scroll.min(i), false));
                     }
                 }
                 self.doc_line_id = Some(d.caret_block().id.clone());
@@ -513,7 +519,7 @@ impl App {
             // (The fresh line a day opens with isn't needed when the caret goes back.)
             let journal = matches!(d.target, Target::Journal { .. });
             if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, journal) {
-                d.set_scroll(scroll.min(i), false);
+                self.doc_pending_scroll = Some((scroll.min(i), false));
             }
         }
         // Lines a crash left unsaved come back, one ⌃Z away (recover.rs), and save at once.

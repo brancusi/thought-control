@@ -103,7 +103,7 @@ fn layout_key(app: &App, key: &PanelKey, parts: impl std::hash::Hash) -> Option<
 /// don't fit beside the text). The rows it lays out to, counting no further than `cap`.
 fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16, cap: usize) -> Option<usize> {
     let column = w.saturating_sub((MARKS + HANG) as u16 + 1).max(10);
-    let pending = app.panels.get_mut(key).and_then(|rt| rt.pending_scroll.take());
+    let pending = app.panels.get_mut(key).and_then(|rt| rt.slot.pending_scroll.take());
     let (d, _) = app.panel_doc_mut(key)?;
     let mut g = ViewGeometry { width: w.max(1), height: h.max(1), column, extra_rows: Vec::new(), typewriter: false };
     d.set_view(&g);

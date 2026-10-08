@@ -111,7 +111,7 @@ fn perf_page_open() {
 }
 
 #[test]
-#[ignore = "vw384 perf over budget: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_sidebar_open() {
     let mut over = Vec::new();
     for size in [Size::Long, Size::Huge] {

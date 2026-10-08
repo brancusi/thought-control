@@ -34,6 +34,8 @@ pub struct DocSlot {
     vsel: Option<usize>,
     footer_cur: Option<usize>,
     scroll_free: bool,
+    /// The panel's remembered scroll, waiting for its first layout (`App::doc_pending_scroll`).
+    pub(crate) pending_scroll: Option<(usize, bool)>,
     save_after_frame: bool,
     footer: Option<(String, Vec<crate::doc_app::FooterRow>)>,
     first_ever: bool,
@@ -48,9 +50,6 @@ pub struct PanelRt {
     pub slot: DocSlot,
     /// Why it can't show its document (deleted, unreadable).
     pub problem: Option<String>,
-    /// A remembered scroll waiting for the panel's first layout (zszv1): its row counts rows
-    /// as the panel's width wraps them, so it's applied once the view has that width.
-    pub pending_scroll: Option<(usize, bool)>,
 }
 
 impl PanelRt {
@@ -194,6 +193,7 @@ impl App {
         std::mem::swap(&mut ui.doc_vsel, &mut slot.vsel);
         std::mem::swap(&mut ui.doc_footer_cur, &mut slot.footer_cur);
         std::mem::swap(&mut ui.doc_scroll_free, &mut slot.scroll_free);
+        std::mem::swap(&mut self.doc_pending_scroll, &mut slot.pending_scroll);
         std::mem::swap(&mut self.doc_save_after_frame, &mut slot.save_after_frame);
         std::mem::swap(&mut self.doc_footer, &mut slot.footer);
         std::mem::swap(&mut self.doc_first_ever, &mut slot.first_ever);
@@ -277,8 +277,10 @@ impl App {
         let vid = self.next_vid;
         self.next_vid += 1;
         let remembered = self.ui.sidebar.get(key).and_then(|p| p.doc_view().cloned());
+        // The remembered scroll waits for the panel's first layout (zszv1): its row counts rows
+        // as the panel's width wraps them.
         let pending_scroll = remembered.as_ref().filter(|v| v.caret.is_some()).map(|v| (v.scroll.row, v.scroll_free));
-        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, ..Default::default() }, problem: None, pending_scroll };
+        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, pending_scroll, ..Default::default() }, problem: None };
         if self.doc.as_ref().is_some_and(|d| caret_key(&d.target) == dk) {
             let d = self.doc.as_mut().unwrap();
             d.add_view(vid);
@@ -476,7 +478,7 @@ impl App {
 
     fn sync_panel_view(&mut self, key: &PanelKey) {
         // Not laid out yet: the remembered view stands until it is.
-        if self.panels.get(key).is_some_and(|rt| rt.pending_scroll.is_some()) {
+        if self.panels.get(key).is_some_and(|rt| rt.slot.pending_scroll.is_some()) {
             return;
         }
         let Some((d, _)) = self.panel_doc_mut(key) else { return };

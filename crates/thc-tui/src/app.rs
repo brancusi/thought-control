@@ -389,6 +389,10 @@ pub struct App {
     pub doc: Option<crate::editor::Doc>,
     /// The journal opened with no day ever written: the footer says `just type`.
     pub doc_first_ever: bool,
+    /// A remembered scroll (row, scrolled freely) for the document just opened, put on at its
+    /// first layout: rows count as the view's width wraps them, which a view not yet laid out
+    /// doesn't have (vw384, zszv1).
+    pub doc_pending_scroll: Option<(usize, bool)>,
     /// A ⌘ key has arrived from this terminal (now or in an earlier session: <cache>/cmd-seen,
     /// per TERM_PROGRAM and version), so ⌘ keys are known to reach thc (keymap.md §7.0).
     pub cmd_seen: bool,
@@ -805,6 +809,7 @@ impl App {
             doc_saver: None,
             tui_prefs: prefs.clone(),
             doc_first_ever: false,
+            doc_pending_scroll: None,
             cmd_seen: crate::keymap::cmd_seen_cached(&vault_cache),
             images_drawn: (Vec::new(), false),
             hist_pending: None,
