@@ -400,7 +400,11 @@ fn an_empty_line_left_goes_with_the_save() {
         .keys("<cr>")
         .expect_caret_line("")
         .click_caret(doc_at("Last line of the plan", 4))
-        .expect("the empty line went", |s| s.app.doc.as_ref().unwrap().blocks().iter().all(|l| !l.text.trim().is_empty()))
+        // (The fresh line the page arrived with stays at its end: it's in the state.)
+        .expect("the empty line went", |s| {
+            let b = s.app.doc.as_ref().unwrap().blocks();
+            b[..b.len() - 1].iter().all(|l| !l.text.trim().is_empty())
+        })
         .expect_screen("Ship the [[Garden]] redesign")
         .done();
 }

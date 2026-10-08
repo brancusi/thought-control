@@ -237,3 +237,25 @@ fn perf_typing_500_keys_steady() {
     f.done();
     held(over);
 }
+
+#[test]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+fn perf_day_opened_beside() {
+    // Today's journal beside a page (`:aside today`), the first time (the page laid out anew
+    // at the narrower width) and again: the panel's own cost is the day's, a millisecond or two.
+    let mut over = Vec::new();
+    for size in [Size::Long, Size::Huge] {
+        let (mut f, _) = page(size);
+        for _ in 0..8 {
+            f.keys("<m-:>aside today");
+            f.timed("day_beside", |f| {
+                f.keys("<cr>");
+            });
+            f.expect_panels(1);
+            f.keys("<m-s><m-w>");
+        }
+        budget(&f, "day_beside", &format!("a day opened beside a {size:?} page"), 10.0, &mut over);
+        f.done();
+    }
+    held(over);
+}
