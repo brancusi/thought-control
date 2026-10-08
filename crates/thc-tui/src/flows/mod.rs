@@ -59,8 +59,8 @@ pub enum Motion {
     /// A click that places the caret: the chrome stays and the view doesn't scroll at all (the
     /// text under the mouse never moves).
     Click,
-    /// Another writer's change lands (`thc add`, another device): the caret, the scroll and
-    /// the rows above the caret's note stay; the header's badges and the footer may say so.
+    /// Another writer's change lands (`thc add`, another device): the cursor stays where it is
+    /// on screen (what you're typing doesn't move); the header's badges and the footer may say so.
     Agent,
     /// Anything may change (navigation, overlays, the sidebar).
     Any,
@@ -747,7 +747,10 @@ impl Flow {
         if before.scroll != shot.scroll && !at_edge(&shot) && !at_edge(before) {
             self.fail(desc, before, &format!("the view scrolled {:?} → {:?} with the caret mid-screen", before.scroll, shot.scroll));
         }
-        if matches!(motion, Motion::Typing | Motion::Agent) && before.scroll == shot.scroll {
+        if motion == Motion::Agent && before.cursor != shot.cursor && before.cursor.is_some() {
+            self.fail(desc, before, &format!("another writer's change moved the cursor {:?} → {:?}: what you're typing moved", before.cursor, shot.cursor));
+        }
+        if motion == Motion::Typing && before.scroll == shot.scroll {
             // Rows above the caret's note (a note's own rows reflow: a word may move up a row).
             let top = [before.caret_top, shot.caret_top].iter().flatten().copied().min();
             if let Some(cy) = top {

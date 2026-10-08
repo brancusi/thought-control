@@ -198,7 +198,6 @@ fn click_below_the_last_line() {
 }
 
 #[test]
-#[ignore = "zszv1"]
 fn wheel_over_a_panel_scrolls_the_panel() {
     let mut f = flow_with("the wheel over a panel", Size::Long, (140, 36));
     f.keys("<c-o>Garden<cr>");

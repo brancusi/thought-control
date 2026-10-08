@@ -543,7 +543,11 @@ impl Engine {
         let mut v = cn::View::new(self.st.view.viewport);
         v.config = self.st.view.config.clone();
         v.layout = self.st.view.layout.clone();
-        v.focused = false;
+        // Every view reports its caret: which one has the keyboard is thc's to draw (the
+        // terminal's cursor, or a cell of `selection` in a view without it, sidebar.md §5.1).
+        // An unfocused engine view has no caret at all, so a main view added to a panel's
+        // document showed none (kh7ya).
+        v.focused = true;
         let start = self.char_of(BlockPos { line: 0, byte: 0 });
         v.selection = Selection::point(start);
         self.others.push((id, v));

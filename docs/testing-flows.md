@@ -91,8 +91,10 @@ anything else. `dump()` prints the frame.
 - **The state round-trips through JSON** (`UiState` to text and back is equal).
 - **The caret:** while writing, the cursor shows inside the document's view, and hit-testing the
   cursor's cell gives the document's caret (line and byte).
-- **Another writer** (`Motion::Agent`: `agent_add`, `remote_edit`): the scroll and every row
-  above the caret's note stay; the header's badges and the footer may change.
+- **Another writer** (`Motion::Agent`: `agent_add`, `remote_edit`): the cursor stays where it
+  was on screen (what you're typing doesn't move); the header's badges and the footer may change.
+- **A click** (`Motion::Click`: `click_caret`, `alt_click`): as a caret move, and the view
+  doesn't scroll at all; the text stays under the mouse.
 - **No shifting** (`Motion::Typing` and `Motion::Caret` steps): the document's view keeps its
   place; every row outside it (header, tabs, footer) is unchanged, except the footer's hints,
   its counts and a toast; the view scrolls only when the caret is on its first or last row.
@@ -137,7 +139,22 @@ more seeds for a longer hunt.
 | opening the sidebar | 30 ms |
 | the wheel, PgDn, ↓ | 4 ms |
 
-on a 300-line and a 5,000-line page, and typing beside an open panel. They're ignored by
+on a 300-line and a 5,000-line page, and typing beside an open panel. On an M-series Mac,
+quiet, 2026-10-08 (p50 / p99, ms):
+
+| Step | 300 lines | 5,000 lines |
+|---|---|---|
+| typing (near the top) | 0.56 / 0.63 | 1.44 / 1.61 |
+| typing at the page's end | | 2.01 / 2.22 |
+| typing beside a panel | 0.56 / 0.66 | 1.45 / 1.61 |
+| opening the page | 2.3 / 2.6 | 37.6 / 78.7 |
+| opening the sidebar beside it | 0.8 / 1.1 | 1.9 / 4.9 |
+| the page itself opened beside | 1.6 / 1.9 | **28.0 / 33.2** (vw384) |
+| the wheel | 0.43 / 0.50 | 0.53 / 0.65 |
+| PgDn, ↓ | 0.62 / 0.71 | 0.63 / 0.70 |
+
+`flows::perf::diag_split` splits a keystroke's time (the frame's preparation, the key's
+handling, caretline's insert, the draw). They're ignored by
 default (a debug build is far slower): `cargo test --release -p thc-tui flows::perf --
 --ignored --nocapture --test-threads=1` prints p50, p99 and the slowest steps, and fails on a
 p99 over budget. A test whose ignore reason starts with a task id is over budget now. The

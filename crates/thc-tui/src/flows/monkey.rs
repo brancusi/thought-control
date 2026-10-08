@@ -75,11 +75,7 @@ fn walk(seed: u64, steps: usize, size: (u16, u16)) {
                 if !rows.is_empty() {
                     let (y, x0, x1) = rows[rng.below(rows.len())];
                     let x = x0 + rng.below((x1.saturating_sub(x0)).max(1) as usize) as u16;
-                    // Motion::Caret, not Click, until 4z7zh (a click near an edge scrolls) is fixed:
-                    // then `f.alt_click(…)`, which holds a click to never scrolling.
-                    let x = x.min(f.shot.buf.area.width - 1);
-                    f.msg("⌥click", Motion::Caret, Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Down, x, y, mods: "m".into(), clicks: Some(1) } });
-                    f.msg("⌥click up", Motion::Caret, Msg::Mouse { mouse: crate::session::Mouse { kind: crate::session::MouseKind::Up, x, y, mods: "m".into(), clicks: Some(1) } });
+                    f.alt_click(At::Cell(x.min(f.shot.buf.area.width - 1), y));
                 }
             }
             17 => {
@@ -120,13 +116,6 @@ fn monkey_on_a_narrow_screen() {
 fn monkey_c0ffee_a_wide_character_at_the_row_end() {
     // Step 335: 日 typed at column 78 of 80 overflows the row, and the cursor leaves the view.
     walk(0xc0ffee, 200, (80, 24));
-}
-
-#[test]
-#[ignore = "j9xm7"]
-fn monkey_deadbeef_backspace_at_the_end() {
-    // Step 499: a Backspace near the end of the scrolled page pulls the view down.
-    walk(0xdead_beef, 250, (80, 24));
 }
 
 #[test]

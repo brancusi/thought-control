@@ -48,6 +48,9 @@ pub struct PanelRt {
     pub slot: DocSlot,
     /// Why it can't show its document (deleted, unreadable).
     pub problem: Option<String>,
+    /// A remembered scroll waiting for the panel's first layout (zszv1): its row counts rows
+    /// as the panel's width wraps them, so it's applied once the view has that width.
+    pub pending_scroll: Option<(usize, bool)>,
 }
 
 impl PanelRt {
@@ -274,7 +277,8 @@ impl App {
         let vid = self.next_vid;
         self.next_vid += 1;
         let remembered = self.ui.sidebar.get(key).and_then(|p| p.doc_view().cloned());
-        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, ..Default::default() }, problem: None };
+        let pending_scroll = remembered.as_ref().filter(|v| v.caret.is_some()).map(|v| (v.scroll.row, v.scroll_free));
+        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, ..Default::default() }, problem: None, pending_scroll };
         if self.doc.as_ref().is_some_and(|d| caret_key(&d.target) == dk) {
             let d = self.doc.as_mut().unwrap();
             d.add_view(vid);
@@ -471,9 +475,13 @@ impl App {
     }
 
     fn sync_panel_view(&mut self, key: &PanelKey) {
+        // Not laid out yet: the remembered view stands until it is.
+        if self.panels.get(key).is_some_and(|rt| rt.pending_scroll.is_some()) {
+            return;
+        }
         let Some((d, _)) = self.panel_doc_mut(key) else { return };
         let a = d.place_anchor().unwrap_or_else(|| d.caret_anchor());
-        let v = DocView { caret: Some(Caret { node: a.id, byte: a.byte }), scroll: ScrollAnchor { anchor: None, row: d.scroll() }, folds: Vec::new() };
+        let v = DocView { caret: Some(Caret { node: a.id, byte: a.byte }), scroll: ScrollAnchor { anchor: None, row: d.scroll() }, folds: Vec::new(), scroll_free: d.scroll_free() };
         self.main_view_current();
         if let Some(p) = self.ui.sidebar.get_mut(key) {
             p.set_doc_view(v);
@@ -939,7 +947,7 @@ pub(crate) fn load_sidebar(cache: &std::path::Path, vault: &str) -> crate::sideb
 fn apply_doc_view(d: &mut Doc, v: &DocView) {
     if let Some(c) = &v.caret {
         if d.set_caret_anchor(&Anchor { id: c.node.clone(), byte: c.byte }) {
-            d.set_scroll(v.scroll.row, false);
+            d.set_scroll(v.scroll.row, v.scroll_free);
         }
     }
 }
