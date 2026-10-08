@@ -339,8 +339,9 @@ impl Doc {
 
     /// The caret on an empty, unsaved line after note `after` (None: at the top), `depth` deep:
     /// an empty line there already is used (the fresh one the document arrived with, if it's
-    /// there), else one is put in; a fresh line at the end elsewhere goes. False: no `after`.
-    pub fn caret_to_new_line(&mut self, after: Option<&str>, depth: usize, kind: Kind) -> bool {
+    /// there), else one is put in; a fresh line at the end elsewhere goes unless `keep_fresh_end`.
+    /// False: no `after`.
+    pub fn caret_to_new_line(&mut self, after: Option<&str>, depth: usize, kind: Kind, keep_fresh_end: bool) -> bool {
         let at = match after {
             Some(id) => match self.lines().iter().position(|l| l.id == id) {
                 Some(i) => i + 1,
@@ -351,7 +352,7 @@ impl Doc {
         let empty = |l: &Line| l.is_new && l.text.trim().is_empty();
         let n = self.lines().len();
         // The fresh line at the end, when it isn't the one wanted.
-        if n > 1 && at + 1 < n && self.lines().last().is_some_and(empty) {
+        if !keep_fresh_end && n > 1 && at + 1 < n && self.lines().last().is_some_and(empty) {
             self.lines_mut().pop();
             self.fresh_end = None;
         }
@@ -365,7 +366,7 @@ impl Doc {
             l.kind = kind;
             l.status = (kind == Kind::Task).then(|| "todo".to_string());
         }
-        if at + 1 < self.lines().len() {
+        if at + 1 < self.lines().len() && !keep_fresh_end {
             self.fresh_end = None;
         }
         self.set_caret(BlockPos { line: at, byte: 0 });

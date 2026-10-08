@@ -395,7 +395,7 @@ impl Session {
                     }
                 } else if let Some(n) = &ds.caret_new {
                     // An empty line the caret was on, never saved: back where it was (h8vsn).
-                    d.caret_to_new_line(n.after.as_deref(), n.depth, n.kind);
+                    d.caret_to_new_line(n.after.as_deref(), n.depth, n.kind, ds.fresh_end);
                 }
             }
             // The scroll is a row of the document as laid out at the session's size: lay it out

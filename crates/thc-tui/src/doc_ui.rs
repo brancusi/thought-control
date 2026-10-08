@@ -329,6 +329,11 @@ fn meta_of(ctx: DocContext, l: &Line, chip: Option<&str>) -> String {
         }
         return format!("≠ {} · {key} compare", l.conflict_with.as_deref().unwrap_or("changed elsewhere"));
     }
+    // The meta is the saved note's; a done time it shows goes as soon as the line isn't done
+    // (⌃T back to text, a reopen), not when the save lands.
+    if l.status.as_deref() != Some("done") && l.meta.starts_with("done") {
+        return l.meta.split_once(" · ").map_or(String::new(), |(_, rest)| rest.to_string());
+    }
     l.meta.clone()
 }
 

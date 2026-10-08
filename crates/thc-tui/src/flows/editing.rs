@@ -173,3 +173,24 @@ fn undo_redo_selection_edits() {
         .expect_no_line("Grow the newsletter")
         .done();
 }
+
+#[test]
+fn ctrl_t_from_done_to_text_clears_the_done_time() {
+    // ⌃T cycles [ ] → [x] → text: back to text, the row says nothing of a done time, while
+    // the caret is still on it and after the save, live and restored.
+    let mut f = q4();
+    f.named("⌃T from done back to text");
+    f.click_caret(doc_at("Draft the budget", 5)).keys("<c-t>").expect_saved_status("Draft the budget", "done");
+    f.keys("<down><up>").expect_screen("done ");
+    f.keys("<c-t>").expect("no done time on the row", |s| {
+        let (w, h) = s.size;
+        let frame = s.render(w, h, "text").unwrap().frame.unwrap();
+        frame.lines().filter(|l| l.contains("Draft the budget")).all(|l| !l.contains("done "))
+    });
+    f.keys("<down>").expect("still none after the save", |s| {
+        let (w, h) = s.size;
+        let frame = s.render(w, h, "text").unwrap().frame.unwrap();
+        frame.lines().filter(|l| l.contains("Draft the budget")).all(|l| !l.contains("done "))
+    });
+    f.done();
+}

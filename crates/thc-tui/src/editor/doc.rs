@@ -673,7 +673,11 @@ impl Doc {
         // An empty line away from the caret isn't a note and is never saved: it goes now,
         // with the save, so the page you see is the page you reopen (h8vsn). The caret's own
         // empty line stays (it's where you're about to type); so does a line in conflict.
-        let gone = |i: usize, l: &Line| l.is_new && l.text.trim().is_empty() && i != caret && !l.conflict;
+        // The fresh line a document arrives with at its end stays too: it's in the state
+        // (`fresh_end`), so it reopens as it shows, and ↓ from the last note goes to it.
+        let fresh = self.fresh_end.clone();
+        let last = self.engine.lines().len().saturating_sub(1);
+        let gone = |i: usize, l: &Line| l.is_new && l.text.trim().is_empty() && i != caret && !l.conflict && !(i == last && fresh.as_deref() == Some(l.id.as_str()));
         let mut caret = caret;
         if self.engine.lines().len() > 1 && self.engine.lines().iter().enumerate().any(|(i, l)| gone(i, l)) {
             let keep: Vec<bool> = self.engine.lines().iter().enumerate().map(|(i, l)| !gone(i, l)).collect();
