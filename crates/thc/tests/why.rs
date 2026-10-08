@@ -29,7 +29,7 @@ fn reasons(v: &Value, text: &str) -> Vec<String> {
 
 #[test]
 fn rows_say_why_they_are_here() {
-    let root = std::env::temp_dir().join(format!("thc-why-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-why-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

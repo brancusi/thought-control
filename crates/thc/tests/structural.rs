@@ -24,7 +24,7 @@ fn run(root: &Path, args: &[&str]) -> String {
 
 #[test]
 fn structural_queries_walk_the_tree() {
-    let root = std::env::temp_dir().join(format!("thc-struct-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-struct-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

@@ -6,7 +6,7 @@ use std::{path::PathBuf, process::{Command, Output}};
 struct V { root: PathBuf }
 impl V {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!("thc-team-roles-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-team-roles-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("home")).unwrap();
         let v = Self { root };

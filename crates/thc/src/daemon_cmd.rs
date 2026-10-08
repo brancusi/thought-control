@@ -880,7 +880,7 @@ mod tests {
     use super::*;
 
     fn file(name: &str) -> PathBuf {
-        let d = std::env::temp_dir().join(format!("thc-stale-{}-{name}", std::process::id()));
+        let d = thc_core::scratch::dir(&format!("thc-stale-{}-{name}", std::process::id()));
         std::fs::create_dir_all(&d).unwrap();
         let p = d.join("thc");
         std::fs::write(&p, "x").unwrap();

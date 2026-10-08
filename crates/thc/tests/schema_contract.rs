@@ -108,7 +108,7 @@ fn check(vault: &Path, cache: &Path, cmd: &str, args: &[&str], errs: &mut Vec<St
 }
 
 fn tmp() -> PathBuf {
-    let d = std::env::temp_dir().join(format!("thc-contract-{}", std::process::id()));
+    let d = thc_core::scratch::dir(&format!("thc-contract-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d

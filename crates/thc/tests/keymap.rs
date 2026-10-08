@@ -12,7 +12,7 @@ struct V {
 
 impl V {
     fn new(name: &str) -> V {
-        let root = std::env::temp_dir().join(format!("thc-keymap-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-keymap-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let v = V { root };
@@ -387,7 +387,7 @@ fn editor_polish() {
 /// ⌘ isn't known to reach thc it says how; `thc keys --markdown` lists ⌘ first.
 #[test]
 fn mac_keys_come_first() {
-    let root = std::env::temp_dir().join(format!("thc-mackeys-help-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-mackeys-help-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |env: &[(&str, &str)], args: &[&str]| {

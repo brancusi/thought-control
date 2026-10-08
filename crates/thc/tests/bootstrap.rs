@@ -13,7 +13,7 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 fn home(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("thc-setup-{name}-{}", std::process::id()));
+    let d = thc_core::scratch::dir(&format!("thc-setup-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     d.canonicalize().unwrap()
@@ -300,7 +300,7 @@ fn first_run_no_means_no_skill() {
 fn setup_wezterm_adds_one_block_and_undo_removes_it() {
     let original = "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.font_size = 14\nreturn config\n";
     for (case, rel, env_file) in [("xdg", ".config/wezterm/wezterm.lua", false), ("dot", ".wezterm.lua", false), ("env", "custom/wez.lua", true)] {
-        let home = std::env::temp_dir().join(format!("thc-wezterm-{case}-{}", std::process::id()));
+        let home = thc_core::scratch::dir(&format!("thc-wezterm-{case}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let file = home.join(rel);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
@@ -335,7 +335,7 @@ fn setup_wezterm_adds_one_block_and_undo_removes_it() {
         let _ = std::fs::remove_dir_all(&home);
     }
     // No `return config` to put it before: the block is printed, the file untouched.
-    let home = std::env::temp_dir().join(format!("thc-wezterm-noreturn-{}", std::process::id()));
+    let home = thc_core::scratch::dir(&format!("thc-wezterm-noreturn-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
     std::fs::write(home.join(".wezterm.lua"), "return { font_size = 14 }\n").unwrap();
@@ -354,7 +354,7 @@ fn wezterm_keys_pass_through_outside_thc() {
     if !o.status.success() {
         return;
     }
-    let home = std::env::temp_dir().join(format!("thc-wezkeys-{}", std::process::id()));
+    let home = thc_core::scratch::dir(&format!("thc-wezkeys-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(&home).unwrap();
     let mut c = common::thc();
@@ -399,7 +399,7 @@ return config
 /// the user's wezterm.lua.
 #[test]
 fn the_tui_refreshes_an_older_wezterm_module() {
-    let home = std::env::temp_dir().join(format!("thc-wezterm-refresh-{}", std::process::id()));
+    let home = thc_core::scratch::dir(&format!("thc-wezterm-refresh-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     std::fs::create_dir_all(home.join("p")).unwrap();
     let tui = || {

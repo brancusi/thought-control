@@ -9,7 +9,7 @@ use thc_core::vault::{self, Paths, Vault};
 
 #[test]
 fn badge_counts_each_node_once() {
-    let root = std::env::temp_dir().join(format!("thc-badge-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-badge-{}", thc_core::id::new_id()));
     vault::init(&root.join("v"), None, None).unwrap();
     let paths = Paths { vault: root.join("v"), cache: root.join("cache") };
     let mut v = Vault::open(paths, Actor { kind: "human".into(), name: None }, "test").unwrap();

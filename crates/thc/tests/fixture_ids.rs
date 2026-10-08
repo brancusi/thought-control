@@ -6,7 +6,7 @@ mod common;
 use serde_json::Value;
 
 fn build(name: &str, fixed: bool) -> Value {
-    let root = std::env::temp_dir().join(format!("thc-fixture-{name}-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-fixture-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |args: &[&str]| {
@@ -39,7 +39,7 @@ fn fixture_ids_make_the_log_the_same_on_every_run() {
 
 #[test]
 fn a_leftover_fixture_ids_warns_and_refuses_writes_without_a_pinned_clock() {
-    let root = std::env::temp_dir().join(format!("thc-fixture-guard-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-fixture-guard-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cmd = |args: &[&str], now: bool, test: bool| {

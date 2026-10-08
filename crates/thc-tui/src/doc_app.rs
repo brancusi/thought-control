@@ -609,16 +609,26 @@ impl App {
                 if let Some(m) = msgs.into_iter().last() {
                     self.info(m);
                 }
-                // The rail's counts follow the save (64j4y; see drain_saves).
-                if self.in_panel.is_none() {
-                    self.build_rail();
-                }
+                // The rail's counts and the conflicts follow the save (see drain_saves).
+                self.after_save_results();
             }
             Err(e) => {
                 // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
                 d.mark_save_failed(&plan.parsed, &e);
                 self.error(format!("not saved: {e} · :retry"));
             }
+        }
+    }
+
+    /// What a save's results change outside the document: the conflicts the banner shows and
+    /// the rail's counts.
+    fn after_save_results(&mut self) {
+        let conflicts = self.vault.store.open_conflicts().unwrap_or_default();
+        if conflicts != self.conflicts {
+            self.conflicts = conflicts;
+        }
+        if self.in_panel.is_none() {
+            self.build_rail();
         }
     }
 
@@ -664,12 +674,11 @@ impl App {
             if let Some(m) = msgs.into_iter().last() {
                 self.info(m);
             }
-            // What the save changed shows in the rail's counts (a page's open tasks, a day's
-            // entries) at once, as a fresh session would read them (64j4y). The rail is the
-            // main view's: a panel's save leaves it for the main view's next.
-            if self.in_panel.is_none() {
-                self.build_rail();
-            }
+            // What the save changed shows at once, as a fresh session would read it: the rail's
+            // counts (a page's open tasks, a day's entries; 64j4y) and the conflicts banner (a
+            // save that kept both sides; t741c). The rail is the main view's: a panel's save
+            // leaves it for the main view's next.
+            self.after_save_results();
             // The save that waited for this one: planned now, against what the vault has.
             if let Some(all) = self.doc_saver.as_mut().filter(|s| s.pending == 0).and_then(|s| s.waiting.take()) {
                 self.save_doc(all);
