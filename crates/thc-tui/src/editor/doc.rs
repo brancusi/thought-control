@@ -472,6 +472,96 @@ fn place_by<'a>(depth: usize, n: usize, at: impl Fn(usize) -> (usize, &'a str)) 
 
 // ---- saving ---------------------------------------------------------------------------------------
 
+/// Siblings in the vault's order, as a linked list per parent: what a save's creates and moves
+/// do to it (`after`: right after that sibling; none: first), followed op by op.
+struct VaultOrder {
+    root: String,
+    parent: HashMap<String, String>,
+    prev: HashMap<String, Option<String>>,
+    next: HashMap<String, Option<String>>,
+    first: HashMap<String, Option<String>>,
+}
+
+impl VaultOrder {
+    fn key(&self, p: Option<&str>) -> String {
+        p.filter(|p| *p != self.root).unwrap_or("").to_string()
+    }
+
+    /// From each saved note's (id, parent, after). None when they don't make one chain per
+    /// parent (two after the same note, an `after` that isn't a sibling here).
+    fn of<'a>(notes: impl Iterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>, root: Option<&str>) -> Option<VaultOrder> {
+        let mut o = VaultOrder { root: root.unwrap_or("").to_string(), parent: HashMap::new(), prev: HashMap::new(), next: HashMap::new(), first: HashMap::new() };
+        let notes: Vec<_> = notes.collect();
+        for (id, p, _) in &notes {
+            let k = o.key(*p);
+            o.parent.insert(id.to_string(), k);
+        }
+        for (id, p, after) in &notes {
+            let k = o.key(*p);
+            o.prev.insert(id.to_string(), after.map(str::to_string));
+            match after {
+                Some(a) => {
+                    if o.parent.get(*a) != Some(&k) || o.next.get(*a).is_some_and(|n| n.is_some()) {
+                        return None;
+                    }
+                    o.next.insert(a.to_string(), Some(id.to_string()));
+                }
+                None => {
+                    if o.first.get(&k).is_some_and(|f| f.is_some()) {
+                        return None;
+                    }
+                    o.first.insert(k, Some(id.to_string()));
+                }
+            }
+        }
+        Some(o)
+    }
+
+    /// `id` is where the vault would have it: under `parent`, right after `after`.
+    fn is_at(&self, id: &str, parent: Option<&str>, after: Option<&str>) -> bool {
+        self.parent.get(id) == Some(&self.key(parent)) && self.prev.get(id).map(|p| p.as_deref()) == Some(after)
+    }
+
+    fn unlink(&mut self, id: &str) {
+        let Some(k) = self.parent.remove(id) else { return };
+        let p = self.prev.remove(id).flatten();
+        let n = self.next.remove(id).flatten();
+        match &p {
+            Some(p) => {
+                self.next.insert(p.clone(), n.clone());
+            }
+            None => {
+                self.first.insert(k, n.clone());
+            }
+        }
+        if let Some(n) = n {
+            self.prev.insert(n, p);
+        }
+    }
+
+    fn insert(&mut self, id: &str, parent: Option<&str>, after: Option<&str>) {
+        let k = self.key(parent);
+        let n = match after {
+            Some(a) => self.next.get(a).cloned().flatten(),
+            None => self.first.get(&k).cloned().flatten(),
+        };
+        match after {
+            Some(a) => {
+                self.next.insert(a.to_string(), Some(id.to_string()));
+            }
+            None => {
+                self.first.insert(k.clone(), Some(id.to_string()));
+            }
+        }
+        if let Some(n) = &n {
+            self.prev.insert(n.clone(), Some(id.to_string()));
+        }
+        self.parent.insert(id.to_string(), k);
+        self.prev.insert(id.to_string(), after.map(str::to_string));
+        self.next.insert(id.to_string(), n);
+    }
+}
+
 /// What a save sends: the ops, and which line each `after` / parse belongs to.
 pub struct SavePlan {
     pub ops: Vec<BlockOp>,
@@ -492,6 +582,9 @@ pub struct Sent {
     /// The lines this save creates: one gone from the buffer by the time it's made (joined,
     /// cut, undone) is deleted by the next save.
     pub created: std::collections::HashSet<String>,
+    /// Lines this save leaves where they are whose note before them in the vault changes (a
+    /// note created or moved in just above): what they follow once it lands.
+    pub shifted: Vec<(String, Option<String>)>,
 }
 
 impl Doc {
@@ -561,6 +654,11 @@ impl Doc {
         let mut present: Vec<(usize, usize)> = Vec::new();
         // Notes this save moves or creates.
         let mut placed: HashSet<&str> = HashSet::new();
+        // The vault's sibling order as this save's ops change it, to move only notes whose
+        // place in it differs (ymh1g: a paste above 5,000 notes moved every one of them).
+        // None: the saved places don't chain up (a delete pending, a line from elsewhere):
+        // the cautious rule below then moves every note after a moved one.
+        let mut order = if self.engine.deleted().is_empty() { VaultOrder::of(lines.iter().filter(|l| !l.is_new).map(|l| (l.id.as_str(), l.saved_parent.as_deref(), l.saved_after.as_deref())), self.root.as_deref()) } else { None };
         let push = |present: &mut Vec<(usize, usize)>, d: usize, i: usize| {
             while present.last().is_some_and(|&(pd, _)| pd >= d) {
                 present.pop();
@@ -578,6 +676,9 @@ impl Doc {
                     continue;
                 }
                 placed.insert(l.id.as_str());
+                if let Some(o) = order.as_mut() {
+                    o.insert(&l.id, parent.as_deref(), after.as_deref());
+                }
                 ops.push(BlockOp::Create { id: l.id.clone(), parent, after: after.clone(), kind: l.kind(), text: l.text.clone() });
                 afters.insert(l.id.clone(), after);
                 parsed.push(l.id.clone());
@@ -601,7 +702,15 @@ impl Doc {
             // A note after one this save moves goes with it: the vault places it by its own
             // order, not by what comes before it (fuzz: ⌥↓ moved two notes, the second stayed).
             let follows_moved = after.is_some_and(|a| placed.contains(a));
-            if reparented || after != l.saved_after.as_deref() || follows_moved {
+            let moves = match order.as_mut() {
+                Some(o) => !o.is_at(&l.id, parent, after),
+                None => reparented || after != l.saved_after.as_deref() || follows_moved,
+            };
+            if moves {
+                if let Some(o) = order.as_mut() {
+                    o.unlink(&l.id);
+                    o.insert(&l.id, parent, after);
+                }
                 placed.insert(l.id.as_str());
                 let after = after.map(str::to_string);
                 ops.push(BlockOp::Move { id: l.id.clone(), parent: parent.map(str::to_string), after: after.clone(), rev: None });
@@ -627,6 +736,10 @@ impl Doc {
                 ops.push(BlockOp::Status { id: l.id.clone(), status: l.status.clone().unwrap(), rev: None });
             }
         }
+        let shifted: Vec<(String, Option<String>)> = match &order {
+            Some(o) => lines.iter().filter(|l| !l.is_new && !afters.contains_key(&l.id)).filter_map(|l| o.prev.get(&l.id).filter(|p| p.as_deref() != l.saved_after.as_deref()).map(|p| (l.id.clone(), p.clone()))).collect(),
+            None => Vec::new(),
+        };
         for id in std::mem::take(self.engine.deleted_mut()).into_iter() {
             ops.push(BlockOp::Delete { id, rev: None });
         }
@@ -634,6 +747,7 @@ impl Doc {
         let sent = Sent {
             lines: self.engine.lines().iter().filter(|_| !ops.is_empty()).map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
             created: ops.iter().filter_map(|o| if let BlockOp::Create { id, .. } = o { Some(id.clone()) } else { None }).collect(),
+            shifted,
         };
         self.engine.settle();
         SavePlan { ops, parsed, afters, sent }
@@ -747,6 +861,14 @@ impl Doc {
                 _ => {
                     l.save_error = r.error.clone();
                     messages.push(format!("not saved: {} · :retry", r.error.clone().unwrap_or_default()));
+                }
+            }
+        }
+        // Every op landed: the lines it left in place follow what the vault has above them now.
+        if results.iter().all(|r| r.state == "ok") {
+            for (id, after) in &sent.shifted {
+                if let Some(l) = self.engine.lines_mut().iter_mut().find(|l| l.id == *id && !l.is_new) {
+                    l.saved_after = after.clone();
                 }
             }
         }
