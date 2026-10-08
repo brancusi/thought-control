@@ -444,6 +444,8 @@ pub struct App {
     pub rail: Vec<RailItem>,
     /// The daemon said something changed that has no transaction (a conflict): refresh.
     pub(crate) live_dirty: bool,
+    /// Where the last poll's time went (THC_TUI_TRACE's slow-key log).
+    pub(crate) poll_split: Vec<(&'static str, f64)>,
     /// The daemon pushed a change: poll now, not at the next interval.
     pub poll_wanted: bool,
     last_agent_tx: Option<String>,
@@ -845,6 +847,7 @@ impl App {
             live_txs: Vec::new(),
             rail: Vec::new(),
             live_dirty: false,
+            poll_split: Vec::new(),
             poll_wanted: false,
             last_agent_tx: None,
             screen_width: 80,
@@ -3847,6 +3850,13 @@ impl App {
     /// Poll the log for changes from other processes (agents, other devices via sync). True when
     /// it found some (and reloaded): the session records that as a `poll` message.
     pub fn poll_external(&mut self) -> Result<bool> {
+        let mut at = Instant::now();
+        let mut split = |name: &'static str, out: &mut Vec<(&'static str, f64)>| {
+            let now = Instant::now();
+            out.push((name, (now - at).as_secs_f64() * 1000.0));
+            at = now;
+        };
+        self.poll_split.clear();
         // The other vaults a cross-vault view shows: their changes reload it.
         let mut others_moved = false;
         for o in self.others.iter_mut() {
@@ -3857,18 +3867,22 @@ impl App {
         if others_moved {
             self.reload_stable()?;
         }
+        split("others", &mut self.poll_split);
         let sizes = self.vault.log.files()?;
         let changed = sizes != self.log_sizes;
         self.log_sizes = sizes;
+        split("files", &mut self.poll_split);
         if changed {
             self.vault.catch_up()?;
         }
+        split("catch_up", &mut self.poll_split);
         // What arrived from elsewhere since the last poll: what this vault's catch-ups took in
         // (a local save catches up first, too) and what the daemon pushed. Not a watermark:
         // another device's events arrive with older times, and a rebuild renumbers rows.
         let news = self.vault.take_news();
         let txs = std::mem::take(&mut self.live_txs);
         let dirty = std::mem::take(&mut self.live_dirty);
+        split("news", &mut self.poll_split);
         if !news.foreign() && txs.is_empty() && !dirty {
             return Ok(others_moved);
         }
