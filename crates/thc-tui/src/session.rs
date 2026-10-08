@@ -372,12 +372,12 @@ impl Session {
         let new = self.same_vault(new)?;
         let doc = new.document.clone();
         let frozen = new.rail_frozen.clone();
-        let parked = new.doc_parked;
+        let parked = new.main.parked;
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
         // Whether the document was just arrived at is the state's (reload arrives afresh).
-        self.app.ui.doc_parked = parked;
+        self.app.ui.main.parked = parked;
         // The rail's order is the state's: reload, arriving at a document from no document,
         // ordered it afresh (q93zh).
         if frozen.is_some() && self.app.ui.rail_frozen != frozen {
@@ -697,17 +697,17 @@ impl Session {
     fn held_drag(&mut self) {
         let Some(edge) = crate::doc_keys::drag_edge(&self.app) else { return };
         let ui = &self.app.ui;
-        if ui.now_ms.saturating_sub(ui.drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
+        if ui.now_ms.saturating_sub(ui.main.drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
             return;
         }
-        let Some((x, y)) = ui.drag_at else { return };
+        let Some((x, y)) = ui.main.drag_at else { return };
         self.mouse(Mouse { kind: MouseKind::Drag, x, y, mods: String::new(), clicks: None });
     }
 
     /// When the held drag next repeats (the runtime wakes for it), if one is held on an edge.
     pub fn held_drag_in(&self) -> Option<u64> {
         let edge = crate::doc_keys::drag_edge(&self.app)?;
-        Some((self.app.ui.drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
+        Some((self.app.ui.main.drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
     }
 
     /// Double and triple clicks: another left press within 400 ms (logical clock) on the same

@@ -544,13 +544,13 @@ impl DocContext {
         let journal = app.doc.as_ref().is_some_and(|d| matches!(d.target, Target::Journal { .. }));
         Self {
             focus: app.focus_mode.then_some(FocusView { set: app.focus_cfg.set, width: app.focus_cfg.width() as usize, journal }),
-            writing: app.doc_write,
+            writing: app.main.write,
             rail: if app.rail_shows() { RAIL_W } else { 0 },
             cap: (app.sidebar_col.is_some() && !app.focus_mode).then(|| {
                 // The terminal's width, the rail as it shows there, the detail pane as it would.
                 let rail = if app.term_width >= 120 && app.tui_prefs.page_rail && app.doc.is_some() { RAIL_W } else { 0 };
                 let w = (pane_width(app.term_width, app.show_detail) as usize).saturating_sub(rail);
-                let ctx = DocContext { focus: None, writing: app.doc_write, rail, cap: None };
+                let ctx = DocContext { focus: None, writing: app.main.write, rail, cap: None };
                 col_beside(ctx, w).min(w.saturating_sub(MARKS + HANG + 2))
             }),
         }
@@ -571,7 +571,7 @@ fn source_revision(app: &App) -> u64 {
     app.detail_shows().hash(&mut h);
     app.focus_mode.hash(&mut h);
     format!("{:?}", app.focus_cfg).hash(&mut h);
-    app.doc_write.hash(&mut h);
+    app.main.write.hash(&mut h);
     app.rail_shows().hash(&mut h);
     app.crumb_shows().hash(&mut h);
     app.today.hash(&mut h);
@@ -798,8 +798,8 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         let fm = form(app, l);
         let indent = l.depth * 4;
         let mut spans: Vec<Span<'static>> = vec![Span::raw(" ".repeat(left))];
-        let in_vsel = app.doc_vsel.is_some_and(|v| r.line >= v.min(d.caret().line) && r.line <= v.max(d.caret().line));
-        let navigate_here = (!app.doc_write && r.line == d.caret().line && app.doc_footer_cur.is_none()) || in_vsel;
+        let in_vsel = app.main.vsel.is_some_and(|v| r.line >= v.min(d.caret().line) && r.line <= v.max(d.caret().line));
+        let navigate_here = (!app.main.write && r.line == d.caret().line && app.main.footer_cur.is_none()) || in_vsel;
         let row_fill = if navigate_here { th.fill(Token::Selection) } else { Style::default() };
         if r.meta_row {
             let meta = meta_of(ctx, l, (r.line == d.caret().line).then_some(app.derived.caret_chip.as_deref()).flatten());
@@ -893,7 +893,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             base = base.add_modifier(Modifier::DIM);
         }
         // While the caret's line is written, every token is underlined in its hue (§5).
-        let typing = app.doc_write && r.line == d.caret().line;
+        let typing = app.main.write && r.line == d.caret().line;
         let token_style = |word: &str| -> Option<Style> {
             if !typing {
                 return None;
@@ -939,7 +939,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             }
             out
         };
-        let image = image_line(&l.text).filter(|_| !(app.doc_write && r.line == d.caret().line));
+        let image = image_line(&l.text).filter(|_| !(app.main.write && r.line == d.caret().line));
         if let Some((caption, path)) = image {
             // An attachment's line (attachments.md §3): a chip, `▣ caption · 1280×720 · ⌃O open`.
             // The caret's line shows the Markdown, which is what's edited.
@@ -953,7 +953,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                 let rest = if missing { " · missing".to_string() } else { format!("{dims} · ⌃O open") };
                 spans.push(Span::styled(rest, th.s(Token::Muted)));
             }
-        } else if l.kind() == Kind::Para && (l.text == "---" || l.text == "***") && !(app.doc_write && r.line == d.caret().line) {
+        } else if l.kind() == Kind::Para && (l.text == "---" || l.text == "***") && !(app.main.write && r.line == d.caret().line) {
             // A rule: a line across the text column (the text is still `---`).
             let tw = text_width(ctx, app.screen_width, app.detail_shows(), l.depth);
             spans.push(Span::styled("─".repeat(tw), th.s(Token::Line)));
@@ -971,15 +971,15 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
         if r.first {
             let mut meta = meta_of(ctx, l, (r.line == d.caret().line).then_some(app.derived.caret_chip.as_deref()).flatten());
             // While the caret is in a link: the ↗ open chip (mouse.md §3).
-            if app.doc_write && r.line == d.caret().line && crate::doc_app::link_at(&l.text, d.caret().byte).is_some() {
+            if app.main.write && r.line == d.caret().line && crate::doc_app::link_at(&l.text, d.caret().byte).is_some() {
                 meta = "↗ open".to_string();
             }
             // On an attachment's line: ⌃O opens it.
-            if app.doc_write && r.line == d.caret().line && image_line(&l.text).is_some() {
+            if app.main.write && r.line == d.caret().line && image_line(&l.text).is_some() {
                 meta = "⌃O open".to_string();
             }
             // The near-miss chip (writing.md §5), for 3 s after the save.
-            if let Some((_, typed, existing, _, since)) = app.near_miss.as_ref().filter(|n| n.0 == l.id && app.ui.age(n.4).as_secs() < 3) {
+            if let Some((_, typed, existing, _, since)) = app.main.near_miss.as_ref().filter(|n| n.0 == l.id && app.ui.age(n.4).as_secs() < 3) {
                 let _ = since;
                 meta = format!("new page \"{typed}\" · ⌃O {existing}?");
             }
@@ -1049,7 +1049,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
                 Span::styled("─".repeat(span_w.saturating_sub(side + width(&label))), th.s(Token::Line)),
             ]));
             for (fi, it) in items.iter().enumerate().take(h.saturating_sub(shown_rows + 2)) {
-                let here = app.doc_footer_cur == Some(fi);
+                let here = app.main.footer_cur == Some(fi);
                 let fill = if here { th.fill(Token::Selection) } else { Style::default() };
                 let (cell, tok) = match it.status.as_deref() {
                     Some("done") => ("[x] ", Token::Done),
@@ -1136,7 +1136,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             }
         }
     }
-    if app.doc_write {
+    if app.main.write {
         if let Some((col, row)) = prepared.cursor.filter(|&(_, row)| (row as usize) < h) {
             let cx = (body.x as usize + left + col as usize).min(body.right() as usize - 1) as u16;
             let cy = body.y + row;
@@ -1148,7 +1148,7 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
             } else if crate::ui::caret_allowed(app) {
                 f.set_cursor_position((cx, cy));
             }
-            if app.link_open {
+            if app.main.link_open {
                 link_popup(render, f, app, area, cx, cy);
             }
         }
@@ -1226,7 +1226,7 @@ fn link_popup(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, c
         .into_iter()
         .enumerate()
         .map(|(i, (label, muted))| {
-            let on = app.link_sel == Some(i);
+            let on = app.main.link_sel == Some(i);
             let st = if on { th.s(Token::Text).patch(th.fill(Token::Selection)) } else if muted { th.s(Token::Muted) } else { th.s(Token::Text) };
             let text: String = label.chars().take(inner.width as usize).collect();
             let pad = (inner.width as usize).saturating_sub(width(&text));

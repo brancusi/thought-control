@@ -223,7 +223,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                     *sel = i;
                 }
             }
-            Some(crate::ui::Click::LinkRow(i)) if app.link_open => app.link_sel = Some(i),
+            Some(crate::ui::Click::LinkRow(i)) if app.main.link_open => app.main.link_sel = Some(i),
             _ => {}
         }
         return;
@@ -475,8 +475,8 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 return;
             }
             Some(Click::LinkRow(i)) => {
-                if app.link_open {
-                    app.link_sel = Some(i);
+                if app.main.link_open {
+                    app.main.link_sel = Some(i);
                     key(app, KeyCode::Enter, KeyModifiers::NONE);
                 }
                 return;

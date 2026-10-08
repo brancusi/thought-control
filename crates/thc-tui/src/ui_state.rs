@@ -127,39 +127,24 @@ pub struct UiState {
     pub journal_date: NaiveDate,
     /// The open document's caret and scroll (see `DocumentState`).
     pub document: Option<DocumentState>,
-    /// Write (typing) or Navigate inside the document.
-    pub doc_write: bool,
-    /// Just arrived: Tab and ⇧Tab still change views.
-    pub doc_parked: bool,
+    /// The main view's editor pane: writing or parked, the `[[` popup, the pointer, … (its v1
+    /// fields, flattened here under their v1 names; editor_pane.rs).
+    #[serde(flatten)]
+    pub main: crate::editor_pane::EditorState,
     /// The document Esc goes back to: (document, the line to land on, the page it was opened for).
     pub doc_back: Option<(Target, String, String)>,
     /// The list view (and row) the open document was reached from.
     pub doc_origin: Option<(View, Option<String>)>,
-    /// The caret's line when last looked at (leaving it saves).
-    pub doc_line_id: Option<String>,
-    /// Navigate's line selection start.
-    pub doc_vsel: Option<usize>,
-    /// Navigate's cursor in the footer rows.
-    pub doc_footer_cur: Option<usize>,
     /// The wheel moved the view: it stays put until a key brings the caret back.
     pub doc_scroll_free: bool,
-    /// A remote change landed on the caret's line: Some(edited).
-    pub doc_announce: Option<bool>,
     /// The rail's page order, frozen while going document to document.
     pub rail_frozen: Option<Vec<String>>,
     /// The page last opened (where the Pages list's cursor rests).
     pub last_page: Option<String>,
     /// Documents opened this session, most recent first.
     pub recent_docs: Vec<Target>,
-    /// The `[[` popup: open, and its selected row.
-    pub link_open: bool,
-    pub link_sel: Option<usize>,
     /// ⌥V: the next paste is plain text.
     pub paste_plain: bool,
-    /// A drop just attached: (its line's id, the pasted text, the undo depth then).
-    pub last_drop: Option<(String, String, usize)>,
-    /// A new link close to an existing page: (line id, typed, existing, stub id, since ms).
-    pub near_miss: Option<(String, String, String, Option<String>, u64)>,
 
     // ---- input -----------------------------------------------------------------------------------
     /// The row being edited in place.
@@ -181,16 +166,6 @@ pub struct UiState {
     // ---- the pointer -----------------------------------------------------------------------------
     pub hover: Option<(u16, u16)>,
     pub scroll_drag: bool,
-    #[serde(with = "pos_opt")]
-    pub drag_from: Option<BlockPos>,
-    /// Where the held pointer last dragged to (screen cell), and when (`now_ms`): held on the
-    /// view's edge, the drag repeats on ticks and the view scrolls (Session::held_drag).
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub drag_at: Option<(u16, u16)>,
-    #[serde(default, skip_serializing_if = "is_zero")]
-    pub drag_ms: u64,
-    #[serde(with = "pos_opt")]
-    pub click_link: Option<BlockPos>,
     /// The last left press: (ms, x, y, count), for double and triple clicks.
     pub last_click: Option<(u64, u16, u16, u8)>,
 
@@ -252,23 +227,14 @@ impl Default for UiState {
             page_open: None,
             journal_date: today,
             document: None,
-            doc_write: false,
-            doc_parked: false,
+            main: Default::default(),
             doc_back: None,
             doc_origin: None,
-            doc_line_id: None,
-            doc_vsel: None,
-            doc_footer_cur: None,
             doc_scroll_free: false,
-            doc_announce: None,
             rail_frozen: None,
             last_page: None,
             recent_docs: Vec::new(),
-            link_open: false,
-            link_sel: None,
             paste_plain: false,
-            last_drop: None,
-            near_miss: None,
             edit: None,
             prompt: None,
             awaiting: None,
@@ -280,10 +246,6 @@ impl Default for UiState {
             recent_moves: Vec::new(),
             hover: None,
             scroll_drag: false,
-            drag_from: None,
-            drag_at: None,
-            drag_ms: 0,
-            click_link: None,
             last_click: None,
             toast: None,
             flashes: BTreeMap::new(),
@@ -337,7 +299,7 @@ impl UiState {
             || self.toast.is_some()
             || !self.flashes.is_empty()
             || !self.pending_keys.is_empty()
-            || self.near_miss.is_some()
+            || self.main.near_miss.is_some()
     }
 
     // ---- pure presentation helpers (update.rs uses these; App's wrappers delegate) ----------
@@ -575,7 +537,7 @@ mod keys_notation {
 }
 
 /// A caret position as `{"line", "byte"}`.
-mod pos_opt {
+pub(crate) mod pos_opt {
     use crate::editor::BlockPos;
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     #[derive(Serialize, Deserialize)]
@@ -617,7 +579,7 @@ mod tests {
         s.prompt = Some((PromptKind::Due("n1".into()), LineInput { buf: "fri".into(), cur: 3 }));
         s.overlay = Some(Overlay::Palette { input: LineInput { buf: "do".into(), cur: 2 }, sel: 1 });
         s.toast = Some(Toast { kind: crate::app::ToastKind::Info, parts: vec![("hi".into(), crate::theme::Token::Muted)], at: 9 });
-        s.drag_from = Some(BlockPos { line: 3, byte: 2 });
+        s.main.drag_from = Some(BlockPos { line: 3, byte: 2 });
         s.doc_back = Some((Target::Journal { date: NaiveDate::from_ymd_opt(2026, 10, 7).unwrap() }, "x".into(), "y".into()));
         s.document = Some(DocumentState { caret_id: "n1".into(), caret_byte: 2, scroll: 4, ..Default::default() });
         s.update_state = UpdateState::Downloading { version: "1.0".into() };
@@ -625,6 +587,40 @@ mod tests {
         let back = UiState::parse(&json).unwrap();
         assert_eq!(back, s);
         assert_eq!(back.to_json(), json);
+    }
+
+    /// The default state as v1 wrote it before the main view's editor fields moved into
+    /// `UiState::main` (editor_pane.rs; `thc ui state --default` at 0.10.1).
+    const V1_DEFAULT: &str = r#"{"ui_state_version":1,"now_ms":1791446400000,"utc_offset_min":120,"today":"2026-10-08","vault_name":"v1vault","return_vault":null,"today_by_vault":false,"view":"today","cursor":0,"scroll":0,"selected":null,"show_detail":true,"focus":"list","focus_mode":false,"focus_cfg":{"preset":"writer","set":263,"custom_width":null},"collapsed":[],"page_ids":false,"tasks_filter":"status:open sort:due","tasks_order":null,"search_terms":"","pages_filter":"","log_actor":null,"log_node":null,"review_lane":false,"agenda_mode":false,"show_all_done":false,"context_on":true,"scope_override":{},"page_open":null,"journal_date":"2026-10-08","document":null,"doc_write":false,"doc_parked":false,"doc_back":null,"doc_origin":null,"doc_line_id":null,"doc_vsel":null,"doc_footer_cur":null,"doc_scroll_free":false,"doc_announce":null,"rail_frozen":null,"last_page":null,"recent_docs":[],"link_open":false,"link_sel":null,"paste_plain":false,"last_drop":null,"near_miss":null,"edit":null,"prompt":null,"awaiting":null,"overlay":null,"pending_keys":[],"pending_since":null,"input_untouched":false,"recent_cmds":[],"recent_moves":[],"hover":null,"scroll_drag":false,"drag_from":null,"click_link":null,"last_click":null,"toast":null,"flashes":{},"alert_toast_node":null,"update_state":{"kind":"idle"},"about_new":false,"write_alt_hint":false,"meta_hint":false,"focus_hint_shown":false,"offline_toast_shown":false,"history":{"entries":[],"pos":0},"sidebar":{"shown":true,"width":null,"focused":null,"open":[],"closed":[],"image_folded":false}}"#;
+
+    #[test]
+    fn the_v1_wire_is_unchanged_by_the_editor_pane() {
+        // Old states parse, and write back the same JSON (the main pane's fields sit together
+        // now: a JSON object's key order means nothing).
+        let old: serde_json::Value = serde_json::from_str(V1_DEFAULT).unwrap();
+        let s = UiState::parse(&old).unwrap();
+        assert_eq!(s.to_json(), old);
+        let mut d = UiState::default();
+        (d.today, d.journal_date, d.now_ms, d.utc_offset_min, d.vault_name, d.focus_cfg) = (s.today, s.journal_date, s.now_ms, s.utc_offset_min, s.vault_name.clone(), s.focus_cfg.clone());
+        assert_eq!(d.to_json(), old, "the default state is v1's");
+        // Every editor pane field by its v1 name, set, lands in `main` and goes back out.
+        let mut rich = old.clone();
+        let fields = serde_json::json!({
+            "doc_write": true, "doc_parked": true, "doc_line_id": "n1", "doc_vsel": 2, "doc_footer_cur": 1,
+            "doc_announce": false, "link_open": true, "link_sel": 3, "last_drop": ["n1", "pasted", 4],
+            "near_miss": ["n1", "Gardn", "Garden", null, 7], "drag_from": {"line": 1, "byte": 2},
+            "drag_at": [3, 4], "drag_ms": 9, "click_link": {"line": 5, "byte": 6}
+        });
+        merge_patch(&mut rich, &fields);
+        let r = UiState::parse(&rich).unwrap();
+        let m = &r.main;
+        assert!(m.write && m.parked && m.link_open);
+        assert_eq!((m.line_id.as_deref(), m.vsel, m.footer_cur, m.announce, m.link_sel), (Some("n1"), Some(2), Some(1), Some(false), Some(3)));
+        assert_eq!((m.drag_from, m.drag_at, m.drag_ms, m.click_link), (Some(BlockPos { line: 1, byte: 2 }), Some((3, 4)), 9, Some(BlockPos { line: 5, byte: 6 })));
+        assert_eq!(r.to_json(), rich);
+        // Still strict about names.
+        let e = UiState::parse(&serde_json::json!({"doc_parkd": true})).unwrap_err();
+        assert!(e.contains("did you mean `doc_parked`"), "{e}");
     }
 
     #[test]
@@ -677,6 +673,3 @@ mod tests {
     }
 }
 
-fn is_zero(n: &u64) -> bool {
-    *n == 0
-}

@@ -35,6 +35,7 @@ mod snapshot_fmt;
 mod input;
 mod keymap;
 mod editing_keys;
+pub mod editor_pane;
 pub mod keys_edit;
 mod images;
 mod recover;
@@ -444,7 +445,7 @@ fn draw_images(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) ->
 
 /// Text entry shows a bar cursor: writing in a document, a prompt, the palette, move, capture.
 fn wants_bar(app: &App) -> bool {
-    (app.doc.is_some() && app.doc_write && app.overlay.is_none())
+    (app.doc.is_some() && app.main.write && app.overlay.is_none())
         || app.prompt.is_some()
         || matches!(app.overlay, Some(app::Overlay::Palette { .. } | app::Overlay::Finder { .. } | app::Overlay::Move { .. } | app::Overlay::Capture { .. }))
 }
