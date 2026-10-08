@@ -64,7 +64,6 @@ fn finder_arrows_choose_a_page() {
 #[test]
 fn open_a_link_with_alt_enter() {
     flow("⌥Enter on a link opens it")
-        .known("q93zh", Known::Rail)
         .keys("<c-o>Garden<cr>")
         .expect_page("Garden")
         .alt_click(doc_at("See [[Q4 Plan]]", 8))
@@ -77,7 +76,6 @@ fn open_a_link_with_alt_enter() {
 #[test]
 fn open_a_link_with_ctrl_o() {
     flow("⌃O on a link opens it")
-        .known("q93zh", Known::Rail)
         .keys("<c-o>Garden<cr>")
         .alt_click(doc_at("See [[Q4 Plan]]", 8))
         .keys("<c-o>")
@@ -88,7 +86,6 @@ fn open_a_link_with_ctrl_o() {
 #[test]
 fn open_a_link_with_a_click() {
     flow("a click on a link's title follows it")
-        .known("q93zh", Known::Rail)
         .keys("<c-o>Garden<cr>")
         .expect_page("Garden")
         .click(text("Q4 Plan").in_doc())
@@ -109,7 +106,6 @@ fn open_a_page_from_the_pages_list_with_enter() {
 #[test]
 fn back_and_forward_with_cmd_brackets() {
     flow("⌘[ and ⌘] walk the history")
-        .known("q93zh", Known::Rail)
         .keys("<c-o>Q4 Plan<cr>")
         .expect_page("Q4 Plan")
         .keys("<c-o>Garden<cr>")

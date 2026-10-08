@@ -161,7 +161,6 @@ fn wide_characters_wrap_at_the_edge() {
 #[test]
 fn paste_a_markdown_outline() {
     q4().named("paste a multi-line Markdown outline")
-        .known("64j4y", Known::Rail)
         .keys("<c-end><cr>")
         .paste("- first pasted\n  - nested pasted\n- [ ] a pasted task\n- last pasted")
         .expect_line("first pasted")
@@ -206,7 +205,7 @@ fn undo_and_redo_across_typing_enter_and_tab() {
 
 #[test]
 fn type_in_todays_journal() {
-    flow("type in today's journal").known("64j4y", Known::Rail).keys("T<c-end><cr>").type_text("meeting notes: ").type_text(WORDS).expect_saved_contains("meeting notes: the quick").done();
+    flow("type in today's journal").keys("T<c-end><cr>").type_text("meeting notes: ").type_text(WORDS).expect_saved_contains("meeting notes: the quick").done();
 }
 
 #[test]
@@ -346,7 +345,6 @@ fn a_link_hint_on_another_line_holds_still_while_typing() {
     // Edit a link into a near miss ([[Gardena]]): its hint shows on that line. Typing on a line
     // below must not make it flicker away under your eyes.
     q4().named("a near-miss link hint while typing elsewhere")
-        .known("64j4y", Known::Rail)
         .alt_click(doc_at("Ship the [[Garden]] redesign", 16))
         .type_text("a")
         .moves("<down><down><down><down>")

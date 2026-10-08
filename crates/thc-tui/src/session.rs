@@ -371,9 +371,16 @@ impl Session {
         let new = UiState::from_json_over(&self.app.ui, state, state.get("history").is_none())?;
         let new = self.same_vault(new)?;
         let doc = new.document.clone();
+        let frozen = new.rail_frozen.clone();
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
+        // The rail's order is the state's: reload, arriving at a document from no document,
+        // ordered it afresh (q93zh).
+        if frozen.is_some() && self.app.ui.rail_frozen != frozen {
+            self.app.ui.rail_frozen = frozen;
+            self.app.build_rail();
+        }
         if let Some(ds) = doc {
             if let Some(d) = self.app.doc.as_mut() {
                 if !ds.caret_id.is_empty() {

@@ -175,7 +175,7 @@ fn fold_a_panel() {
 
 #[test]
 fn panel_to_main() {
-    with_garden_beside().named("⌥M sends a panel to the main view").known("q93zh", Known::Rail).keys("<m-s><m-m>").expect_page("Garden").expect_focus(Focus::List).done();
+    with_garden_beside().named("⌥M sends a panel to the main view").keys("<m-s><m-m>").expect_page("Garden").expect_focus(Focus::List).done();
 }
 
 #[test]

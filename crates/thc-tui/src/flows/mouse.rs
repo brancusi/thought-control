@@ -151,7 +151,7 @@ fn click_a_task_box_in_a_list() {
 
 #[test]
 fn click_a_task_box_in_the_editor() {
-    q4().named("a click on a task's box in the editor").known("64j4y", Known::Rail).click(text("[ ] Draft").in_doc().dx(1)).expect_saved_status("Draft the budget", "done").done();
+    q4().named("a click on a task's box in the editor").click(text("[ ] Draft").in_doc().dx(1)).expect_saved_status("Draft the budget", "done").done();
 }
 
 #[test]
