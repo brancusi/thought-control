@@ -2431,7 +2431,11 @@ fn row_line(render: &mut RenderOutput, app: &App, row: &Row, selected: bool, foc
             let spans = vec![gutter, Span::raw("  "), Span::styled("+ new page \"", th.s(Token::Muted)), Span::styled(title.clone(), th.s(Token::Text)), Span::styled("\"", th.s(Token::Muted))];
             node_row::finish(&th, spans, selected && focused, wd)
         }
-        Row::Note { parts, right } => {
+        Row::Note { parts, right, narrow } => {
+            let parts = match narrow {
+                Some(n) if app.screen_width < 120 => n,
+                _ => parts,
+            };
             let rs = right.as_ref().map(|r| key_line(&th, r)).unwrap_or_default();
             // Entries (the saved filters' `  1 Work …`) are cut whole: the ones that fit, then
             // `+2 more`, never half an entry.

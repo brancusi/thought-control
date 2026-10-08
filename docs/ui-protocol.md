@@ -58,7 +58,7 @@ is there. The main groups are:
 | Group | Fields |
 |---|---|
 | The screen | `view` (`today` `inbox` `tasks` `pages` `journal` `search` `log`), `cursor`, `scroll`, `selected` (a row's stable key: a node id, `tag:x`, `view:x`, `tx:x`), `show_detail`, `focus` (`list`/`detail`), `focus_mode`, `focus_cfg`, `collapsed`, `page_ids` |
-| Filters and per-view choices | `tasks_filter` (a query, as `thc q` reads it), `search_terms`, `pages_filter`, `log_actor`, `log_node`, `review_lane`, `agenda_mode`, `show_all_done`, `context_on`, `scope_override`, `today_by_vault` |
+| Filters and per-view choices | `tasks_filter` (a query, as `thc q` reads it), `tasks_order` (the Tasks rows' order while you stay on the list: a done row stays put), `search_terms`, `pages_filter`, `log_actor`, `log_node`, `review_lane`, `agenda_mode`, `show_all_done`, `context_on`, `scope_override`, `today_by_vault` |
 | Documents | `page_open`, `journal_date`, `document` (caret and scroll: see below), `doc_write`, `doc_parked`, `doc_back`, `doc_origin`, `rail_frozen`, `last_page`, `recent_docs`, the `[[` popup (`link_open`, `link_sel`) |
 | Input | `edit` (a row being edited in place), `prompt`, `awaiting` (a confirmation), `overlay` (palette, finder, move, capture, help, recipe, history, vaults, scope, about, compare, focus), `pending_keys` (a key sequence in progress, in keymap notation), `input_untouched`, `recent_cmds`, `recent_moves` |
 | The pointer | `hover`, `scroll_drag`, `drag_from`, `click_link`, `last_click` |
