@@ -4,17 +4,17 @@
 
 > 7x3rj  [ ] Buy groceries                                                             due tomorrow
   rrft8  [ ] Finish the sign-up flow                                due fri - !high - P Launch plan
-  mxzq1  [ ] Write the getting-started guide     ^                          due mon - P Launch plan
-  frjjs  [ ] Book the dentist                    |                                          due tue
-  atmev  [ ] Send the invites                    |               due Oct 16 (in 9d) - P Launch plan
-  1chbt  [ ] Renew the passport                 ++ @ claude ---------------------------------------+
-                                                | Start here                                       |
- saved  1 open  2 this week  3 waiting  4 by cla| Due Friday, and the invites wait on it. Two      |
-                                                | screens left: plan and payment.                  |
-                                                +--------------------------------------------------+
-
-
-
+  mxzq1  [ ] Write the getting-started guide       ^                        due mon - P Launch plan
+  frjjs  [ ] Book the dentist                      |                                        due tue
+  atmev  [ ] Send the invites                      |             due Oct 16 (in 9d) - P Launch plan
+  1chbt  [ ] Renew the passport                    |
+                                                   |
+ saved  1 open  2 this week  3 waiting  4 by claude| 5 ready                             f then 1-5
+     +- @ claude ----------------------------------+----+
+     | Start here                                       |
+     | Due Friday, and the invites wait on it. Two      |
+     | screens left: plan and payment.                  |
+     +--------------------------------------------------+
 
 
 

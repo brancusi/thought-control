@@ -98,6 +98,9 @@ enum UiCmd {
         place: Option<String>,
         #[arg(long)]
         no_arrow: bool,
+        /// Keep the box and its arrow off this anchor's cells (repeatable; same forms as ANCHOR).
+        #[arg(long, value_name = "ANCHOR")]
+        avoid: Vec<String>,
         #[command(flatten)]
         target: Target,
     },
@@ -348,6 +351,7 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             ttl,
             place,
             no_arrow,
+            avoid,
             target,
         } => {
             let mut req = json!({"op": "hint.show", "anchor": anchor_arg(&anchor)?, "text": text});
@@ -362,6 +366,9 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             }
             if no_arrow {
                 req["arrow"] = json!(false);
+            }
+            if !avoid.is_empty() {
+                req["avoid"] = Value::Array(avoid.iter().map(|a| anchor_arg(a)).collect::<Result<_>>()?);
             }
             layer_req(cli, paths, &target, req)
         }

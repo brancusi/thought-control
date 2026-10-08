@@ -145,9 +145,11 @@ fn natural_inner(kind: &str, data: &Value) -> usize {
 struct BoxRenderer(&'static str);
 
 impl BoxRenderer {
-    fn size(kind: &str, data: &Value, avail: cl::Size) -> cl::Size {
+    fn size(kind: &str, data: &Value, avail: cl::Size, owner: &cl::Owner) -> cl::Size {
         let room = avail.w.saturating_sub(4) as usize;
-        let want = natural_inner(kind, data).max(MIN_W as usize - 4);
+        // An agent's box is wide enough for ` ◆ name ` on its top edge.
+        let label = owner.actor().map_or(0, |a| crate::text::width(a) + 4);
+        let want = natural_inner(kind, data).max(MIN_W as usize - 4).max(label);
         let inner = want.min(room).max(1);
         let l = lines_of(kind, data, inner);
         let rows = l.title.is_some() as usize + l.body.len() + l.controls.as_ref().map_or(0, |_| 2);
@@ -162,8 +164,8 @@ impl BoxRenderer {
 }
 
 impl cl::Renderer for BoxRenderer {
-    fn measure(&self, data: &Value, avail: cl::Size) -> cl::Size {
-        BoxRenderer::size(self.0, data, avail)
+    fn measure(&self, cx: &cl::MeasureCtx) -> cl::Size {
+        BoxRenderer::size(self.0, cx.data, cx.avail, cx.owner)
     }
 
     fn chip(&self, data: &Value, _anchor: &cl::Anchor, _off: cl::Off) -> cl::Size {
@@ -329,9 +331,11 @@ fn off(m: &mut cl::AnchorMap, key: &str, o: cl::Off) {
     }
 }
 
-/// The editors on screen that resolve text, block and caret anchors, in the order they're
-/// asked: the main document, then each sidebar document panel. The one place anchors are
-/// scoped to a view (caretline's view-scoped anchors replace this order when they land).
+/// The editors on screen that resolve text, block and caret anchors: the main document's view
+/// (`main`) and each sidebar document panel's (`panel:<n>`), each with its clip and the
+/// focused one marked. caretline-layers scopes anchors with them (`{"text": …, "in":
+/// "panel:2"}`; unscoped ones go to the focused view first). Edits map anchors per document
+/// the same way (session.rs `observe_text`, `Edited::Views`).
 fn editors<'a>(app: &'a App, render: &RenderOutput) -> Vec<(String, cl::FrameResolver<'a>)> {
     let mut out = Vec::new();
     let sidebar = app.ui.focus == crate::app::Focus::Sidebar;

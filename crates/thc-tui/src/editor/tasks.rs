@@ -147,6 +147,7 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
         status: Some(status.into()),
         effects: completed.into_iter().map(|id| (COMPLETED.to_string(), json!({ "id": id.0 }))).collect(),
         keep_gaps: true,
+        then_default: false,
     })
 }
 
@@ -327,7 +328,7 @@ mod tests {
             _ => head,
         };
         s.view.selection = Selection::single(anchor, head);
-        update(&mut s, Msg::Resize { width: 80, height: 24 });
+        update(&mut s, Msg::resize(80, 24));
         s
     }
 

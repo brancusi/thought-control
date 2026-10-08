@@ -149,11 +149,11 @@ impl LayerState {
 
     /// The edit `changes` moved the open document's text: text anchors follow it, the layers
     /// showing and a walkthrough's steps still to come alike.
-    pub fn observe(&mut self, changes: &caretline::helix::ChangeSet, now_ms: u64) {
+    pub fn observe(&mut self, changes: &caretline::helix::ChangeSet, edited: cl::Edited, now_ms: u64) {
         if let Some(t) = self.tour.tour.as_mut() {
-            map_steps(&mut t.steps, changes);
+            map_steps(&mut t.steps, edited, changes);
         }
-        cl::observe(&mut self.stack, Some(changes), now_ms);
+        cl::observe(&mut self.stack, edited, Some(changes), now_ms);
     }
 
     /// What the walkthrough's reducer asked for: its steps' layers replace the guide layers,
@@ -193,7 +193,7 @@ pub fn save_seen(cache: &std::path::Path, seen: &std::collections::BTreeMap<Stri
 
 /// A walkthrough's steps through an edit: each step layer's text anchors move as a layer's
 /// would. A layer whose anchors all went (their text deleted) points at the screen's centre.
-fn map_steps(steps: &mut [ct::Step], changes: &caretline::helix::ChangeSet) {
+fn map_steps(steps: &mut [ct::Step], edited: cl::Edited, changes: &caretline::helix::ChangeSet) {
     let text = |a: &ct::StepAnchor| a.anchor().is_some_and(|a| matches!(a.unscoped(), cl::Anchor::Text { .. }));
     if !steps.iter().any(|s| s.layers.iter().any(|l| l.anchor.iter().any(text))) {
         return;
@@ -208,7 +208,7 @@ fn map_steps(steps: &mut [ct::Step], changes: &caretline::helix::ChangeSet) {
             tmp.layers.push(t);
         }
     }
-    cl::map_anchors(&mut tmp, changes);
+    cl::map_anchors(&mut tmp, edited, changes);
     for (i, s) in steps.iter_mut().enumerate() {
         for (k, l) in s.layers.iter_mut().enumerate() {
             if !l.anchor.iter().any(text) {
@@ -304,12 +304,14 @@ pub fn parse_short(s: &str) -> Option<cl::Anchor> {
 /// strict parser.
 fn normalize(req: &Value) -> Result<Value, cl::Refusal> {
     let mut v = req.clone();
-    if let Some(a) = v.get("anchor").cloned() {
-        v["anchor"] = serde_json::to_value(anchor_from(&a)?).unwrap_or_default();
-    }
-    if let Some(a) = v.get("layer").and_then(|l| l.get("anchor")).cloned() {
-        if !a.is_array() || a.as_array().is_some_and(|x| x.iter().any(Value::is_string)) {
-            v["layer"]["anchor"] = serde_json::to_value(anchor_from(&a)?).unwrap_or_default();
+    for k in ["anchor", "avoid"] {
+        if let Some(a) = v.get(k).cloned() {
+            v[k] = serde_json::to_value(anchor_from(&a)?).unwrap_or_default();
+        }
+        if let Some(a) = v.get("layer").and_then(|l| l.get(k)).cloned() {
+            if !a.is_array() || a.as_array().is_some_and(|x| x.iter().any(Value::is_string)) {
+                v["layer"][k] = serde_json::to_value(anchor_from(&a)?).unwrap_or_default();
+            }
         }
     }
     Ok(v)
@@ -562,7 +564,7 @@ pub fn list(st: &LayerState) -> Value {
 pub fn schema() -> Value {
     let anchor = json!({"description": "row:<id> | ui:<element> | action:<command> | panel:<n> | caret | text:<from>..<to> | block:<n>, or a caretline-layers anchor object; a list is fallbacks", "oneOf": [{"type": "string"}, {"type": "object"}, {"type": "array"}]});
     json!({
-        "hint.show": {"type": "object", "required": ["anchor", "text"], "properties": {"anchor": anchor, "text": {"type": "string"}, "title": {"type": "string"}, "ttl_ms": {"type": "integer"}, "place": {"type": "array", "items": {"enum": ["below", "above", "right", "left"]}}, "arrow": {"type": "boolean"}, "ring": {"type": "boolean"}, "actor": {"type": "string"}}},
+        "hint.show": {"type": "object", "required": ["anchor", "text"], "properties": {"anchor": anchor, "avoid": anchor, "text": {"type": "string"}, "title": {"type": "string"}, "ttl_ms": {"type": "integer"}, "place": {"type": "array", "items": {"enum": ["below", "above", "right", "left"]}}, "arrow": {"type": "boolean"}, "ring": {"type": "boolean"}, "actor": {"type": "string"}}},
         "hint.clear": {"type": "object", "properties": {"layer": {"type": "string"}, "all": {"type": "boolean"}, "actor": {"type": "string"}}},
         "highlight": {"type": "object", "required": ["anchor"], "properties": {"anchor": anchor, "ttl_ms": {"type": "integer"}, "actor": {"type": "string"}}},
         "focus": {"type": "object", "required": ["anchor"], "properties": {"anchor": anchor, "text": {"type": "string"}, "title": {"type": "string"}, "ttl_ms": {"type": "integer"}, "actor": {"type": "string"}}},

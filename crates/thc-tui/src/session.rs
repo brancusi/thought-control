@@ -622,7 +622,23 @@ impl Session {
         d.track_changes(false);
         if let Some(cs) = changes {
             let now = self.app.ui.now_ms;
-            self.app.ui.layers.observe(&cs, now);
+            // The views showing the open document: the main one, and each sidebar panel that is
+            // a second view of it (no document of its own). Unscoped anchors move only when
+            // the focused view shows it.
+            let mut views = vec!["main".to_string()];
+            let mut focused_here = self.app.ui.focus != crate::app::Focus::Sidebar;
+            if let Some(sb) = self.app.derived.sidebar.as_ref() {
+                for (i, pp) in sb.panels.iter().enumerate() {
+                    if self.app.panels.get(&pp.key).is_some_and(|rt| rt.slot.doc.is_none()) {
+                        views.push(format!("panel:{i}"));
+                        if self.app.ui.focus == crate::app::Focus::Sidebar && self.app.ui.sidebar.focused.as_ref() == Some(&pp.key) {
+                            focused_here = true;
+                        }
+                    }
+                }
+            }
+            let ids: Vec<&str> = views.iter().map(String::as_str).collect();
+            self.app.ui.layers.observe(&cs, caretline_layers::Edited::Views { views: &ids, unscoped: focused_here }, now);
         }
     }
 

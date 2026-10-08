@@ -507,3 +507,45 @@ fn layers_a_caretline_tour_sets_the_scene_and_advances_on_an_action() {
     // Its ops schema is in the protocol's.
     assert!(caretline_tour::ops::schema().get("tour.start").is_some() || caretline_tour::ops::schema().to_string().contains("tour.start"));
 }
+
+#[test]
+fn layers_an_edit_moves_only_its_own_documents_anchors() {
+    let (_x, vault) = fixture("scoped", 0);
+    let mut s = session(vault, (100, 30), "dark");
+    open_page(&mut s);
+    // One anchor scoped to the main view, one to a panel showing another document.
+    layer(&mut s, json!({"op": "highlight", "anchor": {"text": {"from": 10, "to": 14}, "in": "main"}}), Some("claude"));
+    layer(&mut s, json!({"op": "highlight", "anchor": {"text": {"from": 10, "to": 14}, "in": "panel:0"}}), Some("claude"));
+    s.apply(Msg::Key { key: "<home>".into() }).unwrap();
+    for c in ["N", "e", "w", " "] {
+        s.apply(Msg::Key { key: c.into() }).unwrap();
+    }
+    let at = |s: &Session, id: &str| s.app.ui.layers.stack.get(id).unwrap().anchor[0].unscoped().clone();
+    assert_eq!(at(&s, "L-1"), caretline_layers::Anchor::Text { from: 14, to: 18 }, "main's moved");
+    assert_eq!(at(&s, "L-2"), caretline_layers::Anchor::Text { from: 10, to: 14 }, "the panel's (another document) didn't");
+}
+
+#[test]
+fn layers_a_hint_keeps_off_what_it_avoids() {
+    let (_x, vault) = fixture("avoid", 6);
+    let mut s = session(vault, (100, 30), "dark");
+    open_page(&mut s);
+    // Where the box goes, and which lines' cells, with and without `avoid`.
+    let hint = |s: &mut Session, avoid: Option<String>| {
+        let mut req = json!({"op": "hint.show", "anchor": format!("row:{}", id("signup")), "text": "Due Friday, and the invites wait on it."});
+        if let Some(a) = avoid {
+            req["avoid"] = json!(a);
+        }
+        layer(s, req, Some("claude"));
+        s.render(100, 30, "text").unwrap();
+        let r = s.app.render.layer_plan.as_ref().unwrap().layers.last().unwrap().rect.unwrap();
+        let rows: Vec<(String, caretline_layers::Rect)> = (0..6).map(|i| id(&format!("x{i}"))).chain([id("docs"), id("invites")]).filter_map(|k| Some((k.clone(), *s.app.render.anchors.get(&caretline_layers::AnchorKey::host("row", &k))?.rects.first()?))).collect();
+        layer(s, json!({"op": "hint.clear"}), Some("claude"));
+        (r, rows)
+    };
+    let (plain, rows) = hint(&mut s, None);
+    let (key, covered) = rows.iter().find(|(_, r)| plain.intersects(r)).cloned().expect("the box covers a line without avoid");
+    let (avoided, rows) = hint(&mut s, Some(format!("row:{key}")));
+    let now = rows.iter().find(|(k, _)| *k == key).map_or(covered, |(_, r)| *r);
+    assert!(!avoided.intersects(&now), "with avoid it keeps off {key}: {avoided:?} vs {now:?}");
+}
