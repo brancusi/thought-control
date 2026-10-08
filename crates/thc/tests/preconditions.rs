@@ -23,7 +23,7 @@ fn json(s: &str) -> Value {
 
 #[test]
 fn stale_writes_are_refused_and_fresh_ones_go_through() {
-    let root = std::env::temp_dir().join(format!("thc-pre-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-pre-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

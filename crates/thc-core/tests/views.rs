@@ -43,7 +43,7 @@ fn sync(root: &Path, n: usize) {
 
 #[test]
 fn seeding_is_once_and_converges_across_devices() {
-    let root = std::env::temp_dir().join(format!("thc-views-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-views-{}", thc_core::id::new_id()));
     let (mut a, mut b) = (open(&root, 0), open(&root, 1));
     // Both devices seed before they've synced.
     write(&mut a, |t| views::ensure_seeded(t).map(|_| ()));
@@ -74,7 +74,7 @@ fn seeding_is_once_and_converges_across_devices() {
 
 #[test]
 fn views_expand_inside_queries() {
-    let root = std::env::temp_dir().join(format!("thc-views-q-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-views-q-{}", thc_core::id::new_id()));
     let mut a = open(&root, 0);
     write(&mut a, |t| {
         let j = t.journal(dates::today())?;
@@ -100,7 +100,7 @@ fn views_expand_inside_queries() {
 
 #[test]
 fn cycles_are_rejected_and_builtins_have_titles() {
-    let root = std::env::temp_dir().join(format!("thc-views-c-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-views-c-{}", thc_core::id::new_id()));
     let mut a = open(&root, 0);
     write(&mut a, |t| {
         views::add(t, "a", "status:open", None, None, false, None)?;

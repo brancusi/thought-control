@@ -30,7 +30,7 @@ fn children(root: &Path, page: &str) -> Vec<Value> {
 }
 
 pub fn setup(name: &str) -> (std::path::PathBuf, String) {
-    let root = std::env::temp_dir().join(format!("thc-edit-{name}-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-edit-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

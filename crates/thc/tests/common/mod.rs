@@ -12,7 +12,7 @@ use std::sync::OnceLock;
 pub fn root() -> &'static Path {
     static ROOT: OnceLock<PathBuf> = OnceLock::new();
     ROOT.get_or_init(|| {
-        let r = std::env::temp_dir().join(format!("thc-sandbox-{}", std::process::id()));
+        let r = thc_core::scratch::dir(&format!("thc-sandbox-{}", std::process::id()));
         for d in ["home", "cache", "config", "shims"] {
             std::fs::create_dir_all(r.join(d)).unwrap();
         }

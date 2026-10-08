@@ -32,6 +32,7 @@ pub mod registry;
 pub mod release;
 pub mod repair;
 pub mod sandbox;
+pub mod scratch;
 pub mod tui_config;
 pub mod review;
 pub mod settings;

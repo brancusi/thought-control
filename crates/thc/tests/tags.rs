@@ -13,7 +13,7 @@ fn thc(root: &std::path::Path, args: &[&str]) -> String {
 
 #[test]
 fn explicit_tags_survive_text_edits() {
-    let root = std::env::temp_dir().join(format!("thc-tags-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-tags-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     thc(&root, &["init", "vault"]);
@@ -35,7 +35,7 @@ fn explicit_tags_survive_text_edits() {
 #[test]
 fn reserved_vault_links_stay_text() {
     // [[vault:…]] is reserved for links between vaults (FORMAT.md): no page, no edge.
-    let root = std::env::temp_dir().join(format!("thc-vaultlink-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-vaultlink-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |args: &[&str]| {
@@ -58,7 +58,7 @@ fn reserved_vault_links_stay_text() {
 /// in a finding is text, not a tag.
 #[test]
 fn plain_adds_take_no_tags_from_the_text() {
-    let root = std::env::temp_dir().join(format!("thc-plaintags-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-plaintags-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     thc(&root, &["init", "vault"]);

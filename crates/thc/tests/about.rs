@@ -12,7 +12,7 @@ struct S {
 impl S {
     /// A scratch vault and a device cache whose about.json says `seen` / `launched`.
     fn new(name: &str, seen: Option<&str>) -> S {
-        let root = std::env::temp_dir().join(format!("thc-about-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-about-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(root.join("xdg/thc")).unwrap();
         if let Some(v) = seen {

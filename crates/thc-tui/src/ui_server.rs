@@ -46,6 +46,24 @@ impl Drop for Server {
     }
 }
 
+/// A TUI killed outright leaves its socket and discovery file: remove those whose process is
+/// gone (each named by its pid), so they don't pile up in the temp dir.
+fn prune_dead() {
+    let alive = |pid: i32| unsafe { libc::kill(pid, 0) == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM) };
+    if let Ok(entries) = std::fs::read_dir(discovery_dir()) {
+        for e in entries.flatten() {
+            let p = e.path();
+            let Some(pid) = p.file_stem().and_then(|s| s.to_str()).and_then(|s| s.parse::<i32>().ok()) else { continue };
+            if p.extension().is_some_and(|x| x == "json") && !alive(pid) {
+                if let Some(sock) = std::fs::read_to_string(&p).ok().and_then(|t| serde_json::from_str::<serde_json::Value>(&t).ok()).and_then(|v| v["socket"].as_str().map(PathBuf::from)) {
+                    let _ = std::fs::remove_file(sock);
+                }
+                let _ = std::fs::remove_file(&p);
+            }
+        }
+    }
+}
+
 /// Where discovery files live.
 pub fn discovery_dir() -> PathBuf {
     std::env::temp_dir().join("thc-ui")
@@ -74,6 +92,7 @@ fn socket_path() -> Result<PathBuf, String> {
 impl Server {
     /// Listen for this TUI and advertise it. `vault`: the vault's name and real path.
     pub fn start(vault: &str, vault_path: &Path) -> Result<Server, String> {
+        prune_dead();
         let path = socket_path()?;
         if path.exists() {
             if UnixStream::connect(&path).is_ok() {
@@ -86,6 +105,8 @@ impl Server {
             use std::os::unix::fs::PermissionsExt;
             let _ = std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600));
         }
+        // Gone at exit even when the Server isn't dropped (std::process::exit).
+        thc_core::scratch::remove_at_exit(&path);
         let (tx, rx) = mpsc::channel::<Input>();
         std::thread::spawn(move || {
             for stream in listener.incoming() {
@@ -118,6 +139,7 @@ impl Server {
             "started_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
         });
         std::fs::write(&file, info.to_string() + "\n").map_err(|e| format!("{}: {e}", file.display()))?;
+        thc_core::scratch::remove_at_exit(&file);
         s.discovery = Some(file);
         Ok(s)
     }

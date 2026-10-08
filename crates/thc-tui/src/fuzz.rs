@@ -107,7 +107,7 @@ pub(crate) fn scratch(tag: &str) -> (Scratch, Vault) {
     // Unique per call: tests run in parallel, and some share a tag (`late1`, `final`).
     static N: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
     let n = N.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let root = std::env::temp_dir().join(format!("thc-fuzz-{}-{n}-{tag}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-fuzz-{}-{n}-{tag}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     thc_core::vault::init(&root.join("vault"), None, None).unwrap();
     let v = Vault::open(Paths { vault: root.join("vault"), cache: root.join("cache") }, Actor { kind: "human".into(), name: None }, "tui").unwrap();
@@ -721,7 +721,7 @@ fn run_sync_with(ops: &[SyncOp], tag: &str, strict_order: bool) -> Result<(), St
     let ops = ops.to_vec();
     let tag = tag.to_string();
     let r = std::panic::catch_unwind(move || -> Result<(), String> {
-        let base = std::env::temp_dir().join(format!("thc-sync-{}-{tag}", std::process::id()));
+        let base = thc_core::scratch::dir(&format!("thc-sync-{}-{tag}", std::process::id()));
         let _ = std::fs::remove_dir_all(&base);
         let roots = [base.join("a"), base.join("b")];
         let mut apps: Vec<App> = Vec::new();
