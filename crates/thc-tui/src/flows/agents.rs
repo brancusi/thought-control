@@ -72,7 +72,6 @@ fn another_device_edits_a_line_above_you() {
 #[test]
 fn another_device_edits_the_line_you_are_typing() {
     q4().named("a remote edit of the caret's line")
-        .known("t741c", Known::Restore)
         .click_caret(doc_at("Last line of the plan", 21))
         .type_text(" mine")
         .remote_edit("Last line of the plan", "Last line of the plan (theirs)")
