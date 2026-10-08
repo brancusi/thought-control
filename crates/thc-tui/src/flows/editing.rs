@@ -162,7 +162,7 @@ fn ctrl_t_keeps_the_caret_and_the_rows() {
 
 #[test]
 fn undo_redo_selection_edits() {
-    q4().named("undo and redo a cut and a paste").known("02pjq", Known::Restore)
+    q4().named("undo and redo a cut and a paste")
         .click_caret(doc_at("Grow the newsletter", 0))
         .moves("<s-end>")
         .keys("<c-x>")
