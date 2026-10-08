@@ -333,7 +333,6 @@ fn a_panel_opening_beside_a_short_page_reflows_nothing() {
 /// 5jzx9: a space typed at a row's end hangs in the margin, and the caret after it stays on that
 /// row: no row of its own (the save drops the space, so a reopened page was a row shorter).
 #[test]
-#[ignore = "5jzx9"]
 fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
     use crate::editor::{BlockPos, Doc, DocRow, Target, ViewGeometry};
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
