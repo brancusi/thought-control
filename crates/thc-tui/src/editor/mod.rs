@@ -269,9 +269,13 @@ impl Doc {
         self.engine.select(extend.then(|| anchor.unwrap_or(caret)), p);
     }
 
-    /// A drag from `from` to `to`: selects between them.
-    pub fn drag(&mut self, from: BlockPos, to: BlockPos) {
-        self.engine.select(Some(from), to);
+    /// A drag with the button held, at cell (`col`, `row`) of the view: the selection extends
+    /// there from where the press put the caret; on the view's first or last text row (or past
+    /// it) the view scrolls a row (caretline `Msg::Drag`).
+    pub fn drag_to(&mut self, col: u16, row: u16) {
+        self.run(caretline::Msg::Drag { col, row });
+        // The pointer moves the view a row at a time, no more: no margin pulled after it.
+        self.hold_view();
     }
 
     /// Put the caret back at a held place. False: its note isn't here.

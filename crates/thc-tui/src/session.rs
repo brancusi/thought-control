@@ -496,7 +496,10 @@ impl Session {
     /// What a message does to the state (and, for writes, the vault).
     fn run(&mut self, msg: &Msg) -> Result<(), String> {
         match msg.clone() {
-            Msg::Tick { now_ms, utc_offset_min } => self.app.ui.tick(now_ms, utc_offset_min),
+            Msg::Tick { now_ms, utc_offset_min } => {
+                self.app.ui.tick(now_ms, utc_offset_min);
+                self.held_drag();
+            }
             Msg::Key { key } => {
                 let k = crate::script::key_event(&key).expect("checked");
                 crate::input::handle_key(&mut self.app, k);
@@ -663,6 +666,25 @@ impl Session {
             None => self.count_clicks(&ev),
         };
         crate::input::handle_mouse(&mut self.app, ev, clicks);
+    }
+
+    /// A drag held still on the view's edge repeats on the clock (each Tick), so the view keeps
+    /// scrolling and the selection extending: once per `drag_repeat_ms`, part of the Tick
+    /// that brings it (a replay of the ticks repeats it the same way).
+    fn held_drag(&mut self) {
+        let Some(edge) = crate::doc_keys::drag_edge(&self.app) else { return };
+        let ui = &self.app.ui;
+        if ui.now_ms.saturating_sub(ui.drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
+            return;
+        }
+        let Some((x, y)) = ui.drag_at else { return };
+        self.mouse(Mouse { kind: MouseKind::Drag, x, y, mods: String::new(), clicks: None });
+    }
+
+    /// When the held drag next repeats (the runtime wakes for it), if one is held on an edge.
+    pub fn held_drag_in(&self) -> Option<u64> {
+        let edge = crate::doc_keys::drag_edge(&self.app)?;
+        Some((self.app.ui.drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
     }
 
     /// Double and triple clicks: another left press within 400 ms (logical clock) on the same
