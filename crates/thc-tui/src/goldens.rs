@@ -517,8 +517,10 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     check_g("E75", "[ ] A ¦ [ ] B▮", &["⌃T", "⌃T"], "[ ] A ¦ B▮");
     // E76: to text after a paragraph with a gap: two notes, never joined.
     check_g("E76", "Para one ‖ [ ] Ta▮sk", &["⌃T", "⌃T"], "Para one ‖ Ta▮sk");
-    // E77: Tab keeps the gap.
-    check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ‖   [ ] B▮");
+    // E77: Tab nests the note right under the one above: the blank row between them goes
+    // (tta6t, decided 2026-10-08; caretline nest_joins). ⇧Tab adds none back.
+    check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ¦   [ ] B▮");
+    check_g("E77b", "[ ] A ¦   [ ] B▮", &["⇧Tab"], "[ ] A ¦ [ ] B▮");
     // E78: undo puts the paragraph back, with its id and the caret.
     let mut d78 = run_g(src70, &[]);
     let id = d78.blocks()[0].id.clone();
@@ -546,9 +548,9 @@ fn paragraph_children() {
     check_g("PC1", "Para line▮", &["Enter", "type first subtask", "Tab"], "Para line ‖   first subtask▮");
     check_g("PC2", "Para line ‖   first subtask▮", &["⇧Tab"], "Para line ‖ first subtask▮");
     // Under a paragraph, a bullet, a task; an item under a paragraph.
-    check_g("PC3", "One ‖ ▮Two", &["Tab"], "One ‖   ▮Two");
-    check_g("PC4", "- one ‖ ▮Two", &["Tab"], "- one ‖   ▮Two");
-    check_g("PC5", "[ ] one ‖ ▮Two", &["Tab"], "[ ] one ‖   ▮Two");
+    check_g("PC3", "One ‖ ▮Two", &["Tab"], "One ¦   ▮Two");
+    check_g("PC4", "- one ‖ ▮Two", &["Tab"], "- one ¦   ▮Two");
+    check_g("PC5", "[ ] one ‖ ▮Two", &["Tab"], "[ ] one ¦   ▮Two");
     check_g("PC6", "One ¦ - ▮two", &["Tab"], "One ¦   - ▮two");
     // One level at a time, and never under nothing.
     check_g("PC7", "One ‖   ▮Two", &["Tab"], "One ‖   ▮Two");
