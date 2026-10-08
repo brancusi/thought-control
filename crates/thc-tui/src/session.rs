@@ -242,7 +242,7 @@ impl Session {
         // TERM and COLORTERM chose, the glyphs, the pinned-clock warning, inline images): replay
         // draws them as this session did, not as the replaying process would.
         let d = &self.app.derived;
-        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
+        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images, "drag_hint": self.app.drag_hint, "cmd_seen": self.app.cmd_seen});
         line
     }
 
@@ -250,6 +250,13 @@ impl Session {
     pub fn set_env(&mut self, env: &Value) {
         if let Some(t) = env.get("theme").and_then(|t| serde_json::from_value::<crate::theme::Theme>(t.clone()).ok()) {
             self.app.theme = t;
+        }
+        // The first drag's hint still to show (null: shown) and whether ⌘ keys arrive (emtsr).
+        if let Some(h) = env.get("drag_hint") {
+            self.app.drag_hint = h.as_str().map(str::to_string);
+        }
+        if let Some(b) = env.get("cmd_seen").and_then(Value::as_bool) {
+            self.app.cmd_seen = b;
         }
         let d = &mut self.app.derived;
         d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
@@ -364,9 +371,16 @@ impl Session {
         let new = UiState::from_json_over(&self.app.ui, state, state.get("history").is_none())?;
         let new = self.same_vault(new)?;
         let doc = new.document.clone();
+        let frozen = new.rail_frozen.clone();
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
+        // The rail's order is the state's: reload, arriving at a document from no document,
+        // ordered it afresh (q93zh).
+        if frozen.is_some() && self.app.ui.rail_frozen != frozen {
+            self.app.ui.rail_frozen = frozen;
+            self.app.build_rail();
+        }
         if let Some(ds) = doc {
             if let Some(d) = self.app.doc.as_mut() {
                 if !ds.caret_id.is_empty() {
@@ -981,6 +995,10 @@ pub fn replay_where(open: &mut Open, trace: &str, size: Option<(u16, u16)>, form
             if let Some(env) = v.get("env") {
                 s.set_env(env);
             }
+            // Live, a state line's moment had a frame on screen: what the next click hits (the
+            // click targets, the document's rows) is that frame's, so draw it (emtsr).
+            let (w, h) = s.size;
+            s.render(w, h, "text").map_err(at)?;
         } else {
             if session.is_none() {
                 session = Some(open(None).map_err(at)?);

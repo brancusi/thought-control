@@ -609,6 +609,10 @@ impl App {
                 if let Some(m) = msgs.into_iter().last() {
                     self.info(m);
                 }
+                // The rail's counts follow the save (64j4y; see drain_saves).
+                if self.in_panel.is_none() {
+                    self.build_rail();
+                }
             }
             Err(e) => {
                 // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
@@ -659,6 +663,12 @@ impl App {
             let msgs = self.name_conflicts(msgs);
             if let Some(m) = msgs.into_iter().last() {
                 self.info(m);
+            }
+            // What the save changed shows in the rail's counts (a page's open tasks, a day's
+            // entries) at once, as a fresh session would read them (64j4y). The rail is the
+            // main view's: a panel's save leaves it for the main view's next.
+            if self.in_panel.is_none() {
+                self.build_rail();
             }
             // The save that waited for this one: planned now, against what the vault has.
             if let Some(all) = self.doc_saver.as_mut().filter(|s| s.pending == 0).and_then(|s| s.waiting.take()) {

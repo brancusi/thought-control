@@ -396,6 +396,10 @@ pub struct App {
     /// A ⌘ key has arrived from this terminal (now or in an earlier session: <cache>/cmd-seen,
     /// per TERM_PROGRAM and version), so ⌘ keys are known to reach thc (keymap.md §7.0).
     pub cmd_seen: bool,
+    /// The first drag's hint (mouse.md §7), until shown once on this device: the key that
+    /// gives the terminal's own selection. Read at start (<cache>/mouse-hint-shown,
+    /// TERM_PROGRAM) and carried in a trace's `env`, so a replay draws it as the live TUI did.
+    pub drag_hint: Option<String>,
     /// Terminal images drawn last (and overlay coverage), reconciled with RenderOutput.
     pub images_drawn: (Vec<crate::images::Place>, bool),
     /// A history step into another vault: restored once the TUI has reopened there.
@@ -813,6 +817,7 @@ impl App {
             doc_first_ever: false,
             doc_pending_scroll: None,
             cmd_seen: crate::keymap::cmd_seen_cached(&vault_cache),
+            drag_hint: crate::doc_keys::drag_hint_pending(&vault_cache),
             images_drawn: (Vec::new(), false),
             hist_pending: None,
             kitty: false,
