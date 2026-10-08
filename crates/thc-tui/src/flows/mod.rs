@@ -30,6 +30,7 @@ mod agents;
 mod editing;
 mod lists;
 mod monkey;
+mod structural_probe;
 mod mouse;
 mod nav;
 mod panes;
@@ -763,6 +764,13 @@ impl Flow {
     // ---- checks ------------------------------------------------------------------------
 
     fn fail(&self, desc: &str, before: &Shot, msg: &str) -> ! {
+        if let Ok(path) = std::env::var("THC_DIAGNOSTIC_TRACE") {
+            let (_, trace) = self.s.trace(None, true).unwrap();
+            std::fs::write(&path, trace.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
+            let mut marks = self.marks.clone();
+            marks.push((trace.len(), desc.to_string(), self.shot.frame()));
+            std::fs::write(format!("{path}.steps.json"), serde_json::to_string(&marks).unwrap()).unwrap();
+        }
         let cursor = |s: &Shot| s.cursor.map_or("hidden".to_string(), |(x, y)| format!("({x},{y})"));
         panic!(
             "\nflow `{}` step {} `{desc}`: {msg}\n--- before (cursor {}) ---\n{}\n--- after (cursor {}) ---\n{}\n",

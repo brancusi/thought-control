@@ -93,6 +93,9 @@ fn walk(seed: u64, steps: usize, size: (u16, u16)) {
 }
 
 #[test]
+fn diagnostic_4699c_capture() { walk(0x4699c, 150, (120, 32)); }
+
+#[test]
 fn monkey_on_a_page() {
     walk(0x5eed_f10f, 200, (140, 36));
 }
