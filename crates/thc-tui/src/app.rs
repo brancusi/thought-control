@@ -54,7 +54,9 @@ pub enum Row {
     Empty { l1: String, l2: String },
     Muted(String),
     /// A styled, non-selectable line with an optional right-aligned muted note.
-    Note { parts: Vec<(String, Token)>, right: Option<String> },
+    /// `narrow`: the parts instead on a main area under 120 columns (decided when drawn, so
+    /// the rows don't depend on the width they were last read at; cjn86).
+    Note { parts: Vec<(String, Token)>, right: Option<String>, narrow: Option<Vec<(String, Token)>> },
     Blank,
     /// A new line being written in place (tui-handoff §10); never saved while empty.
     Editing,
@@ -1190,12 +1192,24 @@ impl App {
                 tags.insert(i, *v);
             }
         }
+        // Tasks: the order on screen goes into the state (`tasks_order`).
+        if self.view == View::Tasks {
+            let ids: Vec<String> = out.iter().filter_map(|(r, _)| match r {
+                Row::Node { node, .. } => Some(node.id.clone()),
+                _ => None,
+            }).collect();
+            self.ui.tasks_order = Some((self.tasks_filter.clone(), ids));
+        }
         self.rows = out.into_iter().map(|(r, _)| r).collect();
         self.restore_cursor();
         Ok(())
     }
 
     pub fn reload(&mut self) -> Result<()> {
+        // The Tasks order lasts while you stay on the list (`tasks_order`).
+        if self.view != View::Tasks || self.doc.is_some() {
+            self.ui.tasks_order = None;
+        }
         // The other vaults' changes (their logs, a few stat calls when nothing moved).
         for o in self.others.iter_mut() {
             let _ = o.vault.catch_up();
@@ -1962,7 +1976,7 @@ impl App {
                 return;
             }
             let label = run.iter().map(|d| d.format("%a %b %-d").to_string()).collect::<Vec<_>>().join(" · ");
-            rows.push(Row::Note { parts: vec![(label, Token::Muted)], right: Some("nothing scheduled".into()) });
+            rows.push(Row::Note { parts: vec![(label, Token::Muted)], right: Some("nothing scheduled".into()), narrow: None });
             run.clear();
         };
         for i in 0..7 {
@@ -2021,10 +2035,48 @@ impl App {
         Ok(rows)
     }
 
+    /// The query's tasks in the order you've been looking at: each where it was (one no longer
+    /// matching too, as it is now; deleted, it goes), and a new one after the task before it
+    /// in the query's order (at the top when none is). As `reload_stable` keeps a list.
+    fn in_tasks_order(&self, query: Vec<Node>, order: &[String]) -> Vec<Node> {
+        let mut by_id: HashMap<String, Node> = query.iter().map(|n| (n.id.clone(), n.clone())).collect();
+        let mut out: Vec<Node> = Vec::new();
+        for id in order {
+            match by_id.remove(id) {
+                Some(n) => out.push(n),
+                None => {
+                    if let Some(n) = self.vault.store.node(id).ok().flatten().filter(|n| !n.deleted) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+        let mut prev: Option<String> = None;
+        for n in query {
+            if by_id.contains_key(&n.id) {
+                let at = prev.as_ref().and_then(|p| out.iter().position(|o| &o.id == p)).map_or(0, |i| i + 1);
+                prev = Some(n.id.clone());
+                out.insert(at, n);
+            } else {
+                prev = Some(n.id);
+            }
+        }
+        out
+    }
+
     fn rows_tasks(&mut self, projection: &mut RowProjection) -> Result<Vec<Row>> {
         let started = Instant::now();
         let nodes = match self.vault.store.query(&self.tasks_filter, self.today, 500).map(|n| self.cf(n, projection)) {
-            Ok(n) => n,
+            Ok(n) => match self.ui.tasks_order.clone() {
+                // The order you've been looking at (the state's `tasks_order`, so a fresh
+                // session draws it too; cjn86).
+                Some((filter, order)) if filter == self.tasks_filter => self.in_tasks_order(n, &order),
+                Some(_) => {
+                    self.ui.tasks_order = None;
+                    n
+                }
+                None => n,
+            },
             Err(e) => {
                 let msg = friendly_error(&e);
                 // `unknown status "opn" · did you mean open?` -> bad token + fix
@@ -2064,18 +2116,19 @@ impl App {
             };
             rows.push(Row::Blank);
             let mut parts = vec![("saved".to_string(), Token::Muted)];
-            let wide = self.screen_width >= 120;
+            let mut narrow = parts.clone();
             let slots = self.view_slots();
             for (slot, v) in &slots {
-                parts.push((format!("  {slot}"), Token::Text));
-                parts.push((format!(" {}", v.title.clone().unwrap_or_else(|| v.name.clone())), Token::Muted));
-                if wide {
-                    let short = v.query.replace(" sort:due", "");
-                    parts.push((format!(" {short}"), Token::Muted));
+                for p in [&mut parts, &mut narrow] {
+                    p.push((format!("  {slot}"), Token::Text));
+                    p.push((format!(" {}", v.title.clone().unwrap_or_else(|| v.name.clone())), Token::Muted));
                 }
+                // Wide, each view's query too.
+                let short = v.query.replace(" sort:due", "");
+                parts.push((format!(" {short}"), Token::Muted));
             }
             let max = slots.last().map(|(n, _)| *n).unwrap_or(1);
-            rows.push(Row::Note { parts, right: Some(format!("f then 1-{max}")) });
+            rows.push(Row::Note { parts, right: Some(format!("f then 1-{max}")), narrow: Some(narrow) });
             rows
         };
         self.tasks_last_good = rows.clone();
@@ -2185,7 +2238,7 @@ impl App {
         if !f.is_empty() {
             let n = rows.iter().filter(|r| matches!(r, Row::Node { .. })).count();
             rows.push(Row::Blank);
-            rows.push(Row::Note { parts: vec![(format!("{n} page{} · fuzzy: {}", if n == 1 { "" } else { "s" }, self.pages_filter), Token::Muted)], right: None });
+            rows.push(Row::Note { parts: vec![(format!("{n} page{} · fuzzy: {}", if n == 1 { "" } else { "s" }, self.pages_filter), Token::Muted)], right: None, narrow: None });
             return Ok(rows);
         }
         let mut st = s.conn.prepare(
@@ -2204,7 +2257,7 @@ impl App {
                 parts.push((format!("#{name}"), Token::Tag));
                 parts.push((format!(" {c}"), Token::Muted));
             }
-            rows.push(Row::Note { parts, right: None });
+            rows.push(Row::Note { parts, right: None, narrow: None });
         }
         let mut st = s.conn.prepare(
             "SELECT j.journal, (SELECT count(*) FROM nodes c WHERE c.parent=j.id AND c.deleted=0) AS n FROM nodes j \
@@ -2225,7 +2278,7 @@ impl App {
                     parts.push((format!(" {} {c}", g.sep), Token::Muted));
                 }
             }
-            rows.push(Row::Note { parts, right: None });
+            rows.push(Row::Note { parts, right: None, narrow: None });
         }
         Ok(rows)
     }

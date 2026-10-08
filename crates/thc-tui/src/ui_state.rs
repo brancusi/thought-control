@@ -86,6 +86,10 @@ pub struct UiState {
 
     // ---- filters and per-view choices ------------------------------------------------------------
     pub tasks_filter: String,
+    /// The Tasks rows' order while you stay on the list (the filter, and the tasks' ids top to
+    /// bottom): a row that stops matching (done with `x`) stays where it is and nothing moves
+    /// under you, until you arrive at Tasks afresh.
+    pub tasks_order: Option<(String, Vec<String>)>,
     pub search_terms: String,
     pub pages_filter: String,
     pub log_actor: Option<String>,
@@ -215,6 +219,7 @@ impl Default for UiState {
             collapsed: BTreeSet::new(),
             page_ids: false,
             tasks_filter: DEFAULT_TASKS_FILTER.into(),
+            tasks_order: None,
             search_terms: String::new(),
             pages_filter: String::new(),
             log_actor: None,

@@ -25,7 +25,6 @@ fn today_x_completes_a_task() {
 }
 
 #[test]
-#[ignore = "cjn86"]
 fn tasks_navigation_and_done() {
     flow("Tasks: j, x, X")
         .keys("3")
@@ -38,7 +37,7 @@ fn tasks_navigation_and_done() {
 
 #[test]
 fn tasks_filter() {
-    flow("Tasks: f filters").known("cjn86", Known::Restore)
+    flow("Tasks: f filters")
         .keys("3f")
         .type_text(" #work")
         .keys("<cr>")
@@ -60,7 +59,7 @@ fn tasks_open_a_row() {
 
 #[test]
 fn tasks_open_beside() {
-    flow("Tasks: o opens a row beside").known("cjn86", Known::Restore)
+    flow("Tasks: o opens a row beside")
         .keys("3")
         .click(text("Draft the budget"))
         .timed("sidebar_open", |f| {

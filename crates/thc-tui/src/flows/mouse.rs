@@ -118,7 +118,7 @@ fn wheel_then_type_brings_the_caret_back() {
 
 #[test]
 fn wheel_scrolls_a_list() {
-    flow_with("the wheel in a list", Size::Long, (140, 24)).known("cjn86", Known::Restore).keys("3").expect_view(View::Tasks).wheel(true, 3, None).wheel(false, 3, None).done();
+    flow_with("the wheel in a list", Size::Long, (140, 24)).keys("3").expect_view(View::Tasks).wheel(true, 3, None).wheel(false, 3, None).done();
 }
 
 #[test]
@@ -142,7 +142,7 @@ fn click_a_list_row() {
 
 #[test]
 fn click_a_task_box_in_a_list() {
-    flow("a click on a row's box completes it").known("cjn86", Known::Restore)
+    flow("a click on a row's box completes it")
         .keys("3")
         .click(text("[ ] book flights").dx(1))
         .expect_saved_status("book flights", "done")
