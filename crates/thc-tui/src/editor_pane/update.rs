@@ -158,7 +158,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
                 return true;
             }
             if app.in_panel.is_some() {
-                app.panel_defer.push(crate::sidebar_app::Deferred::Action("sidebar.back".into()));
+                app.panel_defer.push(super::PaneEffect::Leave);
             } else {
                 app.leave_doc();
             }
@@ -220,6 +220,7 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
             d.set_caret(BlockPos { line: d.caret().line, byte: d.caret_block().text.len() });
             d.newline();
         }
+        "focus.toggle" if app.in_panel.is_some() => app.panel_defer.push(super::PaneEffect::Action(action.into())),
         "focus.toggle" => {
             let on = !app.focus_mode;
             app.set_focus_mode(on);

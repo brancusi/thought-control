@@ -115,17 +115,8 @@ pub enum Drag {
     Header { key: PanelKey, from: u16, to: Option<usize> },
 }
 
-/// Something a key in a panel asked for that happens in the main view, after it.
-#[derive(Clone, Debug, PartialEq)]
-pub enum Deferred {
-    /// A keymap action (a view, the palette, ⌥S…).
-    Action(String),
-    /// Follow a link (by title) in the main view (§12: a click follows it there).
-    Follow(String),
-    /// Open this beside (a ⇧-click or ⌥O in a panel).
-    Aside(PanelKey),
-    Compare(String),
-}
+/// Compatibility name for host effects from the shared editor component.
+pub use crate::editor_pane::PaneEffect as Deferred;
 
 impl App {
     /// The stack's panel keys, top to bottom.
@@ -701,6 +692,14 @@ impl App {
                     self.selected = Some(id);
                     self.open_compare();
                 }
+                Deferred::Leave => self.focus_main(),
+                Deferred::OpenIssue { target, line } => {
+                    self.focus_main();
+                    self.save_doc(true);
+                    self.doc_back = matches!(target, Target::Page { .. }).then(|| (target, line.clone(), line.clone()));
+                    self.page_open = Some(line);
+                    self.set_view(View::Pages);
+                }
                 Deferred::Follow(title) => {
                     self.focus_main();
                     let _ = from;
@@ -1016,9 +1015,14 @@ pub fn key(app: &mut App, k: KeyEvent) -> bool {
         return false;
     }
     let popup = app.panel_editor(&pk).is_some_and(|e| e.link_open);
+    let selected = if pk.kind.is_doc() && k.code == KeyCode::Esc {
+        let selected = app.panel_doc_mut(&pk).is_some_and(|(d, _)| d.selection().is_some());
+        app.main_view_current();
+        selected
+    } else { false };
     let key = crate::keymap::Key::of(&k);
     let nav = matches!(k.code, KeyCode::Esc | KeyCode::Up | KeyCode::Down | KeyCode::Enter | KeyCode::Tab | KeyCode::BackTab) && k.modifiers.difference(KeyModifiers::SHIFT).is_empty();
-    if !(popup && nav) {
+    if !(popup && nav || selected) {
         if let Some(Some(b)) = crate::keymap::lookup(app, &[crate::keymap::Ctx::Sidebar], &[key]) {
             crate::keymap::run(app, b.action);
             return true;

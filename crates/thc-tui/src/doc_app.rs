@@ -1068,14 +1068,6 @@ impl App {
         }
         let Some(d) = self.doc.as_ref() else { return };
         let l = d.caret_block();
-        // In a panel, a link is followed in the main view (sidebar.md §12).
-        if self.in_panel.is_some() && crate::sidebar::policy::PANEL_CLICK_FOLLOWS_IN_MAIN && crate::doc_ui::image_line(&l.text).is_none() && !l.conflict {
-            match link_at(&l.text, d.caret().byte) {
-                Some(title) => self.panel_defer.push(crate::sidebar_app::Deferred::Follow(title)),
-                None => self.panel_defer.push(crate::sidebar_app::Deferred::Action("finder.open".into())),
-            }
-            return;
-        }
         // An attachment's line opens its file (attachments.md §3).
         if let Some((_, path)) = crate::doc_ui::image_line(&l.text) {
             return self.open_attachment(&path);
@@ -1088,6 +1080,15 @@ impl App {
         // ⌃O on an issue's line (not on a link in it): the issue opens as its own document, and
         // Esc comes back here (issues.md §1).
         let issue = (link.is_none() && !l.is_new).then(|| l.id.clone()).and_then(|id| self.vault.store.node(&id).ok().flatten()).filter(|n| self.is_issue(n));
+        // The same navigation target, routed by role only after the editor borrow ends.
+        if self.in_panel.is_some() && crate::sidebar::policy::PANEL_CLICK_FOLLOWS_IN_MAIN {
+            self.panel_defer.push(match (link, issue) {
+                (Some(title), _) => crate::editor_pane::PaneEffect::Follow(title),
+                (_, Some(n)) => crate::editor_pane::PaneEffect::OpenIssue { target: d.target.clone(), line: n.id },
+                _ => crate::editor_pane::PaneEffect::Action("finder.open".into()),
+            });
+            return;
+        }
         let here = (d.target.clone(), l.id.clone());
         self.save_doc(true);
         // The saved line's id (a new line has its id only once it's saved).

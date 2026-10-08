@@ -62,6 +62,18 @@ pub struct EditorState {
     pub save_after_frame: bool,
 }
 
+/// Host operations requested by a borrowed editor view. They run only after that borrow
+/// ends, so navigation cannot confuse a panel's document with main's history/origin.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaneEffect {
+    Action(String),
+    Follow(String),
+    Aside(crate::sidebar::PanelKey),
+    Compare(String),
+    OpenIssue { target: crate::editor::Target, line: String },
+    Leave,
+}
+
 fn is_zero(n: &u64) -> bool {
     *n == 0
 }

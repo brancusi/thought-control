@@ -305,6 +305,24 @@ fn parity_restore_on_a_new_line() {
 }
 
 #[test]
+fn parity_esc_clears_selection_before_leaving() {
+    parity("Esc clears selection before leaving").run(|f| {
+        f.click_caret(doc_at("Grow the newsletter", 0)).drag(doc_at("Grow the newsletter", 5), doc_at("Grow the newsletter", 9)).expect_selection("the ");
+        f.keys("<esc>").expect_no_selection();
+        f.type_text("x").keys("<esc>");
+    });
+}
+
+#[test]
+fn parity_meta_date_click() {
+    parity("date chips use the same editor buttons").run(|f| {
+        f.click_caret(doc_at("Draft the budget", 6));
+        f.click(At::Target(|t| matches!(t, crate::ui::Click::Meta { field: "due", .. }), "due chip"));
+        f.keys("<esc>");
+    });
+}
+
+#[test]
 fn parity_link_popup_mouse_insert() {
     parity("[[ popup mouse insert").run(|f| {
         f.click_caret(doc_at("Last line of the plan", 21)).type_text(" [[Gar");

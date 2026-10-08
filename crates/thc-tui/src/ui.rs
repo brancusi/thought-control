@@ -998,7 +998,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         if !aside.is_empty() && !editor.link_open {
             // Sidebar chrome still has its full table/help; the writing footer keeps the
             // writing essentials and one way back, rather than overflowing into nothing.
-            keys.retain(|h| h.actions.iter().any(|(_, a)| a.starts_with("doc.") || *a == "sidebar.focus" || *a == "help.open"));
+            keys.retain(|h| h.actions.iter().any(|(_, a)| a.starts_with("doc.") || *a == "sidebar.focus" || *a == "help.context"));
         }
         // Just arrived (parked, navigation.md §6.1): the bar leads with how to start and how to
         // move on, as the view's bar does; the first key that writes puts the writing keys back.

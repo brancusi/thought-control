@@ -232,7 +232,7 @@ struct After {
 pub(crate) fn view_geometry(app: &App, w: usize, h: u16) -> ViewGeometry {
     let ctx = DocContext::from_app(app);
     let left = left_edge(ctx, w);
-    let typewriter = app.in_panel.is_none() && ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
+    let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
     ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, if app.in_panel.is_some() { w as u16 } else { app.screen_width }, app.in_panel.is_none() && app.detail_shows(), 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter }
 }
 

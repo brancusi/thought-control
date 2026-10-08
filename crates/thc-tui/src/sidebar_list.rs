@@ -195,6 +195,8 @@ pub fn key(app: &mut App, pk: &PanelKey, k: KeyEvent) -> bool {
                 app.selected = Some(id);
                 app.open_compare();
             }
+            crate::sidebar_app::Deferred::Leave => app.focus_main(),
+            crate::sidebar_app::Deferred::OpenIssue { line, .. } => { app.page_open = Some(line); app.set_view(View::Pages); }
         }
     }
     if wrote {
