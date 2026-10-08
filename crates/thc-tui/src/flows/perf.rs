@@ -47,7 +47,7 @@ fn page(size: Size) -> (Flow, &'static str) {
 fn typing(size: Size, label: &str) {
     let mut over = Vec::new();
     let (mut f, _) = page(size);
-    f.click_caret(doc_at("Line 12:", 8)).type_text(&super::typing::WORDS.repeat(3));
+    f.keys("<c-home>").click_caret(doc_at("Line 12:", 8)).type_text(&super::typing::WORDS.repeat(3));
     f.keys("<cr>").type_text(&super::typing::WORDS.repeat(2));
     budget(&f, "type", label, 4.0, &mut over);
     f.done();
@@ -85,7 +85,7 @@ fn perf_typing_beside_a_panel() {
     for size in [Size::Long, Size::Huge] {
         let (mut f, _) = page(size);
         f.shift_click(text("Garden").in_doc()).expect_panels(1);
-        f.click_caret(doc_at("Line 12:", 8)).type_text(&super::typing::WORDS.repeat(3));
+        f.keys("<c-home>").click_caret(doc_at("Line 12:", 8)).type_text(&super::typing::WORDS.repeat(3));
         budget(&f, "type", &format!("typing beside a panel, {size:?} page"), 4.0, &mut over);
         f.done();
     }
@@ -111,7 +111,7 @@ fn perf_page_open() {
 }
 
 #[test]
-#[ignore = "vw384 perf over budget: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_sidebar_open() {
     let mut over = Vec::new();
     for size in [Size::Long, Size::Huge] {
