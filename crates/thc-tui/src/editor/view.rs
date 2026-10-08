@@ -209,7 +209,7 @@ impl Doc {
         let st = self.engine.state();
         let layout = Layout::of(&st.doc, &st.view);
         let mut idx = self.rows.borrow_mut();
-        idx.update(rev, st, &layout);
+        idx.update(rev, st, &layout, self.engine.line_versions());
         let total = idx.prefix.last().copied().unwrap_or(0) as usize;
         let top = layout.top(&st.view.scroll);
         let o = st.doc.blocks().expect("an outline document");
@@ -259,11 +259,13 @@ impl Doc {
     pub fn set_scroll(&mut self, row: usize, free: bool) {
         self.engine.flush();
         let rev = self.revision();
+        let (epoch, vers) = self.engine.line_versions();
+        let vers = vers.to_vec();
         let st = self.engine.state_mut();
         let layout = Layout::of(&st.doc, &st.view);
         // The note row `row` is in (by the row index), then the line in it.
         let mut idx = self.rows.borrow_mut();
-        idx.update(rev, st, &layout);
+        idx.update(rev, st, &layout, (epoch, &vers));
         let o = st.doc.blocks().expect("an outline document");
         let n = o.blocks.len();
         let b = idx.prefix.partition_point(|&p| (p as usize) <= row).saturating_sub(1).min(n.saturating_sub(1));
@@ -329,10 +331,19 @@ pub(crate) struct RowIndex {
     pub(crate) prefix: Vec<u32>,
     /// Notes laid out since the document opened (tests: an edit lays out what it changed).
     pub(crate) laid_out: usize,
+    /// What the last sum saw, note by note (the fast path): the engine's epoch and the
+    /// geometry, each note's content version and its own attributes, and its rows.
+    seen: Option<(u64, u64)>,
+    vers: Vec<u64>,
+    attrs: Vec<u64>,
+    rows: Vec<u32>,
 }
 
 impl RowIndex {
-    fn update(&mut self, rev: u64, st: &cn::State, layout: &Layout) {
+    /// `versions`: the engine's epoch and each note's content version (`Engine::line_versions`):
+    /// within an epoch only notes whose version (or gap, fence) moved are looked at again, so a
+    /// keystroke costs a pass of integer compares, not hashing every note's text (vw384).
+    fn update(&mut self, rev: u64, st: &cn::State, layout: &Layout, versions: (u64, &[u64])) {
         let seed = foldhash::fast::FixedState::with_seed(0);
         let v = &st.view;
         let mut g = seed.build_hasher();
@@ -356,13 +367,47 @@ impl RowIndex {
         let o = st.doc.blocks().expect("an outline document");
         let rope = &st.doc.text;
         let extra = v.layout.as_ref().map(|l| &l.extra_rows);
+        let attr = |b: &cn::outline::BlockInfo| {
+            let mut k = seed.build_hasher();
+            (b.gap, b.fence, extra.and_then(|e| e.get(&b.id)).copied().unwrap_or(0)).hash(&mut k);
+            k.finish()
+        };
+        let (epoch, vers) = versions;
+        // The fast path: the same epoch and geometry, no folds, a version per note.
+        if v.folds.is_empty() && self.seen == Some((epoch, geometry)) && vers.len() == o.blocks.len() && self.vers.len() == vers.len() && self.rows.len() == vers.len() {
+            let mut first: Option<usize> = None;
+            for (i, b) in o.blocks.iter().enumerate() {
+                let a = attr(b);
+                if vers[i] != self.vers[i] || a != self.attrs[i] {
+                    self.rows[i] = (b.first_line..=b.last_line()).map(|l| layout.line_rows(l)).sum::<usize>() as u32;
+                    self.laid_out += 1;
+                    self.vers[i] = vers[i];
+                    self.attrs[i] = a;
+                    first.get_or_insert(i);
+                }
+            }
+            if let Some(f) = first {
+                let mut sum = self.prefix[f];
+                for i in f..self.rows.len() {
+                    self.prefix[i] = sum;
+                    sum += self.rows[i];
+                }
+                *self.prefix.last_mut().expect("one more entry than notes") = sum;
+            }
+            self.stamp = Some(stamp);
+            return;
+        }
         self.prefix.clear();
         self.prefix.reserve(o.blocks.len() + 1);
         let mut sum = 0u32;
         let mut buf = String::new();
+        self.rows.clear();
+        self.attrs.clear();
         for b in &o.blocks {
             self.prefix.push(sum);
+            self.attrs.push(attr(b));
             if !v.folds.is_empty() && layout.is_hidden(b.first_line) {
+                self.rows.push(0);
                 continue;
             }
             let mut k = seed.build_hasher();
@@ -387,9 +432,13 @@ impl RowIndex {
                 }
             };
             sum += rows;
+            self.rows.push(rows);
         }
         self.prefix.push(sum);
         self.stamp = Some(stamp);
+        // The fast path's base: these versions, in this epoch and geometry.
+        self.seen = (vers.len() == o.blocks.len()).then_some((epoch, geometry));
+        self.vers = vers.to_vec();
     }
 }
 
@@ -437,6 +486,35 @@ mod tests {
         let more = d.rows.borrow().laid_out - warm;
         assert!(more <= 1, "only the note typed in: {more}");
         assert_eq!(total2, engine_total(&d), "the rows agree with the engine's walk");
+    }
+
+    /// The row index kept by versions agrees with one summed from scratch, after typing,
+    /// Enter, a delete, undo and redo, anywhere in the document.
+    #[test]
+    fn the_kept_row_index_agrees_with_a_fresh_one() {
+        let mut d = big(300);
+        let fresh = |d: &Doc| {
+            let st = d.engine.state();
+            let layout = Layout::of(&st.doc, &st.view);
+            let mut idx = RowIndex::default();
+            idx.update(d.revision(), st, &layout, (u64::MAX, &[]));
+            idx.prefix
+        };
+        d.scroll_rows();
+        for (i, step) in ["typed and typed again so this note wraps to one more row ", "<cr>", "<bs>", "<bs>", "<undo>", "<redo>", "x"].iter().enumerate() {
+            match *step {
+                "<cr>" => drop(d.run_command("edit.newline")),
+                "<bs>" => drop(d.run_command("edit.backspace")),
+                "<undo>" => drop(d.run_command("history.undo")),
+                "<redo>" => drop(d.run_command("history.redo")),
+                t => drop(d.insert(t)),
+            }
+            d.scroll_rows();
+            assert_eq!(d.rows.borrow().prefix, fresh(&d), "step {i} {step:?}");
+            if i == 2 {
+                let _ = d.run_command("move.doc_end");
+            }
+        }
     }
 
     /// Scrolling to a row and reading it back agree, anywhere in the document.
