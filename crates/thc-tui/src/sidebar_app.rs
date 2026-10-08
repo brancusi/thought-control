@@ -23,22 +23,22 @@ use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 pub struct DocSlot {
     /// The panel's own document, when the main view isn't on the same one.
     pub doc: Option<Doc>,
-    line_id: Option<String>,
-    parked: bool,
-    write: bool,
-    announce: Option<bool>,
-    link_open: bool,
-    link_sel: Option<usize>,
-    last_drop: Option<(String, String, usize)>,
-    near_miss: Option<(String, String, String, Option<String>, u64)>,
-    vsel: Option<usize>,
-    footer_cur: Option<usize>,
-    scroll_free: bool,
+    pub(crate) line_id: Option<String>,
+    pub(crate) parked: bool,
+    pub(crate) write: bool,
+    pub(crate) announce: Option<bool>,
+    pub(crate) link_open: bool,
+    pub(crate) link_sel: Option<usize>,
+    pub(crate) last_drop: Option<(String, String, usize)>,
+    pub(crate) near_miss: Option<(String, String, String, Option<String>, u64)>,
+    pub(crate) vsel: Option<usize>,
+    pub(crate) footer_cur: Option<usize>,
+    pub(crate) scroll_free: bool,
     /// The panel's remembered scroll, waiting for its first layout (`App::doc_pending_scroll`).
     pub(crate) pending_scroll: Option<(usize, bool)>,
-    save_after_frame: bool,
-    footer: Option<(String, Vec<crate::doc_app::FooterRow>)>,
-    first_ever: bool,
+    pub(crate) save_after_frame: bool,
+    pub(crate) footer: Option<(String, Vec<crate::doc_app::FooterRow>)>,
+    pub(crate) first_ever: bool,
 }
 
 /// A doc panel at runtime.
