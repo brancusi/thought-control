@@ -32,6 +32,7 @@ mod lists;
 mod monkey;
 mod mouse;
 mod nav;
+mod panes;
 mod perf;
 mod sidebar;
 mod typing;
@@ -103,6 +104,57 @@ pub struct Shot {
     pub caret_top: Option<u16>,
     /// The document's scrollbar column, when it shows (its thumb follows the length).
     pub bar_x: Option<u16>,
+    /// Every pane showing a document (the main view's, each doc panel's), probed after the
+    /// frame (`Flow::probe`): the invariants hold for whichever pane has the keyboard.
+    pub panes: Vec<PaneShot>,
+    /// The pane with the keyboard, when one shows a document.
+    pub focused: Option<PaneId>,
+}
+
+/// A place a document is shown in: the main view or a sidebar panel.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub enum PaneId {
+    Main,
+    Panel(crate::sidebar::PanelKey),
+}
+
+/// One pane, as the frame left it.
+#[derive(Clone, Debug)]
+pub struct PaneShot {
+    pub id: PaneId,
+    /// The document it shows (`caret_key`: `page:<id>`, `day:<date>`).
+    pub doc: String,
+    /// Its document view on screen.
+    pub rect: Rect,
+    /// Its caret (line, byte).
+    pub caret: (usize, usize),
+    /// Its first row on screen, as a row of the whole document.
+    pub scroll: usize,
+    /// Its first row on screen by what's on it (a note's id and the byte the row starts at),
+    /// None at the top: edits elsewhere in the document don't move it.
+    pub top: Option<String>,
+    /// The wheel moved it: the caret may be off screen.
+    pub free: bool,
+    /// It has the keyboard, writing (not parked, no popup or overlay over it).
+    pub writing: bool,
+    /// Its `[[` popup is open.
+    pub popup: bool,
+    /// What the terminal cursor's cell hits in it (line, byte), when the cursor is in it.
+    pub cursor_hit: Option<(usize, usize)>,
+    /// The screen row where the caret's note starts (its first row, or the view's top).
+    pub caret_top: Option<u16>,
+}
+
+impl Shot {
+    /// The pane with the keyboard.
+    pub fn focused_pane(&self) -> Option<&PaneShot> {
+        let id = self.focused.as_ref()?;
+        self.panes.iter().find(|p| &p.id == id)
+    }
+
+    pub fn pane(&self, id: &PaneId) -> Option<&PaneShot> {
+        self.panes.iter().find(|p| &p.id == id)
+    }
 }
 
 impl Shot {
@@ -140,6 +192,8 @@ pub enum Region {
     Footer,
     /// The first two rows.
     Header,
+    /// The pane under test (`Flow::pane`): the main document's view, or its panel's.
+    Pane,
 }
 
 /// Text on screen.
@@ -197,6 +251,11 @@ impl At {
     pub fn in_footer(self) -> At {
         self.within(Region::Footer)
     }
+    /// In the pane under test (`Flow::pane`): one script reads the same in the main view and
+    /// in a panel (panes.rs).
+    pub fn in_pane(self) -> At {
+        self.within(Region::Pane)
+    }
 }
 
 /// A flow: a scratch vault, a headless session on it, and the frames so far.
@@ -221,6 +280,15 @@ pub struct Flow {
     pub done: bool,
     /// Known product bugs this flow steps around (board task ids), each narrowing one check.
     known: Vec<(String, Known)>,
+    /// The pane under test: where `Region::Pane`, `At::Doc` and the document expectations
+    /// (`expect_caret_*`, `lines`, …) look. The main view unless a parity flow put it in a panel.
+    pub pane: PaneId,
+    /// Each step's record, for a parity flow to compare (panes.rs).
+    pub(super) trail: Option<Vec<panes::Rec>>,
+    /// The current step's wheel notches (screen cells) and whether an agent or another writer
+    /// made it: the only things that may scroll a pane without the keyboard.
+    step_wheel: Vec<(u16, u16)>,
+    step_agent: bool,
 }
 
 /// A known bug (a board task) a flow steps around, narrowly, until it's fixed. Remove the
@@ -233,6 +301,9 @@ pub enum Known {
     /// A fresh session on the saved state lays the page out differently (02pjq: new notes'
     /// blank rows): the restore check is skipped.
     Restore,
+    /// A pane without the keyboard scrolls by itself (a panel's height changing moves its
+    /// view): the unfocused-pane scroll check is skipped.
+    PaneScroll,
 }
 
 /// The start of every flow: the base vault at 140x36, Today showing.
@@ -269,7 +340,8 @@ impl Flow {
         s.apply(Msg::Tick { now_ms, utc_offset_min }).unwrap();
         let mut term = Terminal::new(Emu::new(screen.0, screen.1)).unwrap();
         let shot = draw(&mut term, &mut s);
-        let mut f = Flow { name: name.to_string(), _scratch: scratch, s, term, shot, step: 0, checks, marks: Vec::new(), pace_ms: 60, owed_ms: 0, timings: Vec::new(), timed_steps: Vec::new(), kind: "step", done: false, known: Vec::new() };
+        let mut f = Flow { name: name.to_string(), _scratch: scratch, s, term, shot, step: 0, checks, marks: Vec::new(), pace_ms: 60, owed_ms: 0, timings: Vec::new(), timed_steps: Vec::new(), kind: "step", done: false, known: Vec::new(), pane: PaneId::Main, trail: None, step_wheel: Vec::new(), step_agent: false };
+        f.probe();
         f.checkpoint_mark();
         f
     }
@@ -499,6 +571,7 @@ impl Flow {
             self.s.apply(Msg::Tick { now_ms: now, utc_offset_min: off }).unwrap();
         }
         let before = self.shot.clone();
+        self.step_exemptions(&msgs);
         let t0 = Instant::now();
         for m in msgs {
             // A terminal that changes size starts blank and ratatui draws it whole.
@@ -517,17 +590,55 @@ impl Flow {
         self.timings.push((self.kind, ms));
         self.timed_steps.push(format!("step {} {desc}", self.step));
         self.shot = shot;
+        self.probe();
         self.check(desc, motion, &before);
-        // The runtime's after-frame work (the save of a line just left) and its frame.
-        if self.s.app.doc_save_after_frame {
+        // The runtime's after-frame work (the save of a line just left) and its frame: for
+        // any pane's document.
+        if self.s.app.doc_save_after_frame || self.s.app.panels.values().any(|rt| rt.slot.save_after_frame) {
             self.s.runtime(Msg::Frame);
             let mid = self.shot.clone();
             self.shot = draw(&mut self.term, &mut self.s);
+            self.probe();
             self.check(&format!("{desc} (after-frame)"), motion, &mid);
         }
+        self.record(desc);
         let len = self.s.trace(None, true).map(|(_, l)| l.len()).unwrap_or(0);
         self.marks.push((len, desc.to_string(), self.shot.frame()));
         self
+    }
+
+    /// What may scroll a pane that hasn't the keyboard this step: a wheel notch over it, or a
+    /// change from another writer or an agent.
+    fn step_exemptions(&mut self, msgs: &[Msg]) {
+        let w = self.shot.buf.area.width;
+        self.step_wheel = msgs
+            .iter()
+            .filter_map(|m| match m {
+                Msg::Mouse { mouse } if matches!(mouse.kind, crate::session::MouseKind::ScrollUp | crate::session::MouseKind::ScrollDown) => Some((if mouse.x == u16::MAX { w / 2 } else { mouse.x }, mouse.y)),
+                _ => None,
+            })
+            .collect();
+        self.step_agent = msgs.iter().any(|m| match m {
+            Msg::Fixture { .. } | Msg::Poll | Msg::External { .. } => true,
+            Msg::Patch { actor, .. } | Msg::SetState { actor, .. } | Msg::Aside { actor, .. } => actor.is_some(),
+            _ => false,
+        });
+    }
+
+    /// Fill in the shot's panes: every document on screen, its caret, scroll and cursor hit.
+    /// After the step's timing (perf flows measure the step, not the probe).
+    fn probe(&mut self) {
+        let (panes, focused) = probe_panes(&mut self.s, &self.shot);
+        self.shot.panes = panes;
+        self.shot.focused = focused;
+    }
+
+    /// A parity flow's record of this step (panes.rs).
+    fn record(&mut self, desc: &str) {
+        if self.trail.is_some() {
+            let r = panes::Rec::of(self, desc);
+            self.trail.as_mut().unwrap().push(r);
+        }
     }
 
     /// Redraw after something the runtime did outside a message.
@@ -535,8 +646,12 @@ impl Flow {
         self.step += 1;
         let before = self.shot.clone();
         self.s.sync_external();
+        self.step_wheel.clear();
+        self.step_agent = true;
         self.shot = draw(&mut self.term, &mut self.s);
+        self.probe();
         self.check(desc, motion, &before);
+        self.record(desc);
         let len = self.s.trace(None, true).map(|(_, l)| l.len()).unwrap_or(0);
         self.marks.push((len, desc.to_string(), self.shot.frame()));
         self
@@ -559,11 +674,14 @@ impl Flow {
     // ---- anchors -----------------------------------------------------------------------
 
     /// The cell an anchor names on the last frame.
-    pub fn locate(&self, at: &At) -> (u16, u16) {
+    pub fn locate(&mut self, at: &At) -> (u16, u16) {
         self.try_locate(at).unwrap_or_else(|e| panic!("flow `{}` step {}: {e}\n{}", self.name, self.step, self.shot.frame()))
     }
 
-    pub fn try_locate(&self, at: &At) -> Result<(u16, u16), String> {
+    pub fn try_locate(&mut self, at: &At) -> Result<(u16, u16), String> {
+        if let At::Doc { line, byte } = at {
+            return self.locate_doc(line, *byte);
+        }
         let shot = &self.shot;
         let (w, h) = (shot.buf.area.width, shot.buf.area.height);
         match at {
@@ -579,6 +697,10 @@ impl Flow {
                     }
                     Region::Footer => (0, w, h - 1, h),
                     Region::Header => (0, w, 0, 2.min(h)),
+                    Region::Pane => {
+                        let r = shot.pane(&self.pane).map(|p| p.rect).ok_or_else(|| format!("the pane under test ({:?}) isn't on screen", self.pane))?;
+                        (r.x, r.x + r.width, r.y, r.y + r.height)
+                    }
                 };
                 let mut found = 0;
                 for y in y0..y1 {
@@ -610,26 +732,32 @@ impl Flow {
                 }
                 Err(format!("{s:?} (match {nth}) isn't on screen in {region:?}"))
             }
-            At::Doc { line, byte } => {
-                let d = self.s.app.doc.as_ref().ok_or("no document open")?;
-                let idx = d.blocks().iter().position(|l| l.text.contains(line.as_str())).ok_or_else(|| format!("no line holds {line:?}"))?;
-                let r = shot.doc_view.ok_or("no document on screen")?;
-                for y in r.y..r.y + r.height {
-                    for x in r.x..r.x + r.width {
-                        if let Some((l, b, false)) = crate::doc_ui::hit_at(&self.s.app, &self.s.app.render, x, y) {
-                            if l == idx && b == *byte {
-                                return Ok((x, y));
-                            }
-                        }
-                    }
-                }
-                Err(format!("byte {byte} of {line:?} isn't on screen"))
-            }
+            At::Doc { .. } => unreachable!("located above"),
             At::Target(f, what) => {
                 let t = self.s.app.render.click_targets.iter().find(|t| f(&t.what)).ok_or_else(|| format!("no {what} on screen"))?;
                 Ok((t.x0 + (t.x1 - t.x0) / 2, t.y))
             }
         }
+    }
+
+    /// A place in the pane under test's document: the line holding `line`, `byte` into it.
+    fn locate_doc(&mut self, line: &str, byte: usize) -> Result<(u16, u16), String> {
+        let r = self.shot.pane(&self.pane).map(|p| p.rect).ok_or("no document on screen in the pane under test")?;
+        let pane = self.pane.clone();
+        with_pane_doc(&mut self.s.app, &pane, |d| {
+            let idx = d.blocks().iter().position(|l| l.text.contains(line)).ok_or_else(|| format!("no line holds {line:?}"))?;
+            for y in r.y..r.y + r.height {
+                for x in r.x..r.x + r.width {
+                    if let Some((l, b, false)) = pane_hit(d, r, x, y) {
+                        if l == idx && b == byte {
+                            return Ok((x, y));
+                        }
+                    }
+                }
+            }
+            Err(format!("byte {byte} of {line:?} isn't on screen"))
+        })
+        .unwrap_or_else(|| Err("no document open in the pane under test".into()))
     }
 
     // ---- checks ------------------------------------------------------------------------
@@ -691,73 +819,97 @@ impl Flow {
             }
             Err(e) => self.fail(desc, before, &format!("the state's JSON doesn't parse back: {e}")),
         }
-        // The caret: on screen while writing, on the document's caret.
+        // The caret, in the pane with the keyboard (the main view or a panel): on screen while
+        // writing, on the document's caret.
         // (The wheel scrolls the view freely, the caret may be off screen: a key brings it back.)
-        let free = self.s.app.doc.as_ref().is_some_and(|d| d.scroll_free());
-        if shot.writing && (shot.cursor.is_some() || !free) {
-            let Some((cx, cy)) = shot.cursor else { self.fail(desc, before, "writing, but no cursor shows") };
-            let r = shot.doc_view.unwrap();
+        if let Some(p) = shot.focused_pane().filter(|p| p.writing && (shot.cursor.is_some() || !p.free)) {
+            let Some((cx, cy)) = shot.cursor else { self.fail(desc, before, &format!("writing in {:?}, but no cursor shows", p.id)) };
+            let r = p.rect;
             if !(cx >= r.x && cx < r.x + r.width && cy >= r.y && cy < r.y + r.height) {
-                self.fail(desc, before, &format!("the cursor ({cx},{cy}) is outside the document's view {r:?}"));
+                self.fail(desc, before, &format!("the cursor ({cx},{cy}) is outside {:?}'s view {r:?}", p.id));
             }
-            if let (Some(hit), Some(caret)) = (crate::doc_ui::hit_at(&self.s.app, &self.s.app.render, cx, cy), shot.caret) {
-                if (hit.0, hit.1) != caret {
-                    let d = self.s.app.doc.as_ref().unwrap();
-                    let t = d.blocks().get(caret.0).map(|l| l.text.clone()).unwrap_or_default();
-                    self.fail(desc, before, &format!("the cursor ({cx},{cy}) is on line {} byte {}, the caret on line {} byte {} of {t:?}", hit.0, hit.1, caret.0, caret.1));
+            if let Some(hit) = p.cursor_hit {
+                if hit != p.caret {
+                    let t = pane_line_text(&self.s.app, &p.id, p.caret.0);
+                    self.fail(desc, before, &format!("the cursor ({cx},{cy}) is on line {} byte {} of {:?}, the caret on line {} byte {} of {t:?}", hit.0, hit.1, p.id, p.caret.0, p.caret.1));
                 }
+            }
+        }
+        // A pane without the keyboard keeps its scroll: only the wheel over it, or another
+        // writer's change to its document, moves it (never another pane's focus, its height or
+        // a render at another size).
+        if !self.known.iter().any(|(_, k)| *k == Known::PaneScroll) && !self.step_agent {
+            for p in &shot.panes {
+                let Some(q) = before.pane(&p.id) else { continue };
+                let had_keys = |s: &Shot| s.focused.as_ref() == Some(&p.id);
+                if q.doc != p.doc || had_keys(before) || had_keys(&shot) || q.top == p.top {
+                    continue;
+                }
+                let r = q.rect;
+                if self.step_wheel.iter().any(|&(x, y)| x >= r.x && x < r.x + r.width && y >= r.y && y < r.y + r.height) {
+                    continue;
+                }
+                self.fail(desc, before, &format!("{:?} hasn't the keyboard, but its view scrolled: first row {:?} → {:?}", p.id, q.top, p.top));
             }
         }
         // What may move.
         if motion == Motion::Any || before.overlay || shot.overlay {
             return;
         }
-        let (Some(a), Some(b)) = (before.doc_view, shot.doc_view) else { return };
-        if a != b {
-            self.fail(desc, before, &format!("the document's view moved: {a:?} → {b:?}"));
-        }
-        let w = shot.buf.area.width;
-        let main_r = shot.side_x.unwrap_or(w).min(before.side_x.unwrap_or(w));
-        for y in 0..shot.buf.area.height {
-            if y >= b.y && y < b.y + b.height || motion == Motion::Agent {
-                continue;
+        // The main view's chrome (when it shows a document) stays put.
+        if let (Some(a), Some(b)) = (before.doc_view, shot.doc_view) {
+            if a != b {
+                self.fail(desc, before, &format!("the document's view moved: {a:?} → {b:?}"));
             }
-            // The rail's counts (a page's open tasks, a day's entries) follow what's saved
-            // (64j4y); its rows don't move.
-            let (mut p, mut q) = (rail_counts_masked(&before.row(y, 0, main_r)), rail_counts_masked(&shot.row(y, 0, main_r)));
-            // The footer's counts (words, open tasks) change as you type; its layout doesn't.
-            // The footer: its hints follow the caret (on a link: ⌥O aside) and its counts the
-            // words; its status (the page, autosaved) stays put.
-            // A toast takes the footer for a moment (by design).
-            if y + 1 == shot.buf.area.height {
-                if self.s.app.ui.toast.is_some() {
+            let w = shot.buf.area.width;
+            let main_r = shot.side_x.unwrap_or(w).min(before.side_x.unwrap_or(w));
+            for y in 0..shot.buf.area.height {
+                if y >= b.y && y < b.y + b.height || motion == Motion::Agent {
                     continue;
                 }
-                (p, q) = (footer_status(&p), footer_status(&q));
+                // The rail's counts (a page's open tasks, a day's entries) follow what's saved
+                // (64j4y); its rows don't move.
+                let (mut p, mut q) = (rail_counts_masked(&before.row(y, 0, main_r)), rail_counts_masked(&shot.row(y, 0, main_r)));
+                // The footer's counts (words, open tasks) change as you type; its layout doesn't.
+                // The footer: its hints follow the caret (on a link: ⌥O aside) and its counts the
+                // words; its status (the page, autosaved) stays put.
+                // A toast takes the footer for a moment (by design).
+                if y + 1 == shot.buf.area.height {
+                    if self.s.app.ui.toast.is_some() {
+                        continue;
+                    }
+                    (p, q) = (footer_status(&p), footer_status(&q));
+                }
+                if p != q {
+                    self.fail(desc, before, &format!("row {y} (chrome) changed:\n  before {:?}\n  after  {:?}", p.trim_end(), q.trim_end()));
+                }
             }
-            if p != q {
-                self.fail(desc, before, &format!("row {y} (chrome) changed:\n  before {:?}\n  after  {:?}", p.trim_end(), q.trim_end()));
-            }
-        }
-        // Keys may scroll to keep the caret SCROLLOFF rows from the edges; a click never scrolls.
-        let margin = if motion == Motion::Click { 0 } else { 2 };
-        let bottom = b.y + b.height - 1;
-        let at_edge = |s: &Shot| s.cursor.is_some_and(|(_, y)| y <= b.y + margin || y + margin >= bottom);
-        if motion == Motion::Click && before.scroll != shot.scroll {
-            self.fail(desc, before, &format!("a click scrolled the view {:?} → {:?}: the text moved under the mouse", before.scroll, shot.scroll));
-        }
-        if before.scroll != shot.scroll && !at_edge(&shot) && !at_edge(before) {
-            self.fail(desc, before, &format!("the view scrolled {:?} → {:?} with the caret mid-screen", before.scroll, shot.scroll));
         }
         if motion == Motion::Agent && before.cursor != shot.cursor && before.cursor.is_some() {
             self.fail(desc, before, &format!("another writer's change moved the cursor {:?} → {:?}: what you're typing moved", before.cursor, shot.cursor));
         }
-        if motion == Motion::Typing && before.scroll == shot.scroll {
+        // The rest is about the pane with the keyboard (the same one before and after).
+        let (Some(pb), Some(pa)) = (before.focused_pane(), shot.focused_pane()) else { return };
+        if pb.id != pa.id || pb.doc != pa.doc || pb.rect != pa.rect {
+            return;
+        }
+        let b = pa.rect;
+        // Keys may scroll to keep the caret SCROLLOFF rows from the edges; a click never scrolls.
+        let margin = if motion == Motion::Click { 0 } else { 2 };
+        let bottom = b.y + b.height - 1;
+        let at_edge = |s: &Shot| s.cursor.is_some_and(|(_, y)| y <= b.y + margin || y + margin >= bottom);
+        if motion == Motion::Click && pb.scroll != pa.scroll {
+            self.fail(desc, before, &format!("a click scrolled {:?} {:?} → {:?}: the text moved under the mouse", pa.id, pb.scroll, pa.scroll));
+        }
+        if pb.scroll != pa.scroll && !at_edge(&shot) && !at_edge(before) {
+            self.fail(desc, before, &format!("{:?} scrolled {:?} → {:?} with the caret mid-screen", pa.id, pb.scroll, pa.scroll));
+        }
+        if motion == Motion::Typing && pb.scroll == pa.scroll {
             // Rows above the caret's note (a note's own rows reflow: a word may move up a row).
-            let top = [before.caret_top, shot.caret_top].iter().flatten().copied().min();
+            let top = [pb.caret_top, pa.caret_top].iter().flatten().copied().min();
             if let Some(cy) = top {
                 // The scrollbar's column is left out: its thumb follows the length.
-                let x1 = shot.bar_x.or(before.bar_x).unwrap_or(b.x + b.width).min(b.x + b.width);
+                let x1 = if pa.id == PaneId::Main { shot.bar_x.or(before.bar_x).unwrap_or(b.x + b.width).min(b.x + b.width) } else { b.x + b.width };
                 for y in b.y..cy {
                     let (p, q) = (before.row(y, b.x, x1), shot.row(y, b.x, x1));
                     if p != q {
@@ -860,6 +1012,14 @@ impl Flow {
         self
     }
 
+    /// The pane under test's document, for reading what doesn't depend on a view (its notes).
+    pub fn pane_doc(&self) -> Option<&crate::editor::Doc> {
+        match &self.pane {
+            PaneId::Main => self.s.app.doc.as_ref(),
+            PaneId::Panel(k) => self.s.app.panel_doc(k),
+        }
+    }
+
     /// The main document is the page titled `title`.
     pub fn expect_page(&mut self, title: &str) -> &mut Self {
         match self.s.app.doc.as_ref().map(|d| &d.target) {
@@ -884,10 +1044,14 @@ impl Flow {
         self
     }
 
-    fn caret_line(&self) -> (String, usize) {
-        let d = self.s.app.doc.as_ref().unwrap_or_else(|| self.expect_fail("no document open"));
-        let c = d.caret();
-        (d.blocks()[c.line].text.clone(), c.byte)
+    /// The pane under test's caret: its line's text and the byte in it.
+    fn caret_line(&mut self) -> (String, usize) {
+        let pane = self.pane.clone();
+        with_pane_doc(&mut self.s.app, &pane, |d| {
+            let c = d.caret();
+            (d.blocks()[c.line].text.clone(), c.byte)
+        })
+        .unwrap_or_else(|| self.expect_fail("no document open in the pane under test"))
     }
 
     /// The text before the caret, on its line, ends with `s`.
@@ -936,12 +1100,12 @@ impl Flow {
 
     /// The document's lines (texts), in order.
     pub fn lines(&self) -> Vec<String> {
-        self.s.app.doc.as_ref().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default()
+        self.pane_doc().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default()
     }
 
     /// The line holding `s` sits at `depth`.
     pub fn expect_depth(&mut self, s: &str, depth: usize) -> &mut Self {
-        let d = self.s.app.doc.as_ref().unwrap_or_else(|| self.expect_fail("no document open"));
+        let d = self.pane_doc().unwrap_or_else(|| self.expect_fail("no document open"));
         match d.blocks().iter().find(|l| l.text.contains(s)) {
             Some(l) if l.depth == depth => self,
             Some(l) => {
@@ -954,8 +1118,10 @@ impl Flow {
 
     /// The selection's text (lines joined with `\n`).
     pub fn selection(&mut self) -> Option<String> {
-        let d = self.s.app.doc.as_mut()?;
-        let (a, b) = d.selection()?;
+        let pane = self.pane.clone();
+        let sel = with_pane_doc(&mut self.s.app, &pane, |d| d.selection())??;
+        let d = self.pane_doc()?;
+        let (a, b) = sel;
         let lines: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).collect();
         let (a, b) = if (a.line, a.byte) <= (b.line, b.byte) { (a, b) } else { (b, a) };
         if a.line == b.line {
@@ -1071,7 +1237,98 @@ fn draw(term: &mut Terminal<Emu>, s: &mut Session) -> Shot {
     });
     let bar_x = app.render.click_targets.iter().find(|t| matches!(t.what, crate::ui::Click::Scroll(_))).map(|t| t.x0);
     let text = crate::session::frame_text(&buf).lines().map(str::to_string).collect();
-    Shot { caret_top, bar_x, buf, text, cursor, doc_view, side_x, panels, scroll: app.doc.as_ref().map(|d| d.scroll()), caret, writing, overlay }
+    Shot { caret_top, bar_x, buf, text, cursor, doc_view, side_x, panels, scroll: app.doc.as_ref().map(|d| d.scroll()), caret, writing, overlay, panes: Vec::new(), focused: None }
+}
+
+/// Run `f` on pane `id`'s document through its own view (the main view's, or the panel's).
+pub(super) fn with_pane_doc<R>(app: &mut crate::app::App, id: &PaneId, f: impl FnOnce(&mut crate::editor::Doc) -> R) -> Option<R> {
+    match id {
+        PaneId::Main => app.doc.as_mut().map(f),
+        PaneId::Panel(k) => {
+            let r = app.panel_doc_mut(k).map(|(d, _)| f(d));
+            app.main_view_current();
+            r
+        }
+    }
+}
+
+fn pane_line_text(app: &crate::app::App, id: &PaneId, line: usize) -> String {
+    let d = match id {
+        PaneId::Main => app.doc.as_ref(),
+        PaneId::Panel(k) => app.panel_doc(k),
+    };
+    d.and_then(|d| d.blocks().get(line)).map(|l| l.text.clone()).unwrap_or_default()
+}
+
+/// What cell (`x`, `y`) of a pane's view at `r` hits in its document (the document's current
+/// view laid out there): (line, byte), as a click there would place the caret.
+pub(super) fn pane_hit(d: &crate::editor::Doc, r: Rect, x: u16, y: u16) -> Option<(usize, usize, bool)> {
+    use crate::editor::DocHit;
+    if y < r.y || y >= r.y + r.height || x < r.x || x >= r.x + r.width {
+        return None;
+    }
+    match d.hit(x - r.x, y - r.y)? {
+        DocHit::Text(p) => Some((p.line, p.byte, false)),
+        DocHit::Hang { line, task_box: true, .. } => Some((line, 0, true)),
+        DocHit::Hang { row, .. } | DocHit::Marks { row, .. } => Some((row.line, row.byte, false)),
+    }
+}
+
+/// Every pane showing a document, and the one with the keyboard.
+fn probe_panes(s: &mut Session, shot: &Shot) -> (Vec<PaneShot>, Option<PaneId>) {
+    use crate::doc_app::caret_key;
+    use crate::editor::DocRow;
+    let app = &mut s.app;
+    let overlay = app.ui.overlay.is_some() || app.prompt.is_some();
+    let focused = match app.ui.focus {
+        Focus::Sidebar => app.ui.sidebar.active_key().filter(|k| app.panels.contains_key(k)).map(PaneId::Panel),
+        Focus::List if app.doc.is_some() && shot.doc_view.is_some() => Some(PaneId::Main),
+        _ => None,
+    };
+    let mut ids: Vec<(PaneId, Rect)> = Vec::new();
+    if let Some(r) = shot.doc_view {
+        if app.doc.is_some() {
+            ids.push((PaneId::Main, r));
+        }
+    }
+    for (k, r) in app.render.panel_views.clone() {
+        if app.panels.contains_key(&k) && r.width > 0 && r.height > 0 {
+            ids.push((PaneId::Panel(k), r));
+        }
+    }
+    let mut out = Vec::new();
+    for (id, rect) in ids {
+        let (parked, popup) = match &id {
+            PaneId::Main => (app.ui.doc_parked, app.ui.link_open),
+            PaneId::Panel(k) => app.panels.get(k).map_or((true, false), |rt| (rt.slot.parked, rt.slot.link_open)),
+        };
+        let has_keys = focused.as_ref() == Some(&id);
+        let cursor = shot.cursor;
+        let main_caret_top = shot.caret_top;
+        let is_main = id == PaneId::Main;
+        let p = with_pane_doc(app, &id, |d| {
+            let c = d.caret();
+            let scroll = d.scroll();
+            let rows = d.frame().rows;
+            let id_of = |line: usize| d.blocks().get(line).map(|l| l.id.clone()).unwrap_or_default();
+            let top = (scroll != 0).then(|| match rows.first() {
+                Some(DocRow::Text { line, start, .. }) => format!("{}@{start}", id_of(*line)),
+                Some(DocRow::Gap { line }) => format!("{}:gap", id_of(*line)),
+                Some(DocRow::Extra { line, index }) => format!("{}:extra{index}", id_of(*line)),
+                _ => "past".into(),
+            });
+            // The caret's note's first row on screen (the view's top when it starts above it).
+            let caret_top = if is_main {
+                main_caret_top
+            } else {
+                rows.iter().position(|r| matches!(r, DocRow::Text { line, .. } | DocRow::Gap { line } | DocRow::Extra { line, .. } if *line == c.line)).map(|i| rect.y + i as u16)
+            };
+            let cursor_hit = cursor.and_then(|(x, y)| pane_hit(d, rect, x, y)).map(|(l, b, _)| (l, b));
+            PaneShot { id: id.clone(), doc: caret_key(&d.target), rect, caret: (c.line, c.byte), scroll, top, free: d.scroll_free(), writing: has_keys && !overlay && !parked && !popup, popup, cursor_hit, caret_top }
+        });
+        out.extend(p);
+    }
+    (out, focused)
 }
 
 /// A key script's tokens, as written.

@@ -89,17 +89,22 @@ anything else. `dump()` prints the frame.
 - **No stale caches:** the frame drawn with the sidebar and page-preview caches dropped is the
   same.
 - **The state round-trips through JSON** (`UiState` to text and back is equal).
-- **The caret:** while writing, the cursor shows inside the document's view, and hit-testing the
-  cursor's cell gives the document's caret (line and byte).
+- **The caret, in the focused pane:** the main view and each doc panel are panes; the one with
+  the keyboard (`Shot::focused`) is checked. While writing there, the cursor shows inside that
+  pane's view, and hit-testing the cursor's cell in it gives its caret (line and byte).
+- **A pane without the keyboard keeps its scroll:** its first row (a note's id and the byte
+  the row starts at, so edits elsewhere don't count) changes only for a wheel notch over it or
+  another writer's or an agent's change (`Motion::Agent`, a patch with an actor, a poll). Never
+  for another pane taking focus, its height changing or a render at another size.
 - **Another writer** (`Motion::Agent`: `agent_add`, `remote_edit`): the cursor stays where it
   was on screen (what you're typing doesn't move); the header's badges and the footer may change.
 - **A click** (`Motion::Click`: `click_caret`, `alt_click`): as a caret move, and the view
   doesn't scroll at all; the text stays under the mouse.
 - **No shifting** (`Motion::Typing` and `Motion::Caret` steps): the document's view keeps its
   place; every row outside it (header, tabs, footer) is unchanged, except the footer's hints,
-  its counts and a toast; the view scrolls only when the caret is on its first or last row.
-  While typing, every row above the caret's note is unchanged (the note's own rows may reflow:
-  a word can move up a row).
+  its counts and a toast; the focused pane scrolls only when the caret is on its first or last
+  row. While typing, every row above the caret's note in the focused pane is unchanged (the
+  note's own rows may reflow: a word can move up a row).
 
 At `done()`:
 
@@ -120,7 +125,19 @@ list: `cargo test -p thc-tui flows:: -- --ignored --skip perf` runs them. When a
 spoils one check of an otherwise useful flow, the flow steps around it narrowly instead:
 `.known("<task>", Known::Rail)` leaves the left rail out of the restore check, and
 `.known("<task>", Known::Restore)` skips the restore check. Remove the `.known(…)` or the
-`#[ignore]` with the fix.
+`#[ignore]` with the fix. `Known::PaneScroll` skips the unfocused-pane scroll check.
+
+## Parity: the main view and a panel
+
+`flows/panes.rs` holds the panes refactor's net (docs/design/panes.md): `parity(name).run(script)`
+runs one script on Q4 Plan in the main view (`flow_in(Where::Main)`) and again in a panel beside
+today's journal (`Where::Panel`: ⇧-click its link, ⌥S). The script addresses the pane under test
+(`Flow::pane`): `doc_at(…)`, `text(…).in_pane()` and the document expectations look there. Per
+step it compares whether the pane has the keyboard, its caret, the `[[` popup's rows as drawn,
+the document and the clipboard; at the end, the saved page. In the panel run every step must
+leave the main view's document and history alone. The documented role differences (arrival,
+Esc, link follow, history) are in the module docs; `.except(Except::Follow)` allows a followed
+link to move the main view.
 
 ## The monkey
 
