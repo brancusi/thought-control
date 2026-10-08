@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS rehomed(node TEXT PRIMARY KEY, under TEXT, deleted_pa
 CREATE INDEX IF NOT EXISTS rehomed_under ON rehomed(under);
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(id UNINDEXED, title, text,
   tokenize='unicode61 remove_diacritics 2');
+-- Each node's row in nodes_fts: reindexing deletes by rowid, not by a scan of the unindexed id
+-- (a 1,000-note paste into a 5,000-note page spent a second there). Rebuilt on a schema change.
+CREATE TABLE IF NOT EXISTS fts_rows(id TEXT PRIMARY KEY, rid INTEGER NOT NULL) STRICT;
 CREATE INDEX IF NOT EXISTS by_parent ON nodes(parent, ord);
 CREATE INDEX IF NOT EXISTS open_by_sched ON nodes(scheduled)
   WHERE status IN ('todo','doing','waiting') AND deleted = 0;
@@ -75,7 +78,7 @@ CREATE INDEX IF NOT EXISTS events_actor ON events(actor, tx);
 CREATE INDEX IF NOT EXISTS open_by_status ON nodes(status, deleted, due, scheduled, updated_ms) WHERE status IN ('todo','doing','waiting');
 "#;
 
-const MATERIALIZED: [&str; 10] = ["nodes", "props", "prop_defs", "clocks", "edges", "alerts", "conflicts", "reviews", "nodes_fts", "rehomed"];
+const MATERIALIZED: [&str; 11] = ["nodes", "props", "prop_defs", "clocks", "edges", "alerts", "conflicts", "reviews", "nodes_fts", "fts_rows", "rehomed"];
 
 pub struct Store {
     pub conn: Connection,
@@ -108,6 +111,8 @@ impl Store {
             s.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
             s.conn.execute_batch(SCHEMA)?;
             s.conn.execute_batch(crate::alerts::LOCAL_SCHEMA)?;
+            // The map from scratch: a store another version wrote has rows it doesn't know.
+            s.conn.execute_batch("DELETE FROM fts_rows; INSERT OR REPLACE INTO fts_rows(id, rid) SELECT id, rowid FROM nodes_fts;")?;
             s.conn.execute_batch(&format!("PRAGMA user_version={want};"))?;
         }
         Ok(s)
@@ -446,7 +451,24 @@ impl Store {
     }
 
     fn reindex_fts(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM nodes_fts WHERE id=?1", [id])?;
+        self.reindex_fts_as(id, false)
+    }
+
+    fn reindex_fts_as(&self, id: &str, fresh: bool) -> Result<()> {
+        // By its row; when the map is stale (another version wrote this store meanwhile), by
+        // the scan, which takes every row of the node.
+        let rid: Option<i64> = self.conn.prepare_cached("SELECT rid FROM fts_rows WHERE id=?1")?.query_row([id], |r| r.get(0)).optional()?;
+        let gone = match rid {
+            Some(rid) => self.conn.prepare_cached("DELETE FROM nodes_fts WHERE rowid=?1 AND id=?2")?.execute(params![rid, id])?,
+            None => 0,
+        };
+        // (A node just created has no row: nothing to look for.)
+        if gone == 0 && !fresh {
+            self.conn.execute("DELETE FROM nodes_fts WHERE id=?1", [id])?;
+        }
+        if rid.is_some() {
+            self.conn.prepare_cached("DELETE FROM fts_rows WHERE id=?1")?.execute([id])?;
+        }
         let row: Option<(Option<String>, String)> = self
             .conn
             .query_row("SELECT title, text FROM nodes WHERE id=?1 AND deleted=0", [id], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -463,6 +485,7 @@ impl Store {
                 "INSERT INTO nodes_fts(id,title,text) VALUES(?1,?2,?3)",
                 params![id, title.unwrap_or_default(), rendered],
             )?;
+            self.conn.prepare_cached("INSERT OR REPLACE INTO fts_rows(id, rid) VALUES(?1, ?2)")?.execute(params![id, self.conn.last_insert_rowid()])?;
         }
         Ok(())
     }
@@ -540,7 +563,7 @@ impl Store {
                         self.write_field(id, k, v)?;
                     }
                 }
-                self.reindex_fts(id)?;
+                self.reindex_fts_as(id, true)?;
                 self.reindex_embedders(id)?;
                 self.recompute_alerts(id)?;
                 inverse.push(Op::NodeDelete { id: id.clone() });
