@@ -28,7 +28,10 @@ sha2 = "0.10"
 # this patch is removed once a caretline release contains it. Never patch the engine in this
 # repo; for local work on both, use a path patch to your caretline checkout and don't commit it.
 [patch.crates-io]
-caretline = { git = "https://github.com/brancusi/caretline", rev = "282c8a531157dd6e95687beff019c8251749c5a3" }
+# OVERNIGHT, LOCAL ONLY: caretline 3052272 (the wrap, view-stays and Msg::Drag fixes) isn't
+# pushed, so this branch builds against a private clone beside the repo. Before any push this
+# must become a published caretline version or a pushed git rev (thc-dev board, 82cr9).
+caretline = { path = "../.caretline-for-overnight/crates/caretline" }
 
 [profile.release]
 lto = "fat"

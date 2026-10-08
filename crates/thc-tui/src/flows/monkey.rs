@@ -100,7 +100,6 @@ fn monkey_on_a_page() {
 }
 
 #[test]
-#[ignore = "hyrg2"]
 fn monkey_5eedf10e_a_wide_character_at_the_row_end() {
     // Step 340: an emoji at the end of a wrapped row overflows the column into the scrollbar.
     walk(0x5eed_f10e, 200, (140, 36));
@@ -112,7 +111,6 @@ fn monkey_on_a_narrow_screen() {
 }
 
 #[test]
-#[ignore = "hyrg2"]
 fn monkey_c0ffee_a_wide_character_at_the_row_end() {
     // Step 335: 日 typed at column 78 of 80 overflows the row, and the cursor leaves the view.
     walk(0xc0ffee, 200, (80, 24));
