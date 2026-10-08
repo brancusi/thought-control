@@ -59,10 +59,10 @@ fn enter_makes_a_new_note() {
 
 #[test]
 fn enter_splits_a_line() {
-    q4().named("Enter in the middle of a line splits it").known("0d61e", Known::Restore)
+    q4().named("Enter in the middle of a line splits it")
         .click_caret(doc_at("Last line of the plan", 9))
         .keys("<cr>")
-        .expect_caret_before(" of the plan")
+        .expect_caret_before("of the plan")
         .expect_line("Last line")
         .done();
 }

@@ -237,6 +237,16 @@ fn enter_makes_only_what_a_save_keeps() {
     d.set_caret(BlockPos { line: 1, byte: 0 });
     d.run_command("edit.newline");
     assert_eq!(texts(&d), ["notes", ""]);
+    // A split: the rest starts with no spaces, and one undo brings it all back (0d61e).
+    let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[blk("a", "bullet", "Last line of the plan")], today);
+    d.fill_ids((0..20).map(|i| format!("id{i:03}")).collect());
+    d.set_caret(BlockPos { line: 0, byte: 9 });
+    d.run_command("edit.newline");
+    assert_eq!(texts(&d), ["Last line", "of the plan"]);
+    assert_eq!(d.caret(), BlockPos { line: 1, byte: 0 });
+    d.run_command("history.undo");
+    assert_eq!(texts(&d), ["Last line of the plan"]);
+    assert_eq!((d.caret(), d.selection()), (BlockPos { line: 0, byte: 9 }, None));
 }
 
 /// A saved page of `n` notes (each saved: its parent and the note it follows recorded).
