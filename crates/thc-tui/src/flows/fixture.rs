@@ -14,6 +14,9 @@ pub enum Size {
     Long,
     /// Plus "Huge Page" (5,000 lines).
     Huge,
+    /// Plus "Wrapped Page": 5,000 notes of a dozen words, which wrap once the sidebar narrows
+    /// the page (as scripts/bench-editor.sh's page does).
+    Wrapped,
 }
 
 /// A 300-character paragraph that soft-wraps on any screen.
@@ -63,15 +66,26 @@ pub fn seed(vault: &mut Vault, size: Size) {
     let lines = match size {
         Size::Small => 0,
         Size::Long => 300,
-        Size::Huge => 5000,
+        Size::Huge | Size::Wrapped => 5000,
     };
     if lines > 0 {
-        let title = if size == Size::Long { "Long Page" } else { "Huge Page" };
+        let title = match size {
+            Size::Long => "Long Page",
+            Size::Wrapped => "Wrapped Page",
+            _ => "Huge Page",
+        };
+        let words = "the quick brown fox jumps over a lazy dog while thinking about lunch and the weather".split(' ').collect::<Vec<_>>();
         vault
             .transact(|st| {
                 let mut b = TxBuilder::new(st, today);
                 let p = b.create_page(title, &[])?;
                 for i in 0..lines {
+                    if size == Size::Wrapped {
+                        let line: Vec<&str> = (0..12).map(|k| words[(i + k) % words.len()]).collect();
+                        let t = format!("{}{} {i}", if i % 9 == 0 { "[ ] " } else { "" }, line.join(" "));
+                        b.create_from_capture(Some(p.clone()), &cap(&t), None)?;
+                        continue;
+                    }
                     let t = match i % 10 {
                         3 => format!("Line {i}: {}", &LONG_PARA[..120]),
                         7 => format!("[ ] Line {i}: a task to do"),

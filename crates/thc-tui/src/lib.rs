@@ -712,6 +712,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         phase("announce", &mut phases, tracing);
         session.runtime(Msg::Idle);
         phase("idle", &mut phases, tracing);
+        let area = ratatui::layout::Rect::new(0, 0, session.size.0, session.size.1);
         let app = &mut session.app;
         app.drain_live();
         phase("drain_live", &mut phases, tracing);
@@ -725,6 +726,13 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         // its frame (at least every 30 s all the same). A poll asked for (the daemon's push) runs
         // at once.
         let typing = last_input.elapsed() < Duration::from_millis(300) && last_poll.elapsed() < Duration::from_secs(30);
+        // Idle, and nothing else to do this turn: lay the page out ahead for a sidebar, in 2 ms
+        // slices while no input waits (a key waits at most one slice), up to 40 ms a turn.
+        // No frame is drawn for it: nothing on screen changes.
+        if last_input.elapsed() >= Duration::from_millis(300) && !app.quit {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(40) && !event::poll(Duration::ZERO).unwrap_or(true) && app.prewarm_step(area, Duration::from_millis(2)) {}
+        }
         if std::mem::take(&mut app.poll_wanted) || (!typing && last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 })) {
             last_poll = Instant::now();
             session.runtime(Msg::Poll);

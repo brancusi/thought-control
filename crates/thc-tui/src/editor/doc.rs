@@ -228,6 +228,9 @@ pub struct Doc {
     /// One per view: a page beside itself is laid out at two widths (a shared index re-summed
     /// the whole page at each).
     pub(super) rows: std::cell::RefCell<HashMap<u32, super::view::RowIndex>>,
+    /// Each note's rows by what decides them alone (`view::note_key`), shared by every view
+    /// and filled ahead in idle time (`Doc::prewarm_rows`).
+    pub(super) row_cache: std::cell::RefCell<super::view::RowCache>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
@@ -254,7 +257,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, repin: false, fresh_end: None }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), row_cache: Default::default(), now_ms: 0, hold_caret_line: true, repin: false, fresh_end: None }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.

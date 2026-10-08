@@ -82,12 +82,9 @@ impl Doc {
         self.engine.flush();
         let lines = self.engine.lines();
         let extra_rows: BTreeMap<MarkId, u16> = g.extra_rows.iter().filter_map(|&(i, n)| Some((MarkId(lines.get(i)?.mark?), n))).filter(|(_, n)| *n > 0).collect();
-        let mut layout = OutlineLayout::default();
-        (layout.gutter, layout.indent, layout.hang, layout.column, layout.min_column, layout.extra_rows, layout.hang_glyphs) = (MARKS, INDENT, HANG, g.column.max(1), MIN_COLUMN, extra_rows, false);
         let st = self.engine.state_mut();
         let v = &mut st.view;
-        v.viewport = Viewport { width: g.width.max(1), height: g.height.max(1) };
-        v.layout = Some(layout);
+        shape(v, g, extra_rows);
         v.config.status_bar = false;
         v.config.scrolloff = SCROLLOFF;
         // Writing at the end of a long page: the caret keeps its margin below it there too, so
@@ -100,6 +97,37 @@ impl Doc {
         } else {
             cn::layout::ensure_caret_visible(st);
         }
+    }
+
+    /// Lay the notes out ahead at geometry `g` (another width: the sidebar's, before it opens),
+    /// from note `from`, for at most `budget`: their rows go into the shared cache, so the
+    /// first frame at that width only sums them. Nothing on screen changes. Some(next note) when
+    /// the budget ran out first; None when every note is in.
+    pub fn prewarm_rows(&mut self, g: &ViewGeometry, from: usize, budget: std::time::Duration) -> Option<usize> {
+        self.engine.flush();
+        let t0 = std::time::Instant::now();
+        let st = self.engine.state();
+        let mut v = st.view.clone();
+        shape(&mut v, g, BTreeMap::new());
+        let layout = Layout::of(&st.doc, &v);
+        let params = params_of(&v);
+        let o = st.doc.blocks().expect("an outline document");
+        let mut cache = self.row_cache.borrow_mut();
+        let mut buf = String::new();
+        for (i, b) in o.blocks.iter().enumerate().skip(from) {
+            if i % 32 == 0 && i > from && t0.elapsed() >= budget {
+                return Some(i);
+            }
+            if !v.folds.is_empty() && layout.is_hidden(b.first_line) {
+                continue;
+            }
+            let key = note_key(params, b, 0, st.doc.text.slice(b.start..b.end).chunks(), &mut buf);
+            if !cache.contains_key(&key) {
+                let r = (b.first_line..=b.last_line()).map(|l| layout.line_rows(l)).sum::<usize>() as u32;
+                cache_put(&mut cache, key, r);
+            }
+        }
+        None
     }
 
     /// The end (a byte of its text) of each listed line's first row, as the view wraps it.
@@ -205,6 +233,17 @@ impl Doc {
         }
     }
 
+    /// Tests: the current view's row sums agree with ones made from scratch (no cache).
+    #[cfg(test)]
+    pub(crate) fn row_index_agrees(&self) -> bool {
+        let _ = self.scroll_rows();
+        let st = self.engine.state();
+        let layout = Layout::of(&st.doc, &st.view);
+        let mut fresh = RowIndex::default();
+        fresh.update(self.revision(), st, &layout, (u64::MAX, &[]), &mut RowCache::default());
+        fresh.prefix == self.row_index().prefix
+    }
+
     /// The current view's row index.
     pub(super) fn row_index(&self) -> std::cell::RefMut<'_, RowIndex> {
         let v = self.engine.current_view();
@@ -218,7 +257,7 @@ impl Doc {
         let st = self.engine.state();
         let layout = Layout::of(&st.doc, &st.view);
         let mut idx = self.row_index();
-        idx.update(rev, st, &layout, self.engine.line_versions());
+        idx.update(rev, st, &layout, self.engine.line_versions(), &mut self.row_cache.borrow_mut());
         let total = idx.prefix.last().copied().unwrap_or(0) as usize;
         let top = layout.top(&st.view.scroll);
         let o = st.doc.blocks().expect("an outline document");
@@ -275,7 +314,7 @@ impl Doc {
         let layout = Layout::of(&st.doc, &st.view);
         // The note row `row` is in (by the row index), then the line in it.
         let mut idx = std::cell::RefMut::map(self.rows.borrow_mut(), |m| m.entry(view).or_default());
-        idx.update(rev, st, &layout, (epoch, &vers));
+        idx.update(rev, st, &layout, (epoch, &vers), &mut self.row_cache.borrow_mut());
         let o = st.doc.blocks().expect("an outline document");
         let n = o.blocks.len();
         let b = idx.prefix.partition_point(|&p| (p as usize) <= row).saturating_sub(1).min(n.saturating_sub(1));
@@ -328,13 +367,56 @@ impl Doc {
     }
 }
 
+/// A view shaped for geometry `g`, as thc lays documents out (`Doc::set_view`).
+fn shape(v: &mut cn::View, g: &ViewGeometry, extra_rows: BTreeMap<MarkId, u16>) {
+    let mut layout = OutlineLayout::default();
+    (layout.gutter, layout.indent, layout.hang, layout.column, layout.min_column, layout.extra_rows, layout.hang_glyphs) = (MARKS, INDENT, HANG, g.column.max(1), MIN_COLUMN, extra_rows, false);
+    v.viewport = Viewport { width: g.width.max(1), height: g.height.max(1) };
+    v.layout = Some(layout);
+    v.config.status_bar = false;
+}
+
+/// Notes' rows by `note_key`, shared by a document's views.
+pub(crate) type RowCache = HashMap<u64, u32, foldhash::fast::FixedState>;
+
+fn cache_put(cache: &mut RowCache, key: u64, rows: u32) {
+    if cache.len() > 100_000 {
+        cache.clear();
+    }
+    cache.insert(key, rows);
+}
+
+/// What wraps every note alike: the width, the column and the hang (not the rows drawn after
+/// other notes, nor folds: those aren't a note's own).
+fn params_of(v: &cn::View) -> u64 {
+    let mut g = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    v.viewport.width.hash(&mut g);
+    if let Some(l) = &v.layout {
+        (l.gutter, l.indent, l.hang, l.column, l.min_column, l.hang_glyphs).hash(&mut g);
+    }
+    g.finish()
+}
+
+/// What decides one note's rows: the shared parameters, its blank row and fence, the rows
+/// drawn after it, its text.
+fn note_key<'a>(params: u64, b: &cn::outline::BlockInfo, extra: u16, chunks: impl Iterator<Item = &'a str>, buf: &mut String) -> u64 {
+    let mut k = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    (params, b.gap, b.fence, extra).hash(&mut k);
+    // The text as one string: the rope's chunks move with edits nearby, the text doesn't.
+    buf.clear();
+    for c in chunks {
+        buf.push_str(c);
+    }
+    buf.hash(&mut k);
+    k.finish()
+}
+
 /// Each note's rows in the view, remembered by what decides them (its text and shape, its
 /// blank row and the rows drawn after it, the view's geometry), and the running sums for the
 /// document as it is now. An edit lays out again only the notes it changed; a frame, a clock
 /// tick or a caret move lays out none.
 #[derive(Default)]
 pub(crate) struct RowIndex {
-    by_content: HashMap<u64, u32, foldhash::fast::FixedState>,
     /// What `prefix` was summed for: the text, the marks, the view's geometry and folds.
     stamp: Option<u64>,
     /// `prefix[i]`: the rows before note `i` (one more entry: all of them).
@@ -353,7 +435,7 @@ impl RowIndex {
     /// `versions`: the engine's epoch and each note's content version (`Engine::line_versions`):
     /// within an epoch only notes whose version (or gap, fence) moved are looked at again, so a
     /// keystroke costs a pass of integer compares, not hashing every note's text (vw384).
-    fn update(&mut self, rev: u64, st: &cn::State, layout: &Layout, versions: (u64, &[u64])) {
+    fn update(&mut self, rev: u64, st: &cn::State, layout: &Layout, versions: (u64, &[u64]), cache: &mut RowCache) {
         let seed = foldhash::fast::FixedState::with_seed(0);
         let v = &st.view;
         let mut g = seed.build_hasher();
@@ -411,6 +493,7 @@ impl RowIndex {
         self.prefix.reserve(o.blocks.len() + 1);
         let mut sum = 0u32;
         let mut buf = String::new();
+        let params = params_of(v);
         self.rows.clear();
         self.attrs.clear();
         for b in &o.blocks {
@@ -420,24 +503,13 @@ impl RowIndex {
                 self.rows.push(0);
                 continue;
             }
-            let mut k = seed.build_hasher();
-            (geometry, b.gap, b.fence, extra.and_then(|e| e.get(&b.id)).copied().unwrap_or(0)).hash(&mut k);
-            // The text as one string: the rope's chunks move with edits nearby, the text doesn't.
-            buf.clear();
-            for c in rope.slice(b.start..b.end).chunks() {
-                buf.push_str(c);
-            }
-            buf.hash(&mut k);
-            let key = k.finish();
-            let rows = match self.by_content.get(&key) {
+            let key = note_key(params, b, extra.and_then(|e| e.get(&b.id)).copied().unwrap_or(0), rope.slice(b.start..b.end).chunks(), &mut buf);
+            let rows = match cache.get(&key) {
                 Some(&r) => r,
                 None => {
                     let r = (b.first_line..=b.last_line()).map(|l| layout.line_rows(l)).sum::<usize>() as u32;
                     self.laid_out += 1;
-                    if self.by_content.len() > 50_000 {
-                        self.by_content.clear();
-                    }
-                    self.by_content.insert(key, r);
+                    cache_put(cache, key, r);
                     r
                 }
             };
@@ -507,7 +579,7 @@ mod tests {
             let st = d.engine.state();
             let layout = Layout::of(&st.doc, &st.view);
             let mut idx = RowIndex::default();
-            idx.update(d.revision(), st, &layout, (u64::MAX, &[]));
+            idx.update(d.revision(), st, &layout, (u64::MAX, &[]), &mut RowCache::default());
             idx.prefix
         };
         d.scroll_rows();

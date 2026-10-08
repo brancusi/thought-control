@@ -38,7 +38,11 @@ fn held(over: Vec<String>) {
 }
 
 fn page(size: Size) -> (Flow, &'static str) {
-    let title = if size == Size::Huge { "Huge Page" } else { "Long Page" };
+    let title = match size {
+        Size::Huge => "Huge Page",
+        Size::Wrapped => "Wrapped Page",
+        _ => "Long Page",
+    };
     let mut f = Flow::new(&format!("perf {title}"), size, (140, 40), OFF);
     f.keys(&format!("<c-o>{title}<cr>"));
     (f, title)
@@ -241,11 +245,14 @@ fn perf_typing_500_keys_steady() {
 #[test]
 #[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_day_opened_beside() {
-    // Today's journal beside a page (`:aside today`), the first time (the page laid out anew
-    // at the narrower width) and again: the panel's own cost is the day's, a millisecond or two.
+    // Today's journal beside a page (`:aside today`): the panel's own cost, and the page's at
+    // the narrower width, which idle time laid out ahead (App::prewarm_step) after it opened.
+    // The first open counts: on a page whose notes wrap, it was 17 ms without the idle work.
     let mut over = Vec::new();
-    for size in [Size::Long, Size::Huge] {
+    for size in [Size::Long, Size::Huge, Size::Wrapped] {
         let (mut f, _) = page(size);
+        // The idle time after the page opened, slice by slice, as the live loop gives it.
+        while f.s.app.prewarm_step(ratatui::layout::Rect::new(0, 0, 140, 40), std::time::Duration::from_millis(2)) {}
         for _ in 0..8 {
             f.keys("<m-:>aside today");
             f.timed("day_beside", |f| {
@@ -257,5 +264,22 @@ fn perf_day_opened_beside() {
         budget(&f, "day_beside", &format!("a day opened beside a {size:?} page"), 10.0, &mut over);
         f.done();
     }
+    // Each idle slice keeps to its time: no frame waits for it.
+    let (mut f, _) = page(Size::Wrapped);
+    let mut slices = Vec::new();
+    loop {
+        let t = Instant::now();
+        let more = f.s.app.prewarm_step(ratatui::layout::Rect::new(0, 0, 140, 40), std::time::Duration::from_millis(2));
+        slices.push(t.elapsed().as_secs_f64() * 1e3);
+        if !more {
+            break;
+        }
+    }
+    let (p50, p99) = pct(&slices);
+    eprintln!("perf {:<44} n={:<4} p50 {p50:>7.2} ms  p99 {p99:>7.2} ms  (budget 4 ms)", "an idle slice laying the page out ahead", slices.len());
+    if p99 > 4.0 {
+        over.push(format!("idle slice p99 {p99:.2} ms over 4 ms"));
+    }
+    f.done();
     held(over);
 }

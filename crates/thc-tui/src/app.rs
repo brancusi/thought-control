@@ -444,6 +444,9 @@ pub struct App {
     pub rail: Vec<RailItem>,
     /// The daemon said something changed that has no transaction (a conflict): refresh.
     pub(crate) live_dirty: bool,
+    /// The open page laid out ahead, in idle time, at the width a sidebar column would leave
+    /// it: (the document, that geometry, the next note to lay out; None when all are done).
+    pub(crate) prewarm: Option<(String, crate::editor::ViewGeometry, Option<usize>)>,
     /// Where the last poll's time went (THC_TUI_TRACE's slow-key log).
     pub(crate) poll_split: Vec<(&'static str, f64)>,
     /// The daemon pushed a change: poll now, not at the next interval.
@@ -848,6 +851,7 @@ impl App {
             rail: Vec::new(),
             live_dirty: false,
             poll_split: Vec::new(),
+            prewarm: None,
             poll_wanted: false,
             last_agent_tx: None,
             screen_width: 80,
@@ -4454,4 +4458,28 @@ pub type TuiPrefs = thc_core::tui_config::TuiConfig;
 pub enum RailItem {
     Page { id: String, title: String, open: usize },
     Day { date: NaiveDate, count: usize },
+}
+
+impl App {
+    /// Idle time: lay the open page out ahead at the width a sidebar column would leave it, a
+    /// slice at a time, so opening a panel beside a long page only sums rows it already has.
+    /// Nothing on screen changes (it fills a cache). True: more to do.
+    pub(crate) fn prewarm_step(&mut self, area: ratatui::layout::Rect, budget: std::time::Duration) -> bool {
+        if self.sidebar_col.is_some() {
+            return false;
+        }
+        let Some(g) = crate::ui::doc_geometry_beside(self, area) else { return false };
+        let Some(d) = self.doc.as_mut() else { return false };
+        let key = crate::doc_app::caret_key(&d.target);
+        let next = match &self.prewarm {
+            Some((k, pg, next)) if *k == key && *pg == g => match next {
+                Some(n) => *n,
+                None => return false,
+            },
+            _ => 0,
+        };
+        let left = d.prewarm_rows(&g, next, budget);
+        self.prewarm = Some((key, g, left));
+        left.is_some()
+    }
 }
