@@ -127,6 +127,10 @@ impl Doc {
     /// the line above it is (None: there's no line above).
     pub fn place_anchor(&self) -> Option<Anchor> {
         let l = self.line();
+        // The fresh line the document arrived with: coming back is arriving again (None).
+        if l.is_new && l.text.is_empty() && self.fresh_end.as_deref() == Some(l.id.as_str()) {
+            return None;
+        }
         if l.is_new && l.text.is_empty() {
             let p = self.caret().line.checked_sub(1).and_then(|i| self.lines().get(i))?;
             return Some(Anchor { id: p.id.clone(), byte: p.text.len() });
@@ -282,6 +286,11 @@ impl Doc {
         true
     }
 
+    /// The fresh line the document arrived with (doc_app::arrive) is still at its end, empty.
+    pub fn has_fresh_end(&self) -> bool {
+        self.fresh_end.as_deref().is_some_and(|id| self.lines().last().is_some_and(|l| l.id == id && l.is_new && l.text.is_empty()))
+    }
+
     /// The caret memory when a document opens: back where it was, if that note is still here.
     /// `drop_fresh_end`: a journal day opened on a fresh line at its end doesn't need it when
     /// the caret goes back elsewhere. The caret's line index, or None.
@@ -290,6 +299,7 @@ impl Doc {
         let n = self.lines().len();
         if drop_fresh_end && n > 1 && self.lines().last().is_some_and(|l| l.is_new && l.text.is_empty()) && i + 1 < n {
             self.lines_mut().pop();
+            self.fresh_end = None;
         }
         let b = a.byte.min(self.lines()[i].text.len());
         let b = (0..=b).rev().find(|x| self.lines()[i].text.is_char_boundary(*x)).unwrap_or(0);
