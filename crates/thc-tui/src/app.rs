@@ -483,6 +483,8 @@ pub struct App {
     /// The pointer rests on a link's title (main view or a panel): the terminal is asked to
     /// report ⇧ with clicks there (cmd_click::ShiftCapture).
     pub pointer_on_link: bool,
+    /// The terminal's width at the last layout (screen_width is the main area's).
+    pub term_width: u16,
     /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
     /// would drop).
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
@@ -863,6 +865,7 @@ impl App {
             sidebar_over: None,
             caret_pin: None,
             pointer_on_link: false,
+            term_width: 0,
             sidebar_drag: None,
         };
         app.load_page_ids();

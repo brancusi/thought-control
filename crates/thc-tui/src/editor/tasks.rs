@@ -43,7 +43,7 @@ pub fn config() -> OutlineConfig {
 
 /// The host every thc document runs with.
 pub fn host() -> Host {
-    Host::new().command(TASK_CYCLE, task_cycle).command(SET_STATUS, set_status).input_rule("thc.task_shorthand", shorthand).decorator(decorate)
+    Host::new().command(TASK_CYCLE, task_cycle).command(SET_STATUS, set_status).input_rule("thc.task_shorthand", shorthand).input_rule("thc.trim_split", trim_split).decorator(decorate)
 }
 
 pub fn is_task(b: &BlockInfo) -> bool {
@@ -148,7 +148,20 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
         status: Some(status.into()),
         effects: completed.into_iter().map(|id| (COMPLETED.to_string(), json!({ "id": id.0 }))).collect(),
         keep_gaps: true,
+        then_default: false,
     })
+}
+
+/// Enter that splits a line takes the spaces after the caret with it (0d61e): a saved note never
+/// starts with spaces, so the new one would read differently on reopening. One undo step with
+/// the split (`then_default`: these changes, then Enter's own).
+fn trim_split(ctx: &Ctx, msg: &caretline::Msg) -> Option<Edit> {
+    if !matches!(msg, caretline::Msg::InsertNewline) || ctx.selection().len() != 1 {
+        return None;
+    }
+    let r = ctx.selection().primary();
+    let n = ctx.text().chars_at(r.head).take_while(|c| *c == ' ').count();
+    (r.is_empty() && n > 0).then(|| Edit { changes: vec![(r.head, r.head + n, String::new())], ..Edit::then_default() })
 }
 
 /// ⌃T inside a multi-line paragraph: each selected line becomes its own task, and the lines

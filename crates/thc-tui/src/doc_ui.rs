@@ -50,7 +50,8 @@ fn rail(ctx: DocContext) -> usize {
 /// The text column outside Focus: 72, or with the rail beside it, as much as fits the meta
 /// too, but no less than 60 (72 again from 132 columns).
 fn col_beside(ctx: DocContext, w: usize) -> usize {
-    if rail(ctx) == 0 { 72 } else { w.saturating_sub(MARKS + HANG + 2 + META).clamp(60, 72) }
+    let col = if rail(ctx) == 0 { 72 } else { w.saturating_sub(MARKS + HANG + 2 + META).clamp(60, 72) };
+    ctx.cap.map_or(col, |c| col.min(c))
 }
 
 /// The text column plus marks, hang and meta, outside Focus, in a document area `w` wide.
@@ -519,6 +520,10 @@ pub(crate) struct DocContext {
     focus: Option<FocusView>,
     writing: bool,
     rail: usize,
+    /// With the sidebar beside it, the text column the document has without it: the sidebar
+    /// only takes room, it never gives the text more (mgmm8: at 120 columns the rail gave way
+    /// and the column widened 66 → 72, so every paragraph reflowed when a panel opened).
+    cap: Option<usize>,
 }
 
 impl DocContext {
@@ -528,6 +533,13 @@ impl DocContext {
             focus: app.focus_mode.then_some(FocusView { set: app.focus_cfg.set, width: app.focus_cfg.width() as usize, journal }),
             writing: app.doc_write,
             rail: if app.rail_shows() { RAIL_W } else { 0 },
+            cap: (app.sidebar_col.is_some() && !app.focus_mode).then(|| {
+                // The terminal's width, the rail as it shows there, the detail pane as it would.
+                let rail = if app.term_width >= 120 && app.tui_prefs.page_rail && app.doc.is_some() { RAIL_W } else { 0 };
+                let w = (pane_width(app.term_width, app.show_detail) as usize).saturating_sub(rail);
+                let ctx = DocContext { focus: None, writing: app.doc_write, rail, cap: None };
+                col_beside(ctx, w).min(w.saturating_sub(MARKS + HANG + 2))
+            }),
         }
     }
 }
@@ -541,6 +553,8 @@ fn source_revision(app: &App) -> u64 {
     let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
     app.vault.paths.vault.hash(&mut h);
     app.screen_width.hash(&mut h);
+    app.term_width.hash(&mut h);
+    app.sidebar_col.is_some().hash(&mut h);
     app.detail_shows().hash(&mut h);
     app.focus_mode.hash(&mut h);
     format!("{:?}", app.focus_cfg).hash(&mut h);

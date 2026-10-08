@@ -237,6 +237,16 @@ fn enter_makes_only_what_a_save_keeps() {
     d.set_caret(BlockPos { line: 1, byte: 0 });
     d.run_command("edit.newline");
     assert_eq!(texts(&d), ["notes", ""]);
+    // A split: the rest starts with no spaces, and one undo brings it all back (0d61e).
+    let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[blk("a", "bullet", "Last line of the plan")], today);
+    d.fill_ids((0..20).map(|i| format!("id{i:03}")).collect());
+    d.set_caret(BlockPos { line: 0, byte: 9 });
+    d.run_command("edit.newline");
+    assert_eq!(texts(&d), ["Last line", "of the plan"]);
+    assert_eq!(d.caret(), BlockPos { line: 1, byte: 0 });
+    d.run_command("history.undo");
+    assert_eq!(texts(&d), ["Last line of the plan"]);
+    assert_eq!((d.caret(), d.selection()), (BlockPos { line: 0, byte: 9 }, None));
 }
 
 /// A saved page of `n` notes (each saved: its parent and the note it follows recorded).
@@ -293,4 +303,47 @@ fn after_pastes_the_vault_order_is_the_documents() {
     // next save used to move every one of them).
     let ops = s.app.doc.as_mut().unwrap().plan_save(true).ops;
     assert!(ops.is_empty(), "{ops:?}");
+}
+
+/// mgmm8: on a page that fits the screen at 120 columns, a panel opening beside it changes no
+/// text row: the rail gives way, but the column keeps the width it had (it widened 66 → 72 and
+/// the paragraph reflowed, moving the caret's line).
+#[test]
+fn a_panel_opening_beside_a_short_page_reflows_nothing() {
+    let (_s, mut s) = open_plan((120, 32), "short-reflow");
+    // A short page: Garden, with a long note.
+    keys(&mut s, "<c-o>Garden<cr><c-home><end> and a long tail of words so that this note wraps over more than one row at sixty or seventy columns of text");
+    let (before, b) = frame(&mut s);
+    // The note's rows, as wrapped: from "water the beds" on, the text before any panel.
+    let wrapped = |rows: &[String]| {
+        let (_, y) = find(rows, "water the beds");
+        rows[y as usize..y as usize + 2].iter().map(|r| {
+            let r = r.split('│').find(|p| p.contains("water") || p.contains("than one")).unwrap_or(r);
+            r.trim().trim_start_matches('·').trim().to_string()
+        }).collect::<Vec<_>>()
+    };
+    keys(&mut s, "<m-:>aside Kitchen<cr><m-s>");
+    assert!(panel_open(&s, "Kitchen"));
+    let (after, _) = frame(&mut s);
+    let row = s.app.caret_pin.as_ref().map(|p| p.row());
+    assert_eq!(b.map(|c| c[1]), row, "the caret's row");
+    assert_eq!(wrapped(&before), wrapped(&after), "the note wraps the same\n{}\n---\n{}", before.join("\n"), after.join("\n"));
+}
+
+/// 5jzx9: a space typed at a row's end hangs in the margin, and the caret after it stays on that
+/// row: no row of its own (the save drops the space, so a reopened page was a row shorter).
+#[test]
+#[ignore = "5jzx9"]
+fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
+    use crate::editor::{BlockPos, Doc, DocRow, Target, ViewGeometry};
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    let text = format!("{} ", "a".repeat(72));
+    let b: thc_core::outline::Block = serde_json::from_value(serde_json::json!({"id": "n0", "parent": null, "depth": 0, "kind": "bullet", "text": text, "text_rev": "r"})).unwrap();
+    let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[b], today);
+    d.set_caret(BlockPos { line: 0, byte: text.len() });
+    d.set_view(&ViewGeometry { width: 100, height: 10, column: 72, extra_rows: vec![], typewriter: false });
+    let f = d.frame();
+    let rows = f.rows.iter().filter(|r| matches!(r, DocRow::Text { .. })).count();
+    assert_eq!(rows, 1, "one row, the space and the caret in its margin");
+    assert_eq!(f.cursor.map(|c| c.1), Some(0));
 }

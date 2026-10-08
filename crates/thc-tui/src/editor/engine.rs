@@ -712,9 +712,7 @@ impl Doc {
     /// what the saved page shows when it opens again. An empty paragraph isn't saved, so on one
     /// Enter does nothing: there's no note to end, and the blank rows it used to make vanished
     /// on save (the page jumped up when it opened again). False: Enter does nothing here.
-    ///
-    /// (A split still leaves the spaces after the caret leading the new note, which the save
-    /// drops: dropping them here takes the engine's Enter doing it in its one undo step, 0d61e.)
+    /// (A split drops the spaces after the caret: the input rule `thc.trim_split`, tasks.rs.)
     fn newline_as_saved(&self) -> bool {
         if self.selection().is_some() {
             return true;
