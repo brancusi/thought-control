@@ -422,3 +422,22 @@ fn the_link_popup_ranks_by_how_the_title_matches() {
     assert_eq!(empty.first().map(String::as_str), Some("Kitchen"), "the page you came from first: {empty:?}");
     assert!(!empty.contains(&"Plan".to_string()), "never the page you're on: {empty:?}");
 }
+
+/// caretline 3743263 (host edits as the least change): leaving the empty line a page arrives
+/// with, and the save that follows, keep every other note's id and write nothing: no create,
+/// delete or move (dropping that one line used to touch every block's mark).
+#[test]
+fn leaving_the_arrival_line_changes_no_other_note() {
+    let (_scratch, v) = vault("arrival-ids");
+    let mut s = session(v, (120, 32));
+    keys(&mut s, "<c-o>Plan<cr>");
+    let ids = |s: &Session| s.app.doc.as_ref().unwrap().blocks().iter().filter(|l| !l.is_new).map(|l| l.id.clone()).collect::<Vec<_>>();
+    let events = |s: &Session| -> i64 { s.app.vault.store.conn.query_row("SELECT count(*) FROM events", [], |r| r.get(0)).unwrap() };
+    let before = (ids(&s), events(&s));
+    keys(&mut s, "<c-home><down><down>");
+    s.apply(serde_json::from_value(serde_json::json!({"msg": "focus", "gained": false})).unwrap()).unwrap();
+    s.app.drain_saves(true);
+    assert_eq!(ids(&s), before.0, "every note keeps its id");
+    assert_eq!(events(&s), before.1, "nothing written");
+    assert!(s.app.doc.as_mut().unwrap().plan_save(true).ops.is_empty());
+}

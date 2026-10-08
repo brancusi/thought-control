@@ -413,3 +413,51 @@ fn the_caret_on_an_empty_line_mid_page_restores_there() {
         .expect_caret_line("")
         .done();
 }
+
+/// 2ry8g: writing at the bottom of a long page, the caret keeps its margin below it (the view
+/// may scroll past the end), never on the screen's last row; each Enter leaves it on its row and
+/// the page moves up under it, one row at a time.
+#[test]
+fn writing_at_the_bottom_of_a_long_page_keeps_the_caret_off_the_edge() {
+    let mut f = flow_with("write at the bottom of a long page", Size::Long, (120, 30));
+    f.keys("<c-o>Long Page<cr>");
+    let edge = |f: &Flow| {
+        let r = f.shot.doc_view.unwrap();
+        r.y + r.height - 1
+    };
+    let (_, y0) = f.shot.cursor.expect("the caret shows");
+    assert!(y0 + 2 <= edge(&f), "arriving at the end: the caret {y0} keeps two rows above the edge {}", edge(&f));
+    f.type_text("the first line here");
+    let mut rows = Vec::new();
+    for i in 0..6 {
+        f.keys("<cr>").type_text(&format!("line {i}"));
+        rows.push(f.shot.cursor.expect("the caret shows").1);
+    }
+    assert!(rows.iter().all(|y| *y + 2 <= edge(&f)), "never on the edge: {rows:?}");
+    assert!(rows.windows(2).skip(1).all(|w| w[0] == w[1]), "Enter keeps the caret's row: {rows:?}");
+    f.done();
+}
+
+/// tta6t: Tab nests a note right under the one above, with no blank row between them; ⇧Tab
+/// out adds none back, so neither moves the note up or down.
+#[test]
+fn tab_nests_a_new_note_right_under_the_one_above() {
+    let mut f = q4();
+    f.named("Tab after jumping to a page and typing an item");
+    f.type_text("- item");
+    let (_, y0) = f.shot.cursor.unwrap();
+    // (The text column only: the rail beside it has rows of its own.)
+    let above = |f: &Flow, y: u16| {
+        let r = f.shot.doc_view.unwrap();
+        f.shot.text[(y - 1) as usize].chars().skip(r.x as usize).take(r.width.saturating_sub(1) as usize).collect::<String>().trim().to_string()
+    };
+    assert!(above(&f, y0).is_empty(), "arrival: a blank row before the new note");
+    f.keys("<tab>");
+    let (_, y1) = f.shot.cursor.unwrap();
+    assert_eq!(y1, y0 - 1, "the blank row went: the note moved up into it");
+    assert!(!above(&f, y1).is_empty(), "right under the note above");
+    f.expect_depth("item", 1);
+    f.keys("<s-tab>");
+    assert_eq!(f.shot.cursor.unwrap().1, y1, "⇧Tab adds no row back");
+    f.done();
+}

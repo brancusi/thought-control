@@ -90,6 +90,9 @@ impl Doc {
         v.layout = Some(layout);
         v.config.status_bar = false;
         v.config.scrolloff = SCROLLOFF;
+        // Writing at the end of a long page: the caret keeps its margin below it there too, so
+        // it's never on the screen's last row and Enter keeps its row (2ry8g, decided 2026-10-08).
+        v.config.scroll_past_end = cn::state::ScrollPastEnd::Margin;
         v.config.page_overlap = PAGE_CONTEXT;
         v.config.follow = if g.typewriter { Follow::Typewriter { percent: TYPEWRITER } } else { Follow::Margin };
         if v.free {

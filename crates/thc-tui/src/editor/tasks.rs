@@ -38,6 +38,9 @@ pub fn config() -> OutlineConfig {
     let mut c = OutlineConfig::default();
     c.tags = STATUSES.iter().map(|(c, _)| *c).collect();
     c.new_tag = Some(OPEN);
+    // Tab nests a note right under the one above: no blank row between them (tta6t, decided
+    // 2026-10-08). ⇧Tab leaves blank rows as they are, so it moves nothing.
+    c.nest_joins = true;
     c
 }
 
@@ -472,8 +475,13 @@ mod tests {
     }
 
     #[test]
-    fn e77_tab_keeps_the_blank_row() {
-        golden("- [ ] A ‖ - [ ] B▮", "<tab>", "- [ ] A ‖   - [ ] B▮");
+    fn e77_tab_joins_the_note_above() {
+        // tta6t: the blank row goes with the nesting, in one undo step; ⇧Tab adds none back.
+        let mut s = golden("- [ ] A ‖ - [ ] B▮", "<tab>", "- [ ] A ¦   - [ ] B▮");
+        keys(&mut s, "<s-tab>");
+        assert_eq!(show(&s), "- [ ] A ¦ - [ ] B▮");
+        keys(&mut s, "<c-z><c-z>");
+        assert_eq!(show(&s), "- [ ] A ‖ - [ ] B▮");
     }
 
     #[test]
