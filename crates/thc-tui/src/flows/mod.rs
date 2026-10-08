@@ -722,7 +722,9 @@ impl Flow {
             if y >= b.y && y < b.y + b.height || motion == Motion::Agent {
                 continue;
             }
-            let (mut p, mut q) = (before.row(y, 0, main_r), shot.row(y, 0, main_r));
+            // The rail's counts (a page's open tasks, a day's entries) follow what's saved
+            // (64j4y); its rows don't move.
+            let (mut p, mut q) = (rail_counts_masked(&before.row(y, 0, main_r)), rail_counts_masked(&shot.row(y, 0, main_r)));
             // The footer's counts (words, open tasks) change as you type; its layout doesn't.
             // The footer: its hints follow the caret (on a link: ⌥O aside) and its counts the
             // words; its status (the page, autosaved) stays put.
@@ -1100,6 +1102,17 @@ fn without_rail(frame: &str) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+/// A row with the left rail's count (the digits before the rail's `│`) left out.
+fn rail_counts_masked(row: &str) -> String {
+    match row.char_indices().find(|(_, c)| *c == '│').filter(|(i, _)| row[..*i].chars().count() < 30) {
+        Some((i, _)) => {
+            let rail = row[..i].trim_end().trim_end_matches(|c: char| c.is_ascii_digit()).trim_end();
+            format!("{rail}{}", &row[i..])
+        }
+        None => row.to_string(),
+    }
 }
 
 /// The footer's status (up to its first wide gap), counts masked.
