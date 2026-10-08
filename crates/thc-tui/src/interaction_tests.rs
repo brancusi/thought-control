@@ -319,3 +319,21 @@ fn a_panel_opening_beside_a_short_page_reflows_nothing() {
     assert_eq!(b.map(|c| c[1]), row, "the caret's row");
     assert_eq!(wrapped(&before), wrapped(&after), "the note wraps the same\n{}\n---\n{}", before.join("\n"), after.join("\n"));
 }
+
+/// 5jzx9: a space typed at a row's end hangs in the margin, and the caret after it stays on that
+/// row: no row of its own (the save drops the space, so a reopened page was a row shorter).
+#[test]
+#[ignore = "5jzx9"]
+fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
+    use crate::editor::{BlockPos, Doc, DocRow, Target, ViewGeometry};
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    let text = format!("{} ", "a".repeat(72));
+    let b: thc_core::outline::Block = serde_json::from_value(serde_json::json!({"id": "n0", "parent": null, "depth": 0, "kind": "bullet", "text": text, "text_rev": "r"})).unwrap();
+    let mut d = Doc::new(Target::Journal { date: today }, Some("root".into()), &[b], today);
+    d.set_caret(BlockPos { line: 0, byte: text.len() });
+    d.set_view(&ViewGeometry { width: 100, height: 10, column: 72, extra_rows: vec![], typewriter: false });
+    let f = d.frame();
+    let rows = f.rows.iter().filter(|r| matches!(r, DocRow::Text { .. })).count();
+    assert_eq!(rows, 1, "one row, the space and the caret in its margin");
+    assert_eq!(f.cursor.map(|c| c.1), Some(0));
+}
