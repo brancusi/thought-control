@@ -1061,13 +1061,16 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
 
     // Pages and Search are finders (navigation.md §6): arriving never takes the cursor, and a
     // letter starts the find with that letter (`/` an empty one). With the kept query empty,
-    // digits, ?, :, space and q stay commands; once it has text every printable key types.
+    // digits, ?, :, space and q stay commands (with a kept query too: 5mx4q).
     let finder = app.doc.is_none() && app.overlay.is_none() && ((app.view == View::Pages && app.page_open.is_none()) || app.view == View::Search);
     // (A ⌘ chord is never a letter typed: ⌘[ is history, not a find for "[".)
     if finder && !ctrl && !alt && !k.modifiers.contains(KeyModifiers::SUPER) {
         if let KeyCode::Char(c) = k.code {
             let (kind, kept) = if app.view == View::Pages { (PromptKind::PagesFilter, app.pages_filter.clone()) } else { (PromptKind::Search, app.search_terms.clone()) };
-            let command = kept.is_empty() && matches!(c, '1'..='9' | '?' | ':' | ' ' | 'q');
+            // No caret in the prompt (5mx4q, decided 2026-10-08): digits, ?, :, space and q are
+            // commands, a kept query or not (`/bud` Enter `4` goes to Pages, not `bud4`); a
+            // letter starts or extends the find.
+            let command = matches!(c, '1'..='9' | '?' | ':' | ' ' | 'q');
             if !command {
                 let buf = if c == '/' && kept.is_empty() { String::new() } else { format!("{kept}{c}") };
                 if kind == PromptKind::PagesFilter {

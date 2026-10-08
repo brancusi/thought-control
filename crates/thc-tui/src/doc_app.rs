@@ -1158,13 +1158,37 @@ impl App {
         let pages = s
             .nodes_where(&format!("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0 AND {} ORDER BY n.updated_ms DESC", thc_core::views::HIDDEN_SQL), &[])
             .unwrap_or_default();
-        let mut out: Vec<(String, String)> = pages
-            .into_iter()
-            .filter_map(|p| p.title.clone())
-            .filter(|t| ql.is_empty() || t.to_lowercase().contains(&ql))
-            .take(6)
-            .map(|t| (format!("¶ {t}"), t))
+        // Ranked: the title starting with what's typed, then a word in it starting so, then
+        // anywhere in it; with nothing typed, the pages you've been on (most recent first).
+        // Ties keep the store's order (recently changed first). The page you're on isn't offered.
+        let here = match self.doc.as_ref().map(|d| &d.target) {
+            Some(Target::Page { id, .. }) => Some(id.clone()),
+            _ => None,
+        };
+        let recent: Vec<&str> = self.recent_docs.iter().filter_map(|t| if let Target::Page { id, .. } = t { Some(id.as_str()) } else { None }).collect();
+        let mut ranked: Vec<(usize, usize, String)> = pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| here.as_deref() != Some(p.id.as_str()))
+            .filter_map(|(i, p)| {
+                let t = p.title.clone()?;
+                let tl = t.to_lowercase();
+                let rank = if ql.is_empty() {
+                    recent.iter().position(|r| *r == p.id).unwrap_or(usize::MAX)
+                } else if tl.starts_with(&ql) {
+                    0
+                } else if tl.split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with(&ql)) {
+                    1
+                } else if tl.contains(&ql) {
+                    2
+                } else {
+                    return None;
+                };
+                Some((rank, i, t))
+            })
             .collect();
+        ranked.sort();
+        let mut out: Vec<(String, String)> = ranked.into_iter().take(6).map(|(_, _, t)| (format!("¶ {t}"), t)).collect();
         // Days: today, yesterday, tomorrow, a weekday name (the coming one), a typed date.
         let today = self.today;
         let mut days: Vec<(&str, chrono::NaiveDate)> = vec![("today", today), ("yesterday", today - chrono::Duration::days(1)), ("tomorrow", today + chrono::Duration::days(1))];

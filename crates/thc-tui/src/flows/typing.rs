@@ -254,9 +254,7 @@ fn type_a_link_with_the_popup() {
 /// The typing flows that matter most, at the sizes people use: a laptop split, a full screen.
 fn type_and_wrap(w: u16, h: u16) {
     let mut f = flow_with(&format!("type and wrap at {w}x{h}"), Size::Small, (w, h));
-    // The last typed space ends a row: the caret's own row isn't saved (5jzx9).
-    f.known("5jzx9", Known::Restore)
-        .keys("<c-o>Q4 Plan<cr>")
+    f.keys("<c-o>Q4 Plan<cr>")
         .click_caret(doc_at("This paragraph is long", 90))
         .type_text("WIDE 日本 🙂 ")
         .type_text(WORDS)

@@ -372,9 +372,12 @@ impl Session {
         let new = self.same_vault(new)?;
         let doc = new.document.clone();
         let frozen = new.rail_frozen.clone();
+        let parked = new.doc_parked;
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
+        // Whether the document was just arrived at is the state's (reload arrives afresh).
+        self.app.ui.doc_parked = parked;
         // The rail's order is the state's: reload, arriving at a document from no document,
         // ordered it afresh (q93zh).
         if frozen.is_some() && self.app.ui.rail_frozen != frozen {

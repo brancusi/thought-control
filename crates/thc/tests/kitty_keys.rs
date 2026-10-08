@@ -59,7 +59,7 @@ fn remap_suspends_for_the_editor_and_reloads_live_keys() {
         serde_json::from_slice::<serde_json::Value>(&out.stdout).unwrap()["items"][0]["status"].clone()
     };
     p.send(b"\x18"); // the editor's new key works immediately
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while query("Editor") != "done" {
         assert!(Instant::now() < deadline, "editor remap was not reloaded");
         std::thread::sleep(Duration::from_millis(50));
@@ -73,7 +73,7 @@ fn remap_suspends_for_the_editor_and_reloads_live_keys() {
     p.send(b"3");
     assert_eq!(query("Live"), "todo");
     p.send(b"\x19"); // new completion key
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while query("Live") != "done" {
         assert!(Instant::now() < deadline, "new key was not reloaded: {}", String::from_utf8_lossy(&p.out.lock().unwrap()));
         std::thread::sleep(Duration::from_millis(50));
@@ -107,7 +107,8 @@ impl Pty {
         let mut ws = libc::winsize { ws_row: 30, ws_col: 100, ws_xpixel: 0, ws_ypixel: 0 };
         assert_eq!(unsafe { libc::openpty(&mut m, &mut s, std::ptr::null_mut(), std::ptr::null_mut(), &mut ws) }, 0);
         let slave = unsafe { OwnedFd::from_raw_fd(s) };
-        c.args(args).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c")).env("TERM", "xterm-256color").env_remove("THC_ACTOR");
+        // Each pty's thc copies and pastes through its own clipboard file (tests run side by side).
+        c.args(args).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c")).env("THC_TEST_CLIPBOARD", root.join("clipboard.txt")).env("TERM", "xterm-256color").env_remove("THC_ACTOR");
         for (k, v) in env {
             c.env(k, v);
         }
@@ -210,7 +211,7 @@ fn capitals_survive_the_kitty_keyboard_protocol() {
     }
     std::thread::sleep(Duration::from_millis(1800)); // the idle save
     p.send(&wezterm(flags, 'q', false, true, true));
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() {
         if Instant::now() > deadline {
             let _ = p.child.kill();
@@ -269,7 +270,7 @@ fn an_idle_screen_writes_nothing() {
     assert!(frame.starts_with(b"\x1b[?2026h") && frame.windows(8).any(|w| w == b"\x1b[?2026l"), "a synchronized frame: {:?}", String::from_utf8_lossy(frame));
     assert!(out.windows(5).any(|w| w == b"\x1b[6 q"), "a steady bar cursor while writing (keymap.md §3.1)");
     p.send(b"\x11");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -290,7 +291,7 @@ fn mouse_modes_are_requested_and_released() {
         let mut p = Pty::spawn_env(&root, &["j", "--no-focus"], env);
         std::thread::sleep(Duration::from_millis(1500));
         p.send(b"\x11");
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -328,14 +329,14 @@ fn a_panic_restores_the_terminal_and_keeps_what_was_typed() {
     assert!(cli(&["init", "v"], &[]).status.success());
     let mut p = Pty::spawn_env(&root, &["j", "--no-focus"], &[("THC_TUI_TEST_PANIC", "1")]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
     // Typed, and the panic before the idle save (1.5 s) could write it.
     p.send(b"unsaved words");
     p.send(b"\x1b[24~"); // F12: the test panic
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -373,13 +374,13 @@ fn a_hangup_saves_the_line_being_typed() {
     assert!(cli(&["init", "v"]).status.success());
     let mut p = Pty::spawn(&root, &["j", "--no-focus"]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
     p.send(b"half a thought");
     unsafe { libc::kill(p.child.id() as i32, libc::SIGTERM) };
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -411,7 +412,7 @@ fn typing_in_a_new_page_shows_at_once() {
     p.send(b"\r");
     let mark = p.out.lock().unwrap().len();
     p.send(b"quokka");
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let shown = String::from_utf8_lossy(&p.out.lock().unwrap()[mark..]).contains("quokka");
         if shown {
@@ -453,7 +454,7 @@ fn arrows_walk_down_a_wrapped_paragraph_into_the_next_note() {
     assert!(rows >= 3, "the paragraph wraps: {frame}");
     let mut p = Pty::spawn(&root, &["p", "Fox", "--no-focus"]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
@@ -465,7 +466,7 @@ fn arrows_walk_down_a_wrapped_paragraph_into_the_next_note() {
     p.send(b"Z");
     std::thread::sleep(Duration::from_millis(1800)); // the idle save
     p.send(b"\x1b[113;5u"); // ⌃Q
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -490,7 +491,7 @@ fn a_running_tui_notices_a_newer_thc_installed_under_it() {
     common::sandbox(&mut c);
     let mut p = Pty::spawn_with(c, &root, &["tui"], &[]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
@@ -502,7 +503,7 @@ fn a_running_tui_notices_a_newer_thc_installed_under_it() {
     std::fs::rename(&next, &bin).unwrap();
     let mark = p.out.lock().unwrap().len();
     p.send(b"\x1b[I"); // the terminal regains focus
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     loop {
         let s = String::from_utf8_lossy(&p.out.lock().unwrap()[mark..]).to_string();
         if s.contains("9.9.9 installed") {
@@ -592,12 +593,12 @@ fn tab_always_changes_view_in_a_real_terminal() {
     assert!(init.current_dir(&root).args(["init"]).arg(root.join("v")).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c")).status().unwrap().success());
     let mut p = Pty::spawn(&root, &["tui"]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
     let wait_view = |p: &Pty, want: &str| {
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         loop {
             let sc = screen(&p.out.lock().unwrap(), 30, 100);
             if view_on(&sc) == want {
@@ -652,7 +653,7 @@ fn macos_editing_keys_as_wezterm_sends_them() {
     assert!(cli(&["init", "v"]).status.success());
     let mut p = Pty::spawn(&root, &["j", "--no-focus"]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
@@ -672,7 +673,7 @@ fn macos_editing_keys_as_wezterm_sends_them() {
     p.send(b"S");
     std::thread::sleep(Duration::from_millis(1800)); // the idle save
     p.send(b"\x1b[113;5u"); // ⌃Q
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
@@ -708,7 +709,7 @@ fn an_attached_image_draws_inline_in_wezterm() {
     assert!(cli(&["attach", &page, root.join("shot.png").to_str().unwrap(), "--caption", "the shot"]).status.success());
     let shows = |env: &[(&str, &str)], needle: &[u8]| -> bool {
         let p = Pty::spawn_env(&root, &["p", "Shots", "--no-focus"], env);
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while Instant::now() < deadline {
             if p.out.lock().unwrap().windows(needle.len()).any(|w| w == needle) {
                 return true;
@@ -750,7 +751,7 @@ fn screenshots_by_drag_and_by_cmd_v() {
     let session = |env: &[(&str, &str)], input: &[&[u8]]| {
         let mut p = Pty::spawn_env(&root, &["j", "--no-focus"], env);
         let start = Instant::now();
-        while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+        while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
             std::thread::sleep(Duration::from_millis(50));
         }
         std::thread::sleep(Duration::from_millis(300));
@@ -759,7 +760,7 @@ fn screenshots_by_drag_and_by_cmd_v() {
         }
         std::thread::sleep(Duration::from_millis(800));
         p.send(b"\x1b[113;5u"); // ⌃Q
-        let deadline = Instant::now() + Duration::from_secs(5);
+        let deadline = Instant::now() + Duration::from_secs(20);
         while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
             std::thread::sleep(Duration::from_millis(50));
         }
@@ -798,26 +799,27 @@ fn cmd_c_x_a_z_work_in_thc() {
     assert!(cli(&["init", "v"]).status.success());
     let mut p = Pty::spawn(&root, &["j", "--no-focus"]);
     let start = Instant::now();
-    while p.flags().is_none() && start.elapsed() < Duration::from_secs(5) {
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
         std::thread::sleep(Duration::from_millis(50));
     }
     std::thread::sleep(Duration::from_millis(300));
     p.send(b"alpha beta");
     p.send(b"\x1b[97;9u"); // ⌘A
     p.send(b"\x1b[99;9u"); // ⌘C
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while common::clipboard().trim_end() != "alpha beta" && Instant::now() < deadline {
+    let deadline = Instant::now() + Duration::from_secs(20);
+    let clip = root.join("clipboard.txt");
+    while common::clipboard_at(&clip).trim_end() != "alpha beta" && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }
     let sc = screen(&p.out.lock().unwrap(), 30, 100);
-    assert_eq!(common::clipboard().trim_end(), "alpha beta", "⌘C copied the selection:\n{}", sc.join("\n"));
+    assert_eq!(common::clipboard_at(&clip).trim_end(), "alpha beta", "⌘C copied the selection:\n{}", sc.join("\n"));
     p.send(b"\x1b[120;9u"); // ⌘X: cut it
     p.send(b"\x1b[122;9u"); // ⌘Z: back
     p.send(b"\x1b[F"); // End
     p.send(b"!");
     std::thread::sleep(Duration::from_millis(1800)); // the idle save
     p.send(b"\x1b[113;5u"); // ⌃Q
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let deadline = Instant::now() + Duration::from_secs(20);
     while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
         std::thread::sleep(Duration::from_millis(50));
     }

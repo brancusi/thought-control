@@ -248,7 +248,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     for ((i, meta), end) in with_meta.iter().zip(ends) {
         let l = &d.blocks()[*i];
         let last_row_end_col = width(&l.text[..end.min(l.text.len())]);
-        let own = w < 60 || MARKS + HANG + l.depth * 4 + last_row_end_col + 2 > w.saturating_sub(left).saturating_sub(width(meta));
+        let own = w < 60 || MARKS + HANG + l.depth * 4 + last_row_end_col + 2 > w.saturating_sub(1).saturating_sub(left).saturating_sub(width(meta));
         if own {
             after.entry(*i).or_default().meta_row = true;
         }
@@ -751,7 +751,9 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect) {
     let d = app.doc.as_ref().unwrap();
     let sel = d.selection();
     let left = left_edge(ctx, w);
-    let meta_right = fv.map_or(left + if rail(ctx) > 0 { block_w(ctx, w) } else { BLOCK }, |f| left + f.block()).min(w);
+    // The last column is the scrollbar's, kept whether or not it shows, so a page growing
+    // long enough for one moves nothing and the meta is never drawn under it.
+    let meta_right = fv.map_or(left + if rail(ctx) > 0 { block_w(ctx, w) } else { BLOCK }, |f| left + f.block()).min(w.saturating_sub(1));
     let mut lines: Vec<TLine<'static>> = Vec::new();
     let mut hits: Vec<HitRow> = Vec::new();
     let mut places: Vec<crate::images::Place> = Vec::new();
