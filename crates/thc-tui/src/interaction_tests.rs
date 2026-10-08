@@ -294,3 +294,28 @@ fn after_pastes_the_vault_order_is_the_documents() {
     let ops = s.app.doc.as_mut().unwrap().plan_save(true).ops;
     assert!(ops.is_empty(), "{ops:?}");
 }
+
+/// mgmm8: on a page that fits the screen at 120 columns, a panel opening beside it changes no
+/// text row: the rail gives way, but the column keeps the width it had (it widened 66 → 72 and
+/// the paragraph reflowed, moving the caret's line).
+#[test]
+fn a_panel_opening_beside_a_short_page_reflows_nothing() {
+    let (_s, mut s) = open_plan((120, 32), "short-reflow");
+    // A short page: Garden, with a long note.
+    keys(&mut s, "<c-o>Garden<cr><c-home><end> and a long tail of words so that this note wraps over more than one row at sixty or seventy columns of text");
+    let (before, b) = frame(&mut s);
+    // The note's rows, as wrapped: from "water the beds" on, the text before any panel.
+    let wrapped = |rows: &[String]| {
+        let (_, y) = find(rows, "water the beds");
+        rows[y as usize..y as usize + 2].iter().map(|r| {
+            let r = r.split('│').find(|p| p.contains("water") || p.contains("than one")).unwrap_or(r);
+            r.trim().trim_start_matches('·').trim().to_string()
+        }).collect::<Vec<_>>()
+    };
+    keys(&mut s, "<m-:>aside Kitchen<cr><m-s>");
+    assert!(panel_open(&s, "Kitchen"));
+    let (after, _) = frame(&mut s);
+    let row = s.app.caret_pin.as_ref().map(|p| p.row());
+    assert_eq!(b.map(|c| c[1]), row, "the caret's row");
+    assert_eq!(wrapped(&before), wrapped(&after), "the note wraps the same\n{}\n---\n{}", before.join("\n"), after.join("\n"));
+}

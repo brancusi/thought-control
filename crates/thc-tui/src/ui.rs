@@ -4330,6 +4330,7 @@ fn prepare_frame(app: &mut App, area: Rect) {
     };
     app.sidebar_over = None;
     // Every breakpoint reads the main area's width (sidebar.md §6.2).
+    app.term_width = area.width;
     app.screen_width = app.sidebar_col.map_or(area.width, |s| area.width.saturating_sub(s + 2));
     crate::derived::prepare(app);
     app.derived.doc = None;
