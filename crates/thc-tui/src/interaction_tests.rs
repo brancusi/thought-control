@@ -394,3 +394,31 @@ fn the_bar_says_type_to_write_on_arrival() {
     let b = bar(&mut s);
     assert!(b.contains("⌃T task") && !b.contains("type to write"), "{b}");
 }
+
+/// The `[[` popup ranks what you'd pick: a title starting with what's typed first, then a word
+/// in it, then anywhere; with nothing typed, the pages you've been on; never the page you're on.
+#[test]
+fn the_link_popup_ranks_by_how_the_title_matches() {
+    let (_scratch, mut v) = vault("link-rank");
+    let today = thc_core::dates::today();
+    v.transact(|st| {
+        let mut b = TxBuilder::new(st, today);
+        for t in ["Ungarden", "Rose garden", "Gardening tips"] {
+            b.create_page(t, &[])?;
+        }
+        Ok((b.finish(), ()))
+    })
+    .unwrap();
+    let mut s = session(v, (120, 32));
+    keys(&mut s, "<c-o>Kitchen<cr><c-o>Plan<cr>");
+    let titles = |s: &Session, q: &str| s.app.link_matches(q).0.into_iter().map(|(_, t)| t).collect::<Vec<_>>();
+    let g = titles(&s, "gard");
+    let mut first: Vec<String> = g[..2].to_vec();
+    first.sort();
+    assert_eq!(first, ["Garden", "Gardening tips"], "titles starting so first: {g:?}");
+    assert_eq!(g[2], "Rose garden", "{g:?}");
+    assert_eq!(g[3], "Ungarden", "{g:?}");
+    let empty = titles(&s, "");
+    assert_eq!(empty.first().map(String::as_str), Some("Kitchen"), "the page you came from first: {empty:?}");
+    assert!(!empty.contains(&"Plan".to_string()), "never the page you're on: {empty:?}");
+}
