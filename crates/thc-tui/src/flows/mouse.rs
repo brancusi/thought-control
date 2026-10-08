@@ -179,12 +179,14 @@ fn hover_never_moves_anything() {
 }
 
 #[test]
-#[ignore = "emtsr"]
 fn the_first_drag_hint_replays() {
-    // The hint shows once per device (a flag file in the cache): the replay must draw it too.
+    // The hint shows once per device (a flag file in the cache, read at start into
+    // `App::drag_hint`, which a trace's `env` carries): the replay must draw it too. The flows'
+    // vaults have it shown; here it's still to come, from a new trace segment on.
     let mut f = q4();
     f.named("the first drag's hint, replayed");
-    let _ = std::fs::remove_file(f.s.app.vault.paths.cache.join("mouse-hint-shown"));
+    f.s.app.drag_hint = Some("⇧".into());
+    f.s.checkpoint_saved();
     f.drag(text("Grow").in_doc(), text("newsletter").in_doc()).expect_screen("selected in thc").done();
 }
 

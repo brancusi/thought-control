@@ -857,8 +857,10 @@ pub fn scratch_copy_at(paths: &Paths, at: Option<&Frontier>) -> Result<Paths> {
     let log = paths.vault.join("log");
     copy_dir(&paths.vault, &copy.vault, &|p| at.is_some() && p == log)?;
     if paths.cache.exists() {
-        // As of a frontier the store is ahead of the cut log: it's rebuilt instead.
-        let store = |p: &Path| p.parent() == Some(paths.cache.as_path()) && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("store.db"));
+        // As of a frontier the store is ahead of the cut log: it's rebuilt instead. Every store
+        // in the cache, a writer's own too (cache/fixture-remote/store.db): copied, it would
+        // already hold what the trace then writes (emtsr).
+        let store = |p: &Path| p.is_file() && p.file_name().is_some_and(|n| n.to_string_lossy().starts_with("store.db"));
         copy_dir(&paths.cache, &copy.cache, &|p| at.is_some() && store(p))?;
     }
     if let Some(at) = at {
