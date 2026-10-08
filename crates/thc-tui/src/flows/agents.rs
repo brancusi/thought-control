@@ -6,7 +6,7 @@ use super::*;
 #[test]
 fn an_agent_adds_to_today_while_you_type_there() {
     let mut f = flow("thc add to today while typing in today");
-    f.known("02pjq", Known::Restore).keys("T<c-end><cr>").type_text("my own words");
+    f.keys("T<c-end><cr>").type_text("my own words");
     f.agent_add("from the agent");
     f.expect_caret_after("my own words").expect_screen("from the agent").type_text(" go on").expect_caret_line("my own words go on");
     f.expect_saved("my own words go on").done();
@@ -16,7 +16,7 @@ fn an_agent_adds_to_today_while_you_type_there() {
 fn an_agent_adds_above_the_caret_and_nothing_shifts() {
     // The agent's line lands at the end of the day; typing mid-day, rows above stay.
     let mut f = flow("thc add while typing mid-day");
-    f.known("02pjq", Known::Restore).keys("T").click_caret(doc_at("Morning notes", 13)).type_text(" and coffee");
+    f.keys("T").click_caret(doc_at("Morning notes", 13)).type_text(" and coffee");
     f.agent_add("agent line one").agent_add("agent line two");
     f.type_text(" and toast").expect_caret_line("Morning notes and coffee and toast").done();
 }

@@ -108,7 +108,10 @@ At `done()`:
   minted fresh (a node's short id, a tx id) and the minute a write stamped from the wall clock
   (`done 01:15`) may differ.
 - **Restore:** after a save, the state restored on a fresh session on a copy of the vault
-  draws the same frame.
+  draws the same frame (trailing spaces aside). One rule, by design: the caret's own empty
+  note is never saved, so when the caret sits on an empty note that isn't the document's last
+  line, the live frame is compared without that row (`Flow::unsaved_caret_row`). Last, it is
+  where a fresh session arrives anyway, on a fresh line.
 
 ## Known bugs, ignored flows
 
@@ -116,8 +119,8 @@ A flow that fails on a product bug is filed on the board (¶ Issues) and marked
 `#[ignore = "<task short id>"]`, so the suite stays green and the ignored flows are the to-do
 list: `cargo test -p thc-tui flows:: -- --ignored --skip perf` runs them. When a bug only
 spoils one check of an otherwise useful flow, the flow steps around it narrowly instead:
-`.known("q93zh", Known::Rail)` leaves the left rail out of the restore check, and
-`.known("02pjq", Known::Restore)` skips the restore check. Remove the `.known(…)` or the
+`.known("<task>", Known::Rail)` leaves the left rail out of the restore check, and
+`.known("<task>", Known::Restore)` skips the restore check. Remove the `.known(…)` or the
 `#[ignore]` with the fix.
 
 ## The monkey
