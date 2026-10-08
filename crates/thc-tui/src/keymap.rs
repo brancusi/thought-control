@@ -835,7 +835,7 @@ pub fn footer_ctxs(app: &App) -> Vec<Ctx> {
         return vec![Ctx::Sidebar];
     }
     if app.doc.is_some() {
-        return vec![if app.link_open { Ctx::Link } else { Ctx::Write }];
+        return vec![if app.main.link_open { Ctx::Link } else { Ctx::Write }];
     }
     vec![Ctx::of_view(app.view), Ctx::Global]
 }

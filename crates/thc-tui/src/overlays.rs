@@ -216,12 +216,12 @@ fn the_link_popup_is_a_menu_too() {
         key(&mut app, KeyCode::Char(c));
     }
     draw(&mut app, &mut term);
-    assert!(app.link_open, "the popup opened");
+    assert!(app.main.link_open, "the popup opened");
     let rows: Vec<(usize, u16, u16)> = app.render.click_targets.iter().filter_map(|t| if let Click::LinkRow(i) = t.what { Some((i, t.y, t.x0 + 1)) } else { None }).collect();
     assert!(!rows.is_empty(), "its rows are targets");
     let (i, y, x) = rows[0];
     mouse(&mut app, MouseEventKind::Moved, x, y);
-    assert_eq!(app.link_sel, Some(i), "hover selects");
+    assert_eq!(app.main.link_sel, Some(i), "hover selects");
     click(&mut app, x, y);
     let d = app.doc.as_ref().unwrap();
     assert!(d.caret_block().text.contains("[[Lisbon flat]]"), "a click inserts: {:?}", d.caret_block().text);

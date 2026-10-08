@@ -17,23 +17,14 @@ use crate::sidebar::{Caret, DocView, Panel, PanelKey, PanelKind, ScrollAnchor};
 use crate::update::{Effect, SidebarOp, WidthChange};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-/// What a document's view carries besides the document: the editing state that `App` keeps for
-/// the open document (doc_app.rs), swapped in while a panel's key runs.
+/// What a panel's view carries besides the document: its editor pane's state, and the
+/// runtime's bookkeeping for it, swapped in while a panel's key runs.
 #[derive(Default)]
 pub struct DocSlot {
     /// The panel's own document, when the main view isn't on the same one.
     pub doc: Option<Doc>,
-    pub(crate) line_id: Option<String>,
-    pub(crate) parked: bool,
-    pub(crate) write: bool,
-    pub(crate) announce: Option<bool>,
-    pub(crate) link_open: bool,
-    pub(crate) link_sel: Option<usize>,
-    pub(crate) last_drop: Option<(String, String, usize)>,
-    pub(crate) near_miss: Option<(String, String, String, Option<String>, u64)>,
-    pub(crate) vsel: Option<usize>,
-    pub(crate) footer_cur: Option<usize>,
-    pub(crate) scroll_free: bool,
+    /// The panel's editor pane (editor_pane.rs): parked, the popup, the pointer, …
+    pub(crate) ed: crate::editor_pane::EditorState,
     /// The panel's remembered scroll, waiting for its first layout (`App::doc_pending_scroll`).
     pub(crate) pending_scroll: Option<(usize, bool)>,
     pub(crate) save_after_frame: bool,
@@ -54,7 +45,7 @@ pub struct PanelRt {
 
 impl PanelRt {
     pub fn link_open(&self) -> bool {
-        self.slot.link_open
+        self.slot.ed.link_open
     }
 }
 
@@ -181,18 +172,7 @@ impl App {
         if with_doc {
             std::mem::swap(&mut self.doc, &mut slot.doc);
         }
-        let ui = &mut self.ui;
-        std::mem::swap(&mut ui.doc_line_id, &mut slot.line_id);
-        std::mem::swap(&mut ui.doc_parked, &mut slot.parked);
-        std::mem::swap(&mut ui.doc_write, &mut slot.write);
-        std::mem::swap(&mut ui.doc_announce, &mut slot.announce);
-        std::mem::swap(&mut ui.link_open, &mut slot.link_open);
-        std::mem::swap(&mut ui.link_sel, &mut slot.link_sel);
-        std::mem::swap(&mut ui.last_drop, &mut slot.last_drop);
-        std::mem::swap(&mut ui.near_miss, &mut slot.near_miss);
-        std::mem::swap(&mut ui.doc_vsel, &mut slot.vsel);
-        std::mem::swap(&mut ui.doc_footer_cur, &mut slot.footer_cur);
-        std::mem::swap(&mut ui.doc_scroll_free, &mut slot.scroll_free);
+        std::mem::swap(&mut self.ui.main, &mut slot.ed);
         std::mem::swap(&mut self.doc_pending_scroll, &mut slot.pending_scroll);
         std::mem::swap(&mut self.doc_save_after_frame, &mut slot.save_after_frame);
         std::mem::swap(&mut self.doc_footer, &mut slot.footer);
@@ -280,7 +260,7 @@ impl App {
         // The remembered scroll waits for the panel's first layout (zszv1): its row counts rows
         // as the panel's width wraps them.
         let pending_scroll = remembered.as_ref().filter(|v| v.caret.is_some()).map(|v| (v.scroll.row, v.scroll_free));
-        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { parked: true, write: true, pending_scroll, ..Default::default() }, problem: None };
+        let mut rt = PanelRt { vid, linked: 0, slot: DocSlot { ed: crate::editor_pane::EditorState { parked: true, write: true, ..Default::default() }, pending_scroll, ..Default::default() }, problem: None };
         if self.doc.as_ref().is_some_and(|d| caret_key(&d.target) == dk) {
             let d = self.doc.as_mut().unwrap();
             d.add_view(vid);
@@ -294,7 +274,7 @@ impl App {
                     if let Some(v) = &remembered {
                         apply_doc_view(&mut d, v);
                     }
-                    rt.slot.line_id = Some(d.caret_block().id.clone());
+                    rt.slot.ed.line_id = Some(d.caret_block().id.clone());
                     rt.slot.doc = Some(d);
                 }
                 Err(why) => rt.problem = Some(why),
@@ -389,7 +369,7 @@ impl App {
             let rt = self.panels.get_mut(&k).unwrap();
             d.use_view(rt.vid);
             d.remove_view(MAIN_VIEW);
-            rt.slot.line_id = Some(d.caret_block().id.clone());
+            rt.slot.ed.line_id = Some(d.caret_block().id.clone());
             rt.slot.doc = Some(d);
         }
     }
@@ -679,7 +659,7 @@ impl App {
                 d.clear_selection();
             }
             a.save_doc(true);
-            a.doc_parked = true;
+            a.main.parked = true;
         });
         self.sync_panel_view(key);
         self.persist_sidebar();
@@ -759,7 +739,7 @@ impl App {
             if d.set_caret_anchor(&Anchor { id, byte }) {
                 d.set_scroll(scroll, false);
             }
-            self.doc_line_id = Some(d.caret_block().id.clone());
+            self.main.line_id = Some(d.caret_block().id.clone());
         }
     }
 
@@ -988,7 +968,7 @@ pub fn key(app: &mut App, k: KeyEvent) -> bool {
         return crate::sidebar_list::key(app, &pk, k);
     }
     // Tab in a parked panel goes to the main view's tabs (§5.1).
-    let parked = app.panels.get(&pk).is_some_and(|rt| rt.slot.parked);
+    let parked = app.panels.get(&pk).is_some_and(|rt| rt.slot.ed.parked);
     if parked && matches!(k.code, KeyCode::Tab | KeyCode::BackTab) && !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT) {
         app.focus_main();
         crate::keymap::run(app, if k.code == KeyCode::Tab { "view.next" } else { "view.prev" });

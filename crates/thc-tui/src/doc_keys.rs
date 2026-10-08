@@ -15,14 +15,14 @@ pub fn handle(app: &mut App, k: KeyEvent) -> bool {
     let alt = k.modifiers.contains(KeyModifiers::ALT);
     // Parked (just arrived, navigation.md §6.1): Tab and ⇧Tab change views; every other key
     // starts writing and is never lost.
-    if app.doc_parked {
+    if app.main.parked {
         let plain = !k.modifiers.intersects(KeyModifiers::CONTROL | KeyModifiers::ALT | KeyModifiers::SUPER);
-        if plain && matches!(k.code, KeyCode::Tab | KeyCode::BackTab) && !app.link_open {
+        if plain && matches!(k.code, KeyCode::Tab | KeyCode::BackTab) && !app.main.link_open {
             app.save_doc(true);
             crate::keymap::run(app, if k.code == KeyCode::Tab { "view.next" } else { "view.prev" });
             return true;
         }
-        app.doc_parked = false;
+        app.main.parked = false;
     }
     // Write is sealed: a key it doesn't bind does nothing, never a list command (⌥X used to mark
     // the line done). An unbound ⌥ chord says once where commands are.
@@ -54,21 +54,21 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
         }
     }
     // The `[[` popup takes ↑ ↓ ⌃N ⌃P Enter Tab Esc while it's open.
-    if app.link_open {
+    if app.main.link_open {
         if let Some((_, q)) = app.link_query() {
             let (m, create) = app.link_matches(&q);
             let total = m.len() + create.is_some() as usize;
             match k.code {
                 KeyCode::Down | KeyCode::Char('n') if k.code == KeyCode::Down || ctrl => {
-                    app.link_sel = Some(app.link_sel.map(|s| (s + 1).min(total.saturating_sub(1))).unwrap_or(0));
+                    app.main.link_sel = Some(app.main.link_sel.map(|s| (s + 1).min(total.saturating_sub(1))).unwrap_or(0));
                     return true;
                 }
                 KeyCode::Up | KeyCode::Char('p') if k.code == KeyCode::Up || ctrl => {
-                    app.link_sel = app.link_sel.and_then(|s| s.checked_sub(1)).or(if m.is_empty() { None } else { Some(0) });
+                    app.main.link_sel = app.main.link_sel.and_then(|s| s.checked_sub(1)).or(if m.is_empty() { None } else { Some(0) });
                     return true;
                 }
                 KeyCode::Enter | KeyCode::Tab => {
-                    match app.link_sel {
+                    match app.main.link_sel {
                         Some(i) if i < m.len() => app.link_insert(&m[i].1.clone()),
                         Some(_) if create.is_some() => app.link_insert(&create.clone().unwrap()),
                         _ => app.info(match &create {
@@ -79,13 +79,13 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
                     return true;
                 }
                 KeyCode::Esc => {
-                    app.link_open = false;
+                    app.main.link_open = false;
                     return true;
                 }
                 _ => {}
             }
         } else {
-            app.link_open = false;
+            app.main.link_open = false;
         }
     }
     // Typing on a ≠ line opens the compare first: text writes to a conflicted node are refused.
@@ -108,11 +108,11 @@ fn write_key(app: &mut App, k: KeyEvent) -> bool {
             crate::runtime_effects::dispatch(app, crate::update::Msg::Type { text: c.to_string() });
             // `[[` opens the link popup; the cursor starts on the first match.
             if c == '[' && app.link_query().is_some_and(|(_, q)| q.is_empty()) {
-                app.link_open = true;
-                app.link_sel = Some(0);
-            } else if app.link_open {
+                app.main.link_open = true;
+                app.main.link_sel = Some(0);
+            } else if app.main.link_open {
                 let (m, _) = app.link_query().map(|(_, q)| app.link_matches(&q)).unwrap_or_default();
-                app.link_sel = if m.is_empty() { None } else { Some(app.link_sel.unwrap_or(0).min(m.len() - 1)) };
+                app.main.link_sel = if m.is_empty() { None } else { Some(app.main.link_sel.unwrap_or(0).min(m.len() - 1)) };
             }
             return true;
         }
@@ -175,8 +175,8 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
         // a line deleted here, edited elsewhere, then undone, kept the old text and never saved).
         // The first ⌃Z after a drop: the attachment becomes the pasted path, as text (like undoing
         // an autocorrect); the next ⌃Z removes that.
-        "doc.undo" if app.ui.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.blocks().iter().any(|l| &l.id == id)) => {
-            let (id, raw, _) = app.last_drop.take().unwrap();
+        "doc.undo" if app.ui.main.last_drop.as_ref().is_some_and(|(id, _, depth)| d.undo_depth() == *depth && d.blocks().iter().any(|l| &l.id == id)) => {
+            let (id, raw, _) = app.main.last_drop.take().unwrap();
             let d = app.doc.as_mut().unwrap();
             if let Some(i) = d.blocks().iter().position(|l| l.id == id) {
                 let text = raw.trim();
@@ -261,7 +261,7 @@ pub(crate) fn base64(b: &[u8]) -> String {
 /// read like any saved line. Over 500 lines asks first (not yet: pastes that big say so).
 pub fn paste(app: &mut App, text: &str) {
     app.clock_tick();
-    app.doc_parked = false;
+    app.main.parked = false;
     // A dropped file arrives as its path (attachments.md §2): attached at once, and the
     // first ⌃Z keeps the path instead. ⌥V first makes it plain text.
     if !app.paste_plain {
@@ -278,8 +278,8 @@ pub fn paste(app: &mut App, text: &str) {
         return;
     }
     let Some(d) = app.doc.as_mut() else { return };
-    if !app.ui.doc_write {
-        app.ui.doc_write = true;
+    if !app.ui.main.write {
+        app.ui.main.write = true;
     }
     // One line: typed in as is, less what can't show in a line (a tab, a stray CR).
     if !text.contains('\n') && !text.contains('\r') {
@@ -352,12 +352,12 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                     return true;
                 }
             }
-            app.doc_parked = false;
+            app.main.parked = false;
             // The view doesn't move for a click: `hit` placed it in the view as drawn, which may
             // be scrolled away from the caret by the wheel. (Following the old caret first
             // scrolled back to it, and the click landed rows away from the pointer.)
-            app.link_open = false;
-            app.click_link = None;
+            app.main.link_open = false;
+            app.main.click_link = None;
             let d = app.doc.as_mut().unwrap();
             // The task box is a button: open ⇄ done.
             if hang && button == MouseButton::Left && clicks == 1 && !shift && d.blocks()[line].kind() == Kind::Task {
@@ -374,8 +374,8 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             // `[[` / `]]`, or with ⌥, it places the caret (E64, E65). One frame, the page that
             // opens: the caret never flashes inside the link first.
             if clicks == 1 && !shift && !alt && button == MouseButton::Left && crate::doc_app::on_link_title(&d.blocks()[line].text, byte) {
-                app.click_link = Some(p);
-                app.drag_from = Some(p);
+                app.main.click_link = Some(p);
+                app.main.drag_from = Some(p);
                 return true;
             }
             match clicks {
@@ -383,12 +383,12 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
                 3 => d.select_block(line),
                 _ => d.click(p, shift),
             }
-            app.drag_from = (clicks == 1 && !shift).then_some(p);
+            app.main.drag_from = (clicks == 1 && !shift).then_some(p);
             // A double-click on an attachment opens it; a single click only puts the caret there
             // (editing.md §6-7: a click to move around used to open Preview).
             if clicks == 2 && !shift && button == MouseButton::Left {
                 if let Some((_, path)) = crate::doc_ui::image_line(&app.doc.as_ref().unwrap().blocks()[line].text) {
-                    app.drag_from = None;
+                    app.main.drag_from = None;
                     app.open_attachment(&path);
                     app.doc_after_key();
                     return true;
@@ -399,15 +399,15 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
         }
         // A drag selects by grapheme across rows, lines and notes.
         MouseEventKind::Drag(MouseButton::Left) => {
-            let Some(from) = app.drag_from else { return false };
+            let Some(from) = app.main.drag_from else { return false };
             let Some((vx, vy, vw, vh)) = app.render.doc_view else { return true };
             // A press on a link that moves off it is a drag, not a click (the link isn't
             // followed): the selection starts where it was pressed.
-            if let Some(p) = app.click_link {
+            if let Some(p) = app.main.click_link {
                 if crate::doc_ui::hit(app, m.column, m.row).is_some_and(|(line, byte, _)| BlockPos { line, byte } == p) {
                     return true;
                 }
-                app.click_link = None;
+                app.main.click_link = None;
                 app.doc.as_mut().unwrap().click(from, false);
             }
             // The pointer as a cell of the view: above it is its first row, below it one past
@@ -417,14 +417,14 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
             let col = m.column.saturating_sub(vx).min(vw.saturating_sub(1));
             let row = if m.row < vy { 0 } else { (m.row - vy).min(vh) };
             app.doc.as_mut().unwrap().drag_to(col, row);
-            app.ui.drag_at = Some((m.column, m.row));
-            app.ui.drag_ms = app.ui.now_ms;
+            app.ui.main.drag_at = Some((m.column, m.row));
+            app.ui.main.drag_ms = app.ui.now_ms;
             true
         }
         MouseEventKind::Up(MouseButton::Left) => {
-            let dragged = app.drag_from.take().is_some();
-            app.ui.drag_at = None;
-            if let Some(p) = app.click_link.take() {
+            let dragged = app.main.drag_from.take().is_some();
+            app.ui.main.drag_at = None;
+            if let Some(p) = app.main.click_link.take() {
                 let title = crate::doc_app::link_at(&app.doc.as_ref().unwrap().blocks()[p.line].text, p.byte);
                 match title {
                     // Released with ⌘: beside, and the caret stays where it was.
@@ -491,8 +491,8 @@ fn dropped_file(text: &str) -> Option<std::path::PathBuf> {
 /// How far the held pointer is on or past the edge of the view it drags in (0: on its first or
 /// last row; 1: a row past it…), or None: inside it, or no drag held.
 pub fn drag_edge(app: &App) -> Option<u16> {
-    app.drag_from?;
-    let (_, y) = app.ui.drag_at?;
+    app.main.drag_from?;
+    let (_, y) = app.ui.main.drag_at?;
     let (vy, vh) = match app.panel_pointer.as_ref() {
         Some(k) => app.render.panel_views.iter().find(|(p, _)| p == k).map(|(_, r)| (r.y, r.height))?,
         None => app.render.doc_view.map(|(_, vy, _, vh)| (vy, vh))?,

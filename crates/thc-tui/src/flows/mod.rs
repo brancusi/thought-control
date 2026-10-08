@@ -1227,10 +1227,10 @@ fn draw(term: &mut Terminal<Emu>, s: &mut Session) -> Shot {
     let doc_view = app.render.doc_view.map(|(x, y, w, h)| Rect::new(x, y, w, h));
     let side_x = app.sidebar_col.map(|c| buf.area.width.saturating_sub(c + 1)).or(app.sidebar_over.map(|(_, r)| r.x));
     let panels = app.render.panel_views.iter().map(|(_, r)| *r).collect();
-    let overlay = app.ui.overlay.is_some() || app.prompt.is_some() || app.ui.link_open;
+    let overlay = app.ui.overlay.is_some() || app.prompt.is_some() || app.ui.main.link_open;
     let caret = app.doc.as_ref().map(|d| (d.caret().line, d.caret().byte));
     // The main document has the keyboard (whether or not a cursor shows: that's checked).
-    let writing = app.doc.is_some() && doc_view.is_some() && app.ui.focus == Focus::List && !overlay && !app.ui.doc_parked;
+    let writing = app.doc.is_some() && doc_view.is_some() && app.ui.focus == Focus::List && !overlay && !app.ui.main.parked;
     let caret_top = caret.and_then(|(line, _)| {
         let rows: Vec<&crate::doc_ui::HitRow> = app.render.doc_hits.iter().filter(|h| h.line == line).collect();
         rows.iter().find(|h| h.first).map(|h| h.y).or_else(|| rows.first().map(|_| doc_view.map_or(0, |r| r.y)))
@@ -1299,8 +1299,8 @@ fn probe_panes(s: &mut Session, shot: &Shot) -> (Vec<PaneShot>, Option<PaneId>) 
     let mut out = Vec::new();
     for (id, rect) in ids {
         let (parked, popup) = match &id {
-            PaneId::Main => (app.ui.doc_parked, app.ui.link_open),
-            PaneId::Panel(k) => app.panels.get(k).map_or((true, false), |rt| (rt.slot.parked, rt.slot.link_open)),
+            PaneId::Main => (app.ui.main.parked, app.ui.main.link_open),
+            PaneId::Panel(k) => app.panels.get(k).map_or((true, false), |rt| (rt.slot.ed.parked, rt.slot.ed.link_open)),
         };
         let has_keys = focused.as_ref() == Some(&id);
         let cursor = shot.cursor;

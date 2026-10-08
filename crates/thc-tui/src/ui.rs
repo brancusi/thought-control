@@ -631,7 +631,7 @@ fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!(" {} {}", g.conflict, head.join(&format!(" {} ", g.sep))), th.s(Token::Conflict)),
         Span::styled(sentence, base),
         // In Write `c` types: the way in is Esc, then c.
-        Span::styled(if app.doc.is_some() && app.doc_write { "⌃O" } else { "c" }, th.s(Token::Conflict)),
+        Span::styled(if app.doc.is_some() && app.main.write { "⌃O" } else { "c" }, th.s(Token::Conflict)),
         Span::styled(if n == 0 { " review" } else { " compare" }, base),
     ]);
     // ANSI: the whole row (padding too) is Magenta + BOLD + REVERSED; truecolor: tint background.
@@ -972,7 +972,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
         let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());
-        let save: (String, Token, bool) = if app.doc_first_ever && blank && app.doc_write {
+        let save: (String, Token, bool) = if app.doc_first_ever && blank && app.main.write {
             ("just type".into(), Token::Muted, false)
         } else if failed {
             ("not saved · :retry".into(), Token::Overdue, false)
@@ -995,7 +995,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // Just arrived (parked, navigation.md §6.1): the bar leads with how to start and how to
         // move on, as the view's bar does; the first key that writes puts the writing keys back.
         // They're the first to go when the bar is narrow.
-        let parked = aside.is_empty() && app.doc_parked && !app.link_open && app.prompt.is_none();
+        let parked = aside.is_empty() && app.main.parked && !app.main.link_open && app.prompt.is_none();
         let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done").cloned().collect();
         let base = keys.clone();
         for (level, lead_hints) in [(3u8, true), (3, false), (2, false), (1, false), (0, false)] {
@@ -1004,7 +1004,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
                 keys.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![("Tab".into(), "view.next")] });
                 keys.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
             }
-            if level < 3 && !app.link_open && keys.last().is_some_and(|k| k.label == "keys") {
+            if level < 3 && !app.main.link_open && keys.last().is_some_and(|k| k.label == "keys") {
                 keys.pop();
             }
             let mut left = lead();
@@ -1020,7 +1020,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             if level >= 1 || !ok {
                 left.push(Span::styled(text.clone(), th.s(tok)));
             }
-            let mut right = hint_spans(render, &th, if level == 0 && !app.link_open { &done_only } else { &keys }, true);
+            let mut right = hint_spans(render, &th, if level == 0 && !app.main.link_open { &done_only } else { &keys }, true);
             if app.focus_mode && app.focus_cfg.has(thc_core::tui_config::El::Clock) {
                 right.push(Span::raw("   "));
                 right.push(Span::styled(app.derived.clock.clone(), th.s(Token::Muted)));
@@ -1150,7 +1150,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         }
     }
     // A parked document (navigation.md §6.1) leads with how to start and how to move on.
-    if app.doc.is_some() && app.doc_parked && app.overlay.is_none() && app.prompt.is_none() {
+    if app.doc.is_some() && app.main.parked && app.overlay.is_none() && app.prompt.is_none() {
         hint_list.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![] });
         hint_list.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
     }
@@ -4595,7 +4595,7 @@ mod render_tests {
             let doc = app.doc.as_mut().unwrap();
             doc.set_blocks(vec![crate::editor::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")]);
             doc.set_caret(crate::editor::BlockPos::default());
-            app.doc_write = false;
+            app.main.write = false;
             update_frame(app, Rect::new(0, 0, 120, 40));
         }
         assert_eq!(a.derived.attachment(&a.vault.paths.vault, "files/item.txt").unwrap().label, " · 2 B");
@@ -4725,7 +4725,7 @@ mod render_tests {
         app.set_view(View::Journal);
         let line_id = app.doc.as_ref().unwrap().blocks()[0].id.clone();
         app.doc.as_mut().unwrap().replace_content(&line_id, "call due:+2h");
-        app.doc_write = true;
+        app.main.write = true;
         let device = app.vault.device.clone();
         let version = |text: &str| thc_core::model::ConflictVersion {
             text: text.into(), actor: "agent:codex-engineer-3".into(), dev: device.clone(), ms: 1_759_756_800_000, eid: None,

@@ -67,6 +67,11 @@ is there. The main groups are:
 | History | `history` (the ⌘[ / ⌘] stack: `entries`, `pos`, `tab_run`) |
 | Identity | `ui_state_version` (1), `vault_name` (read-only) |
 
+The main view's editor pane (the same component a sidebar panel runs) owns `doc_write`,
+`doc_parked`, `doc_line_id`, `doc_vsel`, `doc_footer_cur`, `doc_announce`, `link_open`,
+`link_sel`, `last_drop`, `near_miss`, `drag_from`, `drag_at`, `drag_ms` and `click_link`. They
+are written next to each other; JSON key order carries no meaning.
+
 What's **not** in the state:
 
 - **Data:** rows, counts, labels and previews. They're derived from the vault each time the

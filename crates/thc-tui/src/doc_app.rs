@@ -315,7 +315,7 @@ impl App {
             self.open_doc(t);
             // Every arrival parks the document (navigation.md §6.1): Tab and ⇧Tab still change
             // views until you write.
-            self.doc_parked = true;
+            self.main.parked = true;
         }
         self.build_rail();
     }
@@ -469,7 +469,7 @@ impl App {
         }
         if let Some(nd) = self.doc.as_mut() {
             nd.set_caret_anchor(&caret);
-            self.doc_line_id = Some(nd.caret_block().id.clone());
+            self.main.line_id = Some(nd.caret_block().id.clone());
         }
     }
 
@@ -490,9 +490,9 @@ impl App {
                         self.doc_pending_scroll = Some((scroll.min(i), false));
                     }
                 }
-                self.doc_line_id = Some(d.caret_block().id.clone());
+                self.main.line_id = Some(d.caret_block().id.clone());
                 self.doc = Some(d);
-                self.doc_write = true;
+                self.main.write = true;
                 self.doc_first_ever = false;
                 self.load_footer();
                 return;
@@ -521,13 +521,13 @@ impl App {
         if let Some(rec) = recovered {
             recovered_n = crate::recover::apply(&mut d, &rec);
         }
-        self.doc_line_id = Some(d.caret_block().id.clone());
+        self.main.line_id = Some(d.caret_block().id.clone());
         self.doc = Some(d);
         if recovered_n > 0 {
             self.save_doc(true);
             self.notice(format!("recovered {recovered_n} unsaved line{} from a crash · ⌃Z undoes", if recovered_n == 1 { "" } else { "s" }));
         }
-        self.doc_write = true;
+        self.main.write = true;
         self.doc_first_ever = journal
             && self
                 .vault
@@ -795,16 +795,16 @@ impl App {
         }
         let Some(d) = self.doc.as_mut() else { return };
         let now = d.caret_block().id.clone();
-        if self.ui.doc_line_id.as_deref() != Some(now.as_str()) {
+        if self.ui.main.line_id.as_deref() != Some(now.as_str()) {
             // The line left: a remote change waiting on it lands now (unless you typed on it:
             // then the save writes yours with its base and the core keeps both).
-            if let Some(prev) = self.ui.doc_line_id.clone() {
+            if let Some(prev) = self.ui.main.line_id.clone() {
                 d.apply_held_text(&prev);
             }
             // Onto a line moved here (its parent was deleted elsewhere): the bar says why
             // (daemon.md §4.0a).
             let moved = d.caret_block().conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE);
-            self.doc_line_id = Some(now.clone());
+            self.main.line_id = Some(now.clone());
             if moved {
                 self.say_why_moved(&now);
             }
@@ -819,7 +819,7 @@ impl App {
         let s = &self.vault.store;
         let parent = d.other.as_ref().map(|o| s.node(&o.text).ok().flatten().map(|n| s.render_text(&n.label())).unwrap_or_else(|| o.text.clone())).unwrap_or_default();
         let dev = d.other.as_ref().map(|o| if o.dev == self.vault.device { "this device".to_string() } else { o.dev.clone() }).unwrap_or_default();
-        let key = if self.doc_write { "⌃O" } else { "c" };
+        let key = if self.main.write { "⌃O" } else { "c" };
         self.info(format!("≠ moved here · its parent \"{parent}\" was deleted on {dev} · {key} review"));
     }
 
@@ -869,7 +869,7 @@ impl App {
             return;
         }
         if patched.announce.is_some() {
-            self.doc_announce = patched.announce;
+            self.main.announce = patched.announce;
         }
         // A conflict that arrived with this refresh says who, too.
         if patched.unnamed_conflicts {
@@ -913,7 +913,7 @@ impl App {
             if (!all && i == caret) || !(l.is_new || l.edited()) || !l.text.contains("[[") {
                 continue;
             }
-            if self.near_miss.as_ref().is_some_and(|n| n.0 == l.id) {
+            if self.main.near_miss.as_ref().is_some_and(|n| n.0 == l.id) {
                 continue;
             }
             for title in links_in(&l.text) {
@@ -923,7 +923,7 @@ impl App {
                 let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
                 let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
                 if let Some((_, existing)) = near {
-                    self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
+                    self.main.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
                     return;
                 }
             }
@@ -947,19 +947,19 @@ impl App {
         let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
         let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
         if let Some((_, existing)) = near {
-            self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
+            self.main.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
         }
     }
 
     /// ⌃O on the near-miss chip: the link becomes the existing page, and the page the save just
     /// made goes (when nothing else links to it and it has nothing in it).
     fn take_near_miss(&mut self) -> bool {
-        let Some((line_id, typed, existing, _, since)) = self.near_miss.clone() else { return false };
+        let Some((line_id, typed, existing, _, since)) = self.main.near_miss.clone() else { return false };
         if self.ui.age(since).as_secs() >= 3 {
-            self.near_miss = None;
+            self.main.near_miss = None;
             return false;
         }
-        self.near_miss = None;
+        self.main.near_miss = None;
         let Some(d) = self.doc.as_mut() else { return false };
         let Some(text) = d.blocks().iter().find(|l| l.id == line_id).map(|l| l.text.replace(&format!("[[{typed}]]"), &format!("[[{existing}]]"))) else { return false };
         d.replace_content(&line_id, &text);
@@ -1014,7 +1014,7 @@ impl App {
         let caption = std::path::Path::new(&name).file_stem().and_then(|s| s.to_str()).unwrap_or("file").replace(['-', '_'], " ");
         if let Some(id) = self.attach_bytes(&data, &name, &caption, "⌃Z keep the path") {
             let depth = self.doc.as_ref().map_or(0, |d| d.undo_depth());
-            self.last_drop = Some((id, raw.to_string(), depth));
+            self.main.last_drop = Some((id, raw.to_string(), depth));
         }
     }
 
@@ -1358,8 +1358,8 @@ impl App {
         let Some((start, _)) = self.link_query() else { return };
         let Some(d) = self.doc.as_mut() else { return };
         d.replace_before_caret(start, &format!("[[{title}]]"));
-        self.link_open = false;
-        self.link_sel = None;
+        self.main.link_open = false;
+        self.main.link_sel = None;
     }
 }
 

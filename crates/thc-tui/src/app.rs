@@ -743,34 +743,20 @@ impl App {
             awaiting: None,
             overlay: None,
             toast: None,
-            doc_write: false,
-            doc_line_id: None,
             paste_plain: false,
             focus_mode: false,
-            link_sel: None,
-            link_open: false,
-            doc_vsel: None,
-            doc_footer_cur: None,
             focus_cfg: prefs.focus,
             focus_hint_shown: false,
             write_alt_hint: false,
-            doc_parked: false,
             doc_back: None,
-            last_drop: None,
             hover: None,
             scroll_drag: false,
             doc_scroll_free: false,
-            drag_from: None,
-            drag_at: None,
-            drag_ms: 0,
             history: history,
             scope_override: load_scopes(&vault_cache),
-            click_link: None,
             last_click: None,
-            near_miss: None,
             about_new: false,
             meta_hint: false,
-            doc_announce: None,
             update_state: UpdateState::Idle,
             flashes: Default::default(),
             show_detail: true,
@@ -3929,7 +3915,7 @@ impl App {
             self.info(format!("{n} change{} synced", if n == 1 { "" } else { "s" }));
         }
         // On the caret's line §9's copy wins, with who.
-        if let Some(edited) = self.doc_announce.take() {
+        if let Some(edited) = self.main.announce.take() {
             let who = agent_events.first().map(|e| format!("{}{}{}", g.agent, g.agent_sep, e.actor.trim_start_matches("agent:"))).unwrap_or_else(|| "• another device".into());
             let text = if edited { " changed this line too · both versions are kept" } else { " changed this line · it updates when you leave it" };
             self.toast_parts(ToastKind::Agent, vec![(who, Token::Agent), (text.into(), Token::Text)]);
