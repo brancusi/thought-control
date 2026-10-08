@@ -316,6 +316,25 @@ focus or close or unpin a pinned panel (exit 6).
 
 ## Part 2: Working on this repo
 
+### How we write code here
+
+These rules come first; every review checks them.
+
+- **One source of truth.** State is normalized: a document, node or query lives in one place,
+  and everything else holds a reference (an id) to it. Never copy state between owners, never
+  swap it in and out, never keep a parallel version "for this case".
+- **Elm architecture everywhere.** Serializable state, messages, a pure `update` that returns
+  effects, and a pure `view`. Runtime handles (files, sockets, threads) stay outside the state.
+  If it isn't in the state, it can't be replayed, patched or tested, so treat that as a bug.
+- **Components are instantiated, not forked.** The same component (an editor pane, a list) is
+  used wherever that thing appears, with its own small view state pointing at a shared leaf.
+  Differences between places are data (a role, a policy, a size), never a second code path.
+- **Special cases are a smell.** A guard like `if in_panel`, a deferred action, a field swap, a
+  one-off branch or "edge-case gymnastics" means the model is wrong. Flag it, and fix the model
+  so the case disappears, instead of adding another guard.
+- **Get things for free.** Before writing code, ask what correct modelling would give us for
+  free (replay, agent control, undo, sync, tests). Prefer the change that deletes code.
+
 - **Layout:**
   - `crates/thc-core` holds the model, event log, merge/replay, store, query, capture,
     dates, recurrence, edit round-trip and export.
