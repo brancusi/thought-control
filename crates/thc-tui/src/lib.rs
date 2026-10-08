@@ -452,6 +452,8 @@ fn wants_bar(app: &App) -> bool {
 fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut session::Session, server: &mut Option<ui_server::Server>) -> Result<()> {
     use session::Msg;
     let mut last_poll = Instant::now();
+    // The last key or paste: the timed poll waits while you type (below).
+    let mut last_input = Instant::now() - Duration::from_secs(1);
     let mut last_keys_poll = Instant::now();
     let mut keys_watch = keys_edit::Watch::default();
     keys_watch.changed(&session.app.vault.paths.vault);
@@ -464,6 +466,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
     let mut samples: Vec<f64> = Vec::new();
     // THC_TUI_TRACE=1: where a slow key's time went, phase by phase (tui-trace-slow.log).
     let mut phases: Vec<(&'static str, f64)> = Vec::new();
+    let mut first_key = String::new();
     let mut phase_at = Instant::now();
     let mut phase = |name: &'static str, phases: &mut Vec<(&'static str, f64)>, on: bool| {
         if on {
@@ -522,11 +525,12 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         draw_images(terminal, app)?;
         terminal.backend_mut().cursor_bar(wants_bar(app))?;
         phase("draw", &mut phases, tracing);
-        if let Some(t) = key_at.take() {
+        // (Not the key that quits: its frame is the last, and its time the saves on the way out.)
+        if let Some(t) = key_at.take().filter(|_| !session.app.quit) {
             let ms = t.elapsed().as_secs_f64() * 1000.0;
             samples.push(ms);
             if ms > 4.0 {
-                let line = format!("{ms:.2} ms: {}\n", phases.iter().filter(|(n, t)| *n != "wait" && *t >= 0.05).map(|(n, t)| format!("{n} {t:.2}")).collect::<Vec<_>>().join(" · "));
+                let line = format!("{ms:.2} ms ({first_key}): {}\n", phases.iter().filter(|(n, t)| *n != "wait" && *t >= 0.05).map(|(n, t)| format!("{n} {t:.2}")).collect::<Vec<_>>().join(" · "));
                 let path = session.app.vault.paths.cache.join("tui-trace-slow.log");
                 let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
             }
@@ -637,10 +641,17 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             while first || event::poll(Duration::ZERO)? {
                 first = false;
                 let ev = event::read()?;
+                if matches!(ev, Event::Key(_) | Event::Paste(_)) {
+                    last_input = Instant::now();
+                }
                 if trace && key_at.is_none() && matches!(ev, Event::Key(_) | Event::Paste(_)) {
                     key_at = Some(Instant::now());
                     phases.clear();
                     phase("wait", &mut phases, true);
+                    first_key = match &ev {
+                        Event::Key(k) => script::key_token(k),
+                        _ => "paste".into(),
+                    };
                 }
                 let msg = match ev {
                     Event::Key(k) if k.kind == KeyEventKind::Press && cmd_release.is_marker(&k) => cmd_release.release(),
@@ -709,10 +720,26 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         phase("checks", &mut phases, tracing);
         // With the daemon live, changes arrive as events (it asks for a poll); polling on a
         // timer is the offline fallback.
-        if std::mem::take(&mut app.poll_wanted) || last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 }) {
+        // The timer's poll reads the log's files from disk (a stat each, up to 11 ms on a busy
+        // disk): it waits until typing pauses (300 ms), so it never lands between a key and
+        // its frame (at least every 30 s all the same). A poll asked for (the daemon's push) runs
+        // at once.
+        let typing = last_input.elapsed() < Duration::from_millis(300) && last_poll.elapsed() < Duration::from_secs(30);
+        if std::mem::take(&mut app.poll_wanted) || (!typing && last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 })) {
             last_poll = Instant::now();
             session.runtime(Msg::Poll);
             phase("poll", &mut phases, tracing);
+            if tracing {
+                // Inside the poll: the steps, and what's left (the scheduler, on a busy machine).
+                let split = session.app.poll_split.clone();
+                let inside: f64 = split.iter().map(|(_, t)| t).sum();
+                for (n, t) in split {
+                    phases.push((n, t));
+                }
+                if let Some(p) = phases.iter().rev().find(|(n, _)| *n == "poll").map(|(_, t)| *t) {
+                    phases.push(("poll-unaccounted", (p - inside).max(0.0)));
+                }
+            }
         }
     } })();
     if let Some(seq) = shift_capture.release() {

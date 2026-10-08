@@ -1062,6 +1062,27 @@ mod tests {
         }
     }
 
+    /// An empty line left behind goes with the save (h8vsn), and only it: the other notes keep
+    /// their ids, and the save sends nothing for them (no moves, no edits).
+    #[test]
+    fn an_empty_line_left_goes_and_nothing_else_moves() {
+        let mut d = doc(&[(0, Kind::Para, "alpha"), (0, Kind::Para, ""), (0, Kind::Para, "beta"), (0, Kind::Para, "gamma")]);
+        let mut prev: Option<String> = None;
+        for l in d.lines_mut().iter_mut().filter(|l| !l.text.is_empty()) {
+            l.is_new = false;
+            l.saved = Some(l.text.clone());
+            l.saved_kind = Some(Kind::Para);
+            l.saved_after = prev.replace(l.id.clone());
+        }
+        let ids: Vec<String> = d.lines().iter().filter(|l| !l.text.is_empty()).map(|l| l.id.clone()).collect();
+        d.set_caret(BlockPos { line: 3, byte: 2 });
+        let plan = d.plan_save(false);
+        assert_eq!(d.lines().iter().map(|l| l.id.clone()).collect::<Vec<_>>(), ids, "the empty line went, every note kept its id");
+        assert!(plan.ops.is_empty(), "nothing to send: {:?}", plan.ops);
+        assert_eq!(d.caret(), BlockPos { line: 2, byte: 2 }, "the caret stays on its text");
+        assert!(d.repin, "the next frame keeps the caret's row");
+    }
+
     #[test]
     fn save_plan_keeps_completion_alongside_an_unsaved_task_kind() {
         let mut d = doc(&[(0, Kind::Para, "alpha line")]);
