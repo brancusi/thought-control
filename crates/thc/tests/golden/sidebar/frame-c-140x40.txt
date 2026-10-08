@@ -5,18 +5,18 @@
        ───────────────────────────────────────────────────────────────────────────────────── │▌  [ ] Replace furnace filter
                                                                                              │                               today · ↻ 3mo!
      · Morning: slept well, 30 min run #health                                               │   [ ] Water plants              today · ↻ 3d
-   [ ] Call dentist to reschedule #health                                    due fri · !high │
-     · Dentist appointment [[Health]]                                              tue 14:00 │   Next 7 days  7
-   [ ] Pay rent                                                        sat 09:00 · ↻ monthly │   [ ] Summarize unread newsletters into [[…
-     · Mom's birthday, call her                                                 oct 19 10:00 │                                 due tomorrow
-   [ ] Summarize unread newsletters into [[Reading List]]                       due tomorrow │   [ ] Call dentist to reschedule #health
+   [ ] Call dentist to reschedule #health                                   due fri · !high  │
+     · Dentist appointment [[Health]]                                             tue 14:00  │   Next 7 days  7
+   [ ] Pay rent                                                       sat 09:00 · ↻ monthly  │   [ ] Summarize unread newsletters into [[…
+     · Mom's birthday, call her                                                oct 19 10:00  │                                 due tomorrow
+   [ ] Summarize unread newsletters into [[Reading List]]                      due tomorrow  │   [ ] Call dentist to reschedule #health
                                                                                              │                              due fri · !high
                                                                                              │   [ ] Collect last quarter's metrics
                                                                                              │                                      due sat
        ──────────────────────────────────── also today ───────────────────────────────────── │   [ ] Pay rent         sat 09:00 · ↻ monthly
-   [ ] Water plants                                                    ¶ Home · today · ↻ 3d │   [ ] Draft Q4 OKRs
-   [ ] Replace furnace filter                                        ¶ Home · today · ↻ 3mo! │                     mon · due oct 14 · !high
-   [x] Renew passport #admin                                       § tue oct 06 · done 09:12 │   [ ] Review draft with the team     due tue
+   [ ] Water plants                                                   ¶ Home · today · ↻ 3d  │   [ ] Draft Q4 OKRs
+   [ ] Replace furnace filter                                       ¶ Home · today · ↻ 3mo!  │                     mon · due oct 14 · !high
+   [x] Renew passport #admin                                      § tue oct 06 · done 09:12  │   [ ] Review draft with the team     due tue
                                                                                              │     · Dentist appointment [[Health]]
                                                                                              │
                                                                                              │   Done today  1

@@ -333,7 +333,6 @@ fn a_panel_opening_beside_a_short_page_reflows_nothing() {
 /// 5jzx9: a space typed at a row's end hangs in the margin, and the caret after it stays on that
 /// row: no row of its own (the save drops the space, so a reopened page was a row shorter).
 #[test]
-#[ignore = "5jzx9"]
 fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
     use crate::editor::{BlockPos, Doc, DocRow, Target, ViewGeometry};
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
@@ -346,4 +345,52 @@ fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
     let rows = f.rows.iter().filter(|r| matches!(r, DocRow::Text { .. })).count();
     assert_eq!(rows, 1, "one row, the space and the caret in its margin");
     assert_eq!(f.cursor.map(|c| c.1), Some(0));
+}
+
+/// The meta never runs under the scrollbar: its column is kept whether or not one shows (the
+/// caret's `↗ open` chip read `↗ ope` on a long page at 120 columns beside the rail).
+#[test]
+fn the_meta_keeps_clear_of_the_scrollbar() {
+    for size in [(120u16, 32u16), (100, 30), (200, 50)] {
+        let (_s, mut s) = open_plan(size, &format!("meta-bar-{}", size.0));
+        let (rows, _) = frame(&mut s);
+        let (x, y) = find(&rows, "[[Garden]]");
+        keys(&mut s, &format!("<aclick:{},{y}>", x + 4));
+        let (rows, _) = frame(&mut s);
+        let row = &rows[y as usize];
+        assert!(row.contains("↗ open"), "{size:?}: the chip whole: {row}");
+        let last: String = row.chars().last().into_iter().collect();
+        assert!(matches!(last.as_str(), "│" | "┃" | " "), "{size:?}: the scrollbar's column: {row}");
+    }
+}
+
+/// The calendar beside a day counts in English: `1 entry · 1 task`, not `1 entries · 1 tasks`.
+#[test]
+fn the_day_summary_says_one_entry() {
+    let (_scratch, v) = vault("one-entry");
+    let mut s = session(v, (200, 50));
+    keys(&mut s, "5[ ] call the plumber<cr><esc>5");
+    let (rows, _) = frame(&mut s);
+    let line = rows.iter().find(|r| r.contains(" done")).cloned().unwrap_or_default();
+    assert!(line.contains("1 entry ·") && line.contains("1 task ·"), "{line}");
+}
+
+/// Just arrived on a page (parked, navigation.md §6.1), the bar says how to start and how to
+/// move on; the first key that writes puts the writing keys back. Narrow, those go first.
+#[test]
+fn the_bar_says_type_to_write_on_arrival() {
+    let (_v, v) = vault("parked-bar");
+    let mut s = session(v, (120, 32));
+    keys(&mut s, "<c-o>Plan<cr>");
+    let bar = |s: &mut Session| frame(s).0.last().cloned().unwrap_or_default();
+    let b = bar(&mut s);
+    assert!(b.contains("type to write") && b.contains("Tab next view") && b.contains("⌃T task"), "{b}");
+    keys(&mut s, "x");
+    let b = bar(&mut s);
+    assert!(!b.contains("type to write") && b.contains("⌃T task"), "{b}");
+    let (_v2, v) = vault("parked-bar-80");
+    let mut s = session(v, (80, 24));
+    keys(&mut s, "<c-o>Plan<cr>");
+    let b = bar(&mut s);
+    assert!(b.contains("⌃T task") && !b.contains("type to write"), "{b}");
 }
