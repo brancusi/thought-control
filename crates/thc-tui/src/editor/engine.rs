@@ -731,8 +731,12 @@ impl Doc {
     /// one of thc's host commands (`thc.task_cycle`). Up, down and pages follow the view's
     /// layout (`Doc::set_view`).
     pub fn run_command(&mut self, id: &str) -> Outcome {
-        if id == "edit.newline" && !self.newline_as_saved() {
-            return Outcome::Done;
+        if id == "edit.newline" && self.selection().is_none() {
+            match self.enter_on_empty() {
+                Some(EmptyEnter::Nothing) => return Outcome::Done,
+                Some(EmptyEnter::Outdent) => return self.run_command("structure.outdent"),
+                None => {}
+            }
         }
         let msg = if id.starts_with("thc.") {
             Msg::Command { name: id.into(), args: serde_json::Value::Null }
@@ -763,17 +767,22 @@ impl Doc {
         }
     }
 
-    /// Enter, as thc keeps notes (writing.md §1; 02pjq): what the screen shows while you type is
-    /// what the saved page shows when it opens again. An empty paragraph isn't saved, so on one
-    /// Enter does nothing: there's no note to end, and the blank rows it used to make vanished
-    /// on save (the page jumped up when it opened again). False: Enter does nothing here.
-    /// (A split drops the spaces after the caret: the input rule `thc.trim_split`, tasks.rs.)
-    fn newline_as_saved(&self) -> bool {
-        if self.selection().is_some() {
-            return true;
-        }
+    /// Enter on an empty note (writing.md §1; 02pjq): what the screen shows while you type is
+    /// what the saved page shows when it opens again, and an empty line isn't saved. A nested
+    /// one comes out a level (as in Logseq); at the top level Enter does nothing, since there's
+    /// no note to end and the empty rows it would make vanish on save (the page jumped when it
+    /// opened again). An empty task at the top level is left to the engine (`thc.enter` makes
+    /// it a plain bullet). None: not an empty note.
+    fn enter_on_empty(&self) -> Option<EmptyEnter> {
         let l = self.caret_block();
-        !(l.kind() == thc_core::outline::Kind::Para && l.text.is_empty())
+        if !l.text.is_empty() {
+            return None;
+        }
+        match l.kind() {
+            _ if l.depth > 0 => Some(EmptyEnter::Outdent),
+            thc_core::outline::Kind::Task => None,
+            _ => Some(EmptyEnter::Nothing),
+        }
     }
 
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
@@ -792,6 +801,12 @@ impl Doc {
     }
 }
 
+
+/// What Enter does on an empty note (`Doc::enter_on_empty`).
+enum EmptyEnter {
+    Nothing,
+    Outdent,
+}
 
 /// What a line holds as the engine lays it out (its text with its marker, its blank row), as a
 /// hash: a line's version moves when this does (`Engine::vers`).

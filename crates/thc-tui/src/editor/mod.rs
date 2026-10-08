@@ -392,7 +392,7 @@ impl Doc {
     /// A page opens at its top (on an empty line, when it has none).
     pub fn caret_to_start(&mut self) {
         if self.lines().is_empty() {
-            self.lines_mut().push(Line::new(0, Kind::Para, ""));
+            self.lines_mut().push(Line::new(0, Kind::Bullet, ""));
         }
         self.set_caret(BlockPos { line: 0, byte: 0 });
     }

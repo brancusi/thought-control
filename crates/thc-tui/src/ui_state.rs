@@ -97,6 +97,10 @@ pub struct UiState {
     pub show_detail: bool,
     pub focus: Focus,
     pub focus_mode: bool,
+    /// Document mode (writing.md §1, Logseq's `t d`): Enter breaks the line inside a note and
+    /// ⇧Enter starts a new note, for long-form writing. This device's choice (`App::
+    /// load_document_mode`); the person's only: an agent's patch can't change it.
+    pub document_mode: bool,
     /// What Focus shows this session (`[tui.focus]`, then live `:focus` changes).
     pub focus_cfg: thc_core::tui_config::Focus,
     /// Outline rows folded away, by node id.
@@ -235,6 +239,7 @@ impl Default for UiState {
             show_detail: true,
             focus: Focus::List,
             focus_mode: false,
+            document_mode: false,
             focus_cfg: Default::default(),
             collapsed: BTreeSet::new(),
             page_ids: false,

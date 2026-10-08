@@ -16,7 +16,7 @@
 
 use caretline as cn;
 use cn::helix::{Assoc, Range, Selection, Tendril, Transaction};
-use cn::outline::{BlockInfo, Kind, OutlineConfig};
+use cn::outline::{BlockInfo, Hang, Kind, OutlineConfig};
 use cn::{Ctx, Deco, Decoration, Edit, Host, MarkAttrs, MarkId, MarkOp, Msg};
 use serde_json::{Value, json};
 
@@ -46,7 +46,14 @@ pub fn config() -> OutlineConfig {
 
 /// The host every thc document runs with.
 pub fn host() -> Host {
-    Host::new().command(TASK_CYCLE, task_cycle).command(SET_STATUS, set_status).input_rule("thc.task_shorthand", shorthand).input_rule("thc.trim_split", trim_split).decorator(decorate)
+    Host::new()
+        .command(TASK_CYCLE, task_cycle)
+        .command(SET_STATUS, set_status)
+        .input_rule("thc.task_shorthand", shorthand)
+        .input_rule("thc.enter", enter)
+        .input_rule("thc.join", join)
+        .input_rule("thc.trim_split", trim_split)
+        .decorator(decorate)
 }
 
 pub fn is_task(b: &BlockInfo) -> bool {
@@ -115,15 +122,11 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
                     changes.push((at, x.content_start(), format!("- [{c}] ")));
                 }
             }
-            Target::Text => {
-                if x.kind != Kind::Para {
-                    changes.push(removal(x.start, x.content_start()));
-                }
-            }
+            Target::Text => {}
         }
     }
     // Back to text next to a paragraph with no blank row between: it joins it (the reverse of
-    // a split). Never across a blank row.
+    // a split, ⌃T in a paragraph). Never across a blank row.
     let mut joins: Vec<MarkId> = Vec::new();
     if target == Target::Text && r.is_empty() {
         let joinable = |x: &BlockInfo| x.is_plain_para() && x.depth == 0;
@@ -133,6 +136,18 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
         if let Some(c) = o.blocks.get(fi + 1) {
             if joinable(c) && !c.gap {
                 joins.push(c.id);
+            }
+        }
+    }
+    // Back to text is a bullet note, as typed lines are (the Logseq model, writing.md §1); a
+    // task that rejoins a paragraph becomes paragraph text again.
+    if target == Target::Text {
+        for x in o.blocks[fi..=li].iter().filter(|x| is_task(x) && !x.fence) {
+            let at = x.start + x.indent;
+            if joins.is_empty() {
+                changes.push(removal(at + 2, x.content_start()));
+            } else {
+                changes.push(removal(x.start, x.content_start()));
             }
         }
     }
@@ -153,6 +168,136 @@ fn task_cycle(ctx: &Ctx, _: &Value) -> Result<Edit, String> {
         keep_gaps: true,
         then_default: false,
     })
+}
+
+/// Enter, the Logseq way (writing.md §1, decided 2026-10-08): Enter always starts a new note,
+/// and ⇧Enter (⌃J) breaks the line inside one. caretline's own Enter already splits a list
+/// item and makes a new empty item after one; this rule covers the rest:
+///
+/// - an item with children (unfolded), Enter at its end: the new note is its first child, as
+///   an outliner makes it, never a sibling its children would then nest under;
+/// - a heading or quote, Enter at its end: the next note is a bullet;
+/// - a paragraph (from imported Markdown): Enter splits it into two paragraph notes where
+///   caretline would break the line; at a line's end the new empty note between is a bullet,
+///   since a typed line is a bullet note.
+///
+/// An empty item is the editor's call (`Doc::run_command`: it outdents, ends a task, or does
+/// nothing at the top level). A split drops the spaces after the caret, as `trim_split` does.
+fn enter(ctx: &Ctx, msg: &Msg) -> Option<Edit> {
+    if !matches!(msg, Msg::InsertNewline) || ctx.selection().len() != 1 {
+        return None;
+    }
+    let r = ctx.selection().primary();
+    if !r.is_empty() {
+        return None;
+    }
+    let o = ctx.blocks()?;
+    let text = ctx.text();
+    let p = r.head;
+    let i = o.index_at(text, p);
+    let b = &o.blocks[i];
+    if is_task(b) && b.is_empty() && b.depth == 0 {
+        // An empty task ends the checklist: a plain bullet.
+        let at = b.start + b.indent;
+        return Some(Edit { changes: vec![(at + 2, b.content_start(), String::new())], selection: Some(Selection::point(at + 2)), ..Edit::default() });
+    }
+    if b.fence || b.atomic || b.is_empty() {
+        return None;
+    }
+    let le = ctx.line_ending();
+    let pad = " ".repeat(b.indent);
+    let insert = |at: usize, ins: String, caret: usize| Edit { changes: vec![(at, at, ins)], selection: Some(Selection::point(caret)), ..Edit::default() };
+    match b.hang {
+        Hang::Bullet if p == b.end => {
+            let child = o.blocks.get(i + 1).filter(|c| c.depth > b.depth && !ctx.view.folds.contains(&b.id))?;
+            let marker = if is_task(b) { format!("- [{OPEN}] ") } else { "- ".to_string() };
+            let ins = format!("{le}{}{marker}", " ".repeat(child.indent));
+            let caret = p + ins.chars().count();
+            Some(insert(p, ins, caret))
+        }
+        Hang::Heading(_) | Hang::Quote if p == b.end => {
+            let ins = format!("{le}{pad}- ");
+            let caret = p + ins.chars().count();
+            Some(insert(p, ins, caret))
+        }
+        Hang::None if b.kind == Kind::Para => {
+            let line = text.char_to_line(p);
+            let ls = text.line_to_char(line);
+            let lend = ls + text.line(line).chars().take_while(|c| *c != '\n' && *c != '\r').count();
+            let first = line == b.first_line;
+            if first && p == b.content_start() {
+                // At its very start: a new empty bullet above; the paragraph keeps its id.
+                let ins = format!("{pad}- {le}");
+                let caret = p + ins.chars().count();
+                return Some(insert(b.start, ins, caret));
+            }
+            if !first && p == ls {
+                // At a later line's start: caretline's split (this line starts a paragraph).
+                return None;
+            }
+            if p == lend {
+                // At a line's end: a new empty bullet after it; the lines below, if any, are a
+                // paragraph of their own.
+                let ins = format!("{le}{pad}- ");
+                let n = ins.chars().count();
+                if line == b.last_line() {
+                    return Some(insert(p, ins, p + n));
+                }
+                let next = text.line_to_char(line + 1);
+                let mut changes = vec![(p, p, ins)];
+                if !pad.is_empty() {
+                    changes.push((next, next, pad.clone()));
+                }
+                let mark = MarkOp::Mint { pos: next + n, attrs: MarkAttrs::default() };
+                return Some(Edit { changes, selection: Some(Selection::point(p + n)), marks: vec![mark], ..Edit::default() });
+            }
+            // Inside a line: the rest is a new paragraph note.
+            let trim = text.chars_at(p).take_while(|c| *c == ' ').count();
+            let ins = format!("{le}{pad}");
+            let n = ins.chars().count();
+            let mark = MarkOp::Mint { pos: p + le.chars().count(), attrs: MarkAttrs::default() };
+            Some(Edit { changes: vec![(p, p + trim, ins)], selection: Some(Selection::point(p + n)), marks: vec![mark], ..Edit::default() })
+        }
+        _ => None,
+    }
+}
+
+/// ⌫ at the start of a bullet note, the Logseq way (writing.md §1): the note joins the one
+/// above, its text after that note's (an empty one just goes), and its children become that
+/// note's. Never a paragraph: typed lines are bullets, and paragraphs come only from imported
+/// Markdown. The first note stays as it is. (⌫ at a task's start still takes its box off
+/// first, caretline's own step.)
+fn join(ctx: &Ctx, msg: &Msg) -> Option<Edit> {
+    if !matches!(msg, Msg::DeleteBackward) || ctx.selection().len() != 1 {
+        return None;
+    }
+    let r = ctx.selection().primary();
+    if !r.is_empty() {
+        return None;
+    }
+    let o = ctx.blocks()?;
+    let text = ctx.text();
+    let i = o.index_at(text, r.head);
+    let b = &o.blocks[i];
+    if b.hang != Hang::Bullet || b.tag.is_some() || r.head != b.content_start() {
+        return None;
+    }
+    if i == 0 {
+        return Some(Edit::default());
+    }
+    let a = &o.blocks[i - 1];
+    if a.atomic {
+        return None;
+    }
+    let mut changes = vec![(a.end, b.content_start(), String::new())];
+    // Its children under the note above: as many levels out as it was deeper than that note.
+    let out = b.depth.saturating_sub(a.depth) as usize * ctx.doc.outline.as_ref().map_or(2, |c| c.indent.max(1) as usize);
+    if out > 0 {
+        for c in o.blocks[i + 1..].iter().take_while(|c| c.depth > b.depth) {
+            changes.push((c.start, c.start + out.min(c.indent), String::new()));
+        }
+    }
+    Some(Edit { changes, selection: Some(Selection::point(a.end)), marks: vec![MarkOp::Remove { id: b.id }], keep_gaps: true, ..Edit::default() })
 }
 
 /// Enter that splits a line takes the spaces after the caret with it (0d61e): a saved note never
@@ -227,14 +372,23 @@ fn shorthand(ctx: &Ctx, msg: &Msg) -> Option<Edit> {
         return None;
     }
     let r: Range = sel.primary();
-    if !r.is_empty() || !typed.ends_with(' ') || typed.contains(['\n', '\r']) {
+    if !r.is_empty() || !(typed.ends_with(' ') || typed.starts_with(' ')) || typed.contains(['\n', '\r']) {
         return None;
     }
     let o = ctx.blocks()?;
     let text = ctx.text();
     let p = r.head;
     let b = o.block_at(text, p);
-    if !b.is_plain_para() {
+    if b.hang == Hang::Bullet && p == b.content_start() && typed.starts_with(' ') {
+        // A saved note never starts with a space (0d61e): one typed at a note's start would
+        // vanish on save and the line shift on reopening, so it never goes in.
+        let rest = typed.trim_start_matches(' ');
+        return Some(Edit { changes: vec![(p, p, rest.to_string())], selection: Some(Selection::point(p + rest.chars().count())), ..Edit::default() });
+    }
+    if b.hang == Hang::Bullet && b.tag.is_none() {
+        return bullet_shorthand(ctx, b, p, typed);
+    }
+    if !typed.ends_with(' ') || !b.is_plain_para() {
         return None;
     }
     let line = text.char_to_line(p);
@@ -251,6 +405,44 @@ fn shorthand(ctx: &Ctx, msg: &Msg) -> Option<Edit> {
     let ins = format!("- [{ch}] ");
     let caret = from + ins.chars().count();
     Some(Edit { changes: vec![(from, p, ins)], selection: Some(Selection::point(caret)), ..Edit::default() })
+}
+
+/// Markdown typed at the start of a bullet note's text, where typed lines are bullets already
+/// (writing.md §1): a box (`[ ] `, `[x] `, `[] `) makes it a task, `- ` or `* ` is the bullet it
+/// already is (nothing changes), `1. ` makes it a numbered item, and `# ` (to `### `) on a
+/// top-level note makes it a heading.
+fn bullet_shorthand(ctx: &Ctx, b: &BlockInfo, p: usize, typed: &str) -> Option<Edit> {
+    let text = ctx.text();
+    let cs = b.content_start();
+    if p < cs || text.char_to_line(p) != b.first_line {
+        return None;
+    }
+    let before: String = text.slice(cs..p).chars().chain(typed.chars()).collect();
+    if before == "- " || before == "* " {
+        return Some(Edit { changes: vec![(cs, p, String::new())], selection: Some(Selection::point(cs)), ..Edit::default() });
+    }
+    let numbered = {
+        let digits = before.chars().take_while(char::is_ascii_digit).count();
+        (1..=3).contains(&digits) && matches!(&before[digits..], ". " | ") ")
+    };
+    if numbered {
+        // `1. ` starts a numbered item: the number is its marker, in place of the bullet.
+        let from = b.start + b.indent;
+        return Some(Edit { changes: vec![(from, p, before.clone())], selection: Some(Selection::point(from + before.chars().count())), ..Edit::default() });
+    }
+    if matches!(before.as_str(), "# " | "## " | "### ") && b.depth == 0 {
+        let from = b.start + b.indent;
+        return Some(Edit { changes: vec![(from, p, before.clone())], selection: Some(Selection::point(from + before.chars().count())), ..Edit::default() });
+    }
+    let inner = before.strip_prefix('[')?.strip_suffix("] ")?;
+    let ch = match inner.chars().count() {
+        0 => OPEN,
+        1 => inner.chars().next().filter(|&c| is_status(c))?,
+        _ => return None,
+    };
+    let ins = format!("[{ch}] ");
+    let caret = cs + ins.chars().count();
+    Some(Edit { changes: vec![(cs, p, ins)], selection: Some(Selection::point(caret)), ..Edit::default() })
 }
 
 /// The id a task's box is hit as.
@@ -465,12 +657,13 @@ mod tests {
 
     #[test]
     fn e75_back_to_text_adds_no_blank_row() {
-        golden("- [ ] A ¦ - [ ] B▮", "<c-t><c-t>", "- [ ] A ¦ B▮");
+        golden("- [ ] A ¦ - [ ] B▮", "<c-t><c-t>", "- [ ] A ¦ - B▮");
     }
 
     #[test]
     fn e76_back_to_text_never_joins_across_a_blank_row() {
-        let s = golden("Para one ‖ - [ ] Ta▮sk", "<c-t><c-t>", "Para one ‖ Ta▮sk");
+        // Back to text is a bullet note (the Logseq model): no join across the blank row.
+        let s = golden("Para one ‖ - [ ] Ta▮sk", "<c-t><c-t>", "Para one ‖ - Ta▮sk");
         assert_eq!(ids(&s), [0, 1]);
     }
 
@@ -495,7 +688,8 @@ mod tests {
 
     #[test]
     fn e79_deleting_the_marker_adds_no_blank_row() {
-        golden("- [ ] ▮A ¦ - [ ] B", "<bs><bs><bs><bs>", "▮A ¦ - [ ] B");
+        // ⌫ takes the box off; the first note stays a bullet (the Logseq model: never a paragraph).
+        golden("- [ ] ▮A ¦ - [ ] B", "<bs><bs><bs><bs>", "- ▮A ¦ - [ ] B");
     }
 
     #[test]
@@ -514,6 +708,82 @@ mod tests {
         assert_eq!(ids(&s), [0]);
     }
 
+    /// Enter starts a new note, ⇧Enter breaks the line (the Logseq model, writing.md §1).
+    #[test]
+    fn enter_starts_a_note_and_shift_enter_breaks_the_line() {
+        golden("- one▮", "<cr>", "- one ¦ - ▮");
+        golden("- on▮e", "<cr>", "- on ¦ - ▮e");
+        golden("- one▮", "<s-cr>", "- one⏎▮");
+        golden("- one▮", "<c-j>", "- one⏎▮");
+        golden("- ▮one", "<cr>", "-  ¦ - ▮one");
+        // A note with children: the new note is the first child.
+        golden("- A▮ ¦   - A1", "<cr>", "- A ¦   - ▮ ¦   - A1");
+        golden("- [ ] A▮ ¦   - A1", "<cr>", "- [ ] A ¦   - [ ] ▮ ¦   - A1");
+        // A task's next note is a task; an empty one at the top ends the checklist.
+        golden("- [ ] A▮", "<cr>", "- [ ] A ¦ - [ ] ▮");
+        golden("- [ ] A ¦ - [ ] ▮", "<cr>", "- [ ] A ¦ - ▮");
+        // A heading: the next note is a bullet.
+        golden("# Title▮", "<cr>", "# Title ‖ - ▮");
+    }
+
+    /// Paragraphs (imported Markdown) keep working: Enter splits them into notes, at a line's
+    /// end the new note is a bullet; ⇧Enter still breaks the line.
+    #[test]
+    fn enter_in_a_paragraph_starts_a_note() {
+        let s = golden("Para one▮", "<cr>", "Para one ‖ - ▮");
+        assert_eq!(ids(&s), [0, 1]);
+        let s = golden("Para ▮one", "<cr>", "Para  ‖ ▮one");
+        assert_eq!(ids(&s), [0, 1]);
+        golden("Para one▮⏎two", "<cr>", "Para one ‖ - ▮ ‖ two");
+        golden("▮Para one", "<cr>", "-  ‖ ▮Para one");
+        golden("Para one▮", "<s-cr>", "Para one⏎▮");
+    }
+
+    /// Markdown typed at a bullet's start: a box is a task, `- ` is the bullet it is already,
+    /// `# ` a heading.
+    #[test]
+    fn markdown_typed_on_a_bullet() {
+        let mut s = doc("- ▮");
+        for t in ["[", " ", "]", " "] {
+            update(&mut s, Msg::InsertText { text: t.into() });
+        }
+        assert_eq!(show(&s), "- [ ] ▮");
+        let mut s = doc("- ▮");
+        for t in ["[", "]", " "] {
+            update(&mut s, Msg::InsertText { text: t.into() });
+        }
+        assert_eq!(show(&s), "- [ ] ▮");
+        let mut s = doc("- ▮");
+        for t in ["-", " ", "x"] {
+            update(&mut s, Msg::InsertText { text: t.into() });
+        }
+        assert_eq!(show(&s), "- x▮");
+        let mut s = doc("- ▮");
+        for t in ["#", " ", "T"] {
+            update(&mut s, Msg::InsertText { text: t.into() });
+        }
+        assert_eq!(show(&s), "# T▮");
+        let mut s = doc("- ▮");
+        for t in ["1", ".", " ", "a"] {
+            update(&mut s, Msg::InsertText { text: t.into() });
+        }
+        assert_eq!(show(&s), "1. a▮");
+        keys(&mut s, "<cr>");
+        assert_eq!(show(&s), "1. a ¦ 2. ▮");
+    }
+
+    /// ⌫ at a bullet's start joins the note above (Logseq), its children with it; never a
+    /// paragraph.
+    #[test]
+    fn backspace_at_a_bullets_start_joins_the_note_above() {
+        let s = golden("- one ¦ - ▮two", "<bs>", "- one▮two");
+        assert_eq!(ids(&s), [0]);
+        golden("- one ¦ - ▮", "<bs>", "- one▮");
+        golden("- ▮one", "<bs>", "- ▮one");
+        golden("- A ¦   - ▮B ¦     - C", "<bs>", "- A▮B ¦   - C");
+        golden("- [ ] A ¦ - [ ] ▮B", "<bs>", "- [ ] A ¦ - ▮B");
+    }
+
     #[test]
     fn the_task_cycle_goes_text_open_done_text() {
         let mut s = doc("Call ▮Sam");
@@ -523,7 +793,10 @@ mod tests {
         assert_eq!(show(&s), "- [x] Call ▮Sam");
         assert_eq!(completed(&fx), [0]);
         keys(&mut s, "<c-t>");
-        assert_eq!(show(&s), "Call ▮Sam");
+        assert_eq!(show(&s), "- Call ▮Sam", "back to text is a bullet note");
+        let s = golden("Before⏎Call ▮Sam⏎After", "<c-t><c-t><c-t>", "Before⏎Call ▮Sam⏎After");
+        assert_eq!(ids(&s), [0], "a task split from a paragraph joins it again as text");
+        golden("- [x] Call ▮Sam", "<c-t>", "- Call ▮Sam");
         golden("- bul▮let", "<c-t>", "- [ ] bul▮let");
         golden("  - [/] doing▮", "<c-t>", "  - [x] doing▮");
     }
@@ -545,7 +818,7 @@ mod tests {
     fn enter_after_a_task_opens_one_and_backspace_steps_back() {
         golden("- [x] done▮", "<cr>", "- [x] done ¦ - [ ] ▮");
         golden("- [ ] ▮task", "<bs>", "- ▮task");
-        golden("  - [x] ▮deep", "<bs><bs>", "▮deep");
+        golden("  - [x] ▮deep", "<bs><bs>", "  - ▮deep");
     }
 
     #[test]

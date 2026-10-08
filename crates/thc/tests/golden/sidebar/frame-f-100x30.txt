@@ -10,13 +10,13 @@
    [ ] Pay rent                         │
      · Mom's birthday, call her         │
    [ ] Summarize unread newsletters into│
-                                        │
-                                        │
+     ·                                  │
                                         │
        ─────────────────────────────────│
    [ ] Water plants                     │
    [ ] Replace furnace filter           │
    [x] Renew passport #admin            │
+                                        │
                                         │
                                         │
                                         │

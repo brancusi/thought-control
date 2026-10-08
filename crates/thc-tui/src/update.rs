@@ -17,6 +17,9 @@ pub(crate) enum Msg {
     ViewportPrepared(Viewport),
     TogglePageIds { at: u64 },
     PageIdsPersisted { result: Result<(), String> },
+    /// `space t D` / the palette: document mode on or off (writing.md §1).
+    ToggleDocumentMode { at: u64 },
+    DocumentModePersisted { result: Result<(), String> },
     Copy { text: String, notice: String },
     ClipboardResult { result: Result<(), String>, notice: String, at: u64 },
     RemapKeys,
@@ -35,6 +38,8 @@ pub(crate) enum Msg {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Effect {
     WritePageIds { visible: bool },
+    /// This device's document mode, for every vault (`App::load_document_mode`).
+    WriteDocumentMode { on: bool },
     WriteClipboard { text: String, notice: String },
     EditKeys,
     /// Rebuild the rows (and open, switch or close the document) from the store.
@@ -445,6 +450,7 @@ fn cursor(ui: &mut crate::ui_state::UiState, facts: &Facts<'_>, delta: isize) ->
 
 pub(crate) struct Fields<'a> {
     pub page_ids: Option<&'a mut bool>,
+    pub document_mode: Option<&'a mut bool>,
     pub cursor: usize,
     pub scroll: &'a mut usize,
     pub toast: &'a mut Option<Toast>,
@@ -492,6 +498,15 @@ pub(crate) fn update(state: Fields<'_>, msg: Msg) -> Vec<Effect> {
         // This preference historically ignored cache failures: the session choice
         // still takes effect. The explicit result can be recorded/replayed.
         Msg::PageIdsPersisted { result: _ } => {}
+        Msg::ToggleDocumentMode { at } => {
+            let Some(on) = state.document_mode else { return vec![] };
+            *on = !*on;
+            let text = if *on { "document mode · Enter breaks the line, ⇧Enter starts a note" } else { "outline mode · Enter starts a note, ⇧Enter breaks the line" };
+            *state.toast = Some(Toast { kind: ToastKind::Info, parts: vec![(text.into(), Token::Muted)], at });
+            return vec![Effect::WriteDocumentMode { on: *on }];
+        }
+        // As page_ids: the session's choice stands if the device file can't be written.
+        Msg::DocumentModePersisted { result: _ } => {}
         Msg::Copy { text, notice } => return vec![Effect::WriteClipboard { text, notice }],
         Msg::RemapKeys => return vec![Effect::EditKeys],
         Msg::DocClock { now_ms } => {
@@ -549,7 +564,7 @@ mod tests {
     use super::*;
 
     fn apply(scroll: &mut usize, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
-        update(Fields { page_ids: None, cursor: 4, scroll, toast, doc: None }, msg)
+        update(Fields { page_ids: None, document_mode: None, cursor: 4, scroll, toast, doc: None }, msg)
     }
 
     #[test]
@@ -563,9 +578,9 @@ mod tests {
             previous_section: false,
             heights: vec![1, 1, 4, 1, 2],
         });
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message.clone());
+        update(Fields { page_ids: None, document_mode: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message.clone());
         assert_eq!(scroll, 3);
-        update(Fields { page_ids: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message);
+        update(Fields { page_ids: None, document_mode: None, cursor: 4, scroll: &mut scroll, toast: &mut toast, doc: None }, message);
         assert_eq!(scroll, 3);
     }
 
@@ -576,17 +591,30 @@ mod tests {
         let mut toast = None;
         let at = 1_000;
         let effects = update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
+            Fields { page_ids: Some(&mut page_ids), document_mode: None, cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
             Msg::TogglePageIds { at },
         );
         assert!(page_ids);
         assert_eq!(effects, vec![Effect::WritePageIds { visible: true }]);
         update(
-            Fields { page_ids: Some(&mut page_ids), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
+            Fields { page_ids: Some(&mut page_ids), document_mode: None, cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None },
             Msg::PageIdsPersisted { result: Err("cache unavailable".into()) },
         );
         assert!(page_ids);
         assert_eq!(toast.unwrap().parts, vec![("IDs shown · . to hide".into(), Token::Muted)]);
+    }
+
+    #[test]
+    fn document_mode_toggles_in_the_state_and_persisting_is_its_effect() {
+        let (mut on, mut scroll, mut toast) = (false, 0, None);
+        let effects = update(Fields { page_ids: None, document_mode: Some(&mut on), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None }, Msg::ToggleDocumentMode { at: 1 });
+        assert!(on);
+        assert_eq!(effects, vec![Effect::WriteDocumentMode { on: true }]);
+        update(Fields { page_ids: None, document_mode: Some(&mut on), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None }, Msg::DocumentModePersisted { result: Err("no cache".into()) });
+        assert!(on, "a failed write keeps the session's choice");
+        let effects = update(Fields { page_ids: None, document_mode: Some(&mut on), cursor: 0, scroll: &mut scroll, toast: &mut toast, doc: None }, Msg::ToggleDocumentMode { at: 2 });
+        assert!(!on);
+        assert_eq!(effects, vec![Effect::WriteDocumentMode { on: false }]);
     }
 
     #[test]
@@ -640,7 +668,7 @@ mod editor_tests {
 
     fn send(d: &mut Doc, toast: &mut Option<Toast>, msg: Msg) -> Vec<Effect> {
         let mut scroll = 0;
-        update(Fields { page_ids: None, cursor: 0, scroll: &mut scroll, toast, doc: Some(d) }, msg)
+        update(Fields { page_ids: None, document_mode: None, cursor: 0, scroll: &mut scroll, toast, doc: Some(d) }, msg)
     }
 
     /// The model mints no ids: the clock asks for them, the runtime mints, the ids come back.

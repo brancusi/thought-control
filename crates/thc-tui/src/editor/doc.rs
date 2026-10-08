@@ -247,6 +247,11 @@ pub struct Doc {
 impl Doc {
     pub fn new(target: Target, root: Option<String>, blocks: &[Block], today: chrono::NaiveDate) -> Doc {
         let mut lines: Vec<Line> = blocks.iter().map(|b| Line::from_block(b, today)).collect();
+        // A blank page or day opens on an empty bullet note, as a typed line is one (the Logseq
+        // model, writing.md §1); the engine would read the empty text as a paragraph.
+        if lines.is_empty() {
+            lines.push(Line::new(0, Kind::Bullet, ""));
+        }
         // The notes that can still be a predecessor, depths increasing (see `plan_save`).
         let mut before: Vec<(usize, String)> = Vec::new();
         for l in lines.iter_mut() {
@@ -364,8 +369,9 @@ impl Doc {
         self.run(caretline::Msg::InsertText { text: s.to_string() });
     }
 
+    /// Enter at the caret, as the key does (`Doc::run_command("edit.newline")`).
     pub fn newline(&mut self) {
-        self.run(caretline::Msg::InsertNewline);
+        self.run_command("edit.newline");
     }
 
     pub fn delete_selection(&mut self) -> bool {
@@ -446,7 +452,7 @@ impl Doc {
     pub fn caret_to_end(&mut self, fresh_line: bool) {
         let lines = self.engine.lines();
         if lines.is_empty() || (fresh_line && !lines.last().unwrap().text.is_empty()) {
-            self.engine.lines_mut().push(Line::new(0, Kind::Para, ""));
+            self.engine.lines_mut().push(Line::new(0, Kind::Bullet, ""));
             self.touch_content();
             if fresh_line {
                 self.engine.flush();
@@ -962,34 +968,44 @@ mod tests {
 
     #[test]
     fn typing_splitting_and_merging() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        // The Logseq model (writing.md §1): a typed line is a bullet note; Enter splits it,
+        // ⇧Enter breaks the line, ⌫ at a note's start joins the note above.
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("Hello world");
         at(&mut d, 0, 6);
-        d.newline(); // a line break in the paragraph
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
-        d.newline(); // a blank line: two notes
-        assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.run_command("edit.backspace"); // at the start of a paragraph: join, the break kept
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
-        assert_eq!(d.caret(), BlockPos { line: 0, byte: 7 });
+        d.run_command("edit.soft_break");
+        assert_eq!(texts(&d), ["Bullet Hello \nworld"]);
+        d.run_command("edit.backspace");
+        d.newline();
+        assert_eq!(texts(&d), ["Bullet Hello ", "Bullet world"]);
+        d.run_command("edit.backspace");
+        assert_eq!(texts(&d), ["Bullet Hello world"]);
+        assert_eq!(d.caret(), BlockPos { line: 0, byte: 6 });
         d.run_command("history.undo");
-        assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
+        assert_eq!(texts(&d), ["Bullet Hello ", "Bullet world"]);
         d.run_command("history.redo");
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
+        assert_eq!(texts(&d), ["Bullet Hello world"]);
+        // A paragraph (imported Markdown) splits too.
+        let mut d = doc(&[(0, Kind::Para, "Hello world")]);
+        at(&mut d, 0, 5);
+        d.newline();
+        assert_eq!(texts(&d), ["Para Hello", "Para world"]);
     }
 
     #[test]
     fn list_forms_and_nesting() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("- ");
-        assert_eq!(d.lines()[0].kind(), Kind::Bullet);
+        assert_eq!(texts(&d), ["Bullet "], "`- ` on a bullet is the bullet it is");
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
         d.run_command("structure.indent");
         d.newline();
-        d.newline(); // an empty item ends the list: an empty paragraph line
-        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Para "]);
+        d.newline(); // an empty nested note comes out a level
+        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Bullet "]);
+        d.newline(); // at the top, Enter on an empty note does nothing
+        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Bullet "]);
         at(&mut d, 0, 4);
         d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].kind(), Kind::Task);
@@ -1108,78 +1124,66 @@ mod tests {
         assert!(kind < status, "the completed status follows the kind that initializes todo");
     }
 
-    /// ⌃T cycles text → [ ] → [x] → text (writing.md A9); ⌫ takes the marker off a step at a
-    /// time (A10); a selection cycles together (A11).
     #[test]
     fn task_cycle_and_marker_steps() {
-        let mut d = doc(&[(0, Kind::Para, "call")]);
+        let mut d = doc(&[(0, Kind::Bullet, "call")]);
         d.run_command("thc.task_cycle");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Task, Some("todo")));
         d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
         d.run_command("thc.task_cycle");
-        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Para, None));
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None), "back to text: a bullet note");
         d.run_command("thc.task_cycle");
         at(&mut d, 0, 0);
         d.run_command("edit.backspace");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None));
         d.run_command("edit.backspace");
-        assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Para, "call"));
-        let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Bullet, "call"), "the first note stays a note");
+        let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Bullet, "b"), (0, Kind::Bullet, "c")]);
         d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 2, byte: 1 });
         d.run_command("thc.task_cycle");
         assert!(d.lines().iter().all(|l| l.kind() == Kind::Task), "{:?}", texts(&d));
     }
 
-    /// Enter is a line break in a paragraph; a blank line splits it (writing.md A2–A4); ⌫ at a
-    /// paragraph's start joins (A5); a marker typed on a later line starts a note.
     #[test]
-    fn paragraphs_are_plain_text() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+    fn notes_are_bullets_and_paragraphs_keep_working() {
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("one");
         d.newline();
         d.insert("two");
-        assert_eq!(texts(&d), ["Para one\ntwo"], "A2: one note, two lines");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        assert_eq!(texts(&d), ["Bullet one", "Bullet two"], "Enter: two notes");
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("one");
-        d.newline();
-        d.newline();
+        d.run_command("edit.soft_break");
         d.insert("two");
-        assert_eq!(texts(&d), ["Para one", "Para two"], "A3: two notes");
+        assert_eq!(texts(&d), ["Bullet one\ntwo"], "⇧Enter: one note, two lines");
         let mut d = doc(&[(0, Kind::Para, "abcdef")]);
         let id = d.lines()[0].id.clone();
         at(&mut d, 0, 3);
         d.newline();
-        d.newline();
-        assert_eq!(texts(&d), ["Para abc", "Para def"], "A4: a split");
+        assert_eq!(texts(&d), ["Para abc", "Para def"], "a paragraph splits");
         assert_eq!(d.lines()[0].id, id, "the first part keeps the id");
         at(&mut d, 1, 0);
         d.run_command("edit.backspace");
-        assert_eq!(texts(&d), ["Para abc\ndef"], "A5: a join keeps the break");
+        assert_eq!(texts(&d), ["Para abc\ndef"], "paragraphs join keeping the break");
         assert_eq!(d.lines()[0].id, id);
-        let mut d = doc(&[(0, Kind::Para, "")]);
-        d.insert("intro");
+        let mut d = doc(&[(0, Kind::Para, "intro")]);
+        at(&mut d, 0, 5);
         d.newline();
-        for c in ["-", " ", "milk"] {
-            d.insert(c);
-        }
-        assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "a marker on a later line starts an item");
-        d.newline();
-        assert_eq!(d.lines()[2].kind(), Kind::Bullet, "A6: the next item");
-        d.newline();
-        assert_eq!((d.lines()[2].kind(), d.lines()[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        d.insert("milk");
+        assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "after a paragraph, a typed line is a bullet");
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         for c in ["[", " ", "]", " ", "call"] {
             d.insert(c);
         }
         d.newline();
         assert_eq!((d.lines()[1].kind(), d.lines()[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         for c in ["#", " ", "Title"] {
             d.insert(c);
         }
         d.newline();
         d.insert("text");
-        assert_eq!(texts(&d), ["Para # Title", "Para text"], "a heading is one line");
+        assert_eq!(texts(&d), ["Para # Title", "Bullet text"], "a heading, then a bullet");
     }
 }

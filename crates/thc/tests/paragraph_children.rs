@@ -83,7 +83,8 @@ fn tab_under_a_paragraph_saves_a_child() {
 #[test]
 fn the_markdown_export_indents_a_paragraphs_children() {
     let v = V::new("export");
-    v.snap("Para line<cr>first subtask<tab><cr><cr>[ ] a task under it<esc>");
+    // (A typed line is a bullet note now; Enter keeps the depth, a second one would outdent.)
+    v.snap("Para line<cr>first subtask<tab><cr>[ ] a task under it<esc>");
     v.cli(&["export"]);
     let dir = v.root.join("vault/export");
     let md = walk(&dir).into_iter().map(|p| std::fs::read_to_string(p).unwrap()).find(|s| s.contains("Para line")).expect("the day exported");

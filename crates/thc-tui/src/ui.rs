@@ -1020,6 +1020,10 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             if level >= 1 || !ok {
                 left.push(Span::styled(text.clone(), th.s(tok)));
             }
+            if level >= 1 && app.ui.document_mode {
+                left.push(sep());
+                left.push(Span::styled("document mode", th.s(Token::Accent)));
+            }
             let mut right = hint_spans(render, &th, if level == 0 && !app.link_open { &done_only } else { &keys }, true);
             if app.focus_mode && app.focus_cfg.has(thc_core::tui_config::El::Clock) {
                 right.push(Span::raw("   "));

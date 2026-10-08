@@ -297,15 +297,15 @@ fn enter_at_the_bottom_scrolls_one_row_at_a_time() {
 
 #[test]
 fn backspace_joins_notes() {
+    // The Logseq model: ⌫ at a note's start joins it to the note above in one step.
     q4().named("Backspace at a line's start joins it to the one above")
         .click_caret(doc_at("Last line of the plan", 0))
         .keys("<bs>")
-        .expect_caret_line("Last line of the plan")
-        .keys("<bs>")
         .expect_caret_before("Last line of the plan")
         .expect("the two notes joined", |s| s.app.doc.as_ref().unwrap().caret_block().text.starts_with("This paragraph"))
-        .keys("<c-z><c-z>")
+        .keys("<c-z>")
         .expect_line("Last line of the plan")
+        .expect_caret_line("Last line of the plan")
         .done();
 }
 
@@ -443,23 +443,24 @@ fn writing_at_the_bottom_of_a_long_page_keeps_the_caret_off_the_edge() {
 }
 
 /// tta6t: Tab nests a note right under the one above, with no blank row between them; ⇧Tab
-/// out adds none back, so neither moves the note up or down.
+/// out adds none back, so neither moves the note up or down. (The Logseq model: the fresh line
+/// a page arrives with is a bullet, right under the last note; `- ` typed on it changes nothing.)
 #[test]
 fn tab_nests_a_new_note_right_under_the_one_above() {
     let mut f = q4();
     f.named("Tab after jumping to a page and typing an item");
     f.type_text("- item");
+    f.expect_line("item").expect_no_line("- item");
     let (_, y0) = f.shot.cursor.unwrap();
     // (The text column only: the rail beside it has rows of its own.)
     let above = |f: &Flow, y: u16| {
         let r = f.shot.doc_view.unwrap();
         f.shot.text[(y - 1) as usize].chars().skip(r.x as usize).take(r.width.saturating_sub(1) as usize).collect::<String>().trim().to_string()
     };
-    assert!(above(&f, y0).is_empty(), "arrival: a blank row before the new note");
+    assert!(!above(&f, y0).is_empty(), "arrival: the new note is right under the last one");
     f.keys("<tab>");
     let (_, y1) = f.shot.cursor.unwrap();
-    assert_eq!(y1, y0 - 1, "the blank row went: the note moved up into it");
-    assert!(!above(&f, y1).is_empty(), "right under the note above");
+    assert_eq!(y1, y0, "Tab moves the note in, not up or down");
     f.expect_depth("item", 1);
     f.keys("<s-tab>");
     assert_eq!(f.shot.cursor.unwrap().1, y1, "⇧Tab adds no row back");

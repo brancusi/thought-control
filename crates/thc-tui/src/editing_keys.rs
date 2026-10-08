@@ -71,6 +71,18 @@ pub fn command_for(action: &str, shift: bool) -> Option<&'static str> {
     cmds.iter().find(|c| c.starts_with("select.") == shift).or(cmds.first()).copied()
 }
 
+/// Document mode (writing.md §1) as data: the write actions it runs as another command.
+/// Enter breaks the line, ⇧Enter starts a note.
+pub const DOCUMENT_MODE: &[(&str, &str)] = &[("line.newline", "edit.soft_break"), ("line.soft_break", "edit.newline")];
+
+/// [`command_for`], in document mode or not.
+pub fn command_in(action: &str, shift: bool, document_mode: bool) -> Option<&'static str> {
+    match DOCUMENT_MODE.iter().find(|(a, _)| document_mode && *a == action) {
+        Some((_, c)) => Some(c),
+        None => command_for(action, shift),
+    }
+}
+
 /// The thc action for a caretline command.
 pub fn action(command: &str) -> Option<&'static str> {
     ACTIONS.iter().find(|(c, _)| *c == command).map(|(_, a)| *a)

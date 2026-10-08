@@ -29,6 +29,7 @@ mod fixture;
 mod agents;
 mod editing;
 mod lists;
+mod logseq;
 mod monkey;
 mod mouse;
 mod nav;

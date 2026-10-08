@@ -463,9 +463,18 @@ impl Session {
     pub fn check(&self, msg: &Msg) -> Result<(), String> {
         match msg {
             Msg::Key { key } if crate::script::key_event(key).is_none() => Err(format!("unknown key {key}")),
-            Msg::SetState { state, actor } => self.parse_state(state).and_then(|s| self.agent_may(&s, actor.as_deref())),
-            Msg::Patch { patch, actor } => self.app.ui.patched(patch).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
+            Msg::SetState { state, actor } => self.mode_kept(state, actor.as_deref()).and_then(|_| self.parse_state(state)).and_then(|s| self.agent_may(&s, actor.as_deref())),
+            Msg::Patch { patch, actor } => self.mode_kept(patch, actor.as_deref()).and_then(|_| self.app.ui.patched(patch)).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
             Msg::Resize { w, h } if *w == 0 || *h == 0 => Err("a size is at least 1x1".into()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Document mode is the person's (writing.md §1): an agent's state or patch that names a
+    /// different `document_mode` is refused; one that leaves it out keeps the person's.
+    fn mode_kept(&self, v: &Value, actor: Option<&str>) -> Result<(), String> {
+        match (actor, v.get("document_mode")) {
+            (Some(_), Some(m)) if m.as_bool() != Some(self.app.ui.document_mode) => Err("document_mode is the person's choice (space t D) · an agent can't change it".into()),
             _ => Ok(()),
         }
     }
@@ -764,6 +773,7 @@ impl Session {
                     new.focus = crate::app::Focus::List;
                 }
             }
+            new.document_mode = self.app.ui.document_mode;
             // `opened_by` is the TUI's: a panel the agent added is its; the rest keep theirs.
             for p in new.sidebar.open.iter_mut() {
                 p.opened_by = match stack_before.get(&p.key()) {

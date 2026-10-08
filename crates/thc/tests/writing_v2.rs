@@ -97,13 +97,18 @@ fn a1_a_blank_day_is_ready() {
 }
 
 #[test]
-fn a2_a3_enter_breaks_and_a_blank_line_makes_a_note() {
+fn a2_a3_enter_makes_a_note_and_shift_enter_breaks_the_line() {
+    // The Logseq model (writing.md §1, 2026-10-08): Enter starts a note, ⇧Enter (⌃J) breaks
+    // the line inside one.
     let v = V::new("a2");
-    v.type_in("one<cr>two<esc>");
+    v.type_in("one<c-j>two<esc>");
     assert_eq!(v.texts(), ["one\ntwo"], "A2: one note");
     let v = V::new("a3");
+    v.type_in("one<cr>two<esc>");
+    assert_eq!(v.texts(), ["one", "two"], "A3: two notes");
+    let v = V::new("a3b");
     v.type_in("one<cr><cr>two<esc>");
-    assert_eq!(v.texts(), ["one", "two"], "A3: two notes, no empty one");
+    assert_eq!(v.texts(), ["one", "two"], "A3: Enter on the empty note does nothing: no empty one");
 }
 
 #[test]
