@@ -445,17 +445,22 @@ pub fn mouse(app: &mut App, m: ratatui::crossterm::event::MouseEvent, clicks: u8
 /// Once per device, the first time a drag selects in thc: how to get the terminal's own
 /// selection while thc has the mouse (mouse.md §7).
 fn native_selection_hint(app: &mut App) {
-    let flag = app.vault.paths.cache.join("mouse-hint-shown");
-    if flag.exists() {
-        return;
-    }
+    let Some(key) = app.drag_hint.take() else { return };
     let _ = std::fs::create_dir_all(&app.vault.paths.cache);
-    let _ = std::fs::write(&flag, "");
-    let key = match std::env::var("TERM_PROGRAM").as_deref() {
+    let _ = std::fs::write(app.vault.paths.cache.join("mouse-hint-shown"), "");
+    app.info(format!("selected in thc · ⌃C copies · {key}-drag for your terminal's own selection"));
+}
+
+/// The first drag's hint, when this device hasn't shown it yet: the key the terminal's own
+/// selection takes (`App::drag_hint`).
+pub(crate) fn drag_hint_pending(cache: &std::path::Path) -> Option<String> {
+    if cache.join("mouse-hint-shown").exists() {
+        return None;
+    }
+    Some(match std::env::var("TERM_PROGRAM").as_deref() {
         Ok("iTerm.app") | Ok("Apple_Terminal") => "⌥",
         _ => "⇧",
-    };
-    app.info(format!("selected in thc · ⌃C copies · {key}-drag for your terminal's own selection"));
+    }.to_string())
 }
 
 /// A pasted single line that's the path of an existing file (how terminals deliver a dropped
