@@ -23,15 +23,10 @@ ulid = "1"
 ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 sha2 = "0.10"
 
-# caretline (the editor engine) lives at https://github.com/brancusi/caretline and comes from
-# crates.io. An engine fix not yet released is pinned here by git revision of that repo, and
-# this patch is removed once a caretline release contains it. Never patch the engine in this
-# repo; for local work on both, use a path patch to your caretline checkout and don't commit it.
-[patch.crates-io]
-# OVERNIGHT, LOCAL ONLY: caretline 3743263 (wrap, view-stays, Drag, view_motion, then_default, hanging caret, scroll_past_end, nest_joins) isn't
-# pushed, so this branch builds against a private clone beside the repo. Before any push this
-# must become a published caretline version or a pushed git rev (thc-dev board, 82cr9).
-caretline = { path = "../.caretline-for-overnight/crates/caretline" }
+# Local development is pinned to the immutable engine revision in caretline.rev.
+# Use scripts/with-caretline.sh to export that commit outside this checkout and supply the
+# Cargo path override. No mutable sibling dependency is consumed. Publication must wait
+# until this engine revision is available as a public release or accessible Git pin.
 
 [profile.release]
 lto = "fat"

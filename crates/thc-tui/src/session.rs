@@ -64,6 +64,14 @@ pub enum Msg {
     Poll,
     /// Test fixtures: another actor writes to the vault (`THC_TUI_KEYS` only).
     Fixture { fixture: Fixture },
+    /// A layer op (layers.rs): `hint.show`, `highlight`, `focus`, `layer.push`, `tour.start`…
+    /// `req` is the request as the socket took it (`op` and its fields); `actor` the agent it
+    /// came from (None: the person or thc).
+    Layer {
+        req: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+    },
     /// Put something beside the person (`thc ui aside`, sidebar.md §10.3), or close a panel the
     /// actor opened.
     Aside {
@@ -243,6 +251,10 @@ impl Session {
         // draws them as this session did, not as the replaying process would.
         let d = &self.app.derived;
         line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images, "drag_hint": self.app.drag_hint, "cmd_seen": self.app.cmd_seen});
+        // The layer policy decides what agents' layer ops do: replay holds them to the same.
+        if self.app.layer_limits != crate::layers::AgentLimits::default() {
+            line["env"]["layers"] = json!({"agent_limits": self.app.layer_limits});
+        }
         line
     }
 
@@ -257,6 +269,15 @@ impl Session {
         }
         if let Some(b) = env.get("cmd_seen").and_then(Value::as_bool) {
             self.app.cmd_seen = b;
+        }
+        if let Some(l) = env
+            .get("layers")
+            .and_then(|l| l.get("agent_limits"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            self.app.layer_limits = l;
+        } else {
+            self.app.layer_limits = crate::layers::AgentLimits::Off;
         }
         let d = &mut self.app.derived;
         d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
@@ -369,7 +390,11 @@ impl Session {
     /// vault). Starts a new trace segment.
     pub fn restore(&mut self, state: &Value) -> Result<(), String> {
         let new = UiState::from_json_over(&self.app.ui, state, state.get("history").is_none())?;
-        let new = self.same_vault(new)?;
+        let new = if crate::SNAPSHOT.with(|s| s.get()) {
+            self.same_vault_name(new)?
+        } else {
+            self.same_vault(new)?
+        };
         let doc = new.document.clone();
         let frozen = new.rail_frozen.clone();
         let parked = new.main.parked;
@@ -466,6 +491,17 @@ impl Session {
             Msg::SetState { state, actor } => self.parse_state(state).and_then(|s| self.agent_may(&s, actor.as_deref())),
             Msg::Patch { patch, actor } => self.app.ui.patched(patch).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
             Msg::Resize { w, h } if *w == 0 || *h == 0 => Err("a size is at least 1x1".into()),
+            Msg::Layer { req, actor } => {
+                let mut ui = self.app.ui.clone();
+                crate::layers::request(
+                    &mut ui,
+                    req,
+                    actor.as_deref(),
+                    &self.app.layer_limits.limits(),
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            }
             _ => Ok(()),
         }
     }
@@ -480,7 +516,21 @@ impl Session {
         if actor.is_none() {
             return Ok(());
         }
-        for (i, p) in self.app.ui.sidebar.open.iter().enumerate().filter(|(_, p)| p.pinned) {
+        if s.focus_cfg != self.app.ui.focus_cfg {
+            return Err("focus_cfg: an agent cannot change the person's preferences".into());
+        }
+        if s.layers != self.app.ui.layers {
+            return Err("layers: an agent changes layers with layer ops (hint.show, layer.push, …), not a state".into());
+        }
+        for (i, p) in self
+            .app
+            .ui
+            .sidebar
+            .open
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.pinned)
+        {
             let k = p.key();
             match s.sidebar.get(&k) {
                 None => return Err(format!("sidebar.open: {} is pinned (open[{i}]) · a pinned panel is the person's; an agent can't close it", self.app.panel_name(&k))),
@@ -492,6 +542,13 @@ impl Session {
     }
 
     fn same_vault(&self, s: UiState) -> Result<UiState, String> {
+        if self.app.ui.teaching_demo != s.teaching_demo {
+            return Err("teaching_demo is the session's read-only sandbox mode".into());
+        }
+        self.same_vault_name(s)
+    }
+
+    fn same_vault_name(&self, s: UiState) -> Result<UiState, String> {
         if s.vault_name != self.app.ui.vault_name {
             return Err(format!("vault_name is {} here; a state can't switch vaults (open thc on that vault)", self.app.ui.vault_name));
         }
@@ -516,8 +573,104 @@ impl Session {
         Ok(self.pending_effects())
     }
 
-    /// What a message does to the state (and, for writes, the vault).
+    /// What a message does to the state (and, for writes, the vault). Text anchors of layers
+    /// follow what it edited in the open document.
     fn run(&mut self, msg: &Msg) -> Result<(), String> {
+        let before = self.layer_text();
+        self.app.ran_actions.clear();
+        let r = self.run_msg(msg);
+        if self.app.ui.teaching_demo {
+            if self.app.switch_to.take().is_some() {
+                self.app.info("Teaching demo stays in its scratch vault");
+            }
+            self.app.reexec = false;
+            if self.app.editor_request.as_deref() == Some("@config") || self.app.editor_request.as_deref() == Some("@keys") {
+                self.app.editor_request = None;
+                self.app.info("Demo preferences stay isolated; use the regular TUI to configure THC");
+            }
+        }
+        self.observe_text(before);
+        self.tour_after(msg);
+        r
+    }
+
+    /// A walkthrough after a message: its predicates see what the message did (an action ran,
+    /// its kind, the state) and the time, and may move it on; the host patches of the steps
+    /// entered land as a step the walkthrough took (one history step, the toast says whose);
+    /// and an ended one's seen-state goes to this device's cache.
+    fn tour_after(&mut self, msg: &Msg) {
+        if self.app.ui.layers.touring() {
+            let kind = serde_json::to_value(msg).ok().and_then(|v| v.get("msg").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            let now = self.app.ui.now_ms;
+            let mut tour = std::mem::take(&mut self.app.ui.layers.tour);
+            let host = TourAnswers { kind, ran: &self.app.ran_actions, ui: &self.app.ui };
+            let fx = caretline_tour::observe(&mut tour, &host, now);
+            self.app.ui.layers.tour = tour;
+            self.app.ui.layers.effects(fx, now);
+        }
+        let patches = std::mem::take(&mut self.app.ui.layers.host_patches);
+        for (p, actor) in patches {
+            match self.app.ui.patched(&p).and_then(|s| self.same_vault(s)).and_then(|s| {
+                self.agent_may(&s, actor.as_deref()).map(|_| s)
+            }) {
+                Ok(new) => self.set_state(new, actor.as_deref()),
+                Err(e) => self.app.error(format!("walkthrough: a step's host patch: {e}")),
+            }
+        }
+        if std::mem::take(&mut self.app.ui.layers.ended) {
+            crate::layers::save_seen(&self.app.vault.paths.cache, &self.app.ui.layers.tour.seen);
+        }
+    }
+
+    /// Starts tracking the open document's text changes when a layer has a text anchor to
+    /// move (anything left over from before is dropped). True: tracking.
+    fn layer_text(&mut self) -> bool {
+        let want = self.app.ui.layers.has_text_anchors();
+        let Some(d) = self.app.doc.as_mut() else {
+            return false;
+        };
+        if !want && !d.tracking() {
+            // No layer follows the text: nothing to do (and the engine isn't touched).
+            return false;
+        }
+        d.track_changes(false);
+        d.track_changes(want);
+        want
+    }
+
+    /// Text anchors follow the edits a message made: `observe` with the engine's ChangeSet.
+    fn observe_text(&mut self, tracking: bool) {
+        if !tracking {
+            return;
+        }
+        let Some(d) = self.app.doc.as_mut() else {
+            return;
+        };
+        let changes = d.take_changes();
+        d.track_changes(false);
+        if let Some(cs) = changes {
+            let now = self.app.ui.now_ms;
+            // The views showing the open document: the main one, and each sidebar panel that is
+            // a second view of it (no document of its own). Unscoped anchors move only when
+            // the focused view shows it.
+            let mut views = vec!["main".to_string()];
+            let mut focused_here = self.app.ui.focus != crate::app::Focus::Sidebar;
+            if let Some(sb) = self.app.derived.sidebar.as_ref() {
+                for (i, pp) in sb.panels.iter().enumerate() {
+                    if self.app.panels.get(&pp.key).is_some_and(|rt| rt.slot.doc.is_none()) {
+                        views.push(format!("panel:{i}"));
+                        if self.app.ui.focus == crate::app::Focus::Sidebar && self.app.ui.sidebar.focused.as_ref() == Some(&pp.key) {
+                            focused_here = true;
+                        }
+                    }
+                }
+            }
+            let ids: Vec<&str> = views.iter().map(String::as_str).collect();
+            self.app.ui.layers.observe(&cs, caretline_layers::Edited::Views { views: &ids, unscoped: focused_here }, now);
+        }
+    }
+
+    fn run_msg(&mut self, msg: &Msg) -> Result<(), String> {
         match msg.clone() {
             Msg::Tick { now_ms, utc_offset_min } => {
                 self.app.ui.tick(now_ms, utc_offset_min);
@@ -559,6 +712,11 @@ impl Session {
                 self.app.agent_aside(&target, pin, fold, close, actor.as_deref()).map_err(|e| e.message())?;
             }
             Msg::External { patch } => self.external(&patch)?,
+            Msg::Layer { req, actor } => {
+                let limits = self.app.layer_limits.limits();
+                crate::layers::request(&mut self.app.ui, &req, actor.as_deref(), &limits)
+                    .map_err(|e| e.to_string())?;
+            }
             Msg::Frame => {
                 self.app.after_frame();
             }
@@ -585,6 +743,7 @@ impl Session {
         }
         // Anything still unrecorded is recorded first, apart from the step.
         self.sync_external();
+        let before = self.layer_text();
         let did = match &msg {
             Msg::Frame => self.app.after_frame(),
             Msg::Idle => self.app.doc_tick(),
@@ -597,6 +756,7 @@ impl Session {
             },
             _ => unreachable!("not a runtime step: {msg:?}"),
         };
+        self.observe_text(before);
         if did {
             // A poll took in what it found during the step: the line carries that too.
             let foreign = self.drain_log();
@@ -867,6 +1027,27 @@ impl Session {
             other => return Err(format!("format {other}: text, ansi, html or cells")),
         };
         Ok(out)
+    }
+}
+
+/// What a walkthrough's predicates ask of thc after a message (caretline-tour's `TourHost`):
+/// the keymap actions it ran, its kind, and the UI state by top-level field. Editor predicates
+/// (`caret_in`, `changed`, …) answer no for now.
+struct TourAnswers<'a> {
+    kind: String,
+    ran: &'a [String],
+    ui: &'a UiState,
+}
+
+impl caretline_tour::TourHost for TourAnswers<'_> {
+    fn ran(&self, command: &str) -> bool {
+        self.ran.iter().any(|a| a == command)
+    }
+    fn msg(&self, kind: &str) -> bool {
+        self.kind == kind
+    }
+    fn state(&self, key: &str) -> Option<Value> {
+        self.ui.to_json().get(key).cloned()
     }
 }
 

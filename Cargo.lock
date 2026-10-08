@@ -186,7 +186,7 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 
 [[package]]
 name = "caretline"
-version = "0.3.0"
+version = "0.4.0"
 dependencies = [
  "log",
  "ropey",
@@ -197,6 +197,28 @@ dependencies = [
  "unicode-general-category",
  "unicode-segmentation",
  "unicode-width 0.1.12",
+]
+
+[[package]]
+name = "caretline-layers"
+version = "0.1.0"
+dependencies = [
+ "caretline",
+ "serde",
+ "serde_json",
+ "unicode-segmentation",
+ "unicode-width 0.1.12",
+]
+
+[[package]]
+name = "caretline-tour"
+version = "0.1.0"
+dependencies = [
+ "caretline",
+ "caretline-layers",
+ "serde",
+ "serde_json",
+ "toml 1.1.6+spec-1.1.0",
 ]
 
 [[package]]
@@ -2150,7 +2172,7 @@ dependencies = [
  "thc-core",
  "thc-daemon",
  "thc-tui",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
 ]
 
 [[package]]
@@ -2169,7 +2191,7 @@ dependencies = [
  "serde_json",
  "sha2",
  "thiserror 2.0.21",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "ulid",
 ]
 
@@ -2193,6 +2215,8 @@ version = "0.10.1"
 dependencies = [
  "anyhow",
  "caretline",
+ "caretline-layers",
+ "caretline-tour",
  "chrono",
  "foldhash 0.2.0",
  "libc",
@@ -2201,7 +2225,7 @@ dependencies = [
  "serde",
  "serde_json",
  "thc-core",
- "toml",
+ "toml 0.9.12+spec-1.1.0",
  "unicode-segmentation",
  "unicode-width 0.2.2",
 ]
@@ -2276,10 +2300,25 @@ dependencies = [
  "indexmap",
  "serde_core",
  "serde_spanned",
- "toml_datetime",
+ "toml_datetime 0.7.5+spec-1.1.0",
  "toml_parser",
  "toml_writer",
  "winnow 0.7.15",
+]
+
+[[package]]
+name = "toml"
+version = "1.1.6+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "920602543f0911ab71da12c50d59701da54c196d1a2bf5cb4b75667f137a406a"
+dependencies = [
+ "indexmap",
+ "serde_core",
+ "serde_spanned",
+ "toml_datetime 1.1.2+spec-1.1.0",
+ "toml_parser",
+ "toml_writer",
+ "winnow 1.0.4",
 ]
 
 [[package]]
@@ -2287,6 +2326,15 @@ name = "toml_datetime"
 version = "0.7.5+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92e1cfed4a3038bc5a127e35a2d360f145e1f4b971b551a2ba5fd7aedf7e1347"
+dependencies = [
+ "serde_core",
+]
+
+[[package]]
+name = "toml_datetime"
+version = "1.1.2+spec-1.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "2b86d767906c6c42421dcba507eb9d203e779497710a47782a224bb871653053"
 dependencies = [
  "serde_core",
 ]
