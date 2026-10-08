@@ -27,7 +27,7 @@ struct T {
 
 impl T {
     fn start(name: &str, env: &[(&str, &str)]) -> T {
-        let root = std::env::temp_dir().join(format!("thc-orphan-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-orphan-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let mut init = common::thc();

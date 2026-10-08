@@ -10,7 +10,7 @@ use thc_core::vault::{self, Paths, Vault};
 
 #[test]
 fn old_minutes_and_repeats_replay_unchanged() {
-    let root = std::env::temp_dir().join(format!("thc-minutes-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-minutes-{}", thc_core::id::new_id()));
     vault::init(&root.join("v"), None, None).unwrap();
     let paths = Paths { vault: root.join("v"), cache: root.join("cache") };
     let mut v = Vault::open(paths, Actor { kind: "human".into(), name: None }, "test").unwrap();

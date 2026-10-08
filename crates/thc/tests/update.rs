@@ -30,7 +30,7 @@ fn run(bin: &Path, args: &[&str], env: &[(&str, String)]) -> (i32, String, Strin
 #[test]
 fn signed_updates_install_and_roll_back() {
     let real = Path::new(env!("CARGO_BIN_EXE_thc"));
-    let tmp = std::env::temp_dir().join(format!("thc-update-{}", std::process::id()));
+    let tmp = thc_core::scratch::dir(&format!("thc-update-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(tmp.join("stage")).unwrap();
     let installed = tmp.join("thc");

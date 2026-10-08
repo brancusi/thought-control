@@ -10,7 +10,7 @@ use std::process::Command;
 #[test]
 fn migrating_from_the_app_replaces_the_link() {
     let real = Path::new(env!("CARGO_BIN_EXE_thc"));
-    let home = std::env::temp_dir().join(format!("thc-migrate-{}", std::process::id()));
+    let home = thc_core::scratch::dir(&format!("thc-migrate-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&home);
     let app = home.join("Applications/Thought Central.app");
     std::fs::create_dir_all(app.join("Contents/Helpers")).unwrap();

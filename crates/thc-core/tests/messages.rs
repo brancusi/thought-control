@@ -8,7 +8,7 @@ use thc_core::{
 
 #[test]
 fn receipt_writes_on_two_devices_converge_without_hiding_other_actors() {
-    let root = std::env::temp_dir().join(format!("thc-messages-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-messages-{}", thc_core::id::new_id()));
     let open = |name: &str| {
         let path = root.join(name);
         vault::init(&path, None, None).unwrap();

@@ -21,7 +21,7 @@ struct Pty {
 
 #[test]
 fn remap_suspends_for_the_editor_and_reloads_live_keys() {
-    let root = std::env::temp_dir().join(format!("thc-pty-remap-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-pty-remap-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("cfg")).unwrap();
     for args in [vec!["init", "v"], vec!["todo", "Editor regression", "--due", "today"], vec!["todo", "Live regression", "--due", "tomorrow"]] {
@@ -188,7 +188,7 @@ fn the_wezterm_port_reproduces_the_lost_capital() {
 
 #[test]
 fn capitals_survive_the_kitty_keyboard_protocol() {
-    let root = std::env::temp_dir().join(format!("thc-kitty-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-kitty-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut init = common::thc();
@@ -230,7 +230,7 @@ fn capitals_survive_the_kitty_keyboard_protocol() {
 /// restarted its blink), a frame goes out as one synchronized update, and writing shows a bar.
 #[test]
 fn an_idle_screen_writes_nothing() {
-    let root = std::env::temp_dir().join(format!("thc-idle-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-idle-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut init = common::thc();
@@ -281,7 +281,7 @@ fn an_idle_screen_writes_nothing() {
 /// over SSH by default) and released on quit; none at all with `mouse = false`.
 #[test]
 fn mouse_modes_are_requested_and_released() {
-    let root = std::env::temp_dir().join(format!("thc-mousemodes-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-mousemodes-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut init = common::thc();
@@ -314,7 +314,7 @@ fn mouse_modes_are_requested_and_released() {
 /// reset) and keeps what was typed but not saved: recovery.json, put back on the next open.
 #[test]
 fn a_panic_restores_the_terminal_and_keeps_what_was_typed() {
-    let root = std::env::temp_dir().join(format!("thc-crash-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-crash-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str], env: &[(&str, &str)]| {
@@ -362,7 +362,7 @@ fn a_panic_restores_the_terminal_and_keeps_what_was_typed() {
 /// being typed saved, instead of dying mid-line.
 #[test]
 fn a_hangup_saves_the_line_being_typed() {
-    let root = std::env::temp_dir().join(format!("thc-hup-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-hup-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {
@@ -394,7 +394,7 @@ fn a_hangup_saves_the_line_being_typed() {
 /// the typed text must reach the screen before any Esc.
 #[test]
 fn typing_in_a_new_page_shows_at_once() {
-    let root = std::env::temp_dir().join(format!("thc-newpage-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-newpage-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut init = common::thc();
@@ -429,7 +429,7 @@ fn typing_in_a_new_page_shows_at_once() {
 /// paragraph's last row; what's typed must land at the next note's start.
 #[test]
 fn arrows_walk_down_a_wrapped_paragraph_into_the_next_note() {
-    let root = std::env::temp_dir().join(format!("thc-arrows-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-arrows-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {
@@ -479,7 +479,7 @@ fn arrows_walk_down_a_wrapped_paragraph_into_the_next_note() {
 /// a minute).
 #[test]
 fn a_running_tui_notices_a_newer_thc_installed_under_it() {
-    let root = std::env::temp_dir().join(format!("thc-stale-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-stale-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(root.join("bin")).unwrap();
     let bin = root.join("bin/thc");
@@ -585,7 +585,7 @@ fn view_on(screen: &[String]) -> String {
 /// typing, and from the Search input with text.
 #[test]
 fn tab_always_changes_view_in_a_real_terminal() {
-    let root = std::env::temp_dir().join(format!("thc-tabs-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-tabs-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let mut init = common::thc();
@@ -641,7 +641,7 @@ fn tab_always_changes_view_in_a_real_terminal() {
 /// the end, ⌘⌫ ⌃U, ⌥⌫ ESC DEL.
 #[test]
 fn macos_editing_keys_as_wezterm_sends_them() {
-    let root = std::env::temp_dir().join(format!("thc-mackeys-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-mackeys-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {
@@ -687,7 +687,7 @@ fn macos_editing_keys_as_wezterm_sends_them() {
 /// `[tui] images = "chips"` draws none.
 #[test]
 fn an_attached_image_draws_inline_in_wezterm() {
-    let root = std::env::temp_dir().join(format!("thc-inline-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-inline-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {
@@ -730,7 +730,7 @@ fn an_attached_image_draws_inline_in_wezterm() {
 /// pastes the text; an empty bracketed paste (an image-only clipboard) looks for the image.
 #[test]
 fn screenshots_by_drag_and_by_cmd_v() {
-    let root = std::env::temp_dir().join(format!("thc-cmdv-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-cmdv-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {
@@ -787,7 +787,7 @@ fn screenshots_by_drag_and_by_cmd_v() {
 /// sandbox's file, never the real one.
 #[test]
 fn cmd_c_x_a_z_work_in_thc() {
-    let root = std::env::temp_dir().join(format!("thc-cmdkeys-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-cmdkeys-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let cli = |args: &[&str]| {

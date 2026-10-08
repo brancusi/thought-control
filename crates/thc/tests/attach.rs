@@ -26,7 +26,7 @@ fn png() -> Vec<u8> {
 
 #[test]
 fn t3_t6_t7_attach_show_doctor_and_the_limit() {
-    let root = std::env::temp_dir().join(format!("thc-attach-cli-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-attach-cli-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     ok(&root, &["init", "vault"]);
@@ -70,7 +70,7 @@ fn t3_t6_t7_attach_show_doctor_and_the_limit() {
 /// chip, and Enter on it opens the file (not launched in a snapshot).
 #[test]
 fn t1_t2_paste_and_drop_an_image_in_the_tui() {
-    let root = std::env::temp_dir().join(format!("thc-attach-tui-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-attach-tui-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     ok(&root, &["init", "vault"]);
@@ -121,7 +121,7 @@ fn t1_t2_paste_and_drop_an_image_in_the_tui() {
 /// caret there and Enter starts a new line after it; ⌃O and a double-click open it.
 #[test]
 fn moving_onto_an_attachment_never_opens_it() {
-    let root = std::env::temp_dir().join(format!("thc-attach-noopen-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-attach-noopen-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     ok(&root, &["init", "vault"]);

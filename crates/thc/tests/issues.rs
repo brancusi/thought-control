@@ -18,7 +18,7 @@ fn texts(root: &std::path::Path, q: &str) -> Vec<String> {
 
 #[test]
 fn i5_an_agents_done_waits_in_to_review_until_accepted() {
-    let root = std::env::temp_dir().join(format!("thc-issues-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-issues-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     thc(&root, "human", &["init", "vault"]);
@@ -45,7 +45,7 @@ fn i5_an_agents_done_waits_in_to_review_until_accepted() {
 /// and Esc goes back to that page.
 #[test]
 fn i2_an_issue_opens_as_a_document() {
-    let root = std::env::temp_dir().join(format!("thc-issues-doc-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-issues-doc-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     thc(&root, "human", &["init", "vault"]);

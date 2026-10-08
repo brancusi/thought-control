@@ -834,7 +834,8 @@ pub fn scratch_copy(paths: &Paths) -> Result<Paths> {
 /// log is append-only, so this is the vault exactly as it was then (FORMAT.md). A file shorter
 /// than the frontier says means another vault, or a log that lost lines: an error.
 pub fn scratch_copy_at(paths: &Paths, at: Option<&Frontier>) -> Result<Paths> {
-    let root = std::env::temp_dir().join(format!("thc-snapshot-{}-{}", std::process::id(), crate::id::new_id()));
+    // Gone when this process exits (crate::scratch); callers done sooner remove it themselves.
+    let root = crate::scratch::dir(&format!("thc-snapshot-{}-{}", std::process::id(), crate::id::new_id()));
     fn copy_dir(from: &Path, to: &Path, skip: &dyn Fn(&Path) -> bool) -> Result<()> {
         fs::create_dir_all(to)?;
         for e in fs::read_dir(from)? {

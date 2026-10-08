@@ -19,7 +19,7 @@ fn thc(root: &Path, args: &[&str]) -> (i32, String, String) {
 /// A vault with the duplicates old versions could make: two roots for one day (each with a
 /// line), two #lisbon tags (each tagging a line), and an empty tag.
 fn seeded(name: &str) -> PathBuf {
-    let root = std::env::temp_dir().join(format!("thc-doctor-{name}-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-doctor-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     vault::init(&root.join("vault"), None, None).unwrap();
     let paths = Paths { vault: root.join("vault"), cache: root.join("cache") };
