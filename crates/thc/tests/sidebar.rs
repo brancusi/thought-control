@@ -161,7 +161,7 @@ fn s3_alt_s_focuses_the_panel_and_esc_returns() {
     let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,8><m-s>"));
     assert!(f.contains("│▌▾ ¶ Health"), "{f}");
     let bar = f.lines().last().unwrap();
-    assert!(bar.contains("¶ health · aside 1 of 2") && bar.contains("⌥S main") && bar.contains("⌥J ⌥K panel") && bar.contains("⌥M to main"), "{bar}");
+    assert!(bar.contains("¶ health · aside 1 of 2") && bar.contains("⌥S main") && bar.contains("⌃T task") && bar.contains("⌃O open") && bar.contains("F1 keys"), "{bar}");
     let back = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,8><m-s><esc>"));
     assert!(!back.contains("▌▾"), "{back}");
     assert!(back.lines().last().unwrap().contains("⌃T task"), "focus is back in main");

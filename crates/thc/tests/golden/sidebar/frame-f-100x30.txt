@@ -2,11 +2,11 @@
 ────────────────────────────────────────┬──────────────━━━━━━━━━────────────────────────────────────
        § Journal › WED 07 OCT 2026 · TOD│▌▾ ¶ Health                                           ↗  ×
        SUN 04   MON 05 •   TUE 06 •   [W│     · Dr. Patel, 555-0100, office on 4th St
-       ─────────────────────────────────│   [ ] Schedule annual physical                 due oct 17
-                                        │   [ ] Refill prescription       oct 15 · !med · ↻ monthly
-     · Morning: slept well, 30 min run #│   ▸ linked from 1
-   [ ] Call dentist to reschedule #healt│
-     · Dentist appointment [[Health]]   │
+       ─────────────────────────────────│   [ ] Schedule annual physical
+                                        │                                                due oct 17
+     · Morning: slept well, 30 min run #│   [ ] Refill prescription
+   [ ] Call dentist to reschedule #healt│                                 oct 15 · !med · ↻ monthly
+     · Dentist appointment [[Health]]   │   ▸ linked from 1
    [ ] Pay rent                         │
      · Mom's birthday, call her         │
    [ ] Summarize unread newsletters into│
@@ -27,4 +27,4 @@
                                         │
                                         │
                                         │
- ¶ health · aside 1 of 1 · autosaved   ⌥S main  ⌥J ⌥K panel  ⌥C fold  ⌥W close  ⌥M to main  F1 keys
+ ¶ health · aside 1 of 1 · autosaved                ⌥S main  ⌃T task  ⌃O open  F1 keys   thc X.Y.Z
