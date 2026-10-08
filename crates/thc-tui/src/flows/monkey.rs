@@ -20,9 +20,6 @@ impl Rng {
 
 fn walk(seed: u64, steps: usize, size: (u16, u16)) {
     let mut f = flow_with(&format!("monkey {seed:x}"), Size::Small, size);
-    // Empty notes away from the caret show live but not on reopen (h8vsn). (The caret's own
-    // empty note is the flows' rule, not a known.)
-    f.known("h8vsn", Known::Restore);
     f.keys("<c-o>Q4 Plan<cr>");
     let mut rng = Rng(seed);
     let chars = ["a", "e", "t", " ", "s", "日", "🙂", "é", "W", ".", "o", "n"];

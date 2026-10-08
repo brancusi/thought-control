@@ -802,13 +802,6 @@ impl Flow {
             let (w, h) = self.s.size;
             let a = self.s.render(w, h, "text").unwrap().frame.unwrap();
             let b = fresh.render(w, h, "text").unwrap().frame.unwrap();
-            // By design the caret's own empty note is never saved (a fresh line, a line cut
-            // empty): a fresh session lays the page out without it. The rule, not a known: the
-            // live frame without that row is what a fresh session draws.
-            let a = match (self.unsaved_caret_row(), self.shot.doc_view) {
-                (Some(y), Some(r)) => without_doc_row(&a, y, r.x, self.shot.side_x.unwrap_or(w), r.y + r.height),
-                _ => a,
-            };
             let _ = std::fs::remove_dir_all(root);
             let (a, b) = match self.known.iter().find(|(_, k)| *k == Known::Rail) {
                 Some((task, _)) => {
@@ -823,18 +816,6 @@ impl Flow {
                 panic!("\nflow `{}`: its state restored on a fresh session draws differently\n--- live ---\n{}\n--- fresh ---\n{}\n", self.name, numbered_str(&a), numbered_str(&b));
             }
         }
-    }
-
-    /// The screen row of the caret's note when it's empty and so won't be saved (the rule in
-    /// `done`'s restore check).
-    fn unsaved_caret_row(&self) -> Option<u16> {
-        let d = self.s.app.doc.as_ref()?;
-        // (Last, it's where a fresh session arrives: on a fresh line at the end, drawn alike.)
-        let last = std::ptr::eq(d.caret_block(), d.blocks().last()?);
-        if !d.caret_block().text.trim().is_empty() || last {
-            return None;
-        }
-        self.shot.cursor.map(|(_, y)| y)
     }
 
     // ---- expectations ------------------------------------------------------------------
@@ -1114,36 +1095,6 @@ fn tokens(script: &str) -> Vec<String> {
 }
 
 /// A frame with the left rail (up to its `│`, when the frame has one) blanked.
-/// `frame` with the document's row `y` taken out: the document's columns (from the column
-/// before `x0`'s nearest `│`, to `x1`) of the rows below it, to `bottom`, move up one, and a
-/// blank row comes in at the bottom.
-fn without_doc_row(frame: &str, y: u16, x0: u16, x1: u16, bottom: u16) -> String {
-    let mut rows: Vec<Vec<char>> = frame.lines().map(|l| l.chars().collect()).collect();
-    let (y, bottom) = (y as usize, (bottom as usize).min(rows.len()));
-    if y >= bottom {
-        return frame.to_string();
-    }
-    let left = rows[y].iter().take(x0 as usize).rposition(|c| *c == '│').map_or(0, |i| i + 1);
-    // Up to the main area's own border (the sidebar's or the detail pane's `│`), if it has one.
-    let right = (x1 as usize).min(rows[y].len());
-    let right = rows[y][..right].iter().rposition(|c| *c == '│').filter(|&i| i >= x0 as usize).unwrap_or(right);
-    let cut = |r: &Vec<char>| -> Vec<char> { (left..right).map(|i| r.get(i).copied().unwrap_or(' ')).collect() };
-    let moved: Vec<Vec<char>> = (y + 1..bottom).map(|i| cut(&rows[i])).chain([vec![' '; right.saturating_sub(left)]]).collect();
-    for (k, i) in (y..bottom).enumerate() {
-        let r = &mut rows[i];
-        let n = r.len();
-        if n < right {
-            r.resize(right, ' ');
-        }
-        r.splice(left..right, moved[k].iter().copied());
-        // As wide as the row was (a frame's rows keep their trailing spaces, or don't).
-        while r.len() > n && r.last() == Some(&' ') {
-            r.pop();
-        }
-    }
-    rows.iter().map(|r| r.iter().collect::<String>()).collect::<Vec<_>>().join("\n")
-}
-
 fn without_rail(frame: &str) -> String {
     frame
         .lines()

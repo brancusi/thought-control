@@ -48,6 +48,26 @@ pub struct DocumentState {
     /// restored session keeps it, or leaves it out, as this one does.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub fresh_end: bool,
+    /// The caret is on an empty line not saved (never is: an empty line isn't a note): where
+    /// it is, so a restored session has it there too (h8vsn). None when `caret_id` names a
+    /// note, or the line is the fresh one at the end (`fresh_end`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caret_new: Option<NewCaretLine>,
+    /// Blank space the caret's note ends with that saving trims (a line break typed at its end,
+    /// still under the caret): a restored session has it under the caret too (h8vsn).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caret_tail: Option<String>,
+}
+
+/// An empty, unsaved caret line (`DocumentState::caret_new`): after which note (None: first),
+/// how deep, and what kind.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NewCaretLine {
+    pub after: Option<String>,
+    #[serde(default)]
+    pub depth: usize,
+    pub kind: thc_core::outline::Kind,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

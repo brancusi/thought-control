@@ -233,6 +233,9 @@ pub struct Doc {
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
     /// you type in). False for a view nobody types in now (a panel without the keyboard).
     pub hold_caret_line: bool,
+    /// A save took empty lines out above the caret: the next frame keeps the caret on the
+    /// screen row it was on (the view scrolls by what went), as a reflow does.
+    pub repin: bool,
     /// The fresh line the document arrived with (`caret_to_end`), by its id while it's there:
     /// it goes when it's left empty (`Doc::drop_fresh_end`).
     pub(super) fresh_end: Option<String>,
@@ -251,7 +254,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, fresh_end: None }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, repin: false, fresh_end: None }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -667,6 +670,19 @@ impl Doc {
             }
         }
         self.engine.deleted_mut().extend(emptied);
+        // An empty line away from the caret isn't a note and is never saved: it goes now,
+        // with the save, so the page you see is the page you reopen (h8vsn). The caret's own
+        // empty line stays (it's where you're about to type); so does a line in conflict.
+        let gone = |i: usize, l: &Line| l.is_new && l.text.trim().is_empty() && i != caret && !l.conflict;
+        let mut caret = caret;
+        if self.engine.lines().len() > 1 && self.engine.lines().iter().enumerate().any(|(i, l)| gone(i, l)) {
+            let keep: Vec<bool> = self.engine.lines().iter().enumerate().map(|(i, l)| !gone(i, l)).collect();
+            let above = keep[..caret].iter().filter(|k| !**k).count();
+            caret -= above;
+            self.repin |= above > 0;
+            let mut k = keep.iter();
+            self.engine.lines_mut().retain(|_| *k.next().expect("one flag a line"));
+        }
         let mut ops = Vec::new();
         let mut parsed = Vec::new();
         let mut afters = HashMap::new();

@@ -389,7 +389,13 @@ impl Session {
                 if !ds.caret_id.is_empty() {
                     // The caret goes back as it does on reopening (a remembered caret), with the
                     // fresh line the document arrived with if the session had it still.
-                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, !ds.fresh_end);
+                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id.clone(), byte: ds.caret_byte }, !ds.fresh_end);
+                    if let Some(tail) = &ds.caret_tail {
+                        d.restore_caret_tail(&ds.caret_id, tail, ds.caret_byte);
+                    }
+                } else if let Some(n) = &ds.caret_new {
+                    // An empty line the caret was on, never saved: back where it was (h8vsn).
+                    d.caret_to_new_line(n.after.as_deref(), n.depth, n.kind);
                 }
             }
             // The scroll is a row of the document as laid out at the session's size: lay it out
@@ -811,6 +817,8 @@ impl Session {
             DocumentState {
                 target: Some(d.target.clone()),
                 caret_id: if d.caret_block().is_new { String::new() } else { a.id },
+                caret_new: d.new_caret_line(),
+                caret_tail: d.caret_tail(),
                 caret_byte: a.byte,
                 scroll: d.scroll(),
                 dirty: d.blocks().iter().any(|l| l.edited()),
