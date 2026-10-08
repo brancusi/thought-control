@@ -5,18 +5,18 @@
        ───────────────────────────────────────────────────────────────────────────────────── |       habit stacking
                                                                                              |   [ ] Read The Pragmatic Programmer, ch.
      · Morning: slept well, 30 min run #health                                               |       1-3
-   [ ] Call dentist to reschedule #health                                    due fri · !high |   + linked from 1
-     · Dentist appointment [[Health]]                                              tue 14:00 |
-   [ ] Pay rent                                                        sat 09:00 · ↻ monthly | - P Health                                 x
-     · Mom's birthday, call her                                                 oct 19 10:00 |     · Dr. Patel, 555-0100, office on 4th St
-   [ ] Summarize unread newsletters into [[Reading List]]                       due tomorrow |   [ ] Schedule annual physical    due oct 17
+   [ ] Call dentist to reschedule #health                                   due fri · !high  |   + linked from 1
+     · Dentist appointment [[Health]]                                             tue 14:00  |
+   [ ] Pay rent                                                       sat 09:00 · ↻ monthly  | - P Health                                 x
+     · Mom's birthday, call her                                                oct 19 10:00  |     · Dr. Patel, 555-0100, office on 4th St
+   [ ] Summarize unread newsletters into [[Reading List]]                      due tomorrow  |   [ ] Schedule annual physical    due oct 17
                                                                                              |   [ ] Refill prescription
                                                                                              |                    oct 15 · !med · ↻ monthly
                                                                                              |   + linked from 1
        ──────────────────────────────────── also today ───────────────────────────────────── |
-   [ ] Water plants                                                    ¶ Home · today · ↻ 3d |
-   [ ] Replace furnace filter                                        ¶ Home · today · ↻ 3mo! |
-   [x] Renew passport #admin                                       § tue oct 06 · done 09:12 |
+   [ ] Water plants                                                   ¶ Home · today · ↻ 3d  |
+   [ ] Replace furnace filter                                       ¶ Home · today · ↻ 3mo!  |
+   [x] Renew passport #admin                                      § tue oct 06 · done 09:12  |
                                                                                              |
                                                                                              |
                                                                                              |

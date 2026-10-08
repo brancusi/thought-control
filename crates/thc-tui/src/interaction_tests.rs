@@ -347,3 +347,20 @@ fn the_caret_after_a_space_that_ends_a_row_stays_on_the_row() {
     assert_eq!(rows, 1, "one row, the space and the caret in its margin");
     assert_eq!(f.cursor.map(|c| c.1), Some(0));
 }
+
+/// The meta never runs under the scrollbar: its column is kept whether or not one shows (the
+/// caret's `↗ open` chip read `↗ ope` on a long page at 120 columns beside the rail).
+#[test]
+fn the_meta_keeps_clear_of_the_scrollbar() {
+    for size in [(120u16, 32u16), (100, 30), (200, 50)] {
+        let (_s, mut s) = open_plan(size, &format!("meta-bar-{}", size.0));
+        let (rows, _) = frame(&mut s);
+        let (x, y) = find(&rows, "[[Garden]]");
+        keys(&mut s, &format!("<aclick:{},{y}>", x + 4));
+        let (rows, _) = frame(&mut s);
+        let row = &rows[y as usize];
+        assert!(row.contains("↗ open"), "{size:?}: the chip whole: {row}");
+        let last: String = row.chars().last().into_iter().collect();
+        assert!(matches!(last.as_str(), "│" | "┃" | " "), "{size:?}: the scrollbar's column: {row}");
+    }
+}
