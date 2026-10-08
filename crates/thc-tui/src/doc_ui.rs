@@ -236,6 +236,7 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
     let detail = app.detail_shows();
     let typewriter = ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
     let mut g = ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, sw, detail, 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter };
+    let pending = app.doc_pending_scroll.take();
     let d = app.doc.as_mut().unwrap();
     d.set_view(&g);
     // Whether the meta gets its own row follows the saved meta, never the live chip: lines
@@ -272,6 +273,10 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
         g.extra_rows = after.iter().map(|(&i, a)| (i, a.meta_row as u16 + a.image.map_or(0, |(n, _)| n))).collect();
         g.extra_rows.sort();
         d.set_view(&g);
+    }
+    // A remembered scroll goes on now the view has its width (`App::doc_pending_scroll`).
+    if let Some((row, free)) = pending {
+        d.set_scroll(row, free);
     }
     let f = d.frame();
     let rows = f

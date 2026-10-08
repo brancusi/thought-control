@@ -246,6 +246,11 @@ impl Doc {
 
     /// The first row on screen, as a row of the whole document.
     pub fn scroll(&self) -> usize {
+        // At the top there's nothing to count (and a view never laid out needn't index its
+        // rows to say so: opening a 5,000-line page beside, vw384).
+        if self.scroll_anchor() == (0, 0) {
+            return 0;
+        }
         self.scroll_rows().1
     }
 

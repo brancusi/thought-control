@@ -354,10 +354,15 @@ impl App {
             Some(Target::Page { .. }) => {
                 let pages = s.nodes_where(&format!("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0 AND {} ORDER BY n.title COLLATE NOCASE", thc_core::views::HIDDEN_SQL), &[]).unwrap_or_default();
                 let mut open: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                if let Ok(mut st) = s.conn.prepare(
-                    "WITH RECURSIVE t(id, root) AS (SELECT id, id FROM nodes WHERE parent IS NULL AND title IS NOT NULL AND is_tag = 0 AND deleted = 0 \
-                     UNION ALL SELECT n.id, t.root FROM nodes n JOIN t ON n.parent = t.id WHERE n.deleted = 0) \
-                     SELECT t.root, count(*) FROM t JOIN nodes x ON x.id = t.id WHERE x.status IN ('todo','doing','waiting') GROUP BY t.root",
+                // Each open task climbs to its page (not every page walked down to its tasks: the
+                // whole vault on every open, a third of opening a 5,000-line page, vw384). A
+                // deleted node on the way stops the climb, as it stopped the walk down (UNION, not
+                // UNION ALL: a parent loop, which the store shouldn't have, still ends).
+                if let Ok(mut st) = s.conn.prepare_cached(
+                    "WITH RECURSIVE up(task, cur) AS (SELECT id, id FROM nodes WHERE status IN ('todo','doing','waiting') AND deleted = 0 \
+                     UNION SELECT up.task, n.parent FROM up JOIN nodes n ON n.id = up.cur WHERE n.parent IS NOT NULL AND n.deleted = 0) \
+                     SELECT r.id, count(*) FROM up JOIN nodes r ON r.id = up.cur \
+                     WHERE r.parent IS NULL AND r.title IS NOT NULL AND r.is_tag = 0 AND r.deleted = 0 GROUP BY r.id",
                 ) {
                     if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
                         for (id, n) in rows.flatten() {
@@ -469,6 +474,7 @@ impl App {
     }
 
     fn open_doc(&mut self, target: Target) {
+        self.doc_pending_scroll = None;
         let same = |a: &Target, b: &Target| match (a, b) {
             (Target::Page { id: x, .. }, Target::Page { id: y, .. }) => x == y,
             (a, b) => a == b,
@@ -481,7 +487,7 @@ impl App {
             if let Some(mut d) = self.adopt_panel_doc(&target) {
                 if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
                     if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, false) {
-                        d.set_scroll(scroll.min(i), false);
+                        self.doc_pending_scroll = Some((scroll.min(i), false));
                     }
                 }
                 self.doc_line_id = Some(d.caret_block().id.clone());
@@ -508,7 +514,8 @@ impl App {
             eprintln!("open: render {:.1} ms · buffer {:.1} ms · {} lines", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3, blocks.len());
         }
         let remembered = self.carets.get(&caret_key(&d.target)).cloned();
-        arrive(&mut d, remembered);
+        // The remembered scroll goes on at the first layout (`doc_pending_scroll`).
+        self.doc_pending_scroll = arrive(&mut d, remembered);
         // Lines a crash left unsaved come back, one ⌃Z away (recover.rs), and save at once.
         let mut recovered_n = 0;
         if let Some(rec) = recovered {
@@ -1453,12 +1460,12 @@ fn clipboard_image() -> Option<Vec<u8>> {
 /// The alternatives weighed: (B) arrive at the top and let the first key start a note above the
 /// first one (the page shifts two rows at that key), (C) arrive at the top and type into the
 /// first note (it glued: `helloGoals for the quarter`).
-pub(crate) fn arrive(d: &mut Doc, remembered: Option<(String, usize, usize)>) {
+/// The scroll it returns is the remembered one, for the view's first layout: rows count as the
+/// view's width wraps them, and a document just read has no width yet (vw384).
+pub(crate) fn arrive(d: &mut Doc, remembered: Option<(String, usize, usize)>) -> Option<(usize, bool)> {
     d.caret_to_end(true);
-    if let Some((line, byte, scroll)) = remembered {
-        // (The fresh line isn't needed when the caret goes back.)
-        if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, true) {
-            d.set_scroll(scroll.min(i), false);
-        }
-    }
+    let (line, byte, scroll) = remembered?;
+    // (The fresh line isn't needed when the caret goes back.)
+    let i = d.restore_caret(&crate::editor::Anchor { id: line, byte }, true)?;
+    Some((scroll.min(i), false))
 }

@@ -96,7 +96,9 @@ impl Store {
     pub fn open(path: &Path) -> Result<Store> {
         let conn = Connection::open(path).with_context(|| format!("opening store {}", path.display()))?;
         // Per-connection settings only; WAL is persistent and set with the schema below.
-        conn.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        // Temp tables and sorts stay in memory: a 5,000-block page's ORDER BY spilled to temp
+        // files in TMPDIR, a third of opening it (vw384).
+        conn.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY;")?;
         let s = Store { conn };
         // Every read opens the store, so skip the schema batch (dozens of CREATE … IF NOT
         // EXISTS) when `user_version` already carries this schema's fingerprint (SPEC §8).
