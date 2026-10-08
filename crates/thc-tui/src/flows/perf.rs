@@ -98,6 +98,27 @@ fn perf_typing_beside_a_panel() {
 
 #[test]
 #[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+fn perf_typing_with_three_panels_one_on_the_same_page() {
+    // The panes budget (docs/design/panes.md): typing under 4 ms with three panels open, one
+    // of them on the 5,000-line page being typed in, in the main view and in that panel.
+    let mut over = Vec::new();
+    let (mut f, title) = page(Size::Huge);
+    for t in [title, "Garden", "Q4 Plan"] {
+        f.msg(&format!("{t} beside"), Motion::Any, Msg::Aside { target: t.into(), pin: false, fold: false, close: false, actor: None });
+    }
+    f.expect_panels(3);
+    f.keys("<c-home>").click_caret(doc_at("Line 12:", 8)).type_text(&super::typing::WORDS.repeat(3));
+    budget(&f, "type", "typing in main, 3 panels (1 on the same page)", 4.0, &mut over);
+    f.timings.clear();
+    f.timed_steps.clear();
+    f.click(text("Line 3:").in_side()).type_text(&super::typing::WORDS.repeat(3));
+    budget(&f, "type", "typing in its panel, beside main on the page", 4.0, &mut over);
+    f.done();
+    held(over);
+}
+
+#[test]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
 fn perf_page_open() {
     let mut over = Vec::new();
     for size in [Size::Long, Size::Huge] {
