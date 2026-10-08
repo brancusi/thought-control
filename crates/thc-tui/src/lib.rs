@@ -462,6 +462,16 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
     let mut cmd_release = cmd_click::CmdRelease::default();
     let mut shift_capture = cmd_click::ShiftCapture::detect();
     let mut samples: Vec<f64> = Vec::new();
+    // THC_TUI_TRACE=1: where a slow key's time went, phase by phase (tui-trace-slow.log).
+    let mut phases: Vec<(&'static str, f64)> = Vec::new();
+    let mut phase_at = Instant::now();
+    let mut phase = |name: &'static str, phases: &mut Vec<(&'static str, f64)>, on: bool| {
+        if on {
+            let now = Instant::now();
+            phases.push((name, (now - phase_at).as_secs_f64() * 1000.0));
+            phase_at = now;
+        }
+    };
     let result = (|| -> Result<()> { loop {
         // The terminal went away: save and leave before drawing into it (a draw would fail
         // first and lose the line being typed).
@@ -482,8 +492,11 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 s.readvertise(&session.app.ui.vault_name, &real);
             }
         }
+        let tracing = trace && key_at.is_some();
+        phase("loop", &mut phases, tracing);
         // What changed outside messages (the daemon, a poll, an idle save) is recorded first.
         session.sync_external();
+        phase("sync_external", &mut phases, tracing);
         // Protocol requests that arrived while the last frame was drawn.
         if let Some(s) = server.as_mut() {
             s.pump(session);
@@ -499,15 +512,25 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if session.app.ui.wants_clock(runtime_effects::wall_clock().0) || session.app.doc_wants_clock() {
             session.tick_wall();
         }
+        phase("pump+tick", &mut phases, tracing);
         let app = &mut session.app;
         app.drain_update();
         // What a crash now would lose, for the panic hook (recover.rs).
         recover::note(app);
+        phase("drain_update+recover", &mut phases, tracing);
         terminal.draw(|f| ui::draw_app(f, app))?;
         draw_images(terminal, app)?;
         terminal.backend_mut().cursor_bar(wants_bar(app))?;
+        phase("draw", &mut phases, tracing);
         if let Some(t) = key_at.take() {
-            samples.push(t.elapsed().as_secs_f64() * 1000.0);
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            samples.push(ms);
+            if ms > 4.0 {
+                let line = format!("{ms:.2} ms: {}\n", phases.iter().filter(|(n, t)| *n != "wait" && *t >= 0.05).map(|(n, t)| format!("{n} {t:.2}")).collect::<Vec<_>>().join(" · "));
+                let path = session.app.vault.paths.cache.join("tui-trace-slow.log");
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+            }
+            phases.clear();
         }
         session.runtime(Msg::Frame);
         let app = &mut session.app;
@@ -609,12 +632,15 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if ready {
             session.sync_external();
             session.tick_wall();
+            phase("tick", &mut phases, trace && key_at.is_some());
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {
                 first = false;
                 let ev = event::read()?;
                 if trace && key_at.is_none() && matches!(ev, Event::Key(_) | Event::Paste(_)) {
                     key_at = Some(Instant::now());
+                    phases.clear();
+                    phase("wait", &mut phases, true);
                 }
                 let msg = match ev {
                     Event::Key(k) if k.kind == KeyEventKind::Press && cmd_release.is_marker(&k) => cmd_release.release(),
@@ -657,6 +683,7 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if !ready && session.held_drag_in().is_some() {
             session.tick_wall();
         }
+        phase("keys", &mut phases, trace && key_at.is_some());
         if let Some(s) = server.as_mut() {
             s.announce(session, "terminal");
         }
@@ -670,16 +697,22 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         }
         // The runtime's steps that touch the vault are recorded when they do something, so a
         // trace replays them where they happened (session.rs).
+        let tracing = trace && key_at.is_some();
+        phase("announce", &mut phases, tracing);
         session.runtime(Msg::Idle);
+        phase("idle", &mut phases, tracing);
         let app = &mut session.app;
         app.drain_live();
+        phase("drain_live", &mut phases, tracing);
         app.check_installed(false);
         app.check_registry();
+        phase("checks", &mut phases, tracing);
         // With the daemon live, changes arrive as events (it asks for a poll); polling on a
         // timer is the offline fallback.
         if std::mem::take(&mut app.poll_wanted) || last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 }) {
             last_poll = Instant::now();
             session.runtime(Msg::Poll);
+            phase("poll", &mut phases, tracing);
         }
     } })();
     if let Some(seq) = shift_capture.release() {

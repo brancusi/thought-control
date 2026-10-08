@@ -228,5 +228,12 @@ fn perf_typing_500_keys_steady() {
     f.click_caret(doc_at("Line 12:", 8)).type_text(&words);
     budget(&f, "type", "500 keys beside a panel, 5,000-line page", 4.0, &mut over);
     f.done();
+    // The page beside itself: one document, two views at two widths.
+    let (mut f, title) = page(Size::Huge);
+    let id = f.s.app.vault.store.nodes_where("title = ?1", &[&title]).unwrap()[0].id.clone();
+    f.msg("aside", Motion::Any, Msg::Aside { target: id, pin: false, fold: false, close: false, actor: None }).expect_panels(1);
+    f.keys("<c-home>").click_caret(doc_at("Line 12:", 8)).type_text(&words);
+    budget(&f, "type", "500 keys, 5,000-line page beside itself", 4.0, &mut over);
+    f.done();
     held(over);
 }

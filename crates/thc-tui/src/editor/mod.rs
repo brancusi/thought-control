@@ -180,13 +180,22 @@ impl Doc {
 
     /// Drop view `id` (another becomes current when it was). False: it's the last view.
     pub fn remove_view(&mut self, id: ViewId) -> bool {
+        self.rows.borrow_mut().remove(&id);
         self.engine.remove_view(id)
     }
 
     /// The current view takes id `id`: a document moving from the main view to a panel, or
     /// back. False: another view has that id.
     pub fn rename_view(&mut self, id: ViewId) -> bool {
-        self.engine.rename_view(id)
+        let was = self.current_view();
+        let ok = self.engine.rename_view(id);
+        if ok && was != id {
+            let mut rows = self.rows.borrow_mut();
+            if let Some(r) = rows.remove(&was) {
+                rows.insert(id, r);
+            }
+        }
+        ok
     }
 
     /// Run `f` through view `id`, then go back to the view that was current. None: no such

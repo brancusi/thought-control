@@ -220,9 +220,14 @@ pub struct Doc {
     pub(super) last_saved: HashMap<String, Line>,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
+    /// Each line's words by its content version (`Engine::line_versions`): a keystroke counts
+    /// only the line it changed (vw384).
+    line_words: std::cell::RefCell<(Option<u64>, Vec<u64>, Vec<u32>)>,
     /// Each note's rows in the view, remembered (`view::RowIndex`): where the view is in the
     /// whole document, without laying the whole document out every frame.
-    pub(super) rows: std::cell::RefCell<super::view::RowIndex>,
+    /// One per view: a page beside itself is laid out at two widths (a shared index re-summed
+    /// the whole page at each).
+    pub(super) rows: std::cell::RefCell<HashMap<u32, super::view::RowIndex>>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
@@ -246,7 +251,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, fresh_end: None }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, fresh_end: None }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -289,7 +294,24 @@ impl Doc {
         if let Some((_, n)) = self.words.get().filter(|(r, _)| *r == rev) {
             return n;
         }
-        let n = self.lines().iter().map(|l| l.text.split_whitespace().count()).sum();
+        let (epoch, vers) = self.engine.line_versions();
+        let lines = self.lines();
+        let mut c = self.line_words.borrow_mut();
+        let (seen, kept, counts) = &mut *c;
+        let count = |l: &Line| l.text.split_whitespace().count() as u32;
+        if *seen == Some(epoch) && kept.len() == vers.len() && vers.len() == lines.len() {
+            for (i, l) in lines.iter().enumerate() {
+                if kept[i] != vers[i] {
+                    kept[i] = vers[i];
+                    counts[i] = count(l);
+                }
+            }
+        } else {
+            *counts = lines.iter().map(count).collect();
+            *kept = vers.to_vec();
+            *seen = (vers.len() == lines.len()).then_some(epoch);
+        }
+        let n = counts.iter().map(|&c| c as usize).sum();
         self.words.set(Some((rev, n)));
         n
     }

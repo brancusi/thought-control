@@ -67,6 +67,13 @@ pub(crate) struct Engine {
     graveyard: HashMap<u64, Line>,
     /// The host changed the lines since the engine last saw them.
     dirty: bool,
+    /// Each line's content version (parallel to `lines`), and the epoch they're good in: an
+    /// edit through the engine gives the lines it touched new versions, anything else (the
+    /// host's changes, blocks coming or going) starts a new epoch. What's derived per line
+    /// (rows laid out, words) is redone only for lines whose version moved (vw384).
+    vers: Vec<u64>,
+    ver_next: u64,
+    epoch: u64,
     /// The host's pending changes are one undo step (`Doc::undo_step`).
     undoable: bool,
     host_rev: u64,
@@ -158,6 +165,9 @@ impl Engine {
             deleted: Vec::new(),
             graveyard: HashMap::new(),
             dirty: false,
+            vers: Vec::new(),
+            ver_next: 0,
+            epoch: 0,
             undoable: false,
             host_rev: 0,
             changed_at: None,
@@ -209,6 +219,20 @@ impl Engine {
         self.dirty = true;
         self.host_rev = self.host_rev.wrapping_add(1);
         &mut self.lines
+    }
+
+    /// Each line's content version and their epoch (see `vers`). A version is the same as
+    /// before only if the epoch is too.
+    pub(super) fn line_versions(&self) -> (u64, &[u64]) {
+        (self.epoch, &self.vers)
+    }
+
+    /// Every line a new version, in a new epoch.
+    fn new_epoch(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        let n = self.lines.len();
+        self.vers = (0..n as u64).map(|i| self.ver_next + i).collect();
+        self.ver_next += n as u64;
     }
 
     pub(super) fn pool(&mut self) -> &mut IdPool {
@@ -367,12 +391,23 @@ impl Engine {
                 Some((a, b)) => (o.index_at(rope.slice(..), a), o.index_at(rope.slice(..), b)),
                 None => (1, 0),
             };
+            // A line's version moves only when what it holds did: a touched range can be wider
+            // than the change (a caret move off the fresh last line touches the whole page).
+            let same_len = self.vers.len() == self.lines.len();
             for (i, (l, b)) in self.lines.iter_mut().zip(&o.blocks).enumerate() {
                 if (from..=to).contains(&i) {
+                    let before = same_len.then(|| content_key(l));
                     read_block(l, b, &rope);
+                    if before.is_some_and(|k| k != content_key(l)) {
+                        self.vers[i] = self.ver_next;
+                        self.ver_next += 1;
+                    }
                 } else {
                     l.gap = b.attrs.gap;
                 }
+            }
+            if !same_len {
+                self.new_epoch();
             }
             return;
         }
@@ -409,6 +444,7 @@ impl Engine {
             self.graveyard.insert(m, l);
         }
         self.lines = lines;
+        self.new_epoch();
     }
 
     /// The host's changes to the lines into the engine (see the module docs). True: there
@@ -457,6 +493,9 @@ impl Engine {
             run = true;
         }
         let undoable = std::mem::take(&mut self.undoable);
+        // Blocks came or went: every version starts over (below). Else only the lines whose
+        // text or blank row the host changed get new ones.
+        let structural = !changes.is_empty() || !steps.is_empty();
         self.external(changes);
         let inserted = !steps.is_empty();
         for (after, blocks) in steps {
@@ -468,14 +507,17 @@ impl Engine {
         let rope = &self.st.doc.text;
         let mut replace: Vec<(usize, usize, String)> = Vec::new();
         let mut gaps = Vec::new();
+        let mut changed_marks: HashSet<u64> = HashSet::new();
         for l in &self.lines {
             let Some(b) = l.mark.and_then(|m| at.get(&m)).map(|&i| &o.blocks[i]) else { continue };
             let want = block_text(l);
             if rope.slice(b.start..b.end) != want.as_str() {
                 replace.push((b.start, b.end, want));
+                changed_marks.insert(b.id.0);
             }
             if l.gap != b.attrs.gap {
                 gaps.push(ExtChange::SetGap { id: b.id, gap: l.gap });
+                changed_marks.insert(b.id.0);
             }
         }
         if undoable && !replace.is_empty() {
@@ -489,7 +531,20 @@ impl Engine {
             let changes = replace.into_iter().map(|(from, to, text)| ExtChange::Replace { from, to, text }).chain(gaps).collect();
             self.external(changes);
         }
+        let epoch = self.epoch;
         self.sync(&HashMap::new());
+        if structural || self.vers.len() != self.lines.len() {
+            if self.epoch == epoch {
+                self.new_epoch();
+            }
+        } else {
+            for (i, l) in self.lines.iter().enumerate() {
+                if l.mark.is_some_and(|m| changed_marks.contains(&m)) {
+                    self.vers[i] = self.ver_next;
+                    self.ver_next += 1;
+                }
+            }
+        }
         true
     }
 
@@ -735,6 +790,17 @@ impl Doc {
         self.engine.flush();
         self.engine.char_of(p)
     }
+}
+
+
+/// What a line holds as the engine lays it out (its text with its marker, its blank row), as a
+/// hash: a line's version moves when this does (`Engine::vers`).
+fn content_key(l: &Line) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    block_text(l).hash(&mut h);
+    l.gap.hash(&mut h);
+    h.finish()
 }
 
 #[cfg(test)]
