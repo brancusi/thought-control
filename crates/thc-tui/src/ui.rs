@@ -3184,7 +3184,8 @@ fn draw_calendar(f: &mut Frame, app: &App, area: Rect) {
     let tasks = calendar.tasks;
     let done = calendar.done;
     lines.push(Line::styled(d.format("%a %b %-d").to_string(), th.strong()));
-    lines.push(Line::styled(format!("{} entries {} {tasks} tasks {} {done} done", calendar.entries, g.sep, g.sep), th.s(Token::Muted)));
+    let n = |k: usize, one: &str, many: &str| format!("{k} {}", if k == 1 { one } else { many });
+    lines.push(Line::styled(format!("{} {} {} {} {done} done", n(calendar.entries, "entry", "entries"), g.sep, n(tasks, "task", "tasks"), g.sep), th.s(Token::Muted)));
     lines.push(Line::raw(""));
     lines.push(Line::from(hints(&th, &[("gd", "go to date…"), ("{ }", "week")])));
     f.render_widget(Paragraph::new(lines), area);

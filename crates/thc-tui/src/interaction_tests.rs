@@ -364,3 +364,14 @@ fn the_meta_keeps_clear_of_the_scrollbar() {
         assert!(matches!(last.as_str(), "│" | "┃" | " "), "{size:?}: the scrollbar's column: {row}");
     }
 }
+
+/// The calendar beside a day counts in English: `1 entry · 1 task`, not `1 entries · 1 tasks`.
+#[test]
+fn the_day_summary_says_one_entry() {
+    let (_scratch, v) = vault("one-entry");
+    let mut s = session(v, (200, 50));
+    keys(&mut s, "5[ ] call the plumber<cr><esc>5");
+    let (rows, _) = frame(&mut s);
+    let line = rows.iter().find(|r| r.contains(" done")).cloned().unwrap_or_default();
+    assert!(line.contains("1 entry ·") && line.contains("1 task ·"), "{line}");
+}
