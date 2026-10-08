@@ -100,6 +100,18 @@ replay. It lives in its own repository, **[brancusi/caretline](https://github.co
 (docs at [caretline.app](https://caretline.app/docs/)), and thc depends on it as the
 `caretline` crate. Engine changes are made there first, then pulled into thc.
 
+Local development currently uses the exact, not-yet-published library commit in
+`caretline.rev`. Build from an immutable scratch export rather than a mutable sibling checkout:
+
+```bash
+scripts/with-caretline.sh /path/to/caretline /path/to/scratch/engine build
+scripts/with-caretline.sh /path/to/caretline /path/to/scratch/engine test --workspace
+```
+
+The helper never fetches or edits the engine source. Reusing an export verifies its revision
+and file checksums; changed exports are refused. Build output defaults to the scratch directory.
+Publication remains paused until the library pin is available publicly.
+
 ## Status
 
 | Milestone | State |
