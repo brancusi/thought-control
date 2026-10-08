@@ -228,6 +228,9 @@ pub struct Doc {
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
     /// you type in). False for a view nobody types in now (a panel without the keyboard).
     pub hold_caret_line: bool,
+    /// The fresh line the document arrived with (`caret_to_end`), by its id while it's there:
+    /// it goes when it's left empty (`Doc::drop_fresh_end`).
+    pub(super) fresh_end: Option<String>,
 }
 
 impl Doc {
@@ -243,7 +246,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true, fresh_end: None }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -417,6 +420,10 @@ impl Doc {
         if lines.is_empty() || (fresh_line && !lines.last().unwrap().text.is_empty()) {
             self.engine.lines_mut().push(Line::new(0, Kind::Para, ""));
             self.touch_content();
+            if fresh_line {
+                self.engine.flush();
+                self.fresh_end = self.lines().last().map(|l| l.id.clone());
+            }
         }
         let i = self.lines().len() - 1;
         let byte = self.lines()[i].text.len();

@@ -63,7 +63,7 @@ fn find(rows: &[String], text: &str) -> (u16, u16) {
 fn open_plan(size: (u16, u16), tag: &str) -> (crate::fuzz::Scratch, Session) {
     let (scratch, v) = vault(tag);
     let mut s = session(v, size);
-    keys(&mut s, "<c-o>Plan<cr>");
+    keys(&mut s, "<c-o>Plan<cr><c-home>");
     (scratch, s)
 }
 

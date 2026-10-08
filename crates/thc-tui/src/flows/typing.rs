@@ -97,11 +97,14 @@ fn type_at_the_start_of_a_page() {
 
 #[test]
 fn type_at_the_end_of_a_page() {
+    // ⌃End is the fresh line a page arrives with (doc_app::arrive): a paragraph, so Enter twice
+    // makes the next note.
     q4().named("type at a page's end")
         .keys("<c-end>")
-        .type_text(" (end)")
-        .keys("<cr>")
+        .type_text("(end)")
+        .keys("<cr><cr>")
         .type_text("after the end")
+        .expect_saved("(end)")
         .expect_saved("after the end")
         .done();
 }
@@ -211,8 +214,8 @@ fn type_on_a_long_page_near_the_bottom() {
     flow_with("type near the bottom of a long page", Size::Long, (140, 36))
         .keys("<c-o>Long Page<cr>")
         .keys("<c-end>")
-        .type_text(" tail")
-        .keys("<cr>")
+        .type_text("tail")
+        .keys("<cr><cr>")
         .type_text("new last line")
         .expect_caret_line("new last line")
         .done();

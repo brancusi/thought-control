@@ -1,6 +1,7 @@
 //! Writing in documents (tui-editor.md: Write by default, Esc to Navigate), end to end: keys
 //! replayed through a snapshot with THC_TUI_SNAPSHOT_WRITE=1 against a temp vault, then the
-//! result read back with the CLI. A page opens with the caret at the start of its first line.
+//! result read back with the CLI. A page opens on a fresh line after its notes (doc_app::arrive):
+//! these start with ⌃Home, at the start of its first line.
 
 mod common;
 
@@ -45,7 +46,7 @@ fn lines_save_on_leave_with_tokens_parsed() {
     let r = &root;
     // Open the page (Pages → filter → Enter), then a new line below the first, with a token.
     // Esc saves and goes back to the Pages list it came from (navigation.md §2).
-    let frame = keys(r, "4Plans<cr><c-e><cr>Call printer due:fri<cr>Second<esc>");
+    let frame = keys(r, "4Plans<cr><c-home><c-e><cr>Call printer due:fri<cr>Second<esc>");
     assert!(frame.contains("Pages  1"), "Esc lands on the Pages list: {frame}");
     let kids = children(r, &page);
     let texts: Vec<&str> = kids.iter().map(|n| n["text"].as_str().unwrap()).collect();
@@ -55,15 +56,15 @@ fn lines_save_on_leave_with_tokens_parsed() {
     assert_eq!(printer["due"], "2026-10-09", "due:fri parsed on save and taken out of the text");
     // Editing an existing row: unchanged writes nothing; a change is one transaction.
     let before = thc(r, &[], &["--json", "log"]).len();
-    keys(r, "4Plans<cr><esc>");
+    keys(r, "4Plans<cr><c-home><esc>");
     assert_eq!(thc(r, &[], &["--json", "log"]).len(), before, "an unchanged line writes nothing");
-    keys(r, "4Plans<cr><c-e>, edited !high<esc>");
+    keys(r, "4Plans<cr><c-home><c-e>, edited !high<esc>");
     let first = children(r, &page).into_iter().find(|n| n["text"].as_str().unwrap().starts_with("First line")).unwrap();
     assert_eq!(first["text"], "First line, edited");
     assert_eq!(first["priority"], "high");
     // An empty new line is never saved.
     let n = children(r, &page).len();
-    keys(r, "4Plans<cr><c-e><cr><esc>");
+    keys(r, "4Plans<cr><c-home><c-e><cr><esc>");
     assert_eq!(children(r, &page).len(), n);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -73,7 +74,7 @@ fn enter_tab_and_backspace_shape_the_outline() {
     let (root, page) = setup("keys");
     let r = &root;
     // Continuous writing: A, then B nested under A, then C at B's depth.
-    keys(r, "4Plans<cr><c-e><cr>A<cr>B<tab><cr>C<esc>");
+    keys(r, "4Plans<cr><c-home><c-e><cr>A<cr>B<tab><cr>C<esc>");
     let kids = children(r, &page);
     let a = kids.iter().find(|n| n["text"] == "A").expect("A at the top level").clone();
     let a_id = a["id"].as_str().unwrap();
@@ -81,12 +82,12 @@ fn enter_tab_and_backspace_shape_the_outline() {
     let t: Vec<&str> = under_a.iter().map(|n| n["text"].as_str().unwrap()).collect();
     assert_eq!(t, ["B", "C"], "B nested with Tab, C continued at its depth");
     // Mid-line Enter splits into two lines.
-    keys(r, "4Plans<cr><c-e><cr>Hello world<left><left><left><left><left><cr><esc>");
+    keys(r, "4Plans<cr><c-home><c-e><cr>Hello world<left><left><left><left><left><cr><esc>");
     let t: Vec<String> = children(r, &page).iter().map(|n| n["text"].as_str().unwrap().to_string()).collect();
     assert!(t.contains(&"Hello".to_string()) && t.contains(&"world".to_string()), "{t:?}");
     // An empty new line is never a node.
     let before = children(r, &page).len();
-    keys(r, "4Plans<cr><c-e><cr><esc>");
+    keys(r, "4Plans<cr><c-home><c-e><cr><esc>");
     assert_eq!(children(r, &page).len(), before);
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -97,9 +98,9 @@ fn page_ids_hidden_by_default_and_toggled() {
     let r = &root;
     let first = children(r, &page)[0]["short"].as_str().unwrap().to_string();
     // IDs are hidden in documents (tui-editor.md §3); `y` in Navigate copies the line's.
-    let frame = keys(r, "4Plans<cr>");
+    let frame = keys(r, "4Plans<cr><c-home>");
     assert!(frame.contains("First line") && !frame.contains(&first), "IDs hidden on pages: {frame}");
-    let frame = keys(r, "4Plans<cr><c-e> more");
+    let frame = keys(r, "4Plans<cr><c-home><c-e> more");
     assert!(frame.contains("First line more") && !frame.contains(&first), "and while writing: {frame}");
     let _ = std::fs::remove_dir_all(&root);
 }
@@ -133,7 +134,7 @@ fn page_notes_read_as_paragraphs() {
     let id = serde_json::from_str::<Value>(&out).unwrap()["nodes"][0]["id"].as_str().unwrap().to_string();
     // Written as a paragraph ($EDITOR sets this); a plain note stays a bullet.
     thc(r, &[], &["set", &id, "style=para"]);
-    let frame = keys(r, "4Plans<cr>");
+    let frame = keys(r, "4Plans<cr><c-home>");
     // Wrapped, not cut; no `·` note glyph; a blank row between paragraphs.
     assert!(frame.contains("fewer, deeper bets") && frame.contains("what comes after."), "{frame}");
     // (Past the header, whose vault name may be shortened.)
@@ -154,7 +155,7 @@ fn saves_go_through_the_daemon_when_it_is_live() {
     let (root, page) = setup("daemon");
     let r = &root;
     thc(r, &[("THC_TEST_DAEMON", "1")], &["daemon", "start"]);
-    let frame = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><c-e><cr>Through the daemon due:fri<cr>And another<esc>"), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_TUI_SNAPSHOT_DAEMON", "1")], &["tui"]);
+    let frame = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><c-home><c-e><cr>Through the daemon due:fri<cr>And another<esc>"), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_TUI_SNAPSHOT_DAEMON", "1")], &["tui"]);
     let kids = children(r, &page);
     thc(r, &[], &["daemon", "stop"]);
     let texts: Vec<&str> = kids.iter().map(|n| n["text"].as_str().unwrap()).collect();
@@ -308,14 +309,14 @@ fn keys_never_fall_through_to_list_commands() {
     let status = |r: &Path| children(r, &page).into_iter().find(|n| n["text"].as_str().unwrap().starts_with("Call the bank")).unwrap()["status"].clone();
     // Write is sealed: ⌥X / ⌃X on the line type nothing and change nothing (D1).
     // THC_NOW="" unpins the clock: its warning would own the bar.
-    let f = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><down><m-x><c-x><c-s>"), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_NOW", "")], &["tui"]);
+    let f = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><c-home><down><m-x><c-x><c-s>"), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_NOW", "")], &["tui"]);
     assert_eq!(status(r), "todo", "{f}");
     assert!(f.contains("⌥X isn't a writing key · F1 shows the keys"), "{f}");
     // In lists, ⌃X isn't x (D2).
     keys(r, "3<c-x>");
     assert_eq!(status(r), "todo");
     // The palette from Write runs the command on the caret's line; it types nothing (D3).
-    keys(r, "4Plans<cr><down><m-:>Done<cr>");
+    keys(r, "4Plans<cr><c-home><down><m-:>Done<cr>");
     assert_eq!(status(r), "done");
     let texts: Vec<String> = children(r, &page).iter().map(|n| n["text"].as_str().unwrap().to_string()).collect();
     assert!(texts.iter().all(|t| !t.ends_with('x')), "nothing typed: {texts:?}");
@@ -384,7 +385,7 @@ fn editing_a_line_again_is_no_conflict() {
 fn double_task_cycle_completes_a_newly_tasked_plain_line() {
     let (root, page) = setup("task-double");
     // Every press advances the model, even before the first kind change has been saved.
-    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
+    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-home><c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
     let kids = children(&root, &page);
     assert_eq!(kids.iter().find(|n| n["text"] == "First line").unwrap()["status"], "done", "{frame}");
     let _ = std::fs::remove_dir_all(root);
@@ -396,7 +397,7 @@ fn double_task_cycle_completes_each_plain_line_while_moving_down() {
     for text in ["Second line", "Third line", "Fourth line", "Fifth line"] {
         thc(&root, &[], &["add", text, "--under", &page]);
     }
-    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-t><c-t><down><c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
+    let frame = thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", "<c-home><c-t><c-t><down><c-t><c-t>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["p", "Plans"]);
     let kids = children(&root, &page);
     for text in ["First line", "Second line"] {
         assert_eq!(kids.iter().find(|n| n["text"] == text).unwrap()["status"], "done", "{text}: {frame}");

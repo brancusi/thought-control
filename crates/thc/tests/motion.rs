@@ -96,8 +96,8 @@ fn end_and_right_across_a_wrap() {
 fn left_and_right_collapse_a_selection() {
     let v = V::new("collapse");
     v.page("Sel", &["First note", "Second note"]);
-    // ⌃End → "Second note▮"; ← ← → "Second no▮te"; ⇧← ×6 → "Sec⟦▮ond no⟧te".
-    let sel = "<c-end><left><left><s-left><s-left><s-left><s-left><s-left><s-left>";
+    // ⌃Home ↓ End → "Second note▮"; ← ← → "Second no▮te"; ⇧← ×6 → "Sec⟦▮ond no⟧te".
+    let sel = "<c-home><down><end><left><left><s-left><s-left><s-left><s-left><s-left><s-left>";
     let f = v.keys("Sel", &format!("{sel}<left>X"));
     // (The snapshot draws the cursor over the character after it.)
     assert!(f.contains("SecX▮nd note") && f.contains("First note"), "E7, ← to the start: {f}");
