@@ -665,7 +665,8 @@ fn hint_spans(render: &mut RenderOutput, th: &Theme, items: &[crate::keymap::Hin
         let h = &mut render.hint_actions;
         h.clear();
         if actions {
-            for it in items {
+            // (A hint with no action, such as `type to write`, is words, not a button.)
+            for it in items.iter().filter(|it| !it.actions.is_empty()) {
                 h.push((it.keys.clone(), it.actions[0].1));
                 for (k, a) in &it.actions {
                     h.push((k.clone(), a));
@@ -991,8 +992,18 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // F1 keys`, the day keys only in a journal.
         let _ = journal;
         let mut keys = app.derived.data.bindings.footer.clone();
+        // Just arrived (parked, navigation.md §6.1): the bar leads with how to start and how to
+        // move on, as the view's bar does; the first key that writes puts the writing keys back.
+        // They're the first to go when the bar is narrow.
+        let parked = aside.is_empty() && app.doc_parked && !app.link_open && app.prompt.is_none();
         let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done").cloned().collect();
-        for level in [3u8, 2, 1, 0] {
+        let base = keys.clone();
+        for (level, lead_hints) in [(3u8, true), (3, false), (2, false), (1, false), (0, false)] {
+            keys = base.clone();
+            if lead_hints && parked {
+                keys.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![("Tab".into(), "view.next")] });
+                keys.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
+            }
             if level < 3 && !app.link_open && keys.last().is_some_and(|k| k.label == "keys") {
                 keys.pop();
             }

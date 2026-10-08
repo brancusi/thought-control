@@ -375,3 +375,23 @@ fn the_day_summary_says_one_entry() {
     let line = rows.iter().find(|r| r.contains(" done")).cloned().unwrap_or_default();
     assert!(line.contains("1 entry ·") && line.contains("1 task ·"), "{line}");
 }
+
+/// Just arrived on a page (parked, navigation.md §6.1), the bar says how to start and how to
+/// move on; the first key that writes puts the writing keys back. Narrow, those go first.
+#[test]
+fn the_bar_says_type_to_write_on_arrival() {
+    let (_v, v) = vault("parked-bar");
+    let mut s = session(v, (120, 32));
+    keys(&mut s, "<c-o>Plan<cr>");
+    let bar = |s: &mut Session| frame(s).0.last().cloned().unwrap_or_default();
+    let b = bar(&mut s);
+    assert!(b.contains("type to write") && b.contains("Tab next view") && b.contains("⌃T task"), "{b}");
+    keys(&mut s, "x");
+    let b = bar(&mut s);
+    assert!(!b.contains("type to write") && b.contains("⌃T task"), "{b}");
+    let (_v2, v) = vault("parked-bar-80");
+    let mut s = session(v, (80, 24));
+    keys(&mut s, "<c-o>Plan<cr>");
+    let b = bar(&mut s);
+    assert!(b.contains("⌃T task") && !b.contains("type to write"), "{b}");
+}

@@ -37,4 +37,4 @@
                                                                                              |
                                                                                              |
                                                                                              |
- § wed 07 oct - 27 words - autosaved                                ⌃T task  ⌃O open  ⌃P ⌃N day  ⌥S sidebar  Esc done  F1 keys   thc X.Y.Z
+ § wed 07 oct - 27 words - autosaved  type to write  Tab next view  ⌃T task  ⌃O open  ⌃P ⌃N day  ⌥S sidebar  Esc done  F1 keys   thc X.Y.Z

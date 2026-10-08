@@ -259,9 +259,10 @@ fn n16_to_n20_documents_park_on_arrival() {
 fn the_footer_shows_the_version_when_it_fits() {
     let v = V::new("version");
     let bar = |size: &str, args: &[&str]| v.run(&[("THC_TUI_SNAPSHOT", size), ("THC_TUI_VERSION", "9.9.9"), ("THC_TUI_KEYS", ""), ("THC_NOW", "")], args).lines().last().unwrap_or_default().to_string();
-    for args in [&["tui"][..], &["j", "--no-focus"][..]] {
-        let wide = bar("120x24", args);
-        assert!(wide.trim_end().ends_with("thc 9.9.9"), "{args:?} at 120: {wide}");
+    // (A day just opened leads with `type to write · Tab next view`: the version fits at 140.)
+    for (args, size) in [(&["tui"][..], "120x24"), (&["j", "--no-focus"][..], "140x24")] {
+        let wide = bar(size, args);
+        assert!(wide.trim_end().ends_with("thc 9.9.9"), "{args:?} at {size}: {wide}");
         let narrow = bar("60x24", args);
         assert!(!narrow.contains("thc 9.9.9"), "{args:?} at 60: {narrow}");
     }
