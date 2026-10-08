@@ -35,19 +35,40 @@ status=0
 # In the TUI itself (THC_TUI_TRACE=1): its own key-to-frame time, and where each key over 4 ms
 # went, phase by phase. End to end minus this is the terminal and the scheduler.
 export THC_TUI_TRACE=1
+# Each variant runs RUNS times (default 3) and is gated on the median p99s: one run that a busy
+# machine slowed down shows, but doesn't fail the smoke (vw384: the same build swung 2.0-6.3 ms
+# p99 run to run at load 4-7, every phase slower together).
+RUNS=${BENCH_LIVE_RUNS:-3}
+median() { python3 -c 'import sys,statistics; print(f"{statistics.median(float(x) for x in sys.argv[1:]):.2f}")' "$@"; }
 run() {
-  rm -f "$S/cache/tui-trace.log" "$S/cache/tui-trace-slow.log"
-  python3 "$HERE/bench-live.py" "$THC" --budget 8 "$@" || status=1
-  if [ -f "$S/cache/tui-trace.log" ]; then
-    sed 's/^/   in thc: /' "$S/cache/tui-trace.log"
-    p99=$(sed -E 's/.*p99 ([0-9.]+) ms.*/\1/' "$S/cache/tui-trace.log" | tail -1)
-    if python3 -c "import sys; sys.exit(0 if float('$p99') <= 4 else 1)"; then :; else echo "   in thc p99 $p99 ms is over 4 ms"; status=1; fi
-  fi
-  if [ -f "$S/cache/tui-trace-slow.log" ]; then
-    echo "   in thc over 4 ms: $(wc -l < "$S/cache/tui-trace-slow.log" | tr -d ' ') keys, slowest:"
-    sort -rn "$S/cache/tui-trace-slow.log" | head -3 | sed 's/^/     /'
-  fi
+  local e2e=() inthc=() label=""
+  local prev=""
+  for a in "$@"; do [ "$prev" = "--label" ] && label=$a; prev=$a; done
+  for i in $(seq 1 "$RUNS"); do
+    rm -f "$S/cache/tui-trace.log" "$S/cache/tui-trace-slow.log"
+    local out
+    out=$(python3 "$HERE/bench-live.py" "$THC" --budget 8 "$@" 2>&1 || true)
+    echo "$out" | sed "s/^/  [$i] /"
+    echo "  [$i]   load:$(uptime | sed 's/.*load average[s]*://')"
+    e2e+=("$(echo "$out" | sed -nE 's/.* p99 ([0-9.]+) ms.*/\1/p' | head -1 || true)")
+    if [ -f "$S/cache/tui-trace.log" ]; then
+      sed "s/^/  [$i]   in thc: /" "$S/cache/tui-trace.log"
+      inthc+=("$(sed -E 's/.*p99 ([0-9.]+) ms.*/\1/' "$S/cache/tui-trace.log" | tail -1)")
+    fi
+    if [ -f "$S/cache/tui-trace-slow.log" ]; then
+      echo "  [$i]   in thc over 4 ms: $(wc -l < "$S/cache/tui-trace-slow.log" | tr -d ' ') keys, slowest:"
+      sort -rn "$S/cache/tui-trace-slow.log" | head -3 | sed 's/^/         /'  || true
+    fi
+  done
+  local me mt=""
+  me=$(median "${e2e[@]}")
+  [ ${#inthc[@]} -gt 0 ] && mt=$(median "${inthc[@]}")
+  local verdict=ok
+  python3 -c "import sys; sys.exit(0 if float('$me') <= 8 else 1)" || { verdict="over: end to end median p99 $me ms > 8"; status=1; }
+  if [ -n "$mt" ] && ! python3 -c "import sys; sys.exit(0 if float('$mt') <= 4 else 1)"; then verdict="over: in thc median p99 $mt ms > 4"; status=1; fi
+  echo "$(printf '%-34s' "$label") median of $RUNS · p99 end to end $me ms (≤ 8) · in thc ${mt:-?} ms (≤ 4) · $verdict"
 }
+echo "load:$(uptime | sed 's/.*load average[s]*://')"
 "$THC" daemon start >/dev/null
 "$THC" daemon status --json | python3 -c 'import sys,json; d=json.load(sys.stdin); assert d["state"]=="live", d'
 echo "== live daemon"
