@@ -304,6 +304,74 @@ impl Doc {
         self.fresh_end.as_deref().is_some_and(|id| self.lines().last().is_some_and(|l| l.id == id && l.is_new && l.text.is_empty()))
     }
 
+    /// Where the caret's line is when it's empty and not saved (and not the fresh line at the
+    /// end, which `fresh_end` keeps): after which saved note, how deep, what kind.
+    pub fn new_caret_line(&self) -> Option<crate::ui_state::NewCaretLine> {
+        let i = self.caret().line;
+        let l = self.lines().get(i)?;
+        if !l.is_new || !l.text.trim().is_empty() || (self.has_fresh_end() && i + 1 == self.lines().len()) {
+            return None;
+        }
+        let after = self.lines()[..i].iter().rev().find(|p| !p.is_new).map(|p| p.id.clone());
+        Some(crate::ui_state::NewCaretLine { after, depth: l.depth, kind: l.kind() })
+    }
+
+    /// The blank space the caret's saved note ends with: the vault trims it (a note never ends
+    /// in a space or a line break), the caret's line keeps it until it's left.
+    pub fn caret_tail(&self) -> Option<String> {
+        let l = self.lines().get(self.caret().line).filter(|l| !l.is_new)?;
+        let tail = &l.text[l.text.trim_end().len()..];
+        (!tail.is_empty()).then(|| tail.to_string())
+    }
+
+    /// Note `id` ends with `tail` again (blank space its save trimmed), the caret at `byte`.
+    pub fn restore_caret_tail(&mut self, id: &str, tail: &str, byte: usize) {
+        let Some(i) = self.lines().iter().position(|l| l.id == id) else { return };
+        if !tail.trim().is_empty() || self.lines()[i].text.ends_with(tail) {
+            return;
+        }
+        self.lines_mut()[i].text.push_str(tail);
+        self.touch_content();
+        let t = &self.lines()[i].text;
+        let b = (0..=byte.min(t.len())).rev().find(|x| t.is_char_boundary(*x)).unwrap_or(0);
+        self.set_caret(BlockPos { line: i, byte: b });
+    }
+
+    /// The caret on an empty, unsaved line after note `after` (None: at the top), `depth` deep:
+    /// an empty line there already is used (the fresh one the document arrived with, if it's
+    /// there), else one is put in; a fresh line at the end elsewhere goes. False: no `after`.
+    pub fn caret_to_new_line(&mut self, after: Option<&str>, depth: usize, kind: Kind) -> bool {
+        let at = match after {
+            Some(id) => match self.lines().iter().position(|l| l.id == id) {
+                Some(i) => i + 1,
+                None => return false,
+            },
+            None => 0,
+        };
+        let empty = |l: &Line| l.is_new && l.text.trim().is_empty();
+        let n = self.lines().len();
+        // The fresh line at the end, when it isn't the one wanted.
+        if n > 1 && at + 1 < n && self.lines().last().is_some_and(empty) {
+            self.lines_mut().pop();
+            self.fresh_end = None;
+        }
+        if !self.lines().get(at).is_some_and(empty) {
+            let mut l = Line::new(depth, kind, "");
+            l.id = self.take_id();
+            self.lines_mut().insert(at, l);
+        } else if self.lines()[at].depth != depth || self.lines()[at].kind() != kind {
+            let l = &mut self.lines_mut()[at];
+            l.depth = depth;
+            l.kind = kind;
+            l.status = (kind == Kind::Task).then(|| "todo".to_string());
+        }
+        if at + 1 < self.lines().len() {
+            self.fresh_end = None;
+        }
+        self.set_caret(BlockPos { line: at, byte: 0 });
+        true
+    }
+
     /// The caret memory when a document opens: back where it was, if that note is still here.
     /// `drop_fresh_end`: a journal day opened on a fresh line at its end doesn't need it when
     /// the caret goes back elsewhere. The caret's line index, or None.

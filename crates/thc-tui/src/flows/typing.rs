@@ -390,3 +390,26 @@ fn a_wide_character_at_the_end_of_a_row_wraps() {
         f.done();
     }
 }
+
+#[test]
+fn an_empty_line_left_goes_with_the_save() {
+    // An empty line isn't a note: left behind, it goes with the save the leaving makes, so the
+    // page you see is the page you reopen (h8vsn). The caret's own empty line stays.
+    q4().named("an empty line left behind")
+        .click_caret(doc_at("Grow the newsletter", 19))
+        .keys("<cr>")
+        .expect_caret_line("")
+        .click_caret(doc_at("Last line of the plan", 4))
+        .expect("the empty line went", |s| s.app.doc.as_ref().unwrap().blocks().iter().all(|l| !l.text.trim().is_empty()))
+        .expect_screen("Ship the [[Garden]] redesign")
+        .done();
+}
+
+#[test]
+fn the_caret_on_an_empty_line_mid_page_restores_there() {
+    q4().named("the caret's empty line, restored")
+        .click_caret(doc_at("Grow the newsletter", 19))
+        .keys("<cr>")
+        .expect_caret_line("")
+        .done();
+}

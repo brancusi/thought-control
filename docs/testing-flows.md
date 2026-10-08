@@ -108,10 +108,9 @@ At `done()`:
   minted fresh (a node's short id, a tx id) and the minute a write stamped from the wall clock
   (`done 01:15`) may differ.
 - **Restore:** after a save, the state restored on a fresh session on a copy of the vault
-  draws the same frame (trailing spaces aside). One rule, by design: the caret's own empty
-  note is never saved, so when the caret sits on an empty note that isn't the document's last
-  line, the live frame is compared without that row (`Flow::unsaved_caret_row`). Last, it is
-  where a fresh session arrives anyway, on a fresh line.
+  draws the same frame (trailing spaces aside). An empty line away from the caret goes with
+  the save it's left in, and the caret's own empty line is in the state
+  (`document.caret_new`), so what's drawn is what reopens (h8vsn).
 
 ## Known bugs, ignored flows
 

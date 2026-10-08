@@ -630,9 +630,11 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
     // opens or closes, the rail comes or goes, the terminal resizes): the view scrolls by what
     // the reflow moved it (interaction.md §2.2).
     let here = pin_key(app, body, w);
+    let repin = app.doc.as_mut().is_some_and(|d| std::mem::take(&mut d.repin));
     if let (Some(pin), Some((_, row))) = (app.caret_pin.clone(), cursor) {
         let d = app.doc.as_ref().unwrap();
-        let same_place = pin.doc == here.doc && pin.caret == d.caret() && pin.geometry != here.geometry;
+        // (Or a save took empty lines out above the caret: h8vsn.)
+        let same_place = pin.doc == here.doc && (pin.caret == d.caret() && pin.geometry != here.geometry || repin);
         let follows = !d.scroll_free() && !ctx.focus.map_or(app.tui_prefs.typewriter, |f| f.has(El::Typewriter));
         let now_y = body.y + row;
         if same_place && follows && now_y != pin.y && pin.y >= body.y && pin.y < body.bottom() {
