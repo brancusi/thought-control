@@ -786,9 +786,12 @@ impl Doc {
         // note as that op left it, so only its last result speaks for it. (An earlier one put
         // back the text from before the edit, and the next save sent it: typing lost, fuzz.)
         let last: HashMap<&str, usize> = results.iter().map(|r| (r.id.as_str(), r.index)).collect();
+        // Where each line is (the results change fields, never the lines' order): a lookup, not
+        // a search per result (a 1,000-note save searched 5,000 lines a result).
+        let at: HashMap<String, usize> = self.engine.lines().iter().enumerate().map(|(i, l)| (l.id.clone(), i)).collect();
         for r in results {
             let latest = last.get(r.id.as_str()) == Some(&r.index);
-            let Some(i) = self.engine.lines().iter().position(|l| l.id == r.id) else {
+            let Some(&i) = at.get(&r.id) else {
                 // Made by this save, gone from the buffer since: the vault has it now, so it goes.
                 if r.state == "ok" && sent.created.contains(&r.id) && !self.engine.deleted().contains(&r.id) {
                     self.engine.deleted_mut().push(r.id.clone());
