@@ -238,3 +238,59 @@ fn enter_makes_only_what_a_save_keeps() {
     d.run_command("edit.newline");
     assert_eq!(texts(&d), ["notes", ""]);
 }
+
+/// A saved page of `n` notes (each saved: its parent and the note it follows recorded).
+fn saved_page(n: usize) -> crate::editor::Doc {
+    use crate::editor::{Doc, Target};
+    let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();
+    let blocks: Vec<thc_core::outline::Block> = (0..n)
+        .map(|i| serde_json::from_value(serde_json::json!({"id": format!("s{i:05}"), "parent": null, "depth": 0, "kind": "bullet", "text": format!("saved {i}"), "text_rev": "r"})).unwrap())
+        .collect();
+    let mut d = Doc::new(Target::Page { id: "root".into(), title: "Big".into() }, Some("root".into()), &blocks, today);
+    d.fill_ids((0..5000).map(|i| format!("n{i:05}")).collect());
+    d
+}
+
+fn op_counts(ops: &[thc_core::outline::BlockOp]) -> (usize, usize) {
+    use thc_core::outline::BlockOp;
+    (ops.iter().filter(|o| matches!(o, BlockOp::Create { .. })).count(), ops.iter().filter(|o| matches!(o, BlockOp::Move { .. })).count())
+}
+
+/// ymh1g: a paste of 1,000 lines into a 5,000-note page creates 1,000 notes and moves next to
+/// none: the notes below it keep their order in the vault (it moved all 5,000 of them).
+#[test]
+fn a_paste_moves_no_note_it_didnt_move() {
+    use crate::editor::BlockPos;
+    let paste: String = (0..1000).map(|i| format!("- pasted {i}")).collect::<Vec<_>>().join("\n");
+    for at in [0usize, 2500, 4999] {
+        let mut d = saved_page(5000);
+        d.set_caret(BlockPos { line: at, byte: d.blocks()[at].text.len() });
+        d.paste(&format!("\n{paste}"), false);
+        let plan = d.plan_save(true);
+        let (creates, moves) = op_counts(&plan.ops);
+        assert!((998..=1001).contains(&creates), "at {at}: {creates} creates");
+        assert!(moves <= 2, "at {at}: {moves} moves");
+    }
+}
+
+/// After pastes in the middle (two of them) and a save, the vault's order of the page's notes is
+/// the document's: the save moved only what moved, and every note is where it shows.
+#[test]
+fn after_pastes_the_vault_order_is_the_documents() {
+    let (_s, mut s) = open_plan((120, 32), "paste-order");
+    let block = |tag: &str, n: usize| (0..n).map(|i| format!("- {tag} {i}")).collect::<Vec<_>>().join("\\n");
+    keys(&mut s, &format!("{}<end><cr><paste:{}>", "<down>".repeat(20), block("first", 30)));
+    keys(&mut s, &format!("{}<end><cr><paste:{}>", "<down>".repeat(12), block("second", 20)));
+    s.apply(serde_json::from_value(serde_json::json!({"msg": "focus", "gained": false})).unwrap()).unwrap();
+    s.app.drain_saves(true);
+    let d = s.app.doc.as_ref().unwrap();
+    let root = d.root.clone().unwrap();
+    let doc: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).filter(|t| !t.trim().is_empty()).collect();
+    let vault: Vec<String> = thc_core::outline::render_for_editor(&s.app.vault.store, &root).unwrap().into_iter().map(|b| b.text).filter(|t| !t.trim().is_empty()).collect();
+    assert_eq!(vault, doc);
+    assert!(doc.iter().any(|t| t == "first 29") && doc.iter().any(|t| t == "second 0"));
+    // Nothing left to send: the notes the pastes landed above know what they follow now (the
+    // next save used to move every one of them).
+    let ops = s.app.doc.as_mut().unwrap().plan_save(true).ops;
+    assert!(ops.is_empty(), "{ops:?}");
+}
