@@ -36,6 +36,12 @@ While you type, tokens are underlined, and the right column previews what they'l
 leave the line, the dates move into that quiet column. Type a new token to change one, or click
 it.
 
+## Where you start typing
+
+Open a page or a day (`⌃O`, a link, a row) and just type: the cursor waits on a fresh line after
+its notes, so what you write is a note of its own. Come back later and the cursor is where you
+left it. `⌃Home` goes to the top.
+
 ## The keys you need
 
 | Key | Does |

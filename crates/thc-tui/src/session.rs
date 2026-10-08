@@ -370,10 +370,9 @@ impl Session {
         if let Some(ds) = doc {
             if let Some(d) = self.app.doc.as_mut() {
                 if !ds.caret_id.is_empty() {
-                    // The caret goes back as it does on reopening (a remembered caret): a day's
-                    // fresh last line is only there when the caret is on it.
-                    let journal = matches!(d.target, crate::editor::Target::Journal { .. });
-                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
+                    // The caret goes back as it does on reopening (a remembered caret), with the
+                    // fresh line the document arrived with if the session had it still.
+                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, !ds.fresh_end);
                 }
             }
             // The scroll is a row of the document as laid out at the session's size: lay it out
@@ -777,6 +776,7 @@ impl Session {
                 scroll: d.scroll(),
                 dirty: d.blocks().iter().any(|l| l.edited()),
                 revision: d.revision(),
+                fresh_end: d.has_fresh_end(),
             }
         });
         if self.app.ui.document != doc {

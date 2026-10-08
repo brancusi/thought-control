@@ -212,7 +212,6 @@ fn a_new_page_from_the_finder() {
 }
 
 #[test]
-#[ignore = "rdfar"]
 fn jump_to_a_page_and_type_right_away() {
     // The owner's first wish: jump, type, and the words land in a note of their own.
     flow("jump to a page and type at once").keys("<c-o>Q4 Plan<cr>").type_text("hello").expect_line("Goals for the quarter").expect_line("hello").done();

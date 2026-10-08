@@ -44,6 +44,10 @@ pub struct DocumentState {
     pub dirty: bool,
     /// The editor's content revision (read-only).
     pub revision: u64,
+    /// The fresh line the document arrived with is still at its end (doc_app::arrive): a
+    /// restored session keeps it, or leaves it out, as this one does.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_end: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

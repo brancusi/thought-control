@@ -442,8 +442,14 @@ impl App {
     /// vault's cache, never synced) so reopening it lands there.
     pub(crate) fn remember_caret(&mut self) {
         let Some(d) = self.doc.as_ref() else { return };
-        // A new, empty line isn't a place to come back to: the line above it is.
-        let Some(a) = d.place_anchor() else { return };
+        // A new, empty line isn't a place to come back to: the line above it is. The fresh line
+        // it arrived with: coming back arrives again, so nothing is kept.
+        let Some(a) = d.place_anchor() else {
+            if self.carets.remove(&caret_key(&d.target)).is_some() {
+                save_carets(&self.vault.paths.cache, &self.carets);
+            }
+            return;
+        };
         self.carets.insert(caret_key(&d.target), (a.id, a.byte, d.scroll()));
         save_carets(&self.vault.paths.cache, &self.carets);
     }
@@ -507,21 +513,9 @@ impl App {
         if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
             eprintln!("open: render {:.1} ms · buffer {:.1} ms · {} lines", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3, blocks.len());
         }
-        if journal {
-            // A journal day opens ready to type: on a fresh line after the day's own lines.
-            d.caret_to_end(true);
-        } else {
-            d.caret_to_start();
-        }
-        // Where you left it (writing.md §1, "the caret remembers"): this document's caret on this
-        // device, if its line is still here. A day never opened here starts at the end.
-        if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
-            // (The fresh line a day opens with isn't needed when the caret goes back.)
-            let journal = matches!(d.target, Target::Journal { .. });
-            if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, journal) {
-                self.doc_pending_scroll = Some((scroll.min(i), false));
-            }
-        }
+        let remembered = self.carets.get(&caret_key(&d.target)).cloned();
+        // The remembered scroll goes on at the first layout (`doc_pending_scroll`).
+        self.doc_pending_scroll = arrive(&mut d, remembered);
         // Lines a crash left unsaved come back, one ⌃Z away (recover.rs), and save at once.
         let mut recovered_n = 0;
         if let Some(rec) = recovered {
@@ -1453,4 +1447,25 @@ fn clipboard_image() -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// Where the caret is when a document opens (the arrival rule, in one place; rdfar, decided
+/// 2026-10-08, option A of three):
+/// - **Where you left it** (writing.md §1, "the caret remembers"): this document's caret on this
+///   device, if its line is still here, with its scroll.
+/// - **Otherwise ready to type:** a day or a page opens on a fresh line after its own notes, so
+///   what you type right after jumping there is a note of its own. On a long page the view ends
+///   with that line, the page above it filling the screen. `⌃End` goes there too.
+///
+/// The alternatives weighed: (B) arrive at the top and let the first key start a note above the
+/// first one (the page shifts two rows at that key), (C) arrive at the top and type into the
+/// first note (it glued: `helloGoals for the quarter`).
+/// The scroll it returns is the remembered one, for the view's first layout: rows count as the
+/// view's width wraps them, and a document just read has no width yet (vw384).
+pub(crate) fn arrive(d: &mut Doc, remembered: Option<(String, usize, usize)>) -> Option<(usize, bool)> {
+    d.caret_to_end(true);
+    let (line, byte, scroll) = remembered?;
+    // (The fresh line isn't needed when the caret goes back.)
+    let i = d.restore_caret(&crate::editor::Anchor { id: line, byte }, true)?;
+    Some((scroll.min(i), false))
 }
