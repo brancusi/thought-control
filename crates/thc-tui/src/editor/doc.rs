@@ -225,7 +225,9 @@ pub struct Doc {
     line_words: std::cell::RefCell<(Option<u64>, Vec<u64>, Vec<u32>)>,
     /// Each note's rows in the view, remembered (`view::RowIndex`): where the view is in the
     /// whole document, without laying the whole document out every frame.
-    pub(super) rows: std::cell::RefCell<super::view::RowIndex>,
+    /// One per view: a page beside itself is laid out at two widths (a shared index re-summed
+    /// the whole page at each).
+    pub(super) rows: std::cell::RefCell<HashMap<u32, super::view::RowIndex>>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view

@@ -202,13 +202,19 @@ impl Doc {
         }
     }
 
+    /// The current view's row index.
+    pub(super) fn row_index(&self) -> std::cell::RefMut<'_, RowIndex> {
+        let v = self.engine.current_view();
+        std::cell::RefMut::map(self.rows.borrow_mut(), |m| m.entry(v).or_default())
+    }
+
     /// How many rows the document lays out to, and the first row on screen. Each note's rows
     /// come from the row index ([`RowIndex`]): only notes that changed are laid out again.
     pub fn scroll_rows(&self) -> (usize, usize) {
         let rev = self.revision();
         let st = self.engine.state();
         let layout = Layout::of(&st.doc, &st.view);
-        let mut idx = self.rows.borrow_mut();
+        let mut idx = self.row_index();
         idx.update(rev, st, &layout, self.engine.line_versions());
         let total = idx.prefix.last().copied().unwrap_or(0) as usize;
         let top = layout.top(&st.view.scroll);
@@ -261,10 +267,11 @@ impl Doc {
         let rev = self.revision();
         let (epoch, vers) = self.engine.line_versions();
         let vers = vers.to_vec();
+        let view = self.engine.current_view();
         let st = self.engine.state_mut();
         let layout = Layout::of(&st.doc, &st.view);
         // The note row `row` is in (by the row index), then the line in it.
-        let mut idx = self.rows.borrow_mut();
+        let mut idx = std::cell::RefMut::map(self.rows.borrow_mut(), |m| m.entry(view).or_default());
         idx.update(rev, st, &layout, (epoch, &vers));
         let o = st.doc.blocks().expect("an outline document");
         let n = o.blocks.len();
@@ -474,16 +481,16 @@ mod tests {
         assert_eq!(top, 0);
         assert_eq!(total, engine_total(&d));
         assert!(total >= 4000, "each note wraps to two rows: {total}");
-        let warm = d.rows.borrow().laid_out;
+        let warm = d.row_index().laid_out;
         assert!(warm >= 1, "the first look lays the document out");
         d.run_command("move.down");
         d.scroll_rows();
         let _ = d.frame();
         d.scroll_rows();
-        assert_eq!(d.rows.borrow().laid_out, warm, "nothing changed: nothing laid out");
+        assert_eq!(d.row_index().laid_out, warm, "nothing changed: nothing laid out");
         d.insert("typed ");
         let (total2, _) = d.scroll_rows();
-        let more = d.rows.borrow().laid_out - warm;
+        let more = d.row_index().laid_out - warm;
         assert!(more <= 1, "only the note typed in: {more}");
         assert_eq!(total2, engine_total(&d), "the rows agree with the engine's walk");
     }
@@ -510,7 +517,7 @@ mod tests {
                 t => drop(d.insert(t)),
             }
             d.scroll_rows();
-            assert_eq!(d.rows.borrow().prefix, fresh(&d), "step {i} {step:?}");
+            assert_eq!(d.row_index().prefix.clone(), fresh(&d), "step {i} {step:?}");
             if i == 2 {
                 let _ = d.run_command("move.doc_end");
             }
