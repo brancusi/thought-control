@@ -64,6 +64,40 @@ fn select_all_then_type_replaces_everything() {
 }
 
 #[test]
+fn cmd_a_selects_the_whole_page_from_a_note() {
+    for key in ["<d-a>", "<m-a>"] {
+        let mut f = q4();
+        f.named("select all from the middle of a page");
+        f.click_caret(doc_at("Grow the newsletter", 5))
+            .keys(key)
+            .expect("exact page selection", |s| {
+                let d = s.app.doc.as_ref().unwrap();
+                let end = d.blocks().len() - 1;
+                d.selection() == Some((crate::editor::BlockPos { line: 0, byte: 0 }, crate::editor::BlockPos { line: end, byte: d.blocks()[end].text.len() }))
+            });
+        f.done();
+    }
+}
+
+#[test]
+fn cmd_a_is_scoped_to_the_focused_page_panel() {
+    let mut f = panes::flow_in("Cmd+A in a page panel", panes::Where::Panel);
+    f.click_caret(doc_at("Grow the newsletter", 0).in_pane())
+        .moves("<s-right><s-right><s-right><s-right>")
+        .expect_selection("Grow")
+        .keys("<d-a>");
+    let d = f.pane_doc().unwrap();
+    let end = d.blocks().len() - 1;
+    assert_eq!(d.selection(), Some((crate::editor::BlockPos { line: 0, byte: 0 }, crate::editor::BlockPos { line: end, byte: d.blocks()[end].text.len() })));
+    assert_eq!(f.s.app.doc.as_ref().unwrap().selection(), None);
+    f.keys("<c-c>");
+    let clip = crate::runtime_effects::SNAPSHOT_CLIPBOARD.with(|c| c.borrow().clone()).unwrap();
+    assert!(clip.contains("Goals for the quarter") && clip.contains("Last line of the plan"));
+    assert!(!clip.contains("Morning notes"));
+    f.done();
+}
+
+#[test]
 fn cut_and_paste_a_word() {
     q4().named("⌃X a word, ⌃V it elsewhere")
         .click_caret(doc_at("Grow the newsletter", 0))

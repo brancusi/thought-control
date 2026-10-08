@@ -783,6 +783,63 @@ fn screenshots_by_drag_and_by_cmd_v() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
+/// Cmd+A must select the current page, not just the caret's note or another page.
+#[test]
+fn cmd_a_selects_only_the_open_page() {
+    let root = thc_core::scratch::dir(&format!("thc-page-select-{}", std::process::id()));
+    std::fs::create_dir_all(&root).unwrap();
+    let cli = |args: &[&str]| {
+        common::thc().args(args).current_dir(&root)
+            .env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c"))
+            .env_remove("THC_ACTOR").output().unwrap()
+    };
+    for args in [vec!["init", "v"], vec!["add", "outside page", "--inbox"], vec!["import", "-", "--page", "Selection Page"]] {
+        let out = if args[0] == "import" {
+            let mut c = common::thc();
+            c.args(&args).current_dir(&root).env("THC_VAULT", root.join("v")).env("THC_CACHE_DIR", root.join("c"))
+                .env_remove("THC_ACTOR").stdin(std::process::Stdio::piped()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+            let mut child = c.spawn().unwrap();
+            child.stdin.take().unwrap().write_all(b"- alpha beta\n  - nested note\n- [ ] last task\n").unwrap();
+            child.wait_with_output().unwrap()
+        } else { cli(&args) };
+        assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
+    }
+    let mut p = Pty::spawn(&root, &["p", "Selection Page", "--no-focus"]);
+    let start = Instant::now();
+    while p.flags().is_none() && start.elapsed() < Duration::from_secs(20) {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    std::thread::sleep(Duration::from_millis(300));
+    p.send(b"\x1b[1;5H"); // Ctrl+Home: caret at the first note.
+    p.send(b"\x1b[1;2C\x1b[1;2C"); // Shift+Right twice: a legitimate partial selection.
+    p.send(b"\x1b[99;9u"); // Cmd+C
+    let clip = root.join("clipboard.txt");
+    let wait_clip = |expected: &str| {
+        let deadline = Instant::now() + Duration::from_secs(20);
+        while common::clipboard_at(&clip).trim_end() != expected {
+            assert!(Instant::now() < deadline, "clipboard {:?}, want {expected:?}", common::clipboard_at(&clip));
+            std::thread::sleep(Duration::from_millis(50));
+        }
+    };
+    wait_clip("al");
+    for _ in 0..2 {
+        std::fs::write(&clip, "").unwrap();
+        p.send(b"\x1b[97;9u\x1b[99;9u"); // Cmd+A, Cmd+C
+        wait_clip("- alpha beta\n  - nested note\n- [ ] last task");
+        std::thread::sleep(Duration::from_millis(1800)); // Also after idle save / ticks.
+    }
+    p.send(b"\x1b[113;5u"); // Ctrl+Q
+    let deadline = Instant::now() + Duration::from_secs(20);
+    while p.child.try_wait().unwrap().is_none() && Instant::now() < deadline {
+        std::thread::sleep(Duration::from_millis(50));
+    }
+    let out = cli(&["q", "text:outside", "--json"]);
+    assert!(out.status.success());
+    assert!(String::from_utf8_lossy(&out.stdout).contains("outside page"));
+    drop(p);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// editing.md §5, §11: ⌘A ⌘C ⌘X ⌘Z as thc's WezTerm keys send them (the kitty
 /// protocol's CSI 97/99/120/122;9u) select all, copy, cut and undo in thc. The clipboard is the
 /// sandbox's file, never the real one.
