@@ -82,7 +82,8 @@ impl Doc {
         self.engine.flush();
         let lines = self.engine.lines();
         let extra_rows: BTreeMap<MarkId, u16> = g.extra_rows.iter().filter_map(|&(i, n)| Some((MarkId(lines.get(i)?.mark?), n))).filter(|(_, n)| *n > 0).collect();
-        let layout = OutlineLayout { gutter: MARKS, indent: INDENT, hang: HANG, column: g.column.max(1), min_column: MIN_COLUMN, extra_rows, hang_glyphs: false };
+        let mut layout = OutlineLayout::default();
+        (layout.gutter, layout.indent, layout.hang, layout.column, layout.min_column, layout.extra_rows, layout.hang_glyphs) = (MARKS, INDENT, HANG, g.column.max(1), MIN_COLUMN, extra_rows, false);
         let st = self.engine.state_mut();
         let v = &mut st.view;
         v.viewport = Viewport { width: g.width.max(1), height: g.height.max(1) };

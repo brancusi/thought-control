@@ -207,7 +207,6 @@ fn the_text_column_doesnt_reserve_room_for_a_yielded_detail_pane() {
 /// column never draws a 73-cell row (hyrg2: the engine's wrap takes it when its first cell
 /// fits, and its right half lands on the scrollbar or the meta).
 #[test]
-#[ignore = "hyrg2"]
 fn a_wide_character_that_doesnt_fit_wraps_whole() {
     use crate::editor::{Doc, DocRow, Target, ViewGeometry};
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 7).unwrap();

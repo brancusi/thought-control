@@ -325,7 +325,6 @@ fn resize_while_typing_keeps_the_caret_on_screen() {
 }
 
 #[test]
-#[ignore = "j9xm7"]
 fn backspace_at_the_end_of_a_scrolled_page() {
     // Blank lines typed at the end of a long page, then taken back: the view stays put.
     let mut f = flow_with("Backspace at the end of a scrolled page", Size::Long, (100, 30));
@@ -365,7 +364,6 @@ fn a_click_near_the_top_or_bottom_never_scrolls() {
 }
 
 #[test]
-#[ignore = "hyrg2"]
 fn a_wide_character_at_the_end_of_a_row_wraps() {
     // Fill a row to its last free column, then type a wide character: it goes to the next row,
     // never into the scrollbar's column.

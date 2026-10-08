@@ -159,6 +159,12 @@ pub struct UiState {
     pub scroll_drag: bool,
     #[serde(with = "pos_opt")]
     pub drag_from: Option<BlockPos>,
+    /// Where the held pointer last dragged to (screen cell), and when (`now_ms`): held on the
+    /// view's edge, the drag repeats on ticks and the view scrolls (Session::held_drag).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub drag_at: Option<(u16, u16)>,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub drag_ms: u64,
     #[serde(with = "pos_opt")]
     pub click_link: Option<BlockPos>,
     /// The last left press: (ms, x, y, count), for double and triple clicks.
@@ -250,6 +256,8 @@ impl Default for UiState {
             hover: None,
             scroll_drag: false,
             drag_from: None,
+            drag_at: None,
+            drag_ms: 0,
             click_link: None,
             last_click: None,
             toast: None,
@@ -642,4 +650,8 @@ mod tests {
         assert_eq!(s.changed_fields(&p), vec!["view", "selected", "focus_cfg"]);
         assert!(s.patched(&serde_json::json!({"cursor": "no"})).is_err());
     }
+}
+
+fn is_zero(n: &u64) -> bool {
+    *n == 0
 }

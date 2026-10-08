@@ -641,6 +641,7 @@ pub struct CaretPin {
     y: u16,
 }
 
+#[cfg(test)]
 impl CaretPin {
     /// The screen row the caret was drawn on.
     pub fn row(&self) -> u16 {
