@@ -211,3 +211,22 @@ fn diag_split() {
         f.done();
     }
 }
+
+#[test]
+#[ignore = "perf: cargo test --release -p thc-tui flows::perf -- --ignored --nocapture"]
+fn perf_typing_500_keys_steady() {
+    // A long run of typing, saves and undo steps and all, on a 5,000-line page and beside a
+    // panel on it: no key stutters (a periodic spike shows at p99).
+    let mut over = Vec::new();
+    let words: String = super::typing::WORDS.chars().cycle().take(500).collect();
+    let (mut f, _) = page(Size::Huge);
+    f.keys("<c-home>").click_caret(doc_at("Line 12:", 8)).type_text(&words);
+    budget(&f, "type", "500 keys, 5,000-line page", 4.0, &mut over);
+    f.done();
+    let (mut f, _) = page(Size::Huge);
+    f.keys("<c-home>").shift_click(text("Garden").in_doc()).expect_panels(1);
+    f.click_caret(doc_at("Line 12:", 8)).type_text(&words);
+    budget(&f, "type", "500 keys beside a panel, 5,000-line page", 4.0, &mut over);
+    f.done();
+    held(over);
+}
