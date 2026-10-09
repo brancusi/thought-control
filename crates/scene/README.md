@@ -91,3 +91,19 @@ python3 crates/scene/examples/finance/tour.py        # from another terminal
 - **Master-detail**: `bind: "@positions"` is the selected row of node `positions`.
 - **Agents drive it** like a person: `click`, `mouse` (move, click, wheel at a cell) and `screen`
   (the current frame as text, to see what's there).
+
+## thc's Today, as a scene UI
+
+`crates/scene/examples/thc/`: `today.json` (from `gen.py`) is thc's Today screen built from
+scene components with the ember-dark tokens; `thcfeed.py` turns `thc today`, `thc q`,
+`thc show` and `thc history` JSON into a view model (rows, meta, details). `compare.sh` renders
+thc's own TUI and the scene UI after the same keys and compares them cell by cell (character,
+colours, attributes): all 13 states, 78,000 cells, are identical.
+
+The template language that took: `<accent+b>…</>` styles (theme tokens, `on-<colour>`, `b d i u
+r s`), `{status|todo=[ ];done=<done>[x]</>}` maps, `{x|?then $}` and `{x|!else}`, `{x|markup}` for
+values that carry their own styles (layered on the surrounding style; `<=spec>` replaces it), a
+tab to right-align the rest of a line, `{*─}` to fill it, and lines whose placeholders all come
+out empty are left out. Lists take `variant`/`variants` (a template per row kind), `skip` (rows
+the cursor passes over), `mark`, `lead` and `selected`; `rule` draws a line; `status_bar: false`
+gives the UI every row.

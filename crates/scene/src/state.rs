@@ -284,9 +284,22 @@ fn cycle(st: &mut State, dir: isize) -> Vec<Effect> {
 
 fn step(st: &mut State, f: impl Fn(usize, usize) -> usize) -> Vec<Effect> {
     let Some(id) = st.focus.clone() else { return vec![] };
-    let len = st.ui.root.find(&id).map(|n| items(st, n).len()).unwrap_or(0);
-    let local = st.local.entry(id).or_default();
-    local.selected = f(local.selected, len);
+    let Some(n) = st.ui.root.find(&id) else { return vec![] };
+    let rows = items(st, n);
+    let at = st.local.get(&id).map(|l| l.selected).unwrap_or(0);
+    let mut to = f(at, rows.len());
+    // Past rows that can't be selected (section headers), in the direction of travel.
+    let dir: isize = if to >= at { 1 } else { -1 };
+    while rows.get(to).is_some_and(|r| n.skips(r)) {
+        match to.checked_add_signed(dir).filter(|t| *t < rows.len()) {
+            Some(t) => to = t,
+            None => {
+                to = at;
+                break;
+            }
+        }
+    }
+    st.local.entry(id).or_default().selected = to;
     vec![]
 }
 
@@ -311,6 +324,23 @@ fn settle(st: &mut State) {
         if let Some(l) = st.local.get_mut(&id) {
             l.selected = l.selected.min(len.saturating_sub(1));
         }
+    }
+    // A selection on a row that can't be selected moves to the next one that can.
+    let fix: Vec<(String, usize)> = all
+        .iter()
+        .filter(|n| n.focusable())
+        .filter_map(|n| {
+            let id = n.id.clone()?;
+            let rows = items(st, n);
+            let at = st.local.get(&id).map(|l| l.selected).unwrap_or(0);
+            if !rows.get(at).is_some_and(|r| n.skips(r)) {
+                return None;
+            }
+            (at..rows.len()).chain(0..at).find(|k| !n.skips(&rows[*k])).map(|k| (id, k))
+        })
+        .collect();
+    for (id, k) in fix {
+        st.local.entry(id).or_default().selected = k;
     }
 }
 

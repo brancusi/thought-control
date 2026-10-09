@@ -28,6 +28,10 @@ pub struct Ui {
     /// (placed by caretline-layers).
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub layers: Vec<LayerSpec>,
+    /// `false` hides the runtime's own status line (hints and the fps meter), so the UI owns every
+    /// row. The meter is still bindable as `$stats`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub status_bar: Option<bool>,
 }
 
 /// One layer, anchored to a node (`on`) or one of its rows (`row`).
@@ -149,7 +153,11 @@ pub enum Kind {
     Row { children: Vec<Node> },
     /// Text. `{field}` placeholders fill from the bound value (`{a.b}` reaches in).
     Text { text: String },
-    /// A selectable list of `items`, or of the bound array. `item` formats each one.
+    /// A selectable list of `items`, or of the bound array. `item` formats each one; with
+    /// `variant` (a path), a row whose value there is a key of `variants` uses that template
+    /// instead (a section header, a blank). Rows whose variant is in `skip` aren't selectable.
+    /// `mark` and `lead` start the selected and the other rows (default `▸ ` and two spaces);
+    /// `selected` styles the selected row (a style spec; default reverse when focused).
     List {
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         items: Vec<Value>,
@@ -157,6 +165,23 @@ pub enum Kind {
         item: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         empty: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        variant: Option<String>,
+        #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+        variants: BTreeMap<String, String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        skip: Vec<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mark: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lead: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        selected: Option<String>,
+    },
+    /// A line filling the node: `glyph` (default `│` when taller than wide, else `─`).
+    Rule {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        glyph: Option<String>,
     },
     /// A selectable table over the bound array (or `items`).
     Table {
@@ -300,6 +325,14 @@ pub enum Action {
 }
 
 impl Node {
+    /// Whether row `r` (`v`) can't be selected: its variant is in the list's `skip`.
+    pub fn skips(&self, v: &Value) -> bool {
+        match &self.kind {
+            Kind::List { variant: Some(p), skip, .. } if !skip.is_empty() => skip.contains(&scalar(lookup(v, p))),
+            _ => false,
+        }
+    }
+
     pub fn children(&self) -> &[Node] {
         match &self.kind {
             Kind::Col { children } | Kind::Row { children } | Kind::Tabs { children, .. } => children,
@@ -359,49 +392,174 @@ impl Node {
     }
 }
 
-/// `{field}` and `{a.b}` filled from `v`; a missing field is empty. A plain string value fills
-/// `{.}`. `{{` is a literal brace.
-pub fn fill(template: &str, v: &Value) -> String {
-    let mut out = String::new();
+/// One run of a filled template: text, its style (a spec like `accent+b`, from `<accent+b>`), the
+/// sign of a `{±x}` number, a tab (the rest of the line is right-aligned) or a fill character
+/// (`{*─}`: repeat to the end of the line).
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct Seg {
+    pub text: String,
+    pub style: Option<String>,
+    pub sign: Option<bool>,
+    pub tab: bool,
+    pub fill: Option<char>,
+}
+
+/// A template filled from `v`, as styled runs. The language:
+///
+/// - `{path}` a value (`{a.b}`, `{rows.0}`; `{.}` the value itself); `{{` is a literal brace.
+/// - `{±path}` a value marked with its number's sign, for the view to colour.
+/// - `{path|a=x;b=y;*=z}` maps the value (`*` is anything else); the result may carry styles and
+///   `$` stands for the value. `{path|?then}` is `then` when the value isn't empty, `{path|!else}`
+///   when it is. `{path|markup}` reads the value's own `<style>` runs (values are plain text
+///   otherwise, so data can't restyle the screen).
+/// - `<spec>` … `</>` a style: theme tokens or colours, `on-<colour>` for the background, and
+///   `b` `d` `i` `u` `r` `s` (bold, dim, italic, underline, reverse, strike), joined by `+`.
+///   Inside a mapped or `|markup` value a style layers on the one around it (a `<tag>` in a bold
+///   title stays bold); `<=spec>` replaces it instead.
+/// - a tab right-aligns the rest of the line; `{*─}` fills the line with `─`.
+pub fn segments(template: &str, v: &Value) -> Vec<Seg> {
+    let mut out = Vec::new();
+    let mut cur: Option<String> = None;
     let mut rest = template;
-    while let Some(i) = rest.find('{') {
-        out.push_str(&rest[..i]);
+    while !rest.is_empty() {
+        let Some(i) = rest.find('{') else {
+            markup(rest, &mut cur, &mut out);
+            break;
+        };
+        markup(&rest[..i], &mut cur, &mut out);
         if rest[i..].starts_with("{{") {
-            out.push('{');
+            push(&mut out, "{", cur.clone(), None);
             rest = &rest[i + 2..];
             continue;
         }
-        match rest[i..].find('}') {
-            Some(j) => {
-                out.push_str(&scalar(lookup(v, rest[i + 1..i + j].trim_start_matches('±'))));
-                rest = &rest[i + j + 1..];
-            }
+        let Some(j) = rest[i..].find('}') else {
+            push(&mut out, &rest[i..], cur.clone(), None);
+            break;
+        };
+        let inner = &rest[i + 1..i + j];
+        rest = &rest[i + j + 1..];
+        let base = cur.clone();
+        if let Some(c) = inner.strip_prefix('*') {
+            out.push(Seg { fill: c.chars().next().or(Some(' ')), style: cur.clone(), ..Seg::default() });
+            continue;
+        }
+        let (signed, inner) = match inner.strip_prefix('±') {
+            Some(x) => (true, x),
+            None => (false, inner),
+        };
+        let (path, filter) = match inner.split_once('|') {
+            Some((p, f)) => (p, Some(f)),
+            None => (inner, None),
+        };
+        let value = scalar(lookup(v, path));
+        match filter {
             None => {
-                out.push_str(&rest[i..]);
-                rest = "";
+                let sign = signed.then(|| number(&value).map(|n| n >= 0.0)).flatten();
+                push(&mut out, &value, cur.clone(), sign);
+            }
+            Some("markup") => markup_in(&value, base.as_deref(), &mut out),
+            Some(f) => {
+                let picked = if let Some(then) = f.strip_prefix('?') {
+                    if value.is_empty() { String::new() } else { then.replace('$', &value) }
+                } else if let Some(other) = f.strip_prefix('!') {
+                    if value.is_empty() { other.to_string() } else { String::new() }
+                } else {
+                    let mut hit = None;
+                    let mut any = None;
+                    for arm in f.split(';') {
+                        if let Some((k, x)) = arm.split_once('=') {
+                            if k == value {
+                                hit = Some(x);
+                            } else if k == "*" {
+                                any = Some(x);
+                            }
+                        }
+                    }
+                    hit.or(any).unwrap_or("").replace('$', &value)
+                };
+                markup_in(&picked, base.as_deref(), &mut out);
             }
         }
     }
-    out.push_str(rest);
+    out.retain(|s| !s.text.is_empty() || s.tab || s.fill.is_some());
     out
 }
 
-/// A template as spans: `{±path}` is filled like `{path}` and marked with the sign of its number
-/// (`Some(true)` positive, `Some(false)` negative), for the view to colour.
-pub fn fill_spans(template: &str, v: &Value) -> Vec<(String, Option<bool>)> {
-    let mut out: Vec<(String, Option<bool>)> = Vec::new();
-    let mut rest = template;
-    while let Some(i) = rest.find("{±") {
-        let Some(j) = rest[i..].find('}') else { break };
-        out.push((fill(&rest[..i], v), None));
-        let value = lookup(v, &rest[i + "{±".len()..i + j]);
-        let text = scalar(value);
-        out.push((text.clone(), number(&text).map(|n| n >= 0.0)));
+fn push(out: &mut Vec<Seg>, text: &str, style: Option<String>, sign: Option<bool>) {
+    if !text.is_empty() {
+        out.push(Seg { text: text.to_string(), style, sign, ..Seg::default() });
+    }
+}
+
+/// A value's own styles, layered on `base` (the style around the placeholder).
+fn markup_in(text: &str, base: Option<&str>, out: &mut Vec<Seg>) {
+    let mut cur = base.map(str::to_string);
+    markup_with(text, &mut cur, base, out);
+}
+
+/// Literal template text: `<spec>` and `</>` switch the style, a tab splits the line.
+fn markup(text: &str, cur: &mut Option<String>, out: &mut Vec<Seg>) {
+    markup_with(text, cur, None, out);
+}
+
+fn markup_with(text: &str, cur: &mut Option<String>, base: Option<&str>, out: &mut Vec<Seg>) {
+    let mut rest = text;
+    loop {
+        let tag = rest.find('<').and_then(|i| {
+            let j = rest[i..].find('>')?;
+            let spec = &rest[i + 1..i + j];
+            let ok = spec == "/" || (!spec.is_empty() && spec.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '#' | '_' | '=')));
+            ok.then_some((i, j, spec))
+        });
+        let upto = tag.map(|(i, ..)| i).unwrap_or(rest.len());
+        for (k, part) in rest[..upto].split('\t').enumerate() {
+            if k > 0 {
+                out.push(Seg { tab: true, ..Seg::default() });
+            }
+            push(out, part, cur.clone(), None);
+        }
+        let Some((i, j, spec)) = tag else { break };
+        *cur = match (spec, base) {
+            ("/", _) => base.map(str::to_string),
+            (s, _) if s.starts_with('=') => Some(s[1..].to_string()),
+            (s, Some(b)) => Some(format!("{b}+{s}")),
+            (s, None) => Some(s.to_string()),
+        };
         rest = &rest[i + j + 1..];
     }
-    out.push((fill(rest, v), None));
-    out.retain(|(s, _)| !s.is_empty());
-    out
+}
+
+/// Whether a template line shows: it has no placeholders, or at least one fills to something.
+/// A line made only of conditional parts that all came out empty is left out, so optional
+/// details don't leave gaps.
+pub fn shows(template: &str, v: &Value) -> bool {
+    let mut any = false;
+    let mut rest = template;
+    while let Some(i) = rest.find('{') {
+        if rest[i..].starts_with("{{") {
+            rest = &rest[i + 2..];
+            continue;
+        }
+        let Some(j) = rest[i..].find('}') else { break };
+        let ph = &rest[i..i + j + 1];
+        rest = &rest[i + j + 1..];
+        if ph.starts_with("{*") {
+            continue;
+        }
+        any = true;
+        if segments(ph, v).iter().any(|g| !g.text.is_empty()) {
+            return true;
+        }
+    }
+    !any
+}
+
+/// A template filled as plain text (styles dropped, a tab as `\t`).
+pub fn fill(template: &str, v: &Value) -> String {
+    segments(template, v)
+        .into_iter()
+        .map(|s| if s.tab { "\t".to_string() } else { s.text })
+        .collect()
 }
 
 /// The number in a cell's text: `-1,234.5`, `+4.2%`, `$12k` → -1234.5, 4.2, 12.
@@ -447,11 +605,36 @@ mod tests {
     #[test]
     fn signed_placeholders_carry_their_sign() {
         let v = json!({"pnl": "-1,204.50", "pct": 3.1});
-        let spans = fill_spans("P&L {±pnl} ({±pct}%)", &v);
+        let spans: Vec<(String, Option<bool>)> = segments("P&L {±pnl} ({±pct}%)", &v).into_iter().map(|s| (s.text, s.sign)).collect();
         assert_eq!(spans, vec![
             ("P&L ".into(), None), ("-1,204.50".into(), Some(false)), (" (".into(), None),
             ("3.1".into(), Some(true)), ("%)".into(), None)
         ]);
+    }
+
+    #[test]
+    fn styles_maps_tabs_and_fills() {
+        let v = json!({"status": "done", "text": "a <b>bold</b> note", "due": "", "ctx": "Home"});
+        let segs = segments("<muted>{status|todo=[ ];done=<done>[x]</>;*=?}</> {text}\t{due|!none}{ctx|? · ¶ $}{*─}", &v);
+        let got: Vec<(String, Option<String>, bool, Option<char>)> =
+            segs.into_iter().map(|s| (s.text, s.style, s.tab, s.fill)).collect();
+        assert_eq!(got, vec![
+            // A mapped value's style layers on the one around it.
+            ("[x]".into(), Some("muted+done".into()), false, None),
+            (" ".into(), None, false, None),
+            // Values are plain text: their angle brackets are never styles.
+            ("a <b>bold</b> note".into(), None, false, None),
+            ("".into(), None, true, None),
+            ("none".into(), None, false, None),
+            (" · ¶ Home".into(), None, false, None),
+            ("".into(), None, false, Some('─')),
+        ]);
+        assert_eq!(fill("{x|markup}", &json!({"x": "<tag>#a</> b"})), "#a b");
+        assert!(shows("static", &v) && shows("{ctx} ", &v) && !shows("<muted>{due|?due $}</> ", &v));
+        // Inside a value, styles layer on the surrounding one; `<=…>` replaces it.
+        let styles: Vec<Option<String>> = segments("<text+b>{x|markup}</>", &json!({"x": "a <tag>#t</> <=muted>[[</>"}))
+            .into_iter().map(|s| s.style).collect();
+        assert_eq!(styles, vec![Some("text+b".into()), Some("text+b+tag".into()), Some("text+b".into()), Some("muted".into())]);
     }
 
     #[test]

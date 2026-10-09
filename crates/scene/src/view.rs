@@ -2,7 +2,7 @@
 //! Besides the frame it returns the hit regions (what is under each cell, for the mouse), and
 //! it places the UI's layers with caretline-layers over what it drew.
 
-use crate::model::{Kind, LayerSpec, Look, Node, Size, Style as NodeStyle, fill, fill_spans, lookup, number, scalar};
+use crate::model::{Kind, LayerSpec, Look, Node, Seg, Size, Style as NodeStyle, fill, lookup, number, scalar, segments};
 use crate::state::{Slot, State, bound, items, selected, split_bind, tab_of, value_of};
 use caretline_layers as cl;
 use ratatui::Frame;
@@ -84,15 +84,110 @@ impl Cx<'_> {
     }
 
     /// Spans from a template: `{±x}` coloured by sign.
+    /// Spans from a template (tabs and fills dropped): `{±x}` coloured by sign, `<spec>` styled.
     fn spans(&self, template: &str, v: &Value, base: Style) -> Vec<Span<'static>> {
-        fill_spans(template, v)
+        self.parts(template, v, base)
             .into_iter()
-            .map(|(s, sign)| match sign {
-                Some(true) => Span::styled(s, base.fg(self.th.pos)),
-                Some(false) => Span::styled(s, base.fg(self.th.neg)),
-                None => Span::styled(s, base),
+            .filter_map(|p| match p {
+                Part::Text(s) => Some(s),
+                _ => None,
             })
             .collect()
+    }
+
+    fn parts(&self, template: &str, v: &Value, base: Style) -> Vec<Part> {
+        segments(template, v).into_iter().map(|g| self.part(g, base)).collect()
+    }
+
+    fn part(&self, g: Seg, base: Style) -> Part {
+        let mut st = match &g.style {
+            Some(spec) => self.spec(spec, base),
+            None => base,
+        };
+        match g.sign {
+            Some(true) => st = st.fg(self.th.pos),
+            Some(false) => st = st.fg(self.th.neg),
+            None => {}
+        }
+        if g.tab {
+            Part::Tab
+        } else if let Some(c) = g.fill {
+            Part::Fill(c, st)
+        } else {
+            Part::Text(Span::styled(g.text, st))
+        }
+    }
+
+    /// A style spec over `base`: `accent+b`, `muted`, `text+on-selection`, `#ff8800+u`.
+    fn spec(&self, spec: &str, base: Style) -> Style {
+        let mut st = base;
+        for t in spec.split('+') {
+            st = match t {
+                "b" => st.add_modifier(Modifier::BOLD),
+                "d" => st.add_modifier(Modifier::DIM),
+                "i" => st.add_modifier(Modifier::ITALIC),
+                "u" => st.add_modifier(Modifier::UNDERLINED),
+                "r" => st.add_modifier(Modifier::REVERSED),
+                "s" => st.add_modifier(Modifier::CROSSED_OUT),
+                t => match t.strip_prefix("on-") {
+                    Some(c) => self.color(c).map_or(st, |c| st.bg(c)),
+                    None => self.color(t).map_or(st, |c| st.fg(c)),
+                },
+            };
+        }
+        st
+    }
+}
+
+/// A run of a drawn line: text, the point where the right-aligned rest starts, or a fill.
+enum Part {
+    Text(Span<'static>),
+    Tab,
+    Fill(char, Style),
+}
+
+/// One line of parts into `r`: the left side from `r.x`, anything after a tab right-aligned to
+/// the end (the left side is cut to leave a cell between them), and a fill taking what's left.
+fn draw_parts(buf: &mut Buffer, r: Rect, parts: Vec<Part>) {
+    let (mut left, mut right, mut seen_tab) = (Vec::new(), Vec::new(), false);
+    for p in parts {
+        match p {
+            Part::Tab if !seen_tab => seen_tab = true,
+            Part::Tab => {}
+            p if seen_tab => right.push(p),
+            p => left.push(p),
+        }
+    }
+    let width = |ps: &[Part]| ps.iter().map(|p| if let Part::Text(s) = p { s.width() } else { 0 }).sum::<usize>();
+    let rw = width(&right).min(r.width as usize);
+    let room = (r.width as usize).saturating_sub(if rw > 0 { rw + 1 } else { 0 });
+    let fixed = width(&left);
+    let mut x = r.x;
+    let end = r.x + room as u16;
+    for p in left {
+        if x >= end {
+            break;
+        }
+        match p {
+            Part::Text(s) => {
+                let (nx, _) = buf.set_span(x, r.y, &s, end - x);
+                x = nx;
+            }
+            Part::Fill(c, st) => {
+                let n = room.saturating_sub(fixed) as u16;
+                let n = n.min(end - x);
+                buf.set_string(x, r.y, c.to_string().repeat(n as usize), st);
+                x += n;
+            }
+            Part::Tab => {}
+        }
+    }
+    let mut x = r.x + r.width - rw as u16;
+    for p in right {
+        if let Part::Text(s) = p {
+            let (nx, _) = buf.set_span(x, r.y, &s, r.right().saturating_sub(x));
+            x = nx;
+        }
     }
 }
 
@@ -124,9 +219,13 @@ pub fn draw(st: &State, f: &mut Frame) -> Vec<Hit> {
     }
     let all = f.area();
     f.buffer_mut().set_style(all, base);
-    let [body, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(1)]).areas(f.area());
+    let bar = st.ui.status_bar.unwrap_or(true);
+    let [body, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(bar as u16)]).areas(f.area());
     node(&mut cx, &st.ui.root, f, body);
     layers(&cx, f.buffer_mut(), body);
+    if !bar {
+        return cx.hits;
+    }
     let line = match &st.status {
         Some(s) => Line::styled(s.clone(), Style::default().fg(cx.th.neg)),
         None => Line::styled(
@@ -211,10 +310,27 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
         }
         Kind::Text { text } => {
             let v = bound(st, n).unwrap_or(&Value::Null);
-            let lines: Vec<Line> = text.lines().map(|l| Line::from(cx.spans(l, v, style))).collect();
-            f.render_widget(Paragraph::new(lines).style(style).alignment(align).wrap(Wrap { trim: false }), inner);
+            // Lines with a tab or a fill are laid out by hand (no wrapping); the rest wrap.
+            // Lines whose placeholders all came out empty are left out (optional details).
+            let shown: Vec<&str> = text.split('\n').filter(|l| crate::model::shows(l, v)).collect();
+            if text.contains('\t') || text.contains("{*") {
+                for (k, l) in shown.iter().enumerate().take(inner.height as usize) {
+                    let r = Rect::new(inner.x, inner.y + k as u16, inner.width, 1);
+                    draw_parts(f.buffer_mut(), r, cx.parts(l, v, style));
+                }
+            } else {
+                let lines: Vec<Line> = shown.iter().map(|l| Line::from(cx.spans(l, v, style))).collect();
+                f.render_widget(Paragraph::new(lines).style(style).alignment(align).wrap(Wrap { trim: false }), inner);
+            }
         }
-        Kind::List { item, empty, .. } => {
+        Kind::Rule { glyph } => {
+            let g = glyph.clone().unwrap_or_else(|| if inner.height > inner.width { "│".into() } else { "─".into() });
+            let ls = if style.fg.is_some() { style } else { style.fg(cx.th.border) };
+            for y in inner.y..inner.bottom() {
+                f.buffer_mut().set_string(inner.x, y, g.repeat(inner.width as usize), ls);
+            }
+        }
+        Kind::List { item, empty, variant, variants, mark, lead, selected: sel_spec, .. } => {
             let rows = items(st, n);
             if rows.is_empty() {
                 let e = empty.clone().unwrap_or_else(|| "(nothing)".into());
@@ -229,17 +345,26 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
                 if cx.hovered(&id, k) {
                     rs = rs.bg(cx.th.hover);
                 }
-                if sel == Some(k) {
-                    rs = if focused { rs.add_modifier(Modifier::REVERSED) } else { rs.add_modifier(Modifier::BOLD) };
+                let picked = variant.as_ref().and_then(|p| variants.get(&scalar(lookup(r, p))));
+                let is_sel = sel == Some(k) && !n.skips(r);
+                if is_sel {
+                    rs = match sel_spec {
+                        Some(spec) => cx.spec(spec, rs),
+                        None if focused => rs.add_modifier(Modifier::REVERSED),
+                        None => rs.add_modifier(Modifier::BOLD),
+                    };
                 }
-                let lead = if sel == Some(k) { "▸ " } else { "  " };
-                let mut spans = vec![Span::styled(lead, rs)];
-                spans.extend(match item {
-                    Some(t) => cx.spans(t, r, rs),
-                    None => vec![Span::styled(scalar(Some(r)), rs)],
-                });
                 f.buffer_mut().set_style(line, rs);
-                f.render_widget(Paragraph::new(Line::from(spans)), line);
+                let mut parts = Vec::new();
+                if picked.is_none() || !n.skips(r) {
+                    let lead_t = if is_sel { mark.as_deref().unwrap_or("▸ ") } else { lead.as_deref().unwrap_or("  ") };
+                    parts.extend(cx.parts(lead_t, r, rs));
+                }
+                match picked.or(item.as_ref()) {
+                    Some(t) => parts.extend(cx.parts(t, r, rs)),
+                    None => parts.push(Part::Text(Span::styled(scalar(Some(r)), rs))),
+                }
+                draw_parts(f.buffer_mut(), line, parts);
                 if !id.is_empty() {
                     cx.mark(&id, Some(k), None, line);
                 }
@@ -349,9 +474,9 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
         }
         Kind::Big { text } => {
             let v = bound(st, n).unwrap_or(&Value::Null);
-            let spans = fill_spans(text, v);
-            let sign = spans.iter().find_map(|(_, s)| *s);
-            let s: String = spans.into_iter().map(|(t, _)| t).collect();
+            let segs = segments(text, v);
+            let sign = segs.iter().find_map(|g| g.sign);
+            let s: String = segs.into_iter().map(|g| g.text).collect();
             let mut bs = style;
             if bs.fg.is_none() {
                 bs = bs.fg(match sign {
@@ -873,8 +998,7 @@ fn layers(cx: &Cx, buf: &mut Buffer, body: Rect) {
         let has_title = content.data["title"].is_string();
         for (k, l) in lines.iter().enumerate().take(r.h as usize - 2) {
             let s = if k == 0 && has_title { border.add_modifier(Modifier::BOLD) } else { fill_s };
-            let spans: Vec<Span> = fill_spans(l, &Value::Null).into_iter().map(|(t, _)| Span::styled(t, s)).collect();
-            buf.set_line(r.x + 2, r.y + 1 + k as u16, &Line::from(spans), r.w - 4);
+            buf.set_line(r.x + 2, r.y + 1 + k as u16, &Line::from(Span::styled(l.clone(), s)), r.w - 4);
         }
     }
 }

@@ -549,6 +549,41 @@ pub fn send(socket: &Path, req: Value) -> Result<Value> {
     Ok(serde_json::from_str(&line)?)
 }
 
+/// A frame as ANSI text: an SGR (truecolour) wherever the style changes.
+fn buffer_ansi(buf: &ratatui::buffer::Buffer) -> String {
+    use ratatui::style::{Color, Modifier};
+    let sgr = |c: &ratatui::buffer::Cell| {
+        let mut p = vec!["0".to_string()];
+        for (m, code) in [(Modifier::BOLD, "1"), (Modifier::DIM, "2"), (Modifier::ITALIC, "3"), (Modifier::UNDERLINED, "4"), (Modifier::REVERSED, "7"), (Modifier::CROSSED_OUT, "9")] {
+            if c.modifier.contains(m) {
+                p.push(code.into());
+            }
+        }
+        if let Color::Rgb(r, g, b) = c.fg {
+            p.push(format!("38;2;{r};{g};{b}"));
+        }
+        if let Color::Rgb(r, g, b) = c.bg {
+            p.push(format!("48;2;{r};{g};{b}"));
+        }
+        format!("\x1b[{}m", p.join(";"))
+    };
+    let mut out = String::new();
+    for y in 0..buf.area.height {
+        let mut last = String::new();
+        for x in 0..buf.area.width {
+            let c = &buf[(x, y)];
+            let s = sgr(c);
+            if s != last {
+                out.push_str(&s);
+                last = s;
+            }
+            out.push_str(c.symbol());
+        }
+        out.push_str("\x1b[0m\n");
+    }
+    out
+}
+
 fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
     let mut out = String::new();
     for y in 0..buf.area.height {
@@ -560,7 +595,7 @@ fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
 }
 
 /// Render one frame as text without a terminal, after fetching sources and replaying keys.
-pub fn render(ui: Ui, width: u16, height: u16, keys: &[String]) -> Result<String> {
+pub fn render(ui: Ui, width: u16, height: u16, keys: &[String], ansi: bool) -> Result<String> {
     use ratatui::{Terminal, backend::TestBackend};
     let (tx, _rx) = mpsc::channel();
     let mut st = State::default();
@@ -574,6 +609,9 @@ pub fn render(ui: Ui, width: u16, height: u16, keys: &[String]) -> Result<String
         view::draw(&st, f);
     })?;
     let buf = term.backend().buffer();
+    if ansi {
+        return Ok(buffer_ansi(buf));
+    }
     let mut out = String::new();
     for y in 0..height {
         let line: String = (0..width).map(|x| buf[(x, y)].symbol().to_string()).collect();

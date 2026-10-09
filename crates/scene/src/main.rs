@@ -52,6 +52,9 @@ enum Cmd {
         /// Keys to replay first, comma-separated (`j,j,tab`).
         #[arg(long, value_delimiter = ',')]
         keys: Vec<String>,
+        /// Colours and attributes as ANSI (truecolour) escapes.
+        #[arg(long)]
+        ansi: bool,
     },
 }
 
@@ -60,9 +63,9 @@ fn main() -> Result<()> {
     let socket = cli.socket.unwrap_or_else(runtime::default_socket);
     let reply = match cli.cmd {
         Cmd::Run { file, watch } => return runtime::run(file, watch, socket),
-        Cmd::Render { file, size, keys } => {
+        Cmd::Render { file, size, keys, ansi } => {
             let (w, h) = size.split_once('x').ok_or_else(|| anyhow::anyhow!("--size is WxH"))?;
-            print!("{}", runtime::render(runtime::load(&file)?, w.parse()?, h.parse()?, &keys)?);
+            print!("{}", runtime::render(runtime::load(&file)?, w.parse()?, h.parse()?, &keys, ansi)?);
             return Ok(());
         }
         Cmd::Push { file } => runtime::send(&socket, json!({"op": "push", "ui": runtime::load(&file)?}))?,
