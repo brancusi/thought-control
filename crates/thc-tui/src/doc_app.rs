@@ -434,16 +434,8 @@ impl App {
         if plan.ops.is_empty() {
             return;
         }
-        let started = self.ui.now_ms;
-        d.mark_saving(&plan.parsed, Some(started));
-        // Review fixture: a save that never lands, as if more than 3 s late (◌ in the marks).
-        if std::env::var_os("THC_TUI_FAKE_SAVE_LATE").is_some() {
-            d.mark_saving(&plan.parsed, Some(started.saturating_sub(4000)));
-            return;
-        }
         // Review fixture: a save that fails (the footer's `not saved · :retry`).
         if std::env::var_os("THC_TUI_FAKE_SAVE_FAIL").is_some() {
-            d.mark_saving(&plan.parsed, None);
             d.mark_save_failed(&plan.parsed, "the disk is full (fixture)");
             return;
         }
@@ -468,7 +460,7 @@ impl App {
                 self.after_save_results();
             }
             Err(e) => {
-                // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
+                // The text stays in the buffer; ◌ marks it and the bar says why.
                 d.mark_save_failed(&plan.parsed, &e);
                 self.error(format!("not saved: {e} · :retry"));
             }

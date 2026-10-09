@@ -449,9 +449,9 @@ impl App {
         any
     }
 
-    /// A panel's document is waiting on time (unsaved typing, a save in flight).
+    /// A panel's document is waiting on time (unsaved typing, a settling flash).
     pub fn panels_want_clock(&self) -> bool {
-        self.panels.values().filter_map(|rt| rt.slot.doc.as_ref()).any(|d| d.blocks().iter().any(|l| l.edited() || l.saving_since.is_some() || l.flash_until.is_some()))
+        self.panels.values().filter_map(|rt| rt.slot.doc.as_ref()).any(|d| d.blocks().iter().any(|l| l.edited() || l.flash_until.is_some()))
     }
 
     /// Each doc panel's view (caret, scroll) into its UiState adapter.

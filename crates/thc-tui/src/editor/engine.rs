@@ -728,7 +728,6 @@ fn read_block(l: &mut Line, b: &BlockInfo, rope: &cn::helix::Rope) {
 /// it's still in the vault, as its last save left it. Its delete landed (or it was never
 /// saved): a new note, under a new id.
 fn revive(l: &mut Line, deleted: &mut Vec<String>, last_saved: &HashMap<String, Line>, pool: &mut IdPool) {
-    l.saving_since = None;
     if let Some(i) = deleted.iter().position(|d| *d == l.id) {
         deleted.remove(i);
         if let Some(s) = last_saved.get(&l.id) {

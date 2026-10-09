@@ -40,13 +40,11 @@ snap doc-remote-current  120x36 "5<up><remote:$pid:Lisbon feels real now. The bo
 snap doc-conflict        120x36 "5<up> Truly.<remote:$pid:Lisbon feels real now.><down>"
 snap doc-compare         120x36 "5<up> Truly.<remote:$pid:Lisbon feels real now.><down><up><c-o>"
 snap doc-focus           120x36 "5<m-z>"
-THC_TUI_FAKE_SAVE_LATE=1 snap doc-save-late 120x36 "5Waiting on the network<cr>"
 THC_TUI_FOCUS_DIM=1 snap doc-focus-dim 120x36 "5<up>"
 # The keys footer (§4.5) and composable Focus (§8).
 snap doc-footer-write-120 120x36 "5"
 snap doc-footer-write-80  80x24  "5"
 # A save lands just after the frame: one more key shows its state.
-THC_TUI_FAKE_SAVE_LATE=1 snap doc-footer-saving    120x36 "5<up> more<down><right>"
 THC_TUI_FAKE_SAVE_FAIL=1 snap doc-footer-not-saved 120x36 "5<up> more<down><right>"
 THC_TUI_FOCUS=bare    snap focus-bare        120x36 "5<m-z>"
 THC_TUI_FOCUS=writer  snap focus-writer      120x36 "5<m-z>"

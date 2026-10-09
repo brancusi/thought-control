@@ -44,8 +44,6 @@ pub struct Line {
     pub conflict: bool,
     /// The meta flashes accent until then (values settling after a save), in ms on the UI's logical clock (`UiState::now_ms`).
     pub flash_until: Option<u64>,
-    /// A save in flight since (◌ after 3 s), in ms on the UI's logical clock (`UiState::now_ms`).
-    pub saving_since: Option<u64>,
     pub save_error: Option<String>,
     /// Changed elsewhere while you're on it (§9): the new text, applied when you leave.
     pub remote_text: Option<String>,
@@ -82,7 +80,6 @@ impl Line {
             is_new: true,
             conflict: false,
             flash_until: None,
-            saving_since: None,
             save_error: None,
             remote_text: None,
             remote_shape: false,
@@ -864,7 +861,6 @@ impl Doc {
                 continue;
             };
             let l = &mut self.engine.lines_mut()[i];
-            l.saving_since = None;
             match r.state {
                 // Only the note's last result: it has every op of this save applied.
                 "ok" if !latest => {}
