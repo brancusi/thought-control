@@ -187,6 +187,8 @@ checksum = "8f1fe948ff07f4bd06c30984e69f5b4899c516a3ef74f34df92a2df2ab535495"
 [[package]]
 name = "caretline"
 version = "0.4.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c41b35f5f3acb0f72f5074dba0b648a50d5e60a9af92acc037175f08e36b9968"
 dependencies = [
  "log",
  "ropey",
@@ -202,6 +204,8 @@ dependencies = [
 [[package]]
 name = "caretline-layers"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "40b650ff5a420f9ebc174895f9d4f345db7fb4c285182f8d90092a4b75545333"
 dependencies = [
  "caretline",
  "serde",
@@ -213,6 +217,8 @@ dependencies = [
 [[package]]
 name = "caretline-tour"
 version = "0.1.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "bd0053710a741be243b683b8a3a15924ad934eaae5a233459ccfb4b0faee6344"
 dependencies = [
  "caretline",
  "caretline-layers",

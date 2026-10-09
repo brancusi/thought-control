@@ -381,10 +381,8 @@ These rules come first; every review checks them.
   derive tx/event ids from it, and the seed keys its creates, so `scripts/guide-renders.sh` output is
   identical across runs: a render diff means the UI changed.
 - **Build/test:**
-  - Local builds use `scripts/with-caretline.sh <engine-repo> <scratch-export>` with the
-    companion-crate Cargo overrides shown in README.md, then `build` or `test --workspace`.
-    The Rust toolchain is selected via `mise.toml`; use `mise exec --` before the script if
-    `cargo` isn't on PATH.
+  - `cargo build`, `cargo test` (the Rust toolchain is pinned via `mise.toml`, so run
+    `mise exec -- cargo …` if `cargo` isn't on PATH).
   - `crates/thc-core/tests/convergence.rs` simulates several devices syncing and must
     always pass.
 - **The contract is `docs/FORMAT.md`:**
@@ -407,13 +405,9 @@ These rules come first; every review checks them.
   inside thought-control.
   - thc depends on `caretline = "=0.4.0"`, `caretline-layers = "=0.1.0"` and
     `caretline-tour = "=0.1.0"` in `crates/thc-tui/Cargo.toml`.
-  - Local-only development pins the exact library commit in `caretline.rev`.
-    `scripts/with-caretline.sh <engine-repo> <scratch-export> <cargo-args…>` archives and
-    verifies that immutable commit, supplies Cargo's engine path override and keeps build
-    output outside the checkout. Companion overrides use the same verified export. It never
-    fetches, follows a branch or edits the engine source.
-  - Publication waits until the pin is a public release or accessible Git revision; never
-    replace it with a mutable sibling checkout.
+  - All three come from crates.io. An engine fix not yet released is pinned by git revision
+    under `[patch.crates-io]` in the root Cargo.toml and removed once a release contains it.
+    For local work on both repos, use a path patch to your caretline checkout and don't commit it.
 - **Keys:** one table (`crates/thc-tui/src/keymap.rs`, keymap.md) drives dispatch, the footer, help,
   the palette and `thc keys`. The write context's editing keys and their words come from caretline's
   command catalog and default keymap (`crates/thc-tui/src/editing_keys.rs`); thc's own differences are

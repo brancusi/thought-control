@@ -100,27 +100,7 @@ replay. It lives in its own repository, **[brancusi/caretline](https://github.co
 (docs at [caretline.app](https://caretline.app/docs/)), and thc depends on it as the
 `caretline` crate. Engine changes are made there first, then pulled into thc.
 
-Local development currently uses the exact, not-yet-published library commit in
-`caretline.rev`. Build from one immutable scratch export of the engine, layers and tour
-crates rather than mutable sibling checkouts:
-
-```bash
-ENGINE_REPO=/path/to/caretline
-EXPORT=/path/to/scratch/engine
-COMPANIONS=(
-  --config "patch.crates-io.caretline-layers.path=\"$EXPORT/crates/caretline-layers\""
-  --config "patch.crates-io.caretline-tour.path=\"$EXPORT/crates/caretline-tour\""
-)
-scripts/with-caretline.sh "$ENGINE_REPO" "$EXPORT" "${COMPANIONS[@]}" build
-scripts/with-caretline.sh "$ENGINE_REPO" "$EXPORT" "${COMPANIONS[@]}" test --workspace
-```
-
-The helper never fetches or edits the source. Reusing an export verifies its revision and
-file checksums; changed exports are refused. All three crates use the same absolute export
-path. Build output defaults to a sibling scratch directory. Publication remains paused
-until the library pin is available publicly.
-
-The local build includes `thc demo`: an [interactive teaching workshop](docs/guide/demo.md)
+`thc demo` is an [interactive teaching workshop](docs/guide/demo.md)
 with anchored overlays and synthetic scratch notes, isolated from your own vault/config.
 
 ## Status
