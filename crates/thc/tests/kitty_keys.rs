@@ -678,8 +678,9 @@ fn macos_editing_keys_as_wezterm_sends_them() {
         std::thread::sleep(Duration::from_millis(50));
     }
     let q = String::from_utf8_lossy(&cli(&["--json", "q", "journal=today"]).stdout).to_string();
-    // (Enter in a paragraph is a line break in the same note.)
-    assert!(q.contains("\"SYalpha beta \\nkept\""), "⌥← ⌘← ⌘→ ⌥⌫ ⌘↑ ⌘⌫: {q}");
+    // (Enter starts a new note: the Logseq model, writing.md §1.)
+    assert!(q.contains("\"SYalpha beta\"") && q.contains("\"kept\""), "⌥← ⌘← ⌘→ ⌥⌫ ⌘↑ ⌘⌫: {q}");
+    assert!(!q.contains("\"style\":\"para\""), "typed lines are bullet notes, not paragraphs: {q}");
     let _ = std::fs::remove_dir_all(&root);
 }
 

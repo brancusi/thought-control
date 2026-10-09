@@ -225,12 +225,19 @@ fn write_action_inner(app: &mut App, action: &str, shift: bool) -> bool {
             let on = !app.focus_mode;
             app.set_focus_mode(on);
         }
+        "doc.toggle_document_mode" => app.toggle_document_mode(),
         "clip.paste_system" => app.paste_system(),
-        // The same end stop for every pane, created lazily: arrival still stays top/parked.
-        "move.doc_end" if !shift => d.caret_to_end(true),
-        // Editing and motion: caretline's commands (and thc's ⌃T), run on the document.
-        other if crate::editing_keys::command_for(other, shift).is_some() => {
-            let command = crate::editing_keys::command_for(other, shift).unwrap().to_string();
+        // ⌃End (⌘↓) goes to the fresh line after the document's notes, as arriving does, in every
+        // pane, never into the last note's text: what you type there is a note of its own.
+        // ⇧ still selects to the end.
+        "move.doc_end" if !shift => {
+            d.clear_selection();
+            d.caret_to_end(true);
+        }
+        // Editing and motion: caretline's commands (and thc's ⌃T), run on the document; in
+        // document mode Enter and ⇧Enter swap (editing_keys::DOCUMENT_MODE).
+        other if crate::editing_keys::command_in(other, shift, app.ui.document_mode).is_some() => {
+            let command = crate::editing_keys::command_in(other, shift, app.ui.document_mode).unwrap().to_string();
             crate::runtime_effects::dispatch(app, crate::update::Msg::Editor { command, at: app.ui.now_ms });
         }
         // The views, help, the palette, quit, today: global actions bound in write; save first.

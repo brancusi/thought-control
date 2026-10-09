@@ -375,7 +375,7 @@ fn editor_polish() {
     assert_eq!(snap("100x26", "5call<m-:>").matches('▮').count(), 1);
     // Help under 100 columns: one column, the words whole.
     let f = snap("80x24", "5<f1>");
-    assert!(f.contains("new line · twice: new note") && !f.lines().any(|l| l.contains('│') && l.contains('…')), "{f}");
+    assert!(f.contains("new note") && !f.lines().any(|l| l.contains('│') && l.contains('…')), "{f}");
     // Search: the is:deleted tip only with no results.
     let f = snap("100x24", "6rent<cr>");
     assert!(f.contains("Pay rent") && !f.contains("deleted nodes are searchable"), "{f}");

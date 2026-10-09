@@ -427,6 +427,8 @@ pub struct Glyphs {
     pub query: &'static str,
     pub back: &'static str,
     pub more: &'static str,
+    /// Where a multi-line note's lines meet in a one-row preview (`linked from`): ` ⏎ `.
+    pub line_break: &'static str,
 }
 
 pub static UNICODE: Glyphs = Glyphs {
@@ -461,6 +463,7 @@ pub static UNICODE: Glyphs = Glyphs {
     query: "≡",
     back: "‹",
     more: "↓",
+    line_break: "⏎",
 };
 
 pub static ASCII: Glyphs = Glyphs {
@@ -495,6 +498,7 @@ pub static ASCII: Glyphs = Glyphs {
     query: "=",
     back: "<",
     more: "v",
+    line_break: "/",
 };
 
 #[cfg(test)]

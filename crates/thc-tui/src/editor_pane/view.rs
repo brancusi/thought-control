@@ -161,6 +161,10 @@ pub(crate) fn form(app: &App, l: &Line) -> Form {
                 f.hang = format!("{} ", l.text[..m].trim_end());
             } else {
                 f.hang = "  · ".into();
+                // Document mode is for prose: the bullets step back.
+                if app.ui.document_mode {
+                    f.hang_style = dim;
+                }
             }
         }
         Kind::Para => {

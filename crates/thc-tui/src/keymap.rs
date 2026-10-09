@@ -508,6 +508,7 @@ pub fn defaults() -> Vec<Binding> {
         b!(Global, "space n i", "capture.inbox", Always, "to inbox", "Leader"),
         b!(Global, "space t f", "focus.toggle", Always, "focus", "Leader"),
         b!(Global, "space t F", "focus.overlay", Always, "focus elements", "Leader"),
+        b!(Global, "space t D", "doc.toggle_document_mode", Always, "document mode", "Leader"),
         b!(Global, "space t c", "context.toggle", Always, "context", "Leader"),
         b!(Global, "space t d", "pane.detail_toggle", Always, "detail pane", "Leader"),
         b!(Global, "space t i", "ids.toggle", Always, "ids", "Leader"),
@@ -1271,8 +1272,8 @@ pub fn continuations(app: &App, seq: &[Key]) -> Vec<Hint> {
 /// for `write`). Actions sharing words share a row: `Tab ⇧Tab  nest · un-nest an item`.
 fn help_text(ctx: Ctx, action: &str) -> Option<&'static str> {
     Some(match (ctx, action) {
-        (Ctx::Write, "line.newline") => "new line · twice: new note",
-        (Ctx::Write, "line.indent" | "line.outdent") => "nest · un-nest an item",
+        (Ctx::Write, "line.newline") => "new note",
+        (Ctx::Write, "line.indent" | "line.outdent") => "nest · un-nest a note",
         (Ctx::Write, "doc.task_cycle") => "text → [ ] → [x] → text",
         (Ctx::Write, "clip.copy" | "clip.cut") => "copy · cut",
         (Ctx::Write, "doc.undo" | "doc.redo") => "undo · redo",
@@ -1281,7 +1282,7 @@ fn help_text(ctx: Ctx, action: &str) -> Option<&'static str> {
         (Ctx::Write, "doc.done") => "done: save, go back",
         (Ctx::Write, "help.context") => "these keys",
         (Ctx::Write, "focus.toggle") => "focus on · off",
-        (Ctx::Write, "line.soft_break") => "line break in an item",
+        (Ctx::Write, "line.soft_break") => "line break in the note",
         (Ctx::Write, "paste.plain_next") => "next paste plain",
         (Ctx::Write, "line.move_up" | "line.move_down") => "move the line",
         (Ctx::Write, "edit.delete_word" | "edit.kill_to_end") => "delete word · to end",
@@ -1538,6 +1539,7 @@ pub fn run(app: &mut App, action: &str) -> bool {
     use crate::input::LineInput;
     match action {
         "go.pages" => app.show_pages(),
+        "doc.toggle_document_mode" => app.toggle_document_mode(),
         "view.next" | "view.prev" => {
             let i = VIEWS.iter().position(|v| *v == app.view).unwrap_or(0);
             let n = VIEWS.len();
@@ -1737,7 +1739,7 @@ fn doc_words(c: Ctx, b: &Binding) -> &'static str {
     }
     // The editing keys: help leaves them out (arrows need no telling); the tables name them,
     // in caretline's words (its command catalog).
-    // Enter is thc's own (twice: a new note), so its words are thc's.
+    // Enter is thc's own (a new note; a line break in document mode), so its words are thc's.
     if c == Ctx::Write && b.action != "line.newline" {
         if let Some(w) = crate::editing_keys::words(b.action) {
             return leak(&w);

@@ -207,6 +207,13 @@ pub struct FooterRow {
     pub meta: String,
 }
 
+/// A note's text in one row: its lines joined by ` ⏎ ` (`brk`), never glued together (a row
+/// can't show a line break, and `with Tab` + `Another` read as `with TabAnother`).
+pub fn one_row(text: &str, brk: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r').trim()).filter(|l| !l.is_empty()).collect();
+    lines.join(&format!(" {brk} "))
+}
+
 impl App {
     /// `also today` / `linked from` for the open document (tui-editor.md §3.3, §3.4).
     pub fn load_footer(&mut self) {
@@ -242,7 +249,8 @@ impl App {
             };
             let why = crate::editor::meta_text(&block, self.today);
             let o = origin(&n.id);
-            FooterRow { id: n.id.clone(), status: n.status.clone(), text: s.render_text(&n.text), meta: if why.is_empty() { o } else { format!("{o} · {why}") } }
+            let text = one_row(&s.render_text(&n.text), self.theme.glyphs().line_break);
+            FooterRow { id: n.id.clone(), status: n.status.clone(), text, meta: if why.is_empty() { o } else { format!("{o} · {why}") } }
         };
         self.doc_footer = match &d.target {
             Target::Journal { date } if *date == self.today => {

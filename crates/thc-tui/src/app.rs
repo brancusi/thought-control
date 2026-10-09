@@ -567,6 +567,7 @@ pub const PALETTE: &[PaletteItem] = &[
     PaletteItem { label: "What's new", action: "changes", cmd: ":changes" },
     PaletteItem { label: "About thc (version, vault, changelog)", action: "about", cmd: ":about" },
     PaletteItem { label: "Focus: what it shows", action: "focus.overlay", cmd: "" },
+    PaletteItem { label: "Document mode on / off (Enter: line break)", action: "doc.toggle_document_mode", cmd: "" },
     PaletteItem { label: "Mouse capture on / off", action: "mouse.toggle", cmd: "" },
     PaletteItem { label: "Help", action: "help.context", cmd: "" },
     PaletteItem { label: "Remap keys in $EDITOR", action: "keys.remap", cmd: ":remap" },
@@ -619,6 +620,11 @@ pub struct OtherVault {
 /// This device's view scopes (view-explain.md §2), beside the vault caches.
 fn scopes_file(cache: &std::path::Path) -> std::path::PathBuf {
     cache.parent().unwrap_or(cache).join("scopes.json")
+}
+
+/// This device's document mode, beside the vault caches (every vault on the device).
+pub(crate) fn document_mode_file(cache: &std::path::Path) -> std::path::PathBuf {
+    cache.parent().unwrap_or(cache).join("writing.toml")
 }
 
 fn load_scopes(cache: &std::path::Path) -> std::collections::BTreeMap<String, String> {
@@ -748,6 +754,7 @@ impl App {
             toast: None,
             paste_plain: false,
             focus_mode: false,
+            document_mode: false,
             focus_cfg: prefs.focus,
             focus_hint_shown: false,
             write_alt_hint: false,
@@ -872,6 +879,7 @@ impl App {
         app.load_page_ids();
         // The tours this device has seen (layers.rs).
         app.ui.layers.tour.seen = crate::layers::load_seen(&app.vault.paths.cache);
+        app.load_document_mode();
         if !deferred {
             app.reload()?;
         }
@@ -1351,6 +1359,22 @@ impl App {
     /// `.` (§10.5): show or hide IDs on pages and Journal days, remembered on this device.
     pub fn toggle_page_ids(&mut self) {
         crate::runtime_effects::toggle_page_ids(self);
+    }
+
+    /// Document mode (`space t D`, the palette): Enter and ⇧Enter swap (writing.md §1). A pure update
+    /// on the state; remembering it on this device is its effect (update.rs).
+    pub fn toggle_document_mode(&mut self) {
+        crate::runtime_effects::dispatch(self, crate::update::Msg::ToggleDocumentMode { at: self.ui.now_ms });
+    }
+
+    /// This device's document mode (`toggle_document_mode`); off when it never chose. A
+    /// snapshot or test session starts off, whatever this device chose.
+    pub fn load_document_mode(&mut self) {
+        if crate::SNAPSHOT.with(|s| s.get()) {
+            return;
+        }
+        let t: Option<toml::Table> = std::fs::read_to_string(document_mode_file(&self.vault.paths.cache)).ok().and_then(|t| t.parse().ok());
+        self.ui.document_mode = t.and_then(|t| t.get("document_mode")?.as_bool()).unwrap_or(false);
     }
 
     /// This device's choice (`<cache>/tui.toml`), else `[tui] page_ids` in device config.
