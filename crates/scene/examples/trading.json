@@ -1,0 +1,23 @@
+{
+  "root": {"type": "col", "children": [
+    {"type": "text", "size": 1, "style": {"bold": true, "fg": "green"}, "bind": "quote",
+     "text": "ACME  {last}  ({change})   vol {volume}"},
+    {"type": "sparkline", "title": "ACME · last 60 ticks", "bind": "series", "field": "p",
+     "size": 8, "style": {"fg": "green"}},
+    {"type": "table", "id": "book", "title": "Watchlist", "bind": "watch",
+     "columns": [
+       {"title": "sym", "value": "{sym}", "size": 6},
+       {"title": "last", "value": "{last}", "size": 9},
+       {"title": "chg", "value": "{chg}", "size": 8}
+     ]}
+  ]},
+  "data": {
+    "series": {"every": 1, "shell": "awk -v t=$(date +%s) 'BEGIN{printf \"[\"; for(i=0;i<60;i++){x=t-60+i; printf \"%s{\\\"p\\\":%.2f}\", (i?\",\":\"\"), 100+8*sin(x/7)+3*sin(x/2.3)}; print \"]\"}'"},
+    "quote": {"every": 1, "shell": "awk -v t=$(date +%s) 'BEGIN{p=100+8*sin(t/7)+3*sin(t/2.3); printf \"{\\\"last\\\":\\\"%.2f\\\",\\\"change\\\":\\\"%+.2f\\\",\\\"volume\\\":%d}\\n\", p, p-100, 1000+t%997}'"},
+    "watch": {"value": [
+      {"sym": "ACME", "last": "101.20", "chg": "+1.2%"},
+      {"sym": "GLOBX", "last": "48.07", "chg": "-0.4%"},
+      {"sym": "INITECH", "last": "12.90", "chg": "+3.1%"}
+    ]}
+  }
+}

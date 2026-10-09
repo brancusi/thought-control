@@ -1,0 +1,23 @@
+[package]
+name = "thc-scene"
+description = "Declarative terminal UI: the whole screen is one serializable value you can push"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+publish = false
+
+[[bin]]
+name = "thc-scene"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+clap.workspace = true
+caretline-layers = { version = "0.2.0", default-features = false }
+base64 = "0.22"
+miniz_oxide = "0.8"
+resvg = { version = "0.48", default-features = false, features = ["text", "system-fonts"] }
+ratatui = "0.30"
+serde.workspace = true
+serde_json.workspace = true

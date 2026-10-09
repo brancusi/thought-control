@@ -1,0 +1,36 @@
+{
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "text",
+    "size": 1,
+    "text": " plasma \u00b7 a 160\u00d750 text frame streamed at 120 Hz \u00b7 seq {seq}",
+    "style": {
+     "bold": true,
+     "fg": "magenta"
+    },
+    "bind": "p"
+   },
+   {
+    "type": "text",
+    "bind": "p",
+    "text": "{art}",
+    "style": {
+     "fg": "cyan"
+    }
+   }
+  ]
+ },
+ "data": {
+  "p": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/stress/feed.py",
+    "plasma",
+    "120"
+   ]
+  }
+ }
+}

@@ -1,0 +1,401 @@
+{
+ "theme": {
+  "text": "#ece5d8",
+  "muted": "#a0968a",
+  "accent": "#e8834f",
+  "line": "#3a352f",
+  "selection": "#352e28",
+  "today": "#e2b54a",
+  "overdue": "#f2766e",
+  "done": "#8fc487",
+  "doing": "#6cc5ce",
+  "agent": "#88b1ec",
+  "tag": "#cca884",
+  "conflict": "#d49aD0",
+  "surface": "#221f1b",
+  "raised": "#2e2a25",
+  "overdue-tint": "#3a2220",
+  "border": "#3a352f",
+  "hover": "#2c2824",
+  "dim": "#a0968a",
+  "bg": "#1b1916",
+  "rim": "#4a433b",
+  "shadow": "#000000"
+ },
+ "status_bar": false,
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "image",
+      "src": "crates/scene/examples/pixels/mark.png",
+      "size": 14,
+      "id": "mark"
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<text+b>Thought Control</>",
+        "scale": 2,
+        "size": 2
+       },
+       {
+        "type": "text",
+        "text": "<muted>Today \u00b7 {date} \u00b7 vault </><accent>{vault}</>",
+        "bind": "feed",
+        "size": 1
+       }
+      ],
+      "size": "1*"
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "\t<muted>pixels </><text>{graphics|true=kitty graphics;*=none, cells only}</><muted> \u00b7 cell </><text>{cell_w}</><muted>\u00d7</><text>{cell_h}</><muted>px \u00b7 larger text </><text>{text_sizing|true=OSC 66;*=no (block digits)}</> ",
+        "bind": "$caps",
+        "size": 1
+       },
+       {
+        "type": "text",
+        "text": "\t<muted>live plot tick </><text>{tick}</> ",
+        "bind": "live",
+        "size": 1
+       },
+       {
+        "type": "text",
+        "text": "\t<muted>{fps|?$} fps \u00b7 draw {draw_ms|?$} ms</> ",
+        "bind": "$stats",
+        "size": 1
+       }
+      ],
+      "size": "1*"
+     }
+    ],
+    "size": 4
+   },
+   {
+    "type": "text",
+    "text": "",
+    "size": 1
+   },
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "list",
+      "id": "today",
+      "bind": "feed.rows",
+      "variant": "kind",
+      "skip": [
+       "section",
+       "blank"
+      ],
+      "variants": {
+       "section": " <text+b>{title}</>  <muted>{count}</>",
+       "blank": "",
+       "done": "<muted>{short}</>  <done>[x]</> <muted>{text}</>\t{meta_m|markup} "
+      },
+      "item": "<muted>{short}</>  {status|todo=<text>[ ]</>;doing=<doing>[/]</>;waiting=<muted>[w]</>;done=<done>[x]</>;cancelled=<muted>[-]</>;note=<muted> \u00b7 </>;*=<text>[ ]</>} {text_m|markup}\t{meta_m|markup} ",
+      "mark": "<accent+b>\u258c</> ",
+      "lead": "  ",
+      "selected": "on-selection",
+      "style": {
+       "fg": "text"
+      },
+      "tip": {
+       "title": "{short} \u00b7 {status}",
+       "text": "{text}\n{crumbs}"
+      },
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "title": "Today",
+      "size": "58%"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "{status|todo=<text>[ ]</>;doing=<doing>[/]</>;waiting=<muted>[w]</>;done=<done>[x]</>;cancelled=<muted>[-]</>;note=<muted> \u00b7 </>;*=<text>[ ]</>} <text+b>{text_m|markup}</>\n<muted>{crumbs}</>\n\n{status|note=;*=<muted>status     </>}{status|done=<done>$</>;note=;*=<text>$</>}\n{sched_l|?<muted>scheduled  </><text>$</>}{sched_rel|?<muted> \u00b7 $</>}\n{due_l|?<muted>due        </><text>$</>}{due_rel|?<muted> \u00b7 $</>}\n{prio_m|?<muted>priority   </>}{prio_m|markup}\n{repeat_l|?<muted>repeat     </><text>$</>}\n{alert_l|?<muted>alert      </><text>$</>}\n{tags_m|?<muted>tags       </>}{tags_m|markup}\n<muted>created    </><text>{created_l} \u00b7 </><agent>\u25c6 {by}</>\n{why|?<muted>why here   </><text>$</>}\n\n{subtasks|?<text+b>Subtasks  $</>}\n{kids.0.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.0.text}\t{kids.0.meta_m|markup} \n{kids.1.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.1.text}\t{kids.1.meta_m|markup} \n{kids.2.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.2.text}\t{kids.2.meta_m|markup} \n{subtasks|? }\n{history.0.t|?<text+b>History</>}\n{history.0.t|?<muted>$</>  }{history.0.who|?<agent>\u25c6 $</>}{history.0.what|?<muted>$</>}\n{history.1.t|?<muted>$</>  }{history.1.who|?<agent>\u25c6 $</>}{history.1.what|?<muted>$</>}\n{history.2.t|?<muted>$</>  }{history.2.who|?<agent>\u25c6 $</>}{history.2.what|?<muted>$</>}\n{more|true=<text>L</> <muted>full history</>  <text>R</> <muted>rewind\u2026</>}\n\n<text>e</> <muted>edit</>  <text>x</> <muted>done</>  <text>d</> <muted>date</>  <text>p</> <muted>priority</>  <text>m</> <muted>move</>",
+        "bind": "@today",
+        "style": {
+         "fg": "text"
+        },
+        "backdrop": {
+         "fill": "raised",
+         "fill2": "surface",
+         "border": "rim",
+         "radius": 0.55,
+         "shadow": 1.1,
+         "glow": "shadow"
+        },
+        "title": "Detail",
+        "size": "55%",
+        "id": "c-detail"
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "plot",
+          "series": [
+           {
+            "name": "done",
+            "bind": "live.done",
+            "color": "accent"
+           },
+           {
+            "name": "added",
+            "bind": "live.added",
+            "color": "agent"
+           }
+          ],
+          "width": 0.12,
+          "backdrop": {
+           "fill": "raised",
+           "fill2": "surface",
+           "border": "rim",
+           "radius": 0.55,
+           "shadow": 1.1,
+           "glow": "shadow"
+          },
+          "title": "Done vs added \u00b7 pixels, live",
+          "size": "1*",
+          "id": "c-plot"
+         },
+         {
+          "type": "text",
+          "text": "",
+          "size": 2
+         },
+         {
+          "type": "chart",
+          "series": [
+           {
+            "name": "done",
+            "bind": "live.done",
+            "color": "accent"
+           },
+           {
+            "name": "added",
+            "bind": "live.added",
+            "color": "agent"
+           }
+          ],
+          "backdrop": {
+           "fill": "raised",
+           "fill2": "surface",
+           "border": "rim",
+           "radius": 0.55,
+           "shadow": 1.1,
+           "glow": "shadow"
+          },
+          "title": "Same data \u00b7 cells",
+          "size": "1*",
+          "id": "c-cells"
+         }
+        ]
+       }
+      ],
+      "size": "1*"
+     }
+    ],
+    "size": "1*"
+   },
+   {
+    "type": "text",
+    "text": "",
+    "size": 1
+   },
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<text+b>{open}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>open tasks</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": "1*",
+      "id": "k-open"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<today+b>{today}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>due or scheduled today</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": "1*",
+      "id": "k-today"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<agent+b>{review}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>agent changes to review</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": "1*",
+      "id": "k-review"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<done+b>{done}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>done today</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": "1*",
+      "id": "k-done"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "svg",
+      "id": "ring",
+      "bind": "kpis",
+      "alt": "{pct}% of today done",
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 260 100\">\n  <circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"none\" stroke=\"#3a352f\" stroke-width=\"12\"/>\n  <circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"none\" stroke=\"#8fc487\" stroke-width=\"12\" stroke-linecap=\"round\"\n          stroke-dasharray=\"{dash} 251.3\" transform=\"rotate(-90 50 50)\"/>\n  <text x=\"50\" y=\"58\" font-family=\"Helvetica, Arial\" font-size=\"24\" font-weight=\"700\" fill=\"#ece5d8\" text-anchor=\"middle\">{pct}%</text>\n  <text x=\"108\" y=\"44\" font-family=\"Helvetica, Arial\" font-size=\"20\" font-weight=\"700\" fill=\"#ece5d8\">today</text>\n  <text x=\"108\" y=\"70\" font-family=\"Helvetica, Arial\" font-size=\"16\" fill=\"#a0968a\">{done} of {total} done</text>\n</svg>",
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": 26
+     }
+    ],
+    "size": 6
+   }
+  ]
+ },
+ "data": {
+  "feed": {
+   "cmd": [
+    "python3",
+    "crates/scene/examples/thc/thcfeed.py"
+   ],
+   "every": 3
+  },
+  "live": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/pixels/wave.py",
+    "15"
+   ]
+  },
+  "kpis": {
+   "shell": "python3 -c \"import json,subprocess as s; q=lambda x: json.loads(s.run(['thc','q',x,'--json'],capture_output=True,text=True).stdout)['count']; r=json.loads(s.run(['thc','review','--json'],capture_output=True,text=True).stdout)['pending']; o=q('status:open'); t=q('(sched<=today or due<=today) status:open'); d=q('done>=today'); n=max(1, t + d); print(json.dumps({'open': o, 'today': t, 'review': r, 'done': d, 'total': n, 'pct': round(100 * d / n), 'dash': round(251.3 * d / n, 1)}))\"",
+   "every": 5
+  }
+ }
+}

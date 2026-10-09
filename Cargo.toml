@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/thc-core", "crates/thc-tui", "crates/thc-daemon", "crates/thc"]
+members = ["crates/thc-core", "crates/thc-tui", "crates/thc-daemon", "crates/thc", "crates/scene"]
 
 [workspace.package]
 version = "0.10.1"
