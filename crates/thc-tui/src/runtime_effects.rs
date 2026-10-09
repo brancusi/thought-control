@@ -10,7 +10,6 @@ fn perform(app: &mut App, effect: Effect) {
     match effect {
         Effect::EditKeys => {
             app.save_doc(true);
-            app.drain_saves(true);
             app.overlay = None;
             app.editor_request = Some("@keys".into());
         }

@@ -234,12 +234,11 @@ impl Session {
         self.push_trace(line);
     }
 
-    /// `trace.checkpoint`: the open document's lines saved first (waiting for the save), so the
+    /// `trace.checkpoint`: the open document's lines saved first, so the
     /// vault the new segment pins holds every line on screen, then a checkpoint.
     pub fn checkpoint_saved(&mut self) {
         if self.app.doc.is_some() {
             self.app.save_everything();
-            self.app.drain_saves(true);
             // The save's look ends the old segment.
             self.sync_external();
         }

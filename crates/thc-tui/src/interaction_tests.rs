@@ -292,7 +292,6 @@ fn after_pastes_the_vault_order_is_the_documents() {
     keys(&mut s, &format!("{}<end><cr><paste:{}>", "<down>".repeat(20), block("first", 30)));
     keys(&mut s, &format!("{}<end><cr><paste:{}>", "<down>".repeat(12), block("second", 20)));
     s.apply(serde_json::from_value(serde_json::json!({"msg": "focus", "gained": false})).unwrap()).unwrap();
-    s.app.drain_saves(true);
     let d = s.app.doc.as_ref().unwrap();
     let root = d.root.clone().unwrap();
     let doc: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).filter(|t| !t.trim().is_empty()).collect();
@@ -436,7 +435,6 @@ fn leaving_the_arrival_line_changes_no_other_note() {
     let before = (ids(&s), events(&s));
     keys(&mut s, "<c-home><down><down>");
     s.apply(serde_json::from_value(serde_json::json!({"msg": "focus", "gained": false})).unwrap()).unwrap();
-    s.app.drain_saves(true);
     assert_eq!(ids(&s), before.0, "every note keeps its id");
     assert_eq!(events(&s), before.1, "nothing written");
     assert!(s.app.doc.as_mut().unwrap().plan_save(true).ops.is_empty());

@@ -644,7 +644,7 @@ Times are app time from `THC_TUI_TRACE=1` (key read to frame written), not termi
 | Open a 5,000-line page, first frame | ≤ 100 ms | 32 ms on a compacted store; 70 ms right after a bulk import (see below) |
 | Open a 300-line day / Today, first frame | — | 4 ms / 3 ms |
 | Keystroke, 300-line day | p50 ≤ 4 ms | p50 0.5 ms, p99 0.6 ms |
-| Paste 1,000 lines into the 5,000-line page, saved | never blocks typing | 1.0 s to save, done by the daemon's writer thread when it runs (inline without a daemon) |
+| Paste 1,000 lines into the 5,000-line page, saved | never blocks typing | 1.0 s to save, inline: the one save path, so typing waits for this rare save |
 
 What the pass changed (0.9.18):
 - **Counts and the review badge** read the index, not every note: the TUI's start went from 64 ms

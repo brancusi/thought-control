@@ -254,7 +254,6 @@ pub(crate) fn switch_vault(app: &mut App, path: &std::path::Path) {
     // Where we were is the last word before the new session reads the history.
     app.history_tick(false);
     app.history.save(&app.vault.paths.cache);
-    app.drain_saves(true);
     let real = thc_core::vault::Paths { vault: path.to_path_buf(), cache: thc_core::vault::default_cache(path) };
     let snapshot = SNAPSHOT.with(|s| s.get());
     let (paths, origin) = if snapshot && app.vault.origin.is_some() {
@@ -505,7 +504,6 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
             let app = &mut session.app;
             app.save_everything();
             app.remember_caret();
-            app.drain_saves(true);
             app.history_tick(false);
             app.history.save(&app.vault.paths.cache);
             return Ok(());
@@ -569,7 +567,6 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if app.quit || app.reexec {
             app.save_everything();
             app.remember_caret();
-            app.drain_saves(true);
             app.history_tick(false);
             app.history.save(&app.vault.paths.cache);
             if app.reexec {
@@ -1124,7 +1121,6 @@ fn snapshot_mode(vault: Vault, width: u16, height: u16, keys: &str, focus: Optio
         let app = &mut session.app;
         // THC_TUI_TRACE=1: a paste's time, its save included (the paste budget).
         if let Some(lines) = paste.filter(|_| std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2")) {
-            app.drain_saves(true);
             term.draw(|f| ui::draw_app(f, app))?;
             eprintln!("thc tui trace: paste {lines} lines {:.1} ms", t0.elapsed().as_secs_f64() * 1000.0);
         }
@@ -1166,12 +1162,6 @@ fn snapshot_mode(vault: Vault, width: u16, height: u16, keys: &str, focus: Optio
     // A snapshot asked to keep caret memory leaves it as quitting does (tests of reopening).
     if std::env::var_os("THC_TUI_SNAPSHOT_CARETS").is_some() {
         app.remember_caret();
-    }
-    // Snapshots that save through the daemon (tests): everything lands before the frame is read.
-    if std::env::var_os("THC_TUI_SNAPSHOT_DAEMON").is_some() {
-        app.save_everything();
-        app.drain_saves(true);
-        term.draw(|f| ui::draw_app(f, app))?;
     }
     // THC_TUI_TRACE=1: each replayed key's handle + frame time, to stderr (the §10 budgets).
     if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1" || v == "2") && !key_ms.is_empty() {

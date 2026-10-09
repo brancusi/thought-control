@@ -148,20 +148,20 @@ fn page_notes_read_as_paragraphs() {
     let _ = std::fs::remove_dir_all(&root);
 }
 
-/// With the daemon live, saves go through a writer thread (blocks.apply over the socket):
-/// typing never waits, and everything lands.
+/// A save is the same with the daemon live: the TUI writes it itself, under the device write
+/// lock, and everything lands.
 #[test]
-fn saves_go_through_the_daemon_when_it_is_live() {
+fn saves_are_the_same_with_the_daemon_live() {
     let (root, page) = setup("daemon");
     let r = &root;
     thc(r, &[("THC_TEST_DAEMON", "1")], &["daemon", "start"]);
-    let frame = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><c-home><c-e><cr>Through the daemon due:fri<cr>And another<esc>"), ("THC_TUI_SNAPSHOT_WRITE", "1"), ("THC_TUI_SNAPSHOT_DAEMON", "1")], &["tui"]);
+    let frame = thc(r, &[("THC_TUI_SNAPSHOT", "100x24"), ("THC_TUI_KEYS", "4Plans<cr><c-home><c-e><cr>Through the daemon due:fri<cr>And another<esc>"), ("THC_TUI_SNAPSHOT_WRITE", "1")], &["tui"]);
     let kids = children(r, &page);
     thc(r, &[], &["daemon", "stop"]);
     let texts: Vec<&str> = kids.iter().map(|n| n["text"].as_str().unwrap()).collect();
     assert!(texts.contains(&"Through the daemon") && texts.contains(&"And another"), "{texts:?}\n{frame}");
     let first = kids.iter().find(|n| n["text"] == "Through the daemon").unwrap();
-    assert_eq!(first["due"], "2026-10-09", "tokens parsed by the daemon's save");
+    assert_eq!(first["due"], "2026-10-09", "tokens parsed by the save");
     let _ = std::fs::remove_dir_all(&root);
 }
 

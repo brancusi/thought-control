@@ -71,9 +71,9 @@ The protocol is version 1 with additive minors; `thc schema --proto` prints it a
 from which the menu bar app's Swift types are generated.
 
 <Decision id="DMN-1" title="Reads never go through the daemon" why="A direct SQLite read from the CLI takes about 2.3 ms in total, most of it process start. Routing it through a socket would save about half a millisecond and add a dependency on a running process." cost="Every client links the store code. That's fine for one binary; the menu bar app, which can't, uses the socket's read methods instead.">
-The CLI and the TUI open the store directly, and the CLI writes under the device file lock.
-The socket is for pushes, for clients that can't touch files, and for the TUI's document saves,
-which go through `blocks.apply` when a daemon runs (see [D-11](../decisions/#d-11)).
+The CLI and the TUI open the store directly and write under the device file lock, whether or
+not a daemon runs (see [D-11](../decisions/#d-11)). The socket is for pushes and for clients
+that can't touch files.
 </Decision>
 
 ## Alerts: replicated state, local firing

@@ -33,7 +33,7 @@ mod patch;
 mod tasks;
 mod view;
 
-pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
+pub use doc::{Doc, Line, Target, meta_text, short_repeat};
 pub use tasks::TASK_CYCLE;
 pub use view::{DocHit, DocRow, ViewGeometry, HANG, MARKS};
 

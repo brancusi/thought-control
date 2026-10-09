@@ -153,53 +153,12 @@ fn saved(app: &App) -> (Vec<(String, Note)>, Vec<String>) {
     (notes, ids)
 }
 
-thread_local! {
-    /// A writer that answers late (`Saver::manual`), when this thread's run uses one: the
-    /// daemon's writer thread, slow or busy, under the test's control.
-    static WRITER: std::cell::RefCell<Option<crate::doc_app::ManualWriter>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Hand back every result the late writer holds; again while a save waited for them.
-pub(crate) fn settle(app: &mut App) {
-    for _ in 0..20 {
-        let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
-        let had = !dones.is_empty();
-        WRITER.with(|w| {
-            if let Some(w) = w.borrow().as_ref() {
-                for d in dones {
-                    w.deliver(d);
-                }
-            }
-        });
-        app.drain_saves(false);
-        if !had && !app.doc_saver.as_ref().is_some_and(|s| s.busy()) {
-            return;
-        }
-    }
-    panic!("the saves never settled");
-}
-
-/// Save everything and wait for it (through the late writer when there is one). Twice: a
-/// result can leave something to save (a ≠ note emptied is saved as text first, and deleted
-/// once the save clears the ≠).
+/// Save everything. Twice: a save can leave something to save (a ≠ note emptied is saved as
+/// text first, and deleted once the save clears the ≠).
 fn flush(app: &mut App) {
     for _ in 0..2 {
         app.save_doc(true);
-        app.drain_saves(true);
     }
-}
-
-/// The late writer hands back the one result it holds, if any.
-fn settle_one(app: &mut App) {
-    let dones = WRITER.with(|w| w.borrow().as_ref().map(|w| w.run(&mut app.vault, app.ui.today)).unwrap_or_default());
-    WRITER.with(|w| {
-        if let Some(w) = w.borrow().as_ref() {
-            for d in dones {
-                w.deliver(d);
-            }
-        }
-    });
-    app.drain_saves(false);
 }
 
 /// Save everything, then: the vault holds exactly the buffer, every ID once.
@@ -287,12 +246,6 @@ fn apply(app: &mut App, op: Op) {
 
 /// Run ops on a fresh vault; the first broken invariant (or panic) as Err.
 fn run(ops: &[Op], every: usize, tag: &str) -> Result<(), String> {
-    run_with(ops, every, tag, None)
-}
-
-/// `run`, with `late`: saves go to a writer that hands results back only at random moments
-/// (seeded), as a busy daemon does, so later edits are made while a save is out.
-fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<(), String> {
     let ops = ops.to_vec();
     let tag = tag.to_string();
     let r = std::panic::catch_unwind(move || -> Result<(), String> {
@@ -300,13 +253,6 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
         app.daemon_live = false;
-        let mut rng = late.map(Rng);
-        WRITER.with(|w| *w.borrow_mut() = None);
-        if rng.is_some() {
-            let (saver, writer) = crate::doc_app::Saver::manual();
-            app.doc_saver = Some(saver);
-            WRITER.with(|w| *w.borrow_mut() = Some(writer));
-        }
         app.journal_date = app.today;
         app.set_view(View::Journal);
         let mut term = Terminal::new(TestBackend::new(100, 30)).unwrap();
@@ -320,26 +266,17 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
             };
             // (A remote text held for a line lands as the caret leaves it: that's the remote
             // edit, not the motion, so a document holding one isn't compared.)
-            // (Nor one with a refresh from the vault waiting for a save: it lands when the
-            // save's result does, whatever the next op is.)
-            let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape)) || app.doc_saver.as_ref().is_some_and(|s| s.patch_waiting());
+            let holding = app.doc.as_ref().is_some_and(|d| d.blocks().iter().any(|l| l.remote_text.is_some() || l.remote_shape));
             let texts_before: Option<Vec<String>> = (matches!(op, Op::Move(_) | Op::Select(_)) && !holding).then(|| app.doc.as_ref().map(|d| d.blocks().iter().map(|l| l.text.clone()).collect()).unwrap_or_default());
             apply(&mut app, *op);
             // Motion (motion.md §6): never edits (I7). (The engine keeps every caret on a stop,
-            // I1: its own goldens and fuzz check that.) Checked before a late result lands: a
-            // result folds in the vault's text (tokens parsed out), whatever the op was.
+            // I1: its own goldens and fuzz check that.)
             if let Some(tb) = texts_before {
                 if let Some(d) = app.doc.as_ref() {
                     let ta: Vec<String> = d.blocks().iter().map(|l| l.text.clone()).collect();
                     if ta != tb {
                         return Err(format!("step {step}: a motion changed the text: {tb:?} → {ta:?}"));
                     }
-                }
-            }
-            // The late writer answers now and then: one result at a time, at random.
-            if let Some(rng) = rng.as_mut() {
-                if rng.below(3) == 0 {
-                    settle_one(&mut app);
                 }
             }
             // A pop-up an op opened (a compare on a ≠ line) is closed; a document stays open.
@@ -408,11 +345,7 @@ fn run_with(ops: &[Op], every: usize, tag: &str, late: Option<u64>) -> Result<()
 }
 
 /// The fewest ops that still fail: drop chunks, halving, while it fails.
-fn shrink(ops: Vec<Op>, every: usize) -> Vec<Op> {
-    shrink_with(ops, every, None)
-}
-
-fn shrink_with(mut ops: Vec<Op>, every: usize, late: Option<u64>) -> Vec<Op> {
+fn shrink(mut ops: Vec<Op>, every: usize) -> Vec<Op> {
     let mut chunk = ops.len() / 2;
     let mut n = 0;
     while chunk >= 1 {
@@ -422,7 +355,7 @@ fn shrink_with(mut ops: Vec<Op>, every: usize, late: Option<u64>) -> Vec<Op> {
             let mut t = ops.clone();
             t.drain(i..(i + chunk).min(t.len()));
             n += 1;
-            if run_with(&t, every, &format!("shrink{n}"), late).is_err() {
+            if run(&t, every, &format!("shrink{n}")).is_err() {
                 ops = t;
                 progressed = true;
             } else {
@@ -511,18 +444,13 @@ fn fuzz_regressions() {
     }
 }
 
-// ---- saves answered late ---------------------------------------------------------------------
+// ---- task cycles and saves --------------------------------------------------------------------
 
-/// Ops on a fresh day, saves through a late writer that answers after op `i` only where
-/// `answer[i]` (None: saved in place, the oracle). Then everything saved: the buffer's notes and
-/// the vault's, without IDs.
-fn late(ops: &[Op], answer: Option<&[bool]>) -> (Vec<Note>, Vec<Note>) {
-    late_from(ops, answer, &[])
-}
-
-fn late_from(ops: &[Op], answer: Option<&[bool]>, plain: &[&str]) -> (Vec<Note>, Vec<Note>) {
-    let tag = if plain.is_empty() { "late" } else { "late-saved" };
-    let (_s, mut vault) = scratch(&format!("{tag}{}", answer.map_or(0, |a| a.iter().fold(1usize, |h, b| h * 2 + *b as usize))));
+/// Ops on a fresh day (after `plain` notes, saved first), then everything saved: the buffer's
+/// notes and the vault's, without IDs.
+fn saved_after(ops: &[Op], plain: &[&str]) -> (Vec<Note>, Vec<Note>) {
+    let tag = if plain.is_empty() { "cycle" } else { "cycle-saved" };
+    let (_s, mut vault) = scratch(&format!("{tag}{}", ops.len()));
     if !plain.is_empty() {
         vault.transact(|store| {
             let today = thc_core::dates::today();
@@ -537,116 +465,57 @@ fn late_from(ops: &[Op], answer: Option<&[bool]>, plain: &[&str]) -> (Vec<Note>,
     crate::SNAPSHOT.with(|s| s.set(true));
     let mut app = App::new(vault).unwrap();
     app.daemon_live = false;
-    WRITER.with(|w| *w.borrow_mut() = None);
-    if answer.is_some() {
-        let (saver, writer) = crate::doc_app::Saver::manual();
-        app.doc_saver = Some(saver);
-        WRITER.with(|w| *w.borrow_mut() = Some(writer));
-    }
     app.journal_date = app.today;
     app.set_view(View::Journal);
     if !plain.is_empty() {
         let d = app.doc.as_mut().unwrap();
         d.click(crate::editor::BlockPos { line: 0, byte: 0 }, false);
     }
-    for (i, op) in ops.iter().enumerate() {
+    for op in ops {
         apply(&mut app, *op);
-        if answer.is_some_and(|a| a.get(i).copied().unwrap_or(false)) {
-            settle_one(&mut app);
-        }
     }
     flush(&mut app);
     let buf = buffer_notes(&app).into_iter().map(|x| x.1).collect();
     let held = saved(&app).0.into_iter().map(|x| x.1).collect();
-    WRITER.with(|w| *w.borrow_mut() = None);
     (buf, held)
 }
 
-fn late_saves_never_roll_back_what_came_after() {
+fn saves_never_roll_back_what_came_after() {
     let t = Op::TaskCycle;
     for ops in [
-        // ⌃T ⌃T: a task, then done; the first save's answer came back after the second ⌃T.
+        // ⌃T ⌃T: a task, then done.
         vec![Op::Type("Book the flat"), t, t],
         vec![Op::Type("Book"), t, Op::Type(" the flat"), t],
         vec![Op::Type("x"), t, t, t],
         vec![Op::Type("x"), t, t, t, t],
         vec![Op::Type("one"), t, Op::Enter, Op::Type("two"), t, t, Op::Move(KeyCode::Up), t],
         vec![Op::Marker("[ ] "), Op::Type("a"), t, Op::Enter, t, Op::Type("b"), t],
-        // Leaving while a save is out and another waits for it.
+        // Leaving after cycling.
         vec![Op::Type("Book the flat"), t, t, Op::LeaveReturn],
         vec![Op::Type("due:fri x"), Op::Enter, Op::Type("y"), Op::Move(KeyCode::Up), Op::Type(" more"), t],
     ] {
-        let (want, held) = late(&ops, None);
-        assert_eq!(want, held, "{ops:?}: saved in place, the vault isn't the buffer");
-        let n = ops.len();
-        // Never answered until the end; after every op; after the first only; every other.
-        let schedules: Vec<Vec<bool>> = vec![vec![false; n], vec![true; n], (0..n).map(|i| i == 0).collect(), (0..n).map(|i| i % 2 == 1).collect()];
-        for answer in schedules {
-            let (buf, held) = late(&ops, Some(&answer));
-            assert_eq!(buf, want, "{ops:?} answered {answer:?}: the buffer isn't the last state");
-            assert_eq!(held, want, "{ops:?} answered {answer:?}: the vault isn't the last state");
-        }
+        let (buf, held) = saved_after(&ops, &[]);
+        assert_eq!(buf, held, "{ops:?}: the vault isn't the buffer");
     }
 }
 
-/// cptrz: inline and delayed saves must complete saved plain notes, rather than merely
-/// agree with each other after both paths have rolled the completed status back to todo.
-fn late_task_cycles_complete_saved_plain_lines() {
+/// cptrz: cycling saved plain notes completes them, rather than rolling the completed status
+/// back to todo.
+fn task_cycles_complete_saved_plain_lines() {
     let t = Op::TaskCycle;
     let plain = ["alpha line", "bravo line", "charlie line"];
     for (ops, completed) in [(vec![t, t], 1), (vec![t, t, Op::Move(KeyCode::Down), t, t], 2)] {
-        let n = ops.len();
-        // Exercise every answer schedule, including inline and no answers until flush.
-        for mask in 0..=(1usize << n) {
-            let answer: Vec<bool> = (0..n).map(|i| mask & (1 << i) != 0).collect();
-            let schedule = if mask == (1usize << n) { None } else { Some(answer.as_slice()) };
-            let (buf, held) = late_from(&ops, schedule, &plain);
-            assert_eq!(buf, held, "{ops:?}, {answer:?}: vault differs from editor");
-            assert_eq!(buf.len(), plain.len());
-            for (i, note) in buf.iter().enumerate() {
-                assert_eq!(note.3, plain[i]);
-                if i < completed {
-                    assert_eq!((note.0, note.2.as_deref()), (Kind::Task, Some("done")), "{ops:?}, {answer:?}: completion rolled back");
-                } else {
-                    assert_eq!(note.2, None);
-                }
+        let (buf, held) = saved_after(&ops, &plain);
+        assert_eq!(buf, held, "{ops:?}: vault differs from editor");
+        assert_eq!(buf.len(), plain.len());
+        for (i, note) in buf.iter().enumerate() {
+            assert_eq!(note.3, plain[i]);
+            if i < completed {
+                assert_eq!((note.0, note.2.as_deref()), (Kind::Task, Some("done")), "{ops:?}: completion rolled back");
+            } else {
+                assert_eq!(note.2, None);
             }
         }
-    }
-}
-
-/// The editor fuzz with the daemon's writer slow: results come back at random moments, so
-/// edits keep landing while a save is out.
-fn fuzz_with_late_saves() {
-    let hook = std::panic::take_hook();
-    std::panic::set_hook(Box::new(|_| {}));
-    let cases = env_num("THC_FUZZ_CASES", 25);
-    let len = env_num("THC_FUZZ_OPS", 60) as usize;
-    let first = env_num("THC_FUZZ_SEED", 1);
-    let mut failure = None;
-    // Found by the soak (case 131): undo brought back a saved note whose delete was pending with
-    // its save state from before that save, so it was "new" and was made twice.
-    let found = vec![Op::Marker("1. "), Op::Bs, Op::TaskCycle, Op::Type("bé"), Op::Type("🙂"), Op::Type("bé"), Op::Click(18, 10), Op::Enter, Op::Tab, Op::TaskCycle, Op::TaskCycle, Op::Redo, Op::Type("bé"), Op::Undo, Op::Paste("- [x] done item"), Op::Bs, Op::Type("漢字"), Op::Type("bé"), Op::MoveLine(true), Op::Type("dash-y"), Op::Undo, Op::Marker("[ ] "), Op::Cut, Op::Type("🙂"), Op::Paste("- [x] done item"), Op::Type("🙂"), Op::Type("x"), Op::Type("🙂"), Op::Move(KeyCode::Right), Op::Redo, Op::MoveLine(false), Op::Bs, Op::Move(KeyCode::Home), Op::Type("bé"), Op::Select(KeyCode::Up), Op::Enter, Op::Undo, Op::Bs, Op::Undo, Op::Marker("* ")];
-    if let Err(e) = run_with(&found, 4, "late-found", Some(0xBADC_0FFE ^ 131)) {
-        failure = Some(format!("soak case 131:\n{e}"));
-    }
-    for case in first..first + cases {
-        if failure.is_some() {
-            break;
-        }
-        let mut rng = Rng(0x5A7E_5A7E_0000_0001 ^ case.wrapping_mul(0x1000_0001));
-        let ops = generate(&mut rng, len);
-        let seed = 0xBADC_0FFE ^ case;
-        if let Err(e) = run_with(&ops, 4, &format!("late{case}"), Some(seed)) {
-            let small = shrink_with(ops, 4, Some(seed));
-            let why = run_with(&small, 4, "final", Some(seed)).err().unwrap_or(e);
-            failure = Some(format!("case {case} (late saves), shrunk to {} ops:\n{small:?}\n{why}", small.len()));
-            break;
-        }
-    }
-    std::panic::set_hook(hook);
-    if let Some(f) = failure {
-        panic!("{f}");
     }
 }
 
@@ -772,7 +641,6 @@ fn run_sync_with(ops: &[SyncOp], tag: &str, strict_order: bool) -> Result<(), St
         for _ in 0..6 {
             for app in apps.iter_mut() {
                 app.save_doc(true);
-                app.drain_saves(true);
             }
             deliver(&roots, 0, 100);
             deliver(&roots, 1, 100);
@@ -981,18 +849,13 @@ mod run {
     }
 
     #[test]
-    fn late_saves_never_roll_back_what_came_after() {
-        super::late_saves_never_roll_back_what_came_after();
+    fn saves_never_roll_back_what_came_after() {
+        super::saves_never_roll_back_what_came_after();
     }
 
     #[test]
-    fn late_task_cycles_complete_saved_plain_lines() {
-        super::late_task_cycles_complete_saved_plain_lines();
-    }
-
-    #[test]
-    fn fuzz_with_late_saves() {
-        super::fuzz_with_late_saves();
+    fn task_cycles_complete_saved_plain_lines() {
+        super::task_cycles_complete_saved_plain_lines();
     }
 
     #[test]
@@ -1024,11 +887,11 @@ mod soak_found {
     use super::Op::*;
     use super::*;
 
-    /// A note moved and edited in one save, its result read late: the move's result (the note
-    /// before the edit) put the old text back, and the next save sent it.
-    fn late_move_and_edit_in_one_save() {
+    /// A note moved and edited in one save (found when saves could answer late, when the move's
+    /// result put the old text back; kept as a regression on the one save path).
+    fn move_and_edit_in_one_save() {
         let ops = vec![Op::Type("🙂"), Op::Marker("- "), Op::Type("dash-y"), Op::Marker("- "), TaskCycle, TaskCycle, Op::MoveLine(true), Op::Type("🙂"), Op::Type("bé"), Op::Marker("- "), Op::Paste("line a\nline b"), Redo, Op::Remote(4), Redo, Redo, Op::Type("alpha"), Enter, Op::Type("🙂"), Op::Select(KeyCode::Left), Undo, Op::Type("漢字"), Op::Type("alpha"), Enter, Enter, Op::Type("x"), Bs, Op::Type("end."), Bs, Op::Type("dash-y"), Tab, Op::Type("🙂"), Op::Click(3, 13), Op::Type("🙂"), Op::Type("two words"), Undo, LeaveReturn, Tab, Enter, LeaveReturn, Op::Type("dash-y"), BackTab, Op::Move(KeyCode::End), Cut, Op::Click(23, 25), Op::Type("漢字"), Op::Type("alpha"), LeaveReturn, Bs, Op::Type("漢字"), Redo, Op::Click(10, 21), Op::Move(KeyCode::Right), Enter, Op::Click(74, 11), Op::Type("🙂"), TaskCycle, Bs, BackTab, BackTab, Op::Select(KeyCode::Up), Op::Type("bé"), Op::Select(KeyCode::Left), Enter, Op::MoveLine(false), Redo, Tab, Tab, Op::Type("漢字"), Tab, Redo, Bs, Op::Marker("[ ] "), Cut, Redo, Op::Paste("line a\nline b"), Op::Paste("line a\nline b"), Bs, Enter, Op::Type("end."), Tab, Bs, Redo, Enter, Undo, Cut, Enter, Op::Type("two words"), Op::Type("alpha"), Enter, Op::Select(KeyCode::Left), BackTab, Op::Select(KeyCode::Up), Undo, BackTab, Op::Type("alpha"), Enter];
-        if let Err(e) = run_with(&ops, 4, "soak100", Some(0xBADC_0FFE ^ 100)) {
+        if let Err(e) = run(&ops, 4, "soak100") {
             panic!("{e}");
         }
     }
@@ -1052,12 +915,12 @@ mod soak_found {
         }
     }
 
-    /// A refresh from the vault waiting on a late save lands with the save's result, on
-    /// whatever op comes next (a motion here): not the motion's doing (case 110).
+    /// Refreshes from the vault between edits and motions (case 110; found when a refresh could
+    /// wait on a late save, kept as a regression on the one save path).
     #[test]
-    fn a_waiting_refresh_isnt_the_next_motions() {
+    fn refreshes_between_motions() {
         let ops = vec![Type("end."), Marker("1. "), Remote(2), Type("two words"), Bs, Type("x"), Paste("line a\nline b"), Type("bé"), Type("end."), Paste("line a\nline b"), Tab, Paste("- [x] done item"), LeaveReturn, Move(KeyCode::Right), Type("alpha"), MoveLine(false), Enter, TaskCycle, Remote(5), Marker("- "), Type("bé"), Paste("- one\n- [ ] two\n\nthird para"), Type("alpha"), Bs, Type("🙂"), Enter, BackTab, Marker("1. "), Type("dash-y"), Type("漢字"), Enter, Type("漢字"), Enter, Move(KeyCode::PageDown), TaskCycle, Select(KeyCode::Right), Type("x"), Bs, LeaveReturn, Undo, MoveLine(true), Tab, Cut, TaskCycle, Type("🙂"), Marker("* "), Move(KeyCode::PageDown), TaskCycle, Type("🙂"), Enter, Enter, MoveLine(false), Click(4, 14), MoveLine(false), Undo, Remote(1), Tab, Type("漢字"), Type("bé"), Marker("[ ] "), BackTab, Type("bé"), Type("alpha"), MoveLine(true), Enter, Remote(3), MoveLine(false), Type("x"), MoveLine(true), Enter, Paste("- [x] done item"), Marker("[ ] "), Redo, Paste("line a\nline b"), Bs, Type("dash-y"), Move(KeyCode::Left), Remote(1), Click(11, 27), MoveLine(true), Marker("- "), Click(26, 8), Enter, Paste("- [x] done item"), Bs, Enter, Type("bé"), Enter, Marker("* "), Type("漢字"), LeaveReturn, Type("dash-y"), Enter, Marker("[ ] "), Paste("- one\n- [ ] two\n\nthird para"), Select(KeyCode::Left), Type("dash-y"), Enter, Undo, Bs, BackTab, Move(KeyCode::PageDown), Paste("line a\nline b"), LeaveReturn, Type("alpha"), Select(KeyCode::Up), Redo, Enter, Enter, TaskCycle, Type("alpha"), Move(KeyCode::Left), Bs, Remote(2), MoveLine(true), Type("x"), Bs, LeaveReturn, Move(KeyCode::Right), Marker("* "), Type("two words"), Type("alpha"), Enter, LeaveReturn, Remote(2), Tab, MoveLine(false), Type("bé"), Cut, Select(KeyCode::Up), Type("end."), Undo, Type("🙂"), Bs, Tab, Tab, Type("漢字"), BackTab, Click(17, 7), Enter, Type("bé"), Enter, Move(KeyCode::Home), Type("alpha"), Type("x"), TaskCycle, Remote(0), Select(KeyCode::Up)];
-        if let Err(e) = run_with(&ops, 4, "soak110", Some(0xBADC_0FFE ^ 110)) {
+        if let Err(e) = run(&ops, 4, "soak110") {
             panic!("{e}");
         }
     }
@@ -1072,12 +935,12 @@ mod soak_found {
         }
     }
 
-    /// A late result folding in the vault's text lands with whatever op comes next: the
-    /// motion check reads the text before it does (case 341).
+    /// A save folding in the vault's text, then motions (case 341; found when a result could
+    /// land late, kept as a regression on the one save path).
     #[test]
-    fn a_late_result_isnt_the_motions() {
+    fn a_folded_save_then_motions() {
         let ops = vec![Enter, Move(KeyCode::End), Type("end."), TaskCycle, Enter, Type("🙂"), LeaveReturn, Undo, Enter, Bs, Redo, Remote(0), Undo, Enter, Type("🙂"), Type("alpha"), Enter, Enter, Type("alpha"), Type("end."), Cut, Enter, Select(KeyCode::Left), Select(KeyCode::Left), Enter, Bs, Type("end."), Bs, Remote(0), Move(KeyCode::PageUp), Enter, Type("two words"), Type("漢字"), Undo, Type("漢字"), Enter, Undo, Type("two words"), Paste("plain text pasted"), Enter, Type("漢字"), Cut, Cut, Type("漢字"), Type("漢字"), Type("two words"), Type("漢字"), MoveLine(false), Type("end."), LeaveReturn, Marker("* "), TaskCycle, Remote(2), BackTab, LeaveReturn, Marker("- "), Move(KeyCode::Right), Tab, Undo, Redo, Bs, Select(KeyCode::Up), TaskCycle, Remote(0), Bs, Enter, Type("two words"), LeaveReturn, LeaveReturn, Type("bé"), Tab, Move(KeyCode::Home), Enter, Tab, Move(KeyCode::Left), Undo, BackTab, Type("alpha"), Move(KeyCode::Up), LeaveReturn, Marker("[ ] "), MoveLine(false), Move(KeyCode::Up), Type("x"), MoveLine(true), Type("two words"), Tab, Paste("line a\nline b"), Click(36, 9), MoveLine(true), Type("alpha"), Type("🙂"), Type("🙂"), Type("x"), Cut, Select(KeyCode::Up), Cut, Enter, Bs, Undo, Click(30, 5), Marker("[ ] "), Type("end."), LeaveReturn, BackTab, MoveLine(false), TaskCycle, Move(KeyCode::Right), LeaveReturn, Type("alpha"), Select(KeyCode::Left), Undo, Cut, Type("bé"), LeaveReturn, BackTab, Enter, Move(KeyCode::End), Type("🙂"), Cut, Click(11, 5), Enter, Click(71, 9), Select(KeyCode::Up)];
-        if let Err(e) = run_with(&ops, 4, "soak341", Some(0xBADC_0FFE ^ 341)) {
+        if let Err(e) = run(&ops, 4, "soak341") {
             panic!("{e}");
         }
     }
@@ -1088,14 +951,14 @@ mod soak_found {
     #[test]
     fn a_note_after_a_moved_one_moves_with_it() {
         let ops = vec![Type("alpha"), Enter, Enter, Type("dash-y"), Marker("* "), Type("dash-y"), Enter, Type("x"), Marker("- "), Select(KeyCode::Up), Tab, LeaveReturn, Paste("- one\n- [ ] two\n\nthird para"), Select(KeyCode::Up), Move(KeyCode::Left), Paste("- one\n- [ ] two\n\nthird para"), Marker("[ ] "), Click(81, 11), Enter, MoveLine(false)];
-        if let Err(e) = run_with(&ops, 4, "soak845", Some(0xBADC_0FFE ^ 845)) {
+        if let Err(e) = run(&ops, 4, "soak845") {
             panic!("{e}");
         }
     }
 
     #[test]
-    fn late_move_and_edit_in_one_save_keeps_the_typing() {
-        late_move_and_edit_in_one_save();
+    fn move_and_edit_in_one_save_keeps_the_typing() {
+        move_and_edit_in_one_save();
     }
 
     #[test]

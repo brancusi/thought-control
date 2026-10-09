@@ -535,7 +535,7 @@ still run the older way, inside `Session::apply`, with the vault in reach:
   around it. They're still single messages in the trace and replay deterministically on the
   same vault, but they aren't `update` functions yet.
 - **The shared document's key path:** `editor_pane/update.rs` (exported through `doc_keys.rs`)
-  and `doc_app.rs` drive the editor model and save through the writer thread on `App`.
+  and `doc_app.rs` drive the editor model and save it (`save_doc`, inline, the one save path).
   `with_panel` is a scoped runtime document/view borrow, not a separate editor implementation;
   navigation effects run in the host after the borrow, never against main's document identity.
   Its clock is `UiState::now_ms`, so typing runs and idle saves replay, but new lines' ids are

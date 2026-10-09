@@ -7,136 +7,9 @@ use std::time::{Duration, Instant};
 use thc_core::builder::TxBuilder;
 use thc_core::outline::{self, Kind};
 
-/// One save for the writer thread, and what came back.
-pub(crate) struct Job {
-    root: Option<String>,
-    journal: Option<String>,
-    ops: Vec<outline::BlockOp>,
-    afters: std::collections::HashMap<String, Option<String>>,
-    parsed: Vec<String>,
-    sent: crate::editor::Sent,
-}
-
-pub(crate) struct Done {
-    root: Option<String>,
-    result: Result<Vec<outline::OpResult>, String>,
-    afters: std::collections::HashMap<String, Option<String>>,
-    parsed: Vec<String>,
-    sent: crate::editor::Sent,
-}
-
-/// Saves in order on one thread, through the daemon's `blocks.apply`.
-pub struct Saver {
-    tx: std::sync::mpsc::Sender<Job>,
-    rx: std::sync::mpsc::Receiver<Done>,
-    pending: usize,
-    /// A save asked for while one was out (`Some(all)`): planned when that one's result is
-    /// folded in. A plan made before then would diff against what the vault had before the
-    /// save in flight, and its result would land on top of newer edits (⌃T ⌃T came back open).
-    waiting: Option<bool>,
-    /// A test's writer (`Saver::manual`): used whether or not a daemon is live.
-    manual: bool,
-    /// A patch from the vault asked for while a save was out: done once it's in. The vault
-    /// doesn't have that save yet, so patching then put its older state over newer edits.
-    patch: bool,
-}
-
-impl Saver {
-    /// A refresh from the vault waits for the save that's out (the fuzz: a change from
-    /// elsewhere is still to land).
-    #[cfg(test)]
-    pub(crate) fn patch_waiting(&self) -> bool {
-        self.patch
-    }
-
-    fn spawn(paths: thc_core::vault::Paths) -> Saver {
-        let (tx, jobs) = std::sync::mpsc::channel::<Job>();
-        let (done_tx, rx) = std::sync::mpsc::channel::<Done>();
-        std::thread::spawn(move || {
-            let mut client: Option<thc_core::proto::Client> = None;
-            for job in jobs {
-                let result = (|| -> Result<(Option<String>, Vec<outline::OpResult>), String> {
-                    if client.is_none() {
-                        client = thc_core::proto::Client::connect(&paths);
-                    }
-                    let c = client.as_mut().ok_or("the daemon went away")?;
-                    let mut params = serde_json::json!({ "ops": job.ops, "via": "tui" });
-                    match (&job.root, &job.journal) {
-                        (Some(r), _) => params["root"] = serde_json::json!(r),
-                        (None, Some(j)) => params["journal"] = serde_json::json!(j),
-                        _ => return Err("nothing to save into".into()),
-                    }
-                    let v = c.call("blocks.apply", params).map_err(|e| {
-                        client = None;
-                        format!("{e:#}")
-                    })?;
-                    let results: Vec<outline::OpResultWire> = serde_json::from_value(v["results"].clone()).map_err(|e| e.to_string())?;
-                    Ok((v["root"].as_str().map(str::to_string), results.into_iter().map(|r| r.into_result()).collect()))
-                })();
-                let (root, result) = match result {
-                    Ok((root, r)) => (root, Ok(r)),
-                    Err(e) => (None, Err(e)),
-                };
-                if done_tx.send(Done { root, result, afters: job.afters, parsed: job.parsed, sent: job.sent }).is_err() {
-                    return;
-                }
-            }
-        });
-        Saver { tx, rx, pending: 0, waiting: None, manual: false, patch: false }
-    }
-
-    /// A save out, or one waiting to go: its result belongs to the document it came from.
-    pub(crate) fn busy_now(&self) -> bool {
-        self.pending > 0 || self.waiting.is_some()
-    }
-
-    /// A save out, or one waiting for it.
-    #[cfg(test)]
-    pub(crate) fn busy(&self) -> bool {
-        self.pending > 0 || self.waiting.is_some() || self.patch
-    }
-
-    /// A writer the test drives: it gets the jobs and hands back results when (and in the
-    /// order) it chooses, as a slow or busy daemon would.
-    #[cfg(test)]
-    pub(crate) fn manual() -> (Saver, ManualWriter) {
-        let (tx, jobs) = std::sync::mpsc::channel::<Job>();
-        let (done, rx) = std::sync::mpsc::channel::<Done>();
-        (Saver { tx, rx, pending: 0, waiting: None, manual: true, patch: false }, ManualWriter { jobs, done })
-    }
-}
-
-/// The other end of `Saver::manual`.
-#[cfg(test)]
-pub(crate) struct ManualWriter {
-    jobs: std::sync::mpsc::Receiver<Job>,
-    done: std::sync::mpsc::Sender<Done>,
-}
-
-#[cfg(test)]
-impl ManualWriter {
-    /// Run every job sent so far against the vault (as the daemon would), results held back.
-    pub(crate) fn run(&self, vault: &mut thc_core::vault::Vault, today: chrono::NaiveDate) -> Vec<Done> {
-        let mut out = Vec::new();
-        while let Ok(job) = self.jobs.try_recv() {
-            let result = save_inline(vault, job.root.clone(), job.journal.as_deref().and_then(|j| chrono::NaiveDate::parse_from_str(j, "%Y-%m-%d").ok()), job.ops, today);
-            let (root, result) = match result {
-                Ok((root, r)) => (Some(root), Ok(r)),
-                Err(e) => (None, Err(e)),
-            };
-            out.push(Done { root, result, afters: job.afters, parsed: job.parsed, sent: job.sent });
-        }
-        out
-    }
-
-    /// Hand one result back to the app (it folds it in at its next `drain_saves`).
-    pub(crate) fn deliver(&self, d: Done) {
-        let _ = self.done.send(d);
-    }
-}
-
-/// A save written here, in this process: the journal day made first when it has no note yet,
-/// then the plan, with the committed revisions read back.
+/// The one way a document is saved: the journal day made first when it has no note yet, then
+/// the plan, as one transaction under the device write lock, with the committed revisions read
+/// back. The daemon, when it runs, sees the append like any other writer's.
 fn save_inline(vault: &mut thc_core::vault::Vault, root: Option<String>, journal: Option<chrono::NaiveDate>, ops: Vec<outline::BlockOp>, today: chrono::NaiveDate) -> Result<(String, Vec<outline::OpResult>), String> {
     let root = match (root, journal) {
         (Some(r), _) => r,
@@ -308,11 +181,6 @@ impl App {
         }
         if self.doc.is_some() {
             self.save_doc(true);
-            // A save that waited for the one out is planned from this document: wait for it
-            // here (one round trip), or it would go with the document.
-            if self.doc_saver.as_ref().is_some_and(|s| s.waiting.is_some()) {
-                self.drain_saves(true);
-            }
             self.remember_caret();
             if let Some(d) = self.doc.take() {
                 // A panel showing the same page keeps the document (sidebar.md §7.1).
@@ -560,11 +428,6 @@ impl App {
     /// Save every changed line except the caret's (unless `all`) as one transaction.
     pub fn save_doc(&mut self, all: bool) {
         let today = self.today;
-        // One save out at a time: the next is planned once this one's result is in.
-        if let Some(saver) = self.doc_saver.as_mut().filter(|s| s.pending > 0) {
-            saver.waiting = Some(all || saver.waiting.unwrap_or(false));
-            return;
-        }
         self.check_near_miss(all);
         let Some(d) = self.doc.as_mut() else { return };
         let plan = d.plan_save(all);
@@ -584,23 +447,6 @@ impl App {
             d.mark_save_failed(&plan.parsed, "the disk is full (fixture)");
             return;
         }
-        // The daemon is live: hand the save to the writer thread; typing never waits.
-        let snapshot = crate::SNAPSHOT.with(|x| x.get()) && std::env::var_os("THC_TUI_SNAPSHOT_DAEMON").is_none();
-        if (self.daemon_live && !snapshot) || self.doc_saver.as_ref().is_some_and(|s| s.manual) {
-            let journal = match &d.target {
-                Target::Journal { date } if d.root.is_none() => Some(date.format("%Y-%m-%d").to_string()),
-                _ => None,
-            };
-            let job = Job { root: d.root.clone(), journal, ops: plan.ops, afters: plan.afters, parsed: plan.parsed, sent: plan.sent };
-            let paths = self.vault.daemon_paths().clone();
-            let saver = self.doc_saver.get_or_insert_with(|| Saver::spawn(paths));
-            if saver.tx.send(job).is_ok() {
-                saver.pending += 1;
-                return;
-            }
-            self.doc_saver = None;
-            return self.error("not saved: the writer stopped · :retry");
-        }
         let (root, journal) = match &d.target {
             Target::Journal { date } if d.root.is_none() => (None, Some(*date)),
             Target::Page { id, .. } if d.root.is_none() => (Some(id.clone()), None),
@@ -617,7 +463,8 @@ impl App {
                 if let Some(m) = msgs.into_iter().last() {
                     self.info(m);
                 }
-                // The rail's counts and the conflicts follow the save (see drain_saves).
+                // What the save changed shows at once: the rail's counts (a page's open tasks,
+                // a day's entries) and the conflicts banner (a save that kept both sides).
                 self.after_save_results();
             }
             Err(e) => {
@@ -637,64 +484,6 @@ impl App {
         }
         if self.in_panel.is_none() {
             self.build_rail();
-        }
-    }
-
-    /// Fold the writer thread's results back into the document.
-    pub fn drain_saves(&mut self, wait: bool) {
-        // A test's writer answers when the test says; waiting for it is the test settling it.
-        #[cfg(test)]
-        if wait && self.doc_saver.as_ref().is_some_and(|s| s.manual) {
-            return crate::fuzz::settle(self);
-        }
-        let today = self.today;
-        loop {
-            let Some(saver) = self.doc_saver.as_mut() else { return };
-            if saver.pending == 0 {
-                if std::mem::take(&mut saver.patch) {
-                    self.patch_doc();
-                }
-                return;
-            }
-            let got = if wait { saver.rx.recv_timeout(Duration::from_secs(5)).ok() } else { saver.rx.try_recv().ok() };
-            let Some(done) = got else {
-                if wait {
-                    self.doc_saver = None; // gave up waiting: a fresh writer next time
-                }
-                return;
-            };
-            saver.pending -= 1;
-            let msgs = match (self.doc.as_mut(), done.result) {
-                (Some(d), Ok(results)) => {
-                    if d.root.is_none() {
-                        d.root = done.root.clone();
-                    }
-                    d.apply_results(&results, &done.afters, &done.parsed, &done.sent, today)
-                }
-                (Some(d), Err(e)) => {
-                    d.mark_save_failed(&done.parsed, &e);
-                    vec![format!("not saved: {e} · :retry")]
-                }
-                (None, Err(e)) => vec![format!("not saved: {e}")],
-                (None, Ok(_)) => vec![],
-            };
-            let msgs = self.name_conflicts(msgs);
-            if let Some(m) = msgs.into_iter().last() {
-                self.info(m);
-            }
-            // What the save changed shows at once, as a fresh session would read it: the rail's
-            // counts (a page's open tasks, a day's entries; 64j4y) and the conflicts banner (a
-            // save that kept both sides; t741c). The rail is the main view's: a panel's save
-            // leaves it for the main view's next.
-            self.after_save_results();
-            // The save that waited for this one: planned now, against what the vault has.
-            if let Some(all) = self.doc_saver.as_mut().filter(|s| s.pending == 0).and_then(|s| s.waiting.take()) {
-                self.save_doc(all);
-            }
-            // A patch that waited: the vault now has every save made here.
-            if self.doc_saver.as_mut().filter(|s| s.pending == 0 && s.waiting.is_none()).is_some_and(|s| std::mem::take(&mut s.patch)) {
-                self.patch_doc();
-            }
         }
     }
 
@@ -742,13 +531,12 @@ impl App {
         crate::runtime_effects::dispatch(self, crate::update::Msg::DocClock { now_ms: self.ui.now_ms });
     }
 
-    /// The runtime's idle step for the open document: the clock, saves that came back, and the
-    /// idle save. True when the idle point passed (the typing so far became one undo step, and
-    /// it saved what there was): the session records that as an `idle` message, so a replay
-    /// does the same at the same point.
+    /// The runtime's idle step for the open document: the clock and the idle save. True when
+    /// the idle point passed (the typing so far became one undo step, and it saved what there
+    /// was): the session records that as an `idle` message, so a replay does the same at the
+    /// same point.
     pub fn doc_tick(&mut self) -> bool {
         self.clock_tick();
-        self.drain_saves(false);
         let main = self.idle_step();
         let panels = self.panels_idle();
         main || panels
@@ -853,10 +641,6 @@ impl App {
     /// Changes made elsewhere: lines you aren't on and haven't edited update in place; lines
     /// gone from this document leave it. The caret never moves (tui-editor.md §9).
     pub(crate) fn patch_doc(&mut self) {
-        if let Some(saver) = self.doc_saver.as_mut().filter(|s| s.pending > 0 || s.waiting.is_some()) {
-            saver.patch = true;
-            return;
-        }
         let today = self.today;
         // A day opened before it existed, made since by another device (or an agent): take it
         // up, keeping what's typed here (two-device soak: the other device's notes never showed).

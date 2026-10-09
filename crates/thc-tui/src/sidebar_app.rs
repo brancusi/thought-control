@@ -169,10 +169,6 @@ impl App {
         if self.in_panel.is_some() || !self.panels.contains_key(key) {
             return None;
         }
-        // No save crosses a switch of documents: its result belongs to the one it came from.
-        if self.doc_saver.as_ref().is_some_and(|s| s.busy_now()) {
-            self.drain_saves(true);
-        }
         let mut rt = self.panels.remove(key)?;
         let own = rt.slot.doc.is_some();
         if !own {
@@ -196,9 +192,6 @@ impl App {
         self.render.doc_hits = self.render.panel_hits.iter().find(|(k, _)| k == key).map(|(_, h)| h.clone()).unwrap_or_default();
         self.clock_tick();
         let r = f(self);
-        if self.doc_saver.as_ref().is_some_and(|s| s.busy_now()) {
-            self.drain_saves(true);
-        }
         self.render.doc_view = saved_view;
         self.render.doc_hits = saved_hits;
         self.render.doc_scrollbar = saved_bar;

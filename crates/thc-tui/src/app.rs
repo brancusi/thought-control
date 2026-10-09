@@ -410,11 +410,8 @@ pub struct App {
     pub kitty: bool,
     /// Under the document: `also today` (today's journal) or `linked from` (a page).
     pub doc_footer: Option<(String, Vec<crate::doc_app::FooterRow>)>,
-    /// The writer thread (saves through the daemon while it's live, so typing never waits).
-    pub doc_saver: Option<crate::doc_app::Saver>,
     /// `[tui]` settings from ~/.config/thought/config.toml.
     pub tui_prefs: TuiPrefs,
-    /// A save waiting for the frame to be drawn first (leaving a line offline).
     /// A newer thc the last release check found (the bar's `update 0.7.1 · :update`).
     pub update_available: Option<String>,
     /// A newer thc installed on disk under this running one (`thc update` in another window):
@@ -819,7 +816,6 @@ impl App {
             to_review: 0,
             doc: None,
             doc_footer: None,
-            doc_saver: None,
             tui_prefs: prefs.clone(),
             doc_first_ever: false,
             doc_pending_scroll: None,

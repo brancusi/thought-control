@@ -542,7 +542,6 @@ impl Flow {
     pub fn save(&mut self) -> &mut Self {
         // As the terminal losing focus saves: a message, so a replay saves there too.
         self.run("focus lost (saves)", Motion::Any, vec![Msg::Focus { gained: false }]);
-        self.s.app.drain_saves(true);
         self
     }
 
