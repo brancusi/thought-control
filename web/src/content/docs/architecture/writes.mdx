@@ -1,0 +1,198 @@
+---
+title: The write path
+description: From a line of typed text to fsynced events and an updated store, through one door that every surface uses, with policy, preconditions, undo and review built in.
+order: 103
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import TransactPipeline from '../../../components/arch/TransactPipeline.astro';
+
+Every write in thc, from the CLI, the TUI, `thc apply`, an `$EDITOR` round trip or the
+daemon's socket on behalf of the menu bar, goes through one function: `Vault::transact`. It
+takes a closure that builds operations against a caught-up store, and it does the rest.
+
+<Facts items={[
+  ['1', 'door: <code>Vault::transact</code>'],
+  ['1', 'transaction id per command'],
+  ['2', 'locks: the device <code>write.lock</code>, then the log file'],
+  ['0', 'daemons needed to write'],
+]} />
+
+## The pipeline
+
+<Fig n="1" wide caption="Vault::transact. The policy guard runs first; everything after it holds the device write lock, so building, checking and committing see one consistent store.">
+  <TransactPipeline />
+</Fig>
+
+```rust
+pub fn transact<T>(&mut self, build: impl FnOnce(&Store) -> Result<(Vec<Op>, T)>)
+    -> Result<(Vec<Event>, T)>
+{
+    // refused outright in read-only mode
+    let _lock = self.lock()?;          // flock on <cache>/write.lock
+    self.catch_up_locked()?;           // apply anything other writers appended
+    let (ops, out) = build(&self.store)?;
+    if ops.is_empty() { return Ok((vec![], out)); }
+    let events = self.stamp(ops)?;     // HLC, eid, one tx, actor, device, via
+    self.commit(&events)?;             // append + fsync, then apply in one SQLite tx
+    Ok((events, out))
+}
+```
+
+## 1 · Parse once
+
+Human text is parsed at the edge and never again. `capture.rs` splits a capture into words
+(keeping their spacing, so text round-trips), and pulls out the tokens:
+
+| You type | It becomes |
+|---|---|
+| `[ ]`, `[x]`, `todo:` | `status` |
+| `due:fri`, `sched:mon`, `at:"tue 2pm"` | dates, resolved against the writer's clock and timezone |
+| `every:2w`, `every!:1mo` | a `repeat` rule (`!` repeats from completion) |
+| `!high`, `!med`, `!low` | `priority` |
+| `#health` | a tag edge; the word stays in the text |
+| `[[Q4 Planning]]` | a link edge, creating a stub page if it's missing |
+
+Anything inside double quotes or backticks is never read as a token, so writing *about* the
+syntax is safe. On the CLI a token whose value doesn't parse (`due:fryday`) fails with exit 6 and
+a hint; lenient surfaces (the TUI's capture box, the menu bar) keep it as text instead. `thc parse
+"…" --json` previews the result without a vault.
+
+## 2 · Build
+
+`TxBuilder` turns intents into ops. It is where every decision that replay must not make gets
+made:
+
+- **Ids:** a random 12-character id, or a keyed one for days, tags, pages by title and `--key`,
+  used only if free (see [The event log](../event-log/)).
+- **Order:** `next_ord` puts a new node after its last sibling with a fractional key, remembering
+  keys it already handed out in this transaction.
+- **Structure:** today's journal day, the tag, the `[[page]]` are created in the same transaction
+  if they don't exist, so a capture is never half-written.
+- **Recurrence:** completing a repeating task computes the next dates now and writes them into
+  `node.complete`; its done subtasks reset to `todo` for the next occurrence.
+- **Text edits** carry their `base`, so a concurrent edit elsewhere becomes a conflict instead of
+  a silent loss.
+
+`--dry-run` stops here and prints the ops:
+
+```sh
+$ thc todo "x" --dry-run --json
+{"dry_run":true,"ops":[{"op":"node.create","id":"t2n32r81g5a3","parent":"nshgnw2hmhc7","order":"k","text":"x","props":{"status":"todo"}}]}
+```
+
+## 3 · Check: policy
+
+Every actor has a **tier** in the device config (`~/.config/thought/config.toml`), never in the
+vault, so a synced folder can't change what another machine allows:
+
+| Tier | Default for | Allows |
+|---|---|---|
+| `read` | (opt in) | reads and `--dry-run` only |
+| `write` | agents | everyday verbs: `add`, `todo`, `done`, `set`, `text`, `tag`, `mv`, `link`, `apply` up to 20 ops, `undo` of its own work, … |
+| `full` | people | everything |
+
+Each verb is decided in a fixed order: the actor's explicit `deny`, then `confirm`, then `allow`,
+then the tier's preset. Some risk lives in the ops rather than the command, so once the ops exist
+they are checked again by **class**: `delete`, `move-root`, `apply-large` (over 20 ops),
+`undo-others`, `undo-bulk`, `conflict`, `views`. A `confirm` verdict needs `--yes`, which for an
+agent means "I asked the person". This is a guard against mistakes, not a security boundary:
+anything that can run `thc` can edit the config.
+
+## 4 · Check: preconditions
+
+Agents read, think, then write; a person may have changed the node in between. Two flags make
+the write conditional:
+
+```sh
+$ thc set ny82x status=doing owner=claude --expect status=todo
+$ thc set ny82x due=+3d --if-match 01M4FR3YGC1CZJV7J4FD1SJS8H
+```
+
+A node's `rev` is the `eid` of its latest event. `pre::check` runs *inside* the transact closure,
+after catch-up and under the lock, so a passing check and the write are one atomic step. If the
+node moved on, nothing is written and the command exits 4 with `kind: stale`, the current `rev`
+and what changed. This is how agents claim tasks without a coordinator.
+
+## 5 · Commit
+
+`stamp` gives each op its envelope: the clock ticks from the store's newest `hlc`, each event
+gets a ULID, and the whole command shares one `tx`. For agents, new nodes also get `agent_role`
+and `session_id` from `THC_ROLE` and `THC_SESSION_ID`, attribution written by the writer and
+never computed in replay.
+
+`commit` then does two things, in this order:
+
+1. **Append.** `Log::append` groups the lines by monthly file, takes an exclusive `flock` on the
+   file, writes, and `fsync`s. Now the change is durable and will sync.
+2. **Apply.** In one `BEGIN IMMEDIATE` SQLite transaction: `Store::apply` for each event, rehome
+   any children stranded by a delete, then advance the file's cursor, but only if nothing unread
+   sat before this append.
+
+If the process dies between the two, nothing is lost: the line is on disk past the cursor, and
+the next process to open the vault applies it in `catch_up`. The log is durable; the store only
+has to be *eventually* right, and it always gets there.
+
+## The daemon is not in the way
+
+The CLI and the TUI write directly, under the same lock; they never depend on a daemon being up.
+When one is running it sees the append like any other line and pushes `changed` to subscribers
+within about a tenth of a second. Its socket has write methods (`capture`, `complete`, `set`,
+`snooze`, `ack`, `undo`) for clients with no file access, such as the menu bar, and those take
+the same lock through the same `transact`. See [The daemon](../daemon/).
+
+## Retries, batches and documents
+
+- **`--key`** makes a create idempotent: the same key maps to the same id on every device, and a
+  repeat finds it taken and writes nothing (`"events":0`).
+- **`thc apply plan.jsonl`** reads one JSON op per line and commits them as **one** transaction:
+  all or none, one undo, one review item. `"as":"name"` on a create lets later lines refer to
+  `$name`.
+- **Documents** (a page in the editor, an `$EDITOR` round trip) save as block ops (`edit`,
+  `create`, `move`, `delete`, `kind`, `status`) that become ordinary ops in one transaction.
+  An edit carries its text revision as `base`; a stale `move` or `delete` is left out and
+  reported while the rest of the save still lands; a create whose client-made id already exists
+  comes back `exists` instead of making a second node.
+
+## Undo
+
+Nothing is overwritten, so undo is just more events. When `Store::apply` applies an event it
+records the **inverse** of exactly what it changed (only the fields it actually won). `thc undo`
+reads a transaction's inverses newest-first and commits them as a new transaction, plus a
+`tx.review … reverted` verdict for the original:
+
+```sh
+$ thc undo --dry-run --json
+{"dry_run":true,"ops":[
+  {"op":"edge.remove","src":"md78p9t6g9c7","rel":"tag","dst":"2tbj6654hfp8"},
+  {"op":"node.delete","id":"2tbj6654hfp8"},
+  {"op":"node.delete","id":"md78p9t6g9c7"},
+  {"op":"node.delete","id":"nshgnw2hmhc7"},
+  {"op":"tx.review","txs":["01M4FR3YGC4MVN4ET8XMMZ0ER8"],"verdict":"reverted"}]}
+```
+
+Undoing the undo works the same way, and withdraws the verdict.
+
+## Review
+
+Every transaction whose actor is an agent, with no verdict yet, is in the **review queue**
+(`thc review`). A person accepts it (`tx.review … accepted`) or reverts it. Only a human can
+accept: the writer refuses an agent's `accepted`, and replay ignores one if it ever appears. A
+**revert keeps later edits**: if someone changed a field after the agent did, the revert leaves
+their value and says so, instead of restoring the agent's starting point over it. See
+[Agents and teams](../agents/).
+
+<Files files={[
+  ['crates/thc-core/src/vault.rs', '<code>transact</code>, <code>stamp</code>, <code>commit</code>, the write lock'],
+  ['crates/thc-core/src/builder.rs', '<code>TxBuilder</code>: ids, keyed ids, order keys, recurrence, tags and pages'],
+  ['crates/thc-core/src/capture.rs', 'capture syntax, parsed once'],
+  ['crates/thc-core/src/policy.rs', 'tiers, verbs, classes, the decision order'],
+  ['crates/thc/src/pre.rs', '<code>--if-match</code> and <code>--expect</code>, checked under the lock'],
+  ['crates/thc/src/apply.rs', '<code>thc apply</code>: JSONL batches as one transaction'],
+  ['crates/thc-core/src/outline.rs', 'documents as block ops'],
+  ['crates/thc-core/src/review.rs', 'the review queue, undo ops, safe revert'],
+]} />
+
+Next: [Reads and queries](../reads/), the other direction.

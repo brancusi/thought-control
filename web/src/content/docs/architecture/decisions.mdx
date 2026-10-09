@@ -1,0 +1,174 @@
+---
+title: Decisions
+description: The choices that shaped thc, written as a log. Each says what was chosen, why, and what it costs, because every one of them rules something out.
+order: 110
+group: Architecture
+---
+import Decision from '../../../components/arch/Decision.astro';
+
+Each decision carries a stamp. **Held** means it stands as made. **Revised** means it changed,
+and the entry says from what. **Open** means it's decided for now, with a known next step. The
+costs are real: they're the reasons someone could reasonably have chosen otherwise.
+
+| | Decision | |
+|---|---|---|
+| [D-01](#d-01) | The log is the truth, not Markdown files | revised |
+| [D-02](#d-02) | Plain JSONL, not a CRDT framework | held |
+| [D-03](#d-03) | One log directory per device | held |
+| [D-04](#d-04) | A hybrid logical clock and per-field last-writer-wins | held |
+| [D-05](#d-05) | Concurrent text edits keep both versions | held |
+| [D-06](#d-06) | Clocks, randomness and recurrence belong to the writer | held |
+| [D-07](#d-07) | One primitive: the node | held |
+| [D-08](#d-08) | Parse capture syntax once, at the edges | held |
+| [D-09](#d-09) | SQLite is a cache, and the CLI reads it directly | held |
+| [D-10](#d-10) | The daemon is optional | held |
+| [D-11](#d-11) | Who writes: the process itself, or the daemon | revised |
+| [D-12](#d-12) | Random 60-bit ids, keyed ids where devices must agree | held |
+| [D-13](#d-13) | Fractional order keys | held |
+| [D-14](#d-14) | Rust, one binary, macOS and Linux | held |
+| [D-15](#d-15) | The TUI is one serializable state | held |
+| [D-16](#d-16) | The editor engine is its own project | held |
+| [D-17](#d-17) | Agents are users; only people accept | held |
+| [D-18](#d-18) | Policy lives on the device, not in the vault | held |
+| [D-19](#d-19) | The terminal first; the menu bar app paused | revised |
+| [D-20](#d-20) | The CLI is the agent interface; MCP later | open |
+
+## The data
+
+<Decision id="D-01" title="The log is the truth, not Markdown files" state="revised"
+  why={"Markdown as the source of truth needs a parse-and-rewrite layer that has to keep IDs, types and history in text. An append-only event log gives stable IDs, typed fields, transactions and history directly. The SQLite store is a view of it and Markdown is an export."}
+  cost={"Your notes aren't files you edit in place. You get them back as plain text through <code>thc edit</code>, <code>drop/</code> and a continuously regenerated, read-only <code>export/</code> that Obsidian can open."}>
+The first version (v0.1) kept Markdown files as the truth and inline `- [ ]` lines as tasks.
+v0.2 replaced that: every change is one JSON line in `log/<device>/YYYY-MM.jsonl`, and
+everything else is derived.
+</Decision>
+
+<Decision id="D-02" title="Plain JSONL, not a CRDT framework" state="held"
+  why={"A JSONL log can be read with <code>grep</code> and <code>jq</code>, or rebuilt from in fifty lines of any language. The merge rules fit on one page of FORMAT.md. Boring, proven tools add less than they remove."}
+  cost={"Text merges whole fields, not characters. Two devices editing the same note's text offline produce a conflict to resolve (D-05), where a sequence CRDT would interleave them."}>
+The log format is a versioned contract (`docs/FORMAT.md`). Readers skip ops they don't know, so
+an older binary reads a newer log without damage; new op types need a format version bump.
+</Decision>
+
+<Decision id="D-03" title="One log directory per device" state="held"
+  why={"Dropbox, iCloud and Syncthing all misbehave when two machines write one file: they make \"conflicted copy\" files. If each device appends only to its own directory, a sync tool only ever copies files, never merges them."}
+  cost={"Reading means taking the union of every device's files and ordering it. An event that arrives late and sorts before applied ones forces a rebuild from scratch, which is fine at personal scale and wouldn't be at a team's."}>
+`log/<device>/` is written by exactly one device. Readers ignore a trailing partial line until
+its newline arrives, and ignore file names with a space (sync-tool artefacts).
+</Decision>
+
+<Decision id="D-04" title="A hybrid logical clock and per-field last-writer-wins" state="held"
+  why={"Every device must build the same state from the same lines without talking to each other. A total order on <code>(hlc.ms, hlc.counter, dev, eid)</code> and one rule, the latest event wins per field, does that deterministically."}
+  cost={"Concurrent changes to the same field resolve silently: the later one wins and the earlier is only in history. Per-field granularity keeps that rare (a due date and a title don't collide), but it's a choice."}>
+Fields are position (parent and order together), text, each property, deleted, and each edge.
+`crates/thc-core/tests/convergence.rs` simulates devices editing and syncing at random points
+and must always converge to identical state.
+</Decision>
+
+<Decision id="D-05" title="Concurrent text edits keep both versions" state="held"
+  why={"Text is what people actually write; losing a paragraph silently is the one failure a notebook can't have. Two edits from the same base are concurrent: the later one shows, the other is stored as a conflict, and every device shows the same <code>≠</code>."}
+  cost={"A person has to resolve it. Agents are told not to (<code>thc text</code> on a node with an open text conflict exits 4)."}>
+Each `node.text` carries `base`, the event id of the text it started from. An edit made from the
+current text resolves open conflicts on that node.
+</Decision>
+
+<Decision id="D-06" title="Clocks, randomness and recurrence belong to the writer" state="held"
+  why={"If replay read the replaying device's clock or timezone, two devices could build different states from the same log. So the writer resolves <code>fri</code>, mints ids, and computes a repeating task's next dates into the <code>node.complete</code> event itself."}
+  cost={"The writer carries more logic, and a stored date can't be re-derived later under different rules. Whether an alert has fired is per-device local state, never an event, because firing is a side effect of one device's clock."}>
+Replay (`Store::apply`) is a pure function of the events. `TxBuilder` is where every
+clock-, random- or timezone-dependent decision lives.
+</Decision>
+
+<Decision id="D-07" title="One primitive: the node" state="held"
+  why={"A page, a journal day, a task, a tag and a saved view are all nodes used in a particular way. \"Task\" is a status any node can have; \"reminder\" is an alert attached to one. Fewer kinds means fewer edge cases for people and agents."}
+  cost={"Kinds are conventions, so code that cares must ask (a <code>status</code>, a <code>journal</code> date, a <code>system</code> prop). Hidden system nodes, like ¶ Views and attachment nodes, need every listing to skip them."}>
+Built-in properties (`status`, `scheduled`, `due`, `priority`, `repeat`…) are indexed columns;
+anything else is a typed custom property.
+</Decision>
+
+<Decision id="D-08" title="Parse capture syntax once, at the edges" state="held"
+  why={"<code>Call dentist due:fri #health !high</code> is fast to type and ambiguous to store. Parsing it once into typed fields means stored text is never re-read to learn what something is."}
+  cost={"Quoting rules: text inside quotes or backticks is never parsed, so writing about the syntax needs care. The editor's idle save stores text raw, so a half-typed <code>due:fr</code> isn't read as a date until you leave the line."}>
+The edges are `thc add`/`todo`/`remind`, the capture box, the editor, `$EDITOR`'s round trip and
+`drop/`. Everything past them deals in fields.
+</Decision>
+
+## The processes
+
+<Decision id="D-09" title="SQLite is a cache, and the CLI reads it directly" state="held"
+  why={"Measured: opening SQLite and running an indexed query over 20k rows takes about 2.3 ms in a native process, most of it the OS starting the process. Routing reads through the daemon would save about 0.5 ms and add a dependency."}
+  cost={"Every device builds and keeps its own store, and an upgrade that reads more of the log re-materializes it. Deleting it is always safe: <code>thc rebuild</code> replays the log."}>
+The store lives in the local cache directory, never in the synced vault: WAL mode, `STRICT`
+tables, partial indexes on open tasks, FTS5 for search.
+</Decision>
+
+<Decision id="D-10" title="The daemon is optional" state="held"
+  why={"A background process is one more thing to install, update and debug. Everything it does, the CLI and TUI can do on demand. It's a cache warmer, an event bus and an alarm clock, not a server."}
+  cost={"Two paths for some things: the TUI watches the log itself when no daemon runs, and alerts only fire on time while one does. A daemon left on a replaced binary has to be detected (<code>exe_id</code>) and restarted."}>
+`thc daemon` watches the log, replays other devices' lines, pushes `changed` to subscribers within
+about 120 ms, fires alerts and keeps the export fresh.
+</Decision>
+
+<Decision id="D-11" title="Who writes: the process itself, or the daemon" state="revised"
+  why={"The spec first had clients send writes through the daemon. As built, the CLI writes directly under the device write lock (a <code>flock</code> plus <code>BEGIN IMMEDIATE</code>), so it never depends on the daemon. Later the TUI's document saves moved to the daemon's <code>blocks.apply</code> when it's live, on a writer thread, so typing never waits on fsync."}
+  cost={"Two write routes to keep equivalent. Both take the same lock and produce the same events; without a daemon the TUI saves inline."}>
+The socket's write methods also serve clients without file access, such as the menu bar app.
+</Decision>
+
+<Decision id="D-12" title="Random 60-bit ids, keyed ids where devices must agree" state="held"
+  why={"Sequential numbers collide when devices and agents work in parallel, and names drift. Sixty random bits as 12 Crockford base32 characters never need coordinating. Things every device would create the same way (a journal day, a tag, a page made by title, an agent's <code>--key</code>) get an id hashed from a key, so two offline creates make one node."}
+  cost={"Ids carry no meaning, so people use short prefixes and titles. A keyed id already taken (a renamed page, a deleted tag) falls back to a random one. Logs from before keyed ids could hold two roots for one day; <code>thc doctor --fix</code> merges them."}>
+Replay keeps the first `node.create` of an id, which is what makes keyed creates idempotent.
+</Decision>
+
+<Decision id="D-13" title="Fractional order keys" state="held"
+  why={"Base-62 keys sort lexically, and a key between two others always exists, so moving or inserting a note never renumbers its siblings: one event per move, not one per sibling."}
+  cost={"Two devices appending offline can pick the same key. Siblings sort by <code>(order, id)</code> so every reader agrees, and a later insert between equal keys goes just after them."}>
+`crates/thc-core/src/ord.rs` is about a hundred lines and never panics.
+</Decision>
+
+<Decision id="D-14" title="Rust, one binary, macOS and Linux" state="held"
+  why={"A query should take about as long as the OS needs to start a process, so agents can call it in loops. Rust has no runtime to start, like C. One binary holds the CLI, the TUI and the daemon, so there's one thing to install and update. Unix sockets, launchd and systemd cover both platforms."}
+  cost={"No Windows. Release builds (fat LTO, one codegen unit) are slow to compile. The daemon's login item exists twice: a launchd agent and a <code>systemd --user</code> unit."}>
+The budgets are in `docs/SPEC.md` §8. They're targets, not merge gates; CI guards catch
+order-of-magnitude regressions.
+</Decision>
+
+## The interfaces
+
+<Decision id="D-15" title="The TUI is one serializable state" state="held"
+  why={"If a presentation choice isn't in the state, it can't be replayed, patched by an agent, rendered headless or tested. So the TUI is a <code>UiState</code>, messages through one door, a pure update returning effects, and a view a test forbids from reading the store, a clock, the environment or a file."}
+  cost={"Everything has to be modelled, including time (ticks) and ids (minted by the runtime). The migration isn't finished: write actions and the document's key path still run as runtime code, recorded so traces stay exact."}>
+See [the TUI as state](../tui/).
+</Decision>
+
+<Decision id="D-16" title="The editor engine is its own project" state="held"
+  why={"A text editor with exact caret motion is a project of its own, with its own tests (golden caret examples, property tests over random documents). As a separate crate it has a clear boundary: text and cursors only. Tasks, vaults and saving stay in thc, on the engine's extension points."}
+  cost={"Two repositories. An engine bug found in thc is fixed in caretline first, then released or pinned by git revision, then pulled in; never patched here. thc pins exact versions, so every upgrade is deliberate."}>
+See [the editor](../editor/) and [caretline.app](https://caretline.app).
+</Decision>
+
+<Decision id="D-17" title="Agents are users; only people accept" state="held"
+  why={"Agents get what makes them reliable: <code>--json</code>, stable exit codes, <code>--dry-run</code>, idempotency keys, preconditions (<code>--if-match</code>, <code>--expect</code>), and attribution on every event. A person keeps the last word: an agent's transactions wait in <code>thc review</code>, and replay ignores an agent's <code>accepted</code> verdict."}
+  cost={"A review queue to tend. Reverting has to keep later edits by others, so a revert is computed per field, not a blind undo."}>
+Review verdicts are the only ops added in format v2 (`tx.review`, `tx.unreview`).
+</Decision>
+
+<Decision id="D-18" title="Policy lives on the device, not in the vault" state="held"
+  why={"Which verbs an actor may run (allowed, needs confirmation, refused) is a property of a machine. If it lived in the synced vault, one device could change what another allows."}
+  cost={"Each machine is configured on its own. And it's a guard against mistakes, not a security boundary: anything that can run <code>thc</code> can set <code>THC_ACTOR</code> or edit the config."}>
+Checked on every write, in order: read-only mode, the tier's deny, the tier's confirm, hooks,
+the write.
+</Decision>
+
+<Decision id="D-19" title="The terminal first; the menu bar app paused" state="revised"
+  why={"The terminal is the interface: the CLI is where behaviour lives, the TUI drives it, and GUIs tend to grow features only they can reach. A macOS menu bar app (ThoughtBar) shipped as a thin client of the daemon's socket, with no file access and no editing UI."}
+  cost={"No native window. Development of the menu bar app is paused and it isn't part of this repository; install and update now work without it. Its protocol (<code>thc schema --proto</code>) is still generated from the binary."}>
+The daemon's socket protocol stays versioned for clients like it.
+</Decision>
+
+<Decision id="D-20" title="The CLI is the agent interface; MCP later" state="open"
+  why={"An agent that can run a shell can use <code>thc</code> exactly as a person does, with the guide built into the binary (<code>thc instructions</code>) so it can't drift. One interface means one set of tests and one behaviour."}
+  cost={"Agents without a shell can't use it yet. A stdio MCP server on the same core is planned, with tools annotated as read-only, destructive or idempotent."}>
+`thc schema` gives every command's JSON Schema, generated from the clap definitions.
+</Decision>

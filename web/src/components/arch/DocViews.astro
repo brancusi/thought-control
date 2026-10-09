@@ -1,0 +1,52 @@
+---
+// One document, many views: caretline's Doc with thc's lines beside its blocks, the views that
+// share it, and the save that turns changed lines into one transaction.
+---
+<svg class="art" viewBox="0 0 900 400" role="img" aria-labelledby="dv-t dv-d">
+  <title id="dv-t">One Doc, many views, one save</title>
+  <desc id="dv-d">The main view, a sidebar panel and an agent's view are three caretline views on one Doc. Beside each engine block thc keeps a Line with the node id, base revision and save state. Doc::plan_save turns changed lines into block ops, outline::plan turns those into node ops, written as one transaction. Changes from elsewhere come back in through patch.rs as one External message.</desc>
+  <defs>
+    <marker id="dv-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+    <marker id="dv-e" class="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+
+  <text x="60" y="20" class="k">views · each its own caret, selection and scroll</text>
+  <rect x="60" y="30" width="200" height="56" />
+  <text x="74" y="54" class="t">main view</text><text x="74" y="72">the person's caret</text>
+  <rect x="350" y="30" width="200" height="56" />
+  <text x="364" y="54" class="t">sidebar panel</text><text x="364" y="72">same page, own caret</text>
+  <rect x="640" y="30" width="200" height="56" class="agent" />
+  <text x="654" y="54" class="t agent">◆ agent view</text><text x="654" y="72">doc.view.open</text>
+  <path d="M160 86 V 126" marker-end="url(#dv-a)" />
+  <path d="M450 86 V 126" marker-end="url(#dv-a)" />
+  <path d="M740 86 V 126" class="agent" marker-end="url(#dv-a)" />
+
+  <rect x="60" y="130" width="780" height="104" class="e" />
+  <line x1="470" y1="140" x2="470" y2="224" class="faint" />
+  <text x="76" y="152" class="k">caretline · Doc</text>
+  <text x="76" y="178" class="t">one outline document per page or day</text>
+  <text x="76" y="200">text · block shapes · selection</text>
+  <text x="76" y="220">folds · one undo history</text>
+  <text x="486" y="152" class="k">thc · a Line beside each block</text>
+  <text x="486" y="178" class="t">Line &#123; id, base, saved, conflict &#125;</text>
+  <text x="486" y="200">tied by its mark, re-read</text>
+  <text x="486" y="220">after every engine step</text>
+
+  <text x="152" y="280" class="k">saving · one transaction</text>
+  <rect x="60" y="290" width="180" height="56" class="fill" />
+  <text x="74" y="314" class="t">Doc::plan_save</text><text x="74" y="332">the changed lines</text>
+  <rect x="265" y="290" width="210" height="56" class="fill" />
+  <text x="279" y="314" class="t">BlockOp[]</text><text x="279" y="332">Edit · Create · Move</text>
+  <rect x="500" y="290" width="170" height="56" class="fill" />
+  <text x="514" y="314" class="t">outline::plan</text><text x="514" y="332">block ops → ops</text>
+  <rect x="695" y="290" width="145" height="56" class="e" />
+  <text x="709" y="314" class="t">one tx</text><text x="709" y="332" class="e">→ the log</text>
+
+  <path d="M150 234 V 286" marker-end="url(#dv-a)" />
+  <path d="M240 318 H 261" marker-end="url(#dv-a)" />
+  <path d="M475 318 H 496" marker-end="url(#dv-a)" />
+  <path d="M670 318 H 691" class="e" marker-end="url(#dv-e)" />
+  <path d="M790 290 V 238" class="dash" marker-end="url(#dv-a)" />
+  <text x="798" y="268">patch.rs</text>
+  <text x="60" y="380" class="dim">an Edit carries base, the text revision it started from: a change made elsewhere meanwhile becomes a kept conflict</text>
+</svg>

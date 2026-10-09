@@ -1,0 +1,49 @@
+---
+// Vault::transact, step by step: everything after the guard runs under the device write lock.
+const row1 = [
+  ['policy guard', 'readonly · tier', 'dash'],
+  ['flock', 'write.lock', ''],
+  ['catch_up_locked', 'read new lines', ''],
+  ['TxBuilder', 'ops · ids · order', 'fill'],
+  ['pre::check', '--expect · classes', 'fill'],
+];
+const row2 = [
+  ['stamp', 'HLC · ULID · tx', ''],
+  ['Log::append', 'write · fsync', 'e'],
+  ['BEGIN IMMEDIATE', 'apply · rehome', ''],
+  ['cursors', 'advance · COMMIT', ''],
+  ['unlock', 'next writer goes', 'dash'],
+];
+const X = [20, 190, 360, 530, 700];
+---
+<svg class="art" viewBox="0 0 860 320" role="img" aria-labelledby="tp-t tp-d">
+  <title id="tp-t">The write pipeline</title>
+  <desc id="tp-d">A write passes the policy guard, takes the device write lock, catches up on new log lines, builds its ops, checks preconditions and op classes, stamps them with clock and ids, appends and fsyncs them to this device's log, applies them to SQLite in one immediate transaction, advances the file cursors and commits, then releases the lock. A crash between the append and the apply loses nothing: the next open applies the line.</desc>
+  <defs>
+    <marker id="tp-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+  <path d="M190 30 H 850" class="e" /><path d="M190 26 V 34 M850 26 V 34" class="e" />
+  <text x="196" y="22" class="e">under write.lock · in-process and across processes</text>
+  {row1.map(([t, s, c], i) => (
+    <g>
+      <rect x={X[i]} y="46" width="150" height="52" class={c} />
+      <text x={X[i] + 12} y="68" class="t">{t}</text><text x={X[i] + 12} y="86">{s}</text>
+      {i < 4 && <path d={`M${X[i] + 150} 72 H ${X[i + 1] - 4}`} marker-end="url(#tp-a)" />}
+    </g>
+  ))}
+  <path d="M775 98 V 128 H 95 V 152" marker-end="url(#tp-a)" />
+  <text x="300" y="118" class="dim">no ops: return, nothing written</text>
+  {row2.map(([t, s, c], i) => (
+    <g>
+      <rect x={X[i]} y="156" width="150" height="52" class={c} />
+      <text x={X[i] + 12} y="178" class="t">{t}</text><text x={X[i] + 12} y="196" class={c === 'e' ? 'e' : ''}>{s}</text>
+      {i < 4 && <path d={`M${X[i] + 150} 182 H ${X[i + 1] - 4}`} marker-end="url(#tp-a)" />}
+    </g>
+  ))}
+  <path d="M20 218 H 680" class="e" /><path d="M20 214 V 222 M680 214 V 222" class="e" />
+  <text x="20" y="238" class="e">one transaction id on every line · one undo · one review item</text>
+  <path d="M345 166 L 355 176 M355 166 L 345 176" class="signal" style="stroke-width:2" />
+  <text x="20" y="270" class="t signal">crash after the append?</text>
+  <text x="20" y="290">the line is on disk past this file's cursor, so the next open's catch_up applies it: same result.</text>
+  <text x="20" y="310" class="dim">the guard runs before the lock; pre::check and the op classes run inside it, on the caught-up store</text>
+</svg>

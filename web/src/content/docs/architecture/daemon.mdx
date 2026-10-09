@@ -1,0 +1,158 @@
+---
+title: The daemon
+description: An optional background process that is a cache warmer, an event bus and an alarm clock, and never the only way to do anything.
+order: 105
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import Decision from '../../../components/arch/Decision.astro';
+import DaemonLoop from '../../../components/arch/DaemonLoop.astro';
+
+`thc daemon` runs in the background, started at login by launchd or a `systemd --user` unit.
+It watches the vault, replays what other devices wrote, tells every open client what changed,
+fires reminders and keeps the Markdown export fresh. Stop it and nothing breaks: the CLI and
+the TUI read the store themselves, write under the same lock, and catch up on open. The daemon
+only makes things arrive sooner.
+
+<Facts items={[
+  ['~120 ms', 'from an append to a pushed <code>changed</code>'],
+  ['100 ms', 'debounce on file events'],
+  ['5 min', 'safety-net rescan'],
+  ['2 s', 'for a client to claim an alert before the OS shows it'],
+  ['1', 'process for every registered vault'],
+]} />
+
+## The loop
+
+<Fig n="1" wide caption="One vault's loop. File events, the rescan, the drop folder and the clock wake it; one step replays, groups and pushes; alerts go to a client first and to the OS only if none claims them.">
+  <DaemonLoop />
+</Fig>
+
+The watcher is `notify` (FSEvents on macOS, inotify on Linux) on `log/`, debounced 100 ms. A
+full rescan runs every five minutes anyway, because file events can be dropped (sleep, a sync
+tool writing behind the watcher's back). Each step:
+
+1. **Catch up.** `Vault::catch_up` reads each device's log file from its cursor and applies new
+   lines in total order. A line that sorts before something already applied triggers a full
+   re-materialization; at personal scale that is simple and fast.
+2. **Take the news.** Every event applied since the last step, from this device and others,
+   not a watermark: another device's events can arrive with older timestamps, and a rebuild
+   renumbers rows. After a long time away the newest 500 stand for the rest.
+3. **Push, per transaction.** One `changed` event per transaction, naming its node ids, the
+   transaction, the actor and the device. A TUI uses `actor` to flash an agent's change as
+   `◆ claude`.
+4. **Diff conflicts.** New open conflicts go out as `conflict` with a kind, `text` or `move`.
+5. **Schedule the export.** The Markdown export regenerates two seconds after things go quiet.
+
+Once a day, on a quiet rescan, it also compacts the store (`VACUUM`), and every six hours it
+runs the update check the person chose (notify, or install).
+
+## The socket
+
+Clients talk to the daemon over a Unix socket, newline-delimited JSON. The socket lives at
+`/tmp/thc-<uid>/<hash of the cache dir>.sock` in a `0700` directory (macOS caps socket paths at
+104 bytes), and clients find it through `daemon.json` in the vault's cache. There is no TCP
+listener.
+
+```text
+→ {"id":1,"method":"hello","params":{"client":"thoughtbar","topics":["changed","alerts"],"deliver":true}}
+← {"id":1,"result":{"daemon":"0.10.1","proto":1,"device":"studio"}}
+← {"event":"changed","data":{"ids":["k3f9a2mq7x1c"],"tx":"01K…","actor":"agent:claude","dev":"studio"}}
+→ {"id":2,"method":"alert.delivered","params":{"alerts":["xr7pd…"]}}
+```
+
+Requests carry an `id` that the response echoes; pushed events have none. The methods are
+reads (`status`, `query`, `today`, `search`, `page`, `journal`, `log`, …) and a few writes
+(`capture`, `complete`, `set`, `snooze`, `ack`, `undo`, `blocks.apply`) for clients with no
+file access, such as the menu bar app. Those writes take the same device write lock as the CLI.
+The protocol is version 1 with additive minors; `thc schema --proto` prints it as JSON Schema,
+from which the menu bar app's Swift types are generated.
+
+<Decision id="DMN-1" title="Reads never go through the daemon" why="A direct SQLite read from the CLI takes about 2.3 ms in total, most of it process start. Routing it through a socket would save about half a millisecond and add a dependency on a running process." cost="Every client links the store code. That's fine for one binary; the menu bar app, which can't, uses the socket's read methods instead.">
+The CLI and the TUI open the store directly, and the CLI writes under the device file lock.
+The socket is for pushes, for clients that can't touch files, and for the TUI's document saves,
+which go through `blocks.apply` when a daemon runs (see [D-11](../decisions/#d-11)).
+</Decision>
+
+## Alerts: replicated state, local firing
+
+A reminder is an alert object attached to a node. Two kinds of state meet here, and they are
+deliberately kept apart:
+
+| State | Where it lives | Why |
+|---|---|---|
+| `pending`, `snoozed`, `acked`, `fire_at` | the log (`alert.*` ops), replicated | an ack or snooze on one device silences the others once it syncs |
+| fired here, when, through what | `alert_local` in this device's cache, never in the log | firing is a side effect of one device's clock |
+
+An alert fires at most once per device per `fire_at`, and re-arms when `fire_at` changes (a
+snooze, a moved due date). `alerts::plan` is pure: given the due alerts and the time it groups
+those within a minute of each other into one delivery, summarizes ones missed while the machine
+slept, and marks anything over twelve hours late as fired without a sound.
+
+Delivery prefers a client. If a subscriber said `"deliver":true` (the menu bar app), the
+daemon sends `alert.fire` and waits two seconds for `alert.delivered`. If no one claims it, it
+falls back to the OS:
+
+| Platform | Channel | Clicking it |
+|---|---|---|
+| macOS with `terminal-notifier` | a banner, grouped by alert | opens `thc tui --focus <id>` in your terminal |
+| macOS otherwise | `osascript` | nothing |
+| Linux with `notify-send` | a desktop notification | nothing |
+
+When an alert is handled anywhere (acked here or on another device, its node done or deleted),
+the next step withdraws the notification and pushes `alert.withdraw`.
+
+## drop/ and export/
+
+Two folders in the vault are for the world outside `thc`:
+
+- **`drop/`** is an inbox for files. Anything `.md` or `.txt` put there (from a phone, a
+  script, a share sheet) becomes inbox notes, one per list item or paragraph, in one
+  transaction. The daemon claims the file for this device first, so two devices sharing the
+  vault never ingest it twice, then archives it.
+- **`export/`** is a read-only Markdown copy of the vault, regenerated two seconds after the
+  last change. Obsidian can open it. Nothing ever reads it back.
+
+## Every vault, one process
+
+The daemon serves every registered vault ([vaults](../../vaults/)) on threads of one
+process. Each vault keeps its own socket, cache, watcher and alerts, so clients find it
+exactly as before, and reminders fire from every vault, not only the home one. The registry is
+re-read every half second: a vault added starts at once, one removed stops, one renamed
+restarts under its new name. A notification from a vault that isn't home leads with its name
+(`acme · Book the venue · due 17:00`).
+
+## A daemon on an old binary
+
+Installs and updates rename a new `thc` over the old one, which keeps the path and, for a
+rebuild, the version, so neither tells you a running daemon is out of date. The daemon records
+the file it started from as `exe_id` (device and inode) in its status. A daemon whose file has
+been replaced, or that runs a different binary than its login item names, is **stale**. `thc
+setup`, `thc daemon install`, `thc daemon start` and `thc update` restart a stale daemon
+through whatever runs it (launchd `kickstart -k`, `systemctl --user restart`, or a stop and a
+spawn), and wait for the new one to answer. `thc daemon status --json` carries `stale` and the
+reason; `thc doctor` lists it with the fix.
+
+## Without it
+
+| Without the daemon | What happens instead |
+|---|---|
+| Reads | unchanged: the CLI and TUI read the store directly |
+| Writes | unchanged: they take the device write lock themselves |
+| Other devices' changes | applied on the next open, or by the TUI's own polling |
+| Live updates in the TUI | polling; the TUI reconnects to the daemon every 10 s and switches back |
+| `thc watch` | announces it is polling every second, and reconnects on its own |
+| Reminders | they don't fire; `thc today` still lists them |
+
+<Files files={[
+  ['crates/thc-daemon/src/lib.rs', 'the loop: watch, catch up, push, alerts, export, drop, every vault'],
+  ['crates/thc-daemon/src/server.rs', 'the socket server: one thread per connection, the methods'],
+  ['crates/thc-daemon/src/notifier.rs', 'OS notification channels and withdrawal'],
+  ['crates/thc-core/src/proto.rs', 'the protocol: requests, events, discovery, the client'],
+  ['crates/thc-core/src/alerts.rs', 'pure alert planning and the device-local fired state'],
+  ['crates/thc-core/src/ingest.rs', 'drop/ files into inbox notes'],
+  ['crates/thc-core/src/export.rs', 'the Markdown export and the JSON snapshot'],
+  ['crates/thc-tui/src/live.rs', 'the TUI\'s side of the subscription'],
+]} />

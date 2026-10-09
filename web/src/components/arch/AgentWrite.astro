@@ -1,0 +1,31 @@
+---
+// An agent's write: attributed, checked against its tier and its preconditions, logged, then
+// held in the review queue until a person accepts it or anyone reverts it.
+---
+<svg class="art" viewBox="0 0 900 260" role="img" aria-labelledby="aw-t aw-d">
+  <title id="aw-t">An agent's write, from THC_ACTOR to a verdict</title>
+  <desc id="aw-d">The agent names itself with THC_ACTOR. Its tier (read, write or full) may refuse the verb with exit 6. Preconditions are checked under the write lock and a stale read exits 4. The events carry the agent as actor. The transaction waits in the review queue with no verdict; only a person can accept it, and anyone can revert it.</desc>
+  <defs>
+    <marker id="aw-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+    <marker id="aw-e" class="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+  <text x="20" y="40" class="k">the write</text>
+  <rect x="20" y="56" width="155" height="56" class="agent" /><text x="34" y="79" class="t agent">◆ claude</text><text x="34" y="97">THC_ACTOR</text>
+  <rect x="195" y="56" width="155" height="56" /><text x="209" y="79" class="t">policy</text><text x="209" y="97">read·write·full</text>
+  <rect x="370" y="56" width="155" height="56" /><text x="384" y="79" class="t">--expect</text><text x="384" y="97">under the lock</text>
+  <rect x="545" y="56" width="155" height="56" class="e" /><text x="559" y="79" class="t">the log</text><text x="559" y="97" class="e">actor: agent</text>
+  <rect x="720" y="56" width="160" height="56" /><text x="734" y="79" class="t">review queue</text><text x="734" y="97">no verdict yet</text>
+  <path d="M175 84 H 191" marker-end="url(#aw-a)" />
+  <path d="M350 84 H 366" marker-end="url(#aw-a)" />
+  <path d="M525 84 H 541" marker-end="url(#aw-e)" class="e" />
+  <path d="M700 84 H 716" marker-end="url(#aw-a)" />
+  <path d="M272 112 V 166" class="signal" marker-end="url(#aw-a)" /><text x="280" y="144" class="signal">deny</text>
+  <path d="M447 112 V 166" class="signal" marker-end="url(#aw-a)" /><text x="455" y="144" class="signal">changed</text>
+  <path d="M760 112 V 140 H 622 V 166" marker-end="url(#aw-a)" />
+  <path d="M840 112 V 166" marker-end="url(#aw-a)" />
+  <rect x="195" y="170" width="155" height="56" class="signal" /><text x="209" y="193" class="t signal">refused</text><text x="209" y="211">exit 6</text>
+  <rect x="370" y="170" width="155" height="56" class="signal" /><text x="384" y="193" class="t signal">stale</text><text x="384" y="211">exit 4 · re-read</text>
+  <rect x="545" y="170" width="155" height="56" /><text x="559" y="193" class="t done">accepted</text><text x="559" y="211">a person only</text>
+  <rect x="720" y="170" width="160" height="56" /><text x="734" y="193" class="t">reverted</text><text x="734" y="211">by anyone · undo</text>
+  <text x="20" y="252" class="dim">accept and revert are themselves events (tx.review), so every device agrees on the queue</text>
+</svg>

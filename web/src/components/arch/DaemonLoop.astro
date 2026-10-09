@@ -1,0 +1,42 @@
+---
+// The daemon's loop for one vault: what wakes it (left), what one step does (middle), and who
+// hears about it (right), down to the OS notification when no client claims an alert.
+---
+<svg class="art" viewBox="0 0 840 330" role="img" aria-labelledby="dl-t dl-d">
+  <title id="dl-t">The daemon's loop</title>
+  <desc id="dl-d">Appends to log/, a five-minute rescan, files in drop/ and the next alert time wake the loop. One step debounces, catches up by replaying new lines, groups what changed by transaction, notes new conflicts, schedules the export and plans due alerts. Clients on the socket get changed, conflict and alert events; an alert no client claims within two seconds goes to the OS notifier.</desc>
+  <defs><marker id="dl-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker></defs>
+  <text x="20" y="24" class="k">wakes it</text>
+  <rect x="20" y="40" width="180" height="50" /><text x="34" y="61" class="t">log/ appends</text><text x="34" y="78">FSEvents · inotify</text>
+  <rect x="20" y="110" width="180" height="50" /><text x="34" y="131" class="t">rescan</text><text x="34" y="148">every 5 min</text>
+  <rect x="20" y="180" width="180" height="50" /><text x="34" y="201" class="t">drop/ files</text><text x="34" y="218">→ inbox notes</text>
+  <rect x="20" y="250" width="180" height="50" /><text x="34" y="271" class="t">the clock</text><text x="34" y="288">next fire_at</text>
+  <path d="M200 65 H 256" marker-end="url(#dl-a)" />
+  <path d="M200 135 H 256" marker-end="url(#dl-a)" />
+  <path d="M200 205 H 256" marker-end="url(#dl-a)" />
+  <path d="M200 275 H 256" marker-end="url(#dl-a)" />
+
+  <text x="260" y="24" class="k">one step</text>
+  <rect x="260" y="40" width="230" height="260" class="e" />
+  <text x="276" y="64" class="big">the loop</text><text x="350" y="64" class="dim">a thread per vault</text>
+  <text x="276" y="96">debounce 100 ms</text>
+  <text x="276" y="124">catch_up: replay new lines</text>
+  <text x="276" y="152">group news by tx</text>
+  <text x="276" y="180">diff open conflicts</text>
+  <text x="276" y="208">export 2 s after quiet</text>
+  <text x="276" y="236">ingest drop/</text>
+  <text x="276" y="264">due alerts → plan</text>
+
+  <text x="560" y="24" class="k">who hears</text>
+  <rect x="560" y="40" width="260" height="110" />
+  <text x="574" y="62" class="t">socket subscribers</text>
+  <text x="574" y="86">changed &#123;ids, tx, actor&#125;</text>
+  <text x="574" y="106">conflict &#123;id, kind&#125;</text>
+  <text x="574" y="126">alert.fire · alert.withdraw</text>
+  <text x="574" y="143" class="dim">TUI · ThoughtBar · thc watch</text>
+  <path d="M490 95 H 556" marker-end="url(#dl-a)" />
+  <rect x="560" y="180" width="260" height="50" /><text x="574" y="201" class="t">a client claims it</text><text x="574" y="218">alert.delivered · 2 s grace</text>
+  <rect x="560" y="260" width="260" height="50" class="dash" /><text x="574" y="281" class="t">OS fallback</text><text x="574" y="298">notifier · osascript</text>
+  <path d="M690 150 V 176" marker-end="url(#dl-a)" />
+  <path d="M690 230 V 256" class="dash" marker-end="url(#dl-a)" /><text x="700" y="248" class="dim">no claim</text>
+</svg>

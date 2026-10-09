@@ -1,0 +1,24 @@
+---
+// Two edits of the same text from the same base: the later one shows, the other is kept.
+---
+<svg class="art" viewBox="0 0 860 250" role="img" aria-labelledby="tc-t tc-d">
+  <title id="tc-t">A text conflict</title>
+  <desc id="tc-d">The node's text has revision a. Two devices each edit it with base a. On replay the later edit wins the text field, and because both started from a, the earlier one is stored in the conflicts table. A later edit made from the winning text resolves the conflict.</desc>
+  <defs><marker id="tc-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker></defs>
+  <rect x="20" y="96" width="170" height="54" class="fill" />
+  <text x="34" y="118" class="t">text_eid = a</text><text x="34" y="138">"Call dentist"</text>
+  <path d="M190 112 C 230 112, 230 52, 266 52" marker-end="url(#tc-a)" />
+  <path d="M190 134 C 230 134, 230 194, 266 194" marker-end="url(#tc-a)" />
+  <rect x="270" y="26" width="230" height="54" />
+  <text x="284" y="48" class="t">E · mbp · base a</text><text x="284" y="68">"Call dentist Friday"</text>
+  <rect x="270" y="168" width="230" height="54" />
+  <text x="284" y="190" class="t">F · mini · base a</text><text x="284" y="210">"Call dentist, ask for Mon"</text>
+  <path d="M500 53 C 540 53, 540 112, 576 112" class="dash" marker-end="url(#tc-a)" />
+  <path d="M500 195 C 540 195, 540 112, 576 112" marker-end="url(#tc-a)" />
+  <text x="520" y="150" class="dim">replay</text>
+  <rect x="580" y="62" width="260" height="58" class="e" />
+  <text x="594" y="84" class="t">nodes.text = F</text><text x="594" y="104" class="e">later in the order, so it shows</text>
+  <rect x="580" y="136" width="260" height="58" class="dash" />
+  <text x="594" y="158" class="t">conflicts: loser E</text><text x="594" y="178">kept, open · shown as ≠</text>
+  <text x="20" y="244" class="dim">an edit from the current text (base F) resolves it · or a person runs thc conflict resolve</text>
+</svg>

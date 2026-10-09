@@ -1,0 +1,14 @@
+---
+// "Where it lives": source paths, each linked to the public repository, with a line on what it holds.
+interface Props { files: [string, string][]; title?: string }
+const { files, title = 'where it lives' } = Astro.props;
+const REPO = 'https://github.com/brancusi/thought-control/blob/main/';
+---
+<aside class="files" aria-label={title}>
+  <div class="files__h">{title}</div>
+  <ul>
+    {files.map(([path, note]) => (
+      <li><a href={REPO + path}><code>{path}</code></a><span set:html={note} /></li>
+    ))}
+  </ul>
+</aside>

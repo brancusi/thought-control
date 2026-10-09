@@ -1,0 +1,8 @@
+---
+// A strip of hard numbers or one-word facts, ruled like the rest of the site.
+interface Props { items: [string, string][] }
+const { items } = Astro.props;
+---
+<div class="facts">
+  {items.map(([v, l]) => <div><b set:html={v} /><span set:html={l} /></div>)}
+</div>

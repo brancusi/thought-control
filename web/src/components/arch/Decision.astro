@@ -1,0 +1,18 @@
+---
+// One architecture decision: what was chosen, why, and what it costs. The stamp is its state.
+interface Props { id: string; title: string; why: string; cost?: string; state?: 'held' | 'revised' | 'open' }
+const { id, title, why, cost, state = 'held' } = Astro.props;
+const tone = { held: 'done', revised: 'acid', open: 'signal' }[state];
+---
+<section class="decision" id={id.toLowerCase()}>
+  <header>
+    <span class="decision__id">{id}</span>
+    <h3>{title}</h3>
+    <span class={`stamp ${tone}`}>{state}</span>
+  </header>
+  <div class="decision__body"><slot /></div>
+  <dl>
+    <dt>why</dt><dd set:html={why} />
+    {cost && <><dt>cost</dt><dd set:html={cost} /></>}
+  </dl>
+</section>

@@ -9,7 +9,7 @@ const { title, description, slug } = Astro.props;
 const docs = (await getCollection('docs')).map((d) => ({ slug: d.id, title: d.data.title, group: d.data.group, order: d.data.order }));
 docs.push({ slug: 'keys-reference', title: 'Every key', group: 'Reference', order: 30 });
 docs.sort((a, b) => a.order - b.order);
-const groups = ['Start', 'Guide', 'Reference'];
+const groups = ['Start', 'Guide', 'Reference', 'Architecture'];
 const i = docs.findIndex((d) => d.slug === slug);
 const prev = i > 0 ? docs[i - 1] : null;
 const next = i >= 0 && i < docs.length - 1 ? docs[i + 1] : null;

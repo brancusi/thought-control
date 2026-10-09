@@ -1,0 +1,135 @@
+---
+title: Architecture
+description: How Thought Control is built, end to end. One Rust binary, an append-only log as the truth, a database you can delete, and a TUI whose every pixel comes from one serializable state.
+order: 100
+group: Architecture
+---
+import Fig from '../../components/arch/Fig.astro';
+import Facts from '../../components/arch/Facts.astro';
+import Files from '../../components/arch/Files.astro';
+import SystemMap from '../../components/arch/SystemMap.astro';
+import CrateGraph from '../../components/arch/CrateGraph.astro';
+
+This is the deep end of the docs: how the pieces of `thc` fit together, why they are shaped the
+way they are, and where each one lives in the source. Every page links to the files it describes,
+so you can read the code beside it.
+
+<Facts items={[
+  ['1', 'binary: CLI, TUI and daemon in one'],
+  ['4', 'crates in the workspace'],
+  ['~90k', 'lines of Rust'],
+  ['800+', 'unit and integration tests, plus goldens'],
+  ['0', 'servers, accounts or network calls to work'],
+]} />
+
+## The whole system
+
+<Fig n="1" wide caption="Everything on one sheet. Writes run left to right along the top of the core and land in this device's log; reads run right to left along the bottom, out of a store that is only a cache of the log.">
+  <SystemMap />
+</Fig>
+
+Read it from the edges in. **Surfaces** at the top are every way in: you at the CLI or in the
+TUI, an agent running the same CLI (or steering the TUI through its socket), a file dropped into
+`drop/`, a round trip through `$EDITOR`, the menu bar. None of them has behaviour of its own; they
+all call **thc-core**.
+
+A **write** is parsed once (`due:fri` becomes a date field and is never re-read from text), turned
+into validated operations by the builder, checked against the actor's policy and any
+preconditions, then committed: lock, catch up, stamp each event with a hybrid logical clock,
+append to `log/<this-device>/`, fsync, apply to SQLite. A **read** compiles a query into one SQL
+`WHERE` over the store and renders rows, as JSON or for people.
+
+At the bottom, the **vault** is a plain folder you sync with whatever you like. Only the log in
+it is the truth. The **store** next to it is a cache in the local cache directory: delete it and
+`thc rebuild` replays the log into an identical one.
+
+## The rules of the house
+
+Every page in this section follows from a short list. When something in the code looks odd,
+it usually traces back to one of these.
+
+<ol class="laws">
+  <li><p><strong>The log is the truth.</strong> Every change is one JSON line, appended, never rewritten. The SQLite store, the Markdown export and every screen are derived from it.</p></li>
+  <li><p><strong>Replay is a pure function of the events.</strong> Clocks, randomness, timezones and recurrence math live in the writer. Two devices with the same lines build the same state, byte for byte.</p></li>
+  <li><p><strong>One writer per file.</strong> A device appends only to its own log directory, so a sync tool never sees two writers on one file and never makes a "conflicted copy".</p></li>
+  <li><p><strong>One primitive.</strong> A page, a day, a task, a tag and a saved view are all nodes. "Task" is a status, "reminder" is an alert. Fewer kinds, fewer edge cases.</p></li>
+  <li><p><strong>Text at the edges, structure in the core.</strong> Capture syntax is parsed once, into typed fields. Stored text is never re-parsed to learn what something is.</p></li>
+  <li><p><strong>The CLI is the API.</strong> People and agents use the same commands, with <code>--json</code>, stable exit codes and attribution on every write.</p></li>
+  <li><p><strong>State is serializable, or it is a bug.</strong> The TUI is one <code>UiState</code>, changed only by messages, drawn by a pure view. What isn't in the state can't be replayed, patched or tested.</p></li>
+  <li><p><strong>One source of truth, instantiated.</strong> A document lives in one place and every view holds a reference to it. The same component appears wherever that thing does; differences are data, not a second code path.</p></li>
+</ol>
+
+## The crates
+
+<Fig n="2" caption="The workspace. thc-core knows nothing about terminals, sockets or editors; the editor engine is a separate project on crates.io.">
+  <CrateGraph />
+</Fig>
+
+| Crate | What it holds | Size |
+|---|---|---|
+| `thc-core` | The node model, the event log, HLC, merge and replay, the SQLite store, capture syntax, dates and recurrence, the query compiler, outline (documents ↔ ops), review, policy, vaults | ~16.6k lines |
+| `thc-daemon` | The optional background process: log watcher, socket server and subscriptions, alert scheduler, OS notifications, export, `drop/` ingest | ~2k lines |
+| `thc-tui` | The ratatui app: `UiState`, `Session`, the pure update and view, the keymap, the sidebar, layers, and the editor built on caretline | ~43.9k lines |
+| `thc` | The binary: clap dispatch, one module per command in the registry, JSON output, schemas, setup and update, the team launcher | ~28.6k lines |
+| `caretline` | The editor engine, its own repository and site ([caretline.app](https://caretline.app)): text, selection, motion, undo, the layout map | external |
+
+<Files files={[
+  ['Cargo.toml', 'the workspace and its pinned dependencies'],
+  ['crates/thc-core/src/lib.rs', 'the core crate\'s module list'],
+  ['crates/thc/src/registry.rs', 'every command, one line each'],
+  ['docs/FORMAT.md', 'the on-disk contract: the log format and merge rules'],
+  ['docs/ui-protocol.md', 'the TUI\'s state, messages and socket protocol'],
+  ['PHILOSOPHY.md', 'the ideas behind it, in plain words'],
+]} />
+
+## The life of a write
+
+Follow one command all the way down:
+
+```sh
+$ THC_ACTOR=claude thc todo "Call the dentist due:fri #health !high"
+```
+
+1. **Parse.** `capture.rs` splits the text into words, finds `due:fri`, `#health` and `!high`,
+   resolves `fri` against the writer's clock and timezone, and keeps the rest as text.
+2. **Build.** `TxBuilder` makes the operations: today's journal day if it doesn't exist yet
+   (its id is keyed from the date, so every device makes the same one), a `node.create` for the
+   task with a fresh 12-character id, a fractional order key after the last sibling, and its
+   status, due and priority as props, the `health` tag (keyed from its name), and an `edge.add`
+   linking the two.
+3. **Check.** The actor `claude` is an agent, so its tier in the device config decides whether
+   this verb is allowed, needs confirmation, or is refused. `--expect` and `--if-match` would be
+   checked here too, under the lock.
+4. **Commit.** `Vault::transact` takes the device write lock, catches up on any lines it hasn't
+   applied, stamps each op with the HLC, the device id, the actor and one shared transaction id,
+   appends the lines, fsyncs, and applies them to SQLite in one transaction.
+5. **Notify.** The daemon, if it runs, sees the append and pushes `changed` to every subscriber.
+   An open TUI flashes the new row, marked `◆ claude`. The transaction sits in `thc review` until a
+   person accepts or reverts it.
+
+## The life of a read
+
+```sh
+$ thc q 'status:open due<=+3d #health sort:due' --json
+```
+
+The query compiler parses the terms into an AST (which `--explain` prints in plain words) and
+one SQL `WHERE` over `nodes`, with relative dates resolved once. SQLite answers from partial
+indexes on open tasks. The output layer renders node objects with a stable, additive JSON shape.
+No daemon is involved: the CLI opens the store directly, because a round trip through a socket
+would cost more than it saves.
+
+## Read on
+
+| Page | Covers |
+|---|---|
+| [The event log](event-log/) | The vault on disk, the envelope, every op, ids and keyed ids, the version rules |
+| [Replay and merge](replay/) | Total order, per-field last-writer-wins, text conflicts, cycles, convergence |
+| [The write path](writes/) | Capture, the builder, the lock, policy tiers, preconditions, undo and review |
+| [Reads and queries](reads/) | The store schema, the query language and its compiler, views, vaults, time travel |
+| [The daemon](daemon/) | Watching, the socket protocol, push, alerts and notifications, export |
+| [The TUI as state](tui/) | `UiState`, messages, the pure update, effects, traces, the `thc ui` socket |
+| [The editor](editor/) | caretline inside thc: documents, views, saving, tasks on extension points |
+| [Agents and teams](agents/) | Actors, tiers, review, claims, messages and the team board |
+| [How it's tested](testing/) | Convergence simulation, goldens, snapshots, flows, the sandbox |
+| [Decisions](decisions/) | The choices that shaped it, what each one costs, and what it rules out |

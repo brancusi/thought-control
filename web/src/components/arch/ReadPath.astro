@@ -1,0 +1,27 @@
+---
+// A read: the query string goes right along the top (scope, parse, compile), into SQLite, and
+// the rows come back left along the bottom. Federated reads add a merge; one vault skips it.
+---
+<svg class="art" viewBox="0 0 780 270" role="img" aria-labelledby="rp-t rp-d">
+  <title id="rp-t">The read path</title>
+  <desc id="rp-d">A query is scoped (vault terms split off), parsed into an AST that --explain prints, and compiled to one SQL WHERE with parameters and an ORDER BY. SQLite answers from partial indexes or FTS5; rows come back, are merged in memory when several vaults ran, and are rendered as JSON or for people.</desc>
+  <defs><marker id="rp-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker></defs>
+  <text x="20" y="26" class="k">in →</text>
+  <rect x="20" y="40" width="160" height="50" /><text x="34" y="61" class="t">thc q '…'</text><text x="34" y="78">or a view: @today</text>
+  <rect x="200" y="40" width="170" height="50" /><text x="214" y="61" class="t">scope</text><text x="214" y="78">vault: terms out</text>
+  <rect x="390" y="40" width="170" height="50" /><text x="404" y="61" class="t">parse</text><text x="404" y="78">AST → --explain</text>
+  <rect x="580" y="40" width="180" height="50" class="e" /><text x="594" y="61" class="t">compile</text><text x="594" y="78" class="e">WHERE · params · ORDER</text>
+  <path d="M180 65 H 196" marker-end="url(#rp-a)" />
+  <path d="M370 65 H 386" marker-end="url(#rp-a)" />
+  <path d="M560 65 H 576" marker-end="url(#rp-a)" />
+  <path d="M670 90 V 166" marker-end="url(#rp-a)" /><text x="680" y="132">run it</text>
+  <text x="20" y="156" class="k">← out</text>
+  <rect x="20" y="170" width="160" height="50" /><text x="34" y="191" class="t">out</text><text x="34" y="208">--json · --fields</text>
+  <rect x="200" y="170" width="170" height="50" class="dash" /><text x="214" y="191" class="t">merge</text><text x="214" y="208">in-memory · ORDER BY</text>
+  <rect x="390" y="170" width="170" height="50" /><text x="404" y="191" class="t">rows</text><text x="404" y="208">one thread per vault</text>
+  <rect x="580" y="170" width="180" height="50" class="fill" /><text x="594" y="191" class="t">SQLite</text><text x="594" y="208">partial indexes · FTS5</text>
+  <path d="M580 195 H 564" marker-end="url(#rp-a)" />
+  <path d="M390 195 H 374" marker-end="url(#rp-a)" />
+  <path d="M200 195 H 184" marker-end="url(#rp-a)" />
+  <text x="20" y="252" class="dim">one vault: the merge is skipped · vault:* runs each vault's own store in parallel</text>
+</svg>

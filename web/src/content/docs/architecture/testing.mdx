@@ -1,0 +1,176 @@
+---
+title: How it's tested
+description: Because the log is the truth and the TUI is a state, most of thc can be tested by replaying something and comparing what comes out, from three simulated devices syncing at random to a person typing one key at a time.
+order: 109
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import FlowStep from '../../../components/arch/FlowStep.astro';
+
+The architecture was chosen partly so it could be tested this way. A pure replay means two
+devices can be compared line for line. A serializable UI state means a session can be recorded,
+replayed and diffed frame for frame. A pinned clock means a render today matches a render next
+month. Most of the tests below are one of those three moves.
+
+<Facts items={[
+  ['800+', 'unit and integration tests in the workspace'],
+  ['200', 'user-flow tests driving the TUI'],
+  ['3 × 120', 'devices × random ops, per convergence seed'],
+  ['42', 'editing goldens in caret notation'],
+  ['0', 'files a test may touch outside its scratch roots'],
+]} />
+
+## Devices that must agree
+
+`crates/thc-core/tests/convergence.rs` is the test that must always pass. It opens three
+vaults, one per simulated device, and for each of five seeds runs 120 random operations: a
+capture into today's journal, a text edit with a `[[link]]`, a due date, a priority, a
+completion, a move, a delete, a tag, review verdicts. Every few steps (one in six, at random)
+it "syncs" the way Dropbox does: each device's log files are copied to every other vault, a
+file only when the source is longer, so devices see each other's work at different times and
+in different orders.
+
+At the end every device catches up, and the test dumps each one's whole materialized state as
+text and requires them to be identical. Then it rebuilds one device's store from scratch and
+requires the rebuild to equal the incremental result. Along the way it checks that review
+verdicts were exercised and that an agent's `accepted` never took effect.
+
+The same file holds the sharper cases: a child added on one device under a note deleted on
+another (shown under its nearest live ancestor and flagged), client-made ids from two editors
+typing into one page offline, tied sibling order keys, days, tags and pages created offline on
+two devices becoming one node, a renamed page keeping its id, and two vaults that never cross.
+CI runs this suite on its own and fails if it ran fewer than three tests, so a file that
+silently stops compiling into tests can't pass by running nothing.
+
+## The editor, in caret notation
+
+The editor's rules are written as goldens a person can read. `▮` is the caret, `⟦…⟧` a
+selection, ` ‖ ` the boundary between notes:
+
+```text
+E1   Hello ⟦wor▮⟧ld   ←   Hello ▮world
+E2   Hello ⟦wor▮⟧ld   →   Hello wor▮ld
+```
+
+Each row is parsed into a document, the keys are driven through the same `Doc::apply` and
+clipboard the TUI uses, and the result is rendered back into the notation and compared. The
+engine underneath, caretline, carries its own goldens and property tests in its own repository
+([the editor](../editor/)).
+
+`fuzz.rs` uses the editor the way nobody would on purpose: typing, Enter, blank lines, ⌫ joins,
+pastes, ⌃T, Tab and ⇧Tab, moving lines, undo and redo, remote edits, clicks, leaving and coming
+back, against a scratch vault. Every few steps the saved notes must be exactly the buffer (same
+notes, order, kind, depth, status and text; nothing lost or doubled; untouched notes keep their
+ids). A failure is shrunk to the fewest operations that still fail and printed as a replayable
+list. CI runs a fixed seed; `THC_FUZZ_CASES=2000 THC_FUZZ_OPS=200` is a longer soak.
+
+## Flows: a person, one key at a time
+
+`crates/thc-tui/src/flows/` drives the TUI as a person does and reads like a user story:
+
+```rust
+flow("jump to a page with ⌃O and type")
+    .keys("<c-o>Q4 Plan<cr>")
+    .expect_page("Q4 Plan")
+    .keys("<c-end>")
+    .type_text(" and more")
+    .expect_saved_contains("and more")
+    .done();
+```
+
+<Fig n="1" caption="A flow. Every step goes through the one door and is drawn into an emulated terminal, and the invariants are checked before the next. At done() the trace must replay, and the saved state must restore, to the same frames.">
+  <FlowStep />
+</Fig>
+
+`flow(name)` makes a scratch vault with a few pages and journal days, opens a headless
+`Session` on it at 140×36 and pins the logical clock. Each step advances that clock, applies its
+messages through `Session::apply` (the same door the terminal loop uses), and draws into one
+long-lived **emulated terminal** fed only ratatui's diffs, with a real terminal's rules for wide
+characters. A cell the diff forgot, or a wide character torn by a later write, shows up there
+and nowhere else.
+
+After every step, whatever the step was:
+
+- no blank frame, no stale or torn cells, and the same frame with every cache dropped;
+- `UiState` round-trips through JSON unchanged;
+- the caret is inside the focused pane, and hit-testing its cell gives the caret back;
+- typing doesn't shift anything above the caret's note, nor the header, tabs or footer;
+- a pane without the keyboard keeps its scroll unless something actually happened to it;
+- another writer's change (an agent's `thc add`, another device) leaves the cursor where it was.
+
+At `done()`, the recorded trace replays on scratch copies of the vault and must draw the same
+frame at every step, and the saved state restored on a fresh session must draw the same frame.
+A flow dropped without `done()` fails.
+
+Clicks name what's on screen (`text("Garden").in_side()`, `doc_at("Grow the newsletter", 5)`,
+`tab(View::Tasks)`), never a coordinate, so a layout change doesn't break a flow that should
+still pass. Around them: `flows/panes.rs` runs one script in the main view and again in a
+sidebar panel and requires the same caret, popup, document and clipboard; `flows/monkey.rs` is a
+seeded random walk with every invariant on (`THC_FLOW_SEEDS=50` walks more); `flows/perf.rs`
+times typing, opening and scrolling on 300- and 5,000-line pages against budgets. A flow that
+finds a product bug is filed on the board and marked `#[ignore = "<task id>"]`, so the ignored
+flows are the to-do list.
+
+## Same input, same bytes
+
+Determinism is what makes all of this comparable, and it's switched on by a few variables:
+
+| Variable | Pins |
+|---|---|
+| `THC_NOW=2026-10-07T10:00` | "today" and the TUI's clock; the clock never moves, so renders and replays are byte-identical |
+| `THC_FIXTURE_IDS=1` | with `THC_NOW` and `THC_DEVICE`, the writer stamps the pinned time and derives tx and event ids from it |
+| `THC_TUI_SNAPSHOT=120x32` | render one frame as text (or `THC_TUI_SNAPSHOT_FORMAT=ansi\|html`) after `THC_TUI_KEYS`; writes land in a scratch copy |
+| `THC_THEME`, `THC_GLYPHS=ascii` | the theme and glyph set of a render |
+
+`scripts/guide-renders.sh` uses all of them to render the guide's screenshots from seeded
+scratch vaults, each with its own scratch daemon: the same vault every run, so a diff in a render
+means the UI changed. The sidebar and layer goldens (`crates/thc/tests/golden/`,
+`crates/thc-tui/tests/goldens/`) store frames as text and in each theme; `THC_UPDATE_GOLDENS=1`
+regenerates them. Any running session can be recorded with `thc tui --trace t.jsonl` and replayed
+headlessly with `thc ui replay t.jsonl`, on the vault as it was when the trace began.
+
+## The sandbox
+
+Twice, a test escaped into the developer's real environment: once an app helper read the real
+home directory, once a migration test unregistered the real app's login item. The fix is
+systemic. `.cargo/config.toml` sets `THC_TEST=1` for every `cargo test`, and with it any path
+`thc` resolves under the real home or `/Applications`, and any real `launchctl`, `open` or
+`osascript`, **aborts the process with exit 70**. An abort, not an error, so no `let _ =` can
+swallow it. The real home comes from the password database, since `$HOME` can be pointed
+anywhere. In-process tests get config and cache dirs under `target/thc-test`; spawned `thc`
+processes get a whole scratch home. And a daemon or TUI a test starts exits when its test
+process does (`THC_TEST_PARENT`), so none outlives the run.
+
+## CI
+
+| Step | Fails when |
+|---|---|
+| No conflict markers | a `<<<<<<<` reached a commit |
+| `cargo test --workspace` | any test fails, including the schema contract |
+| No thc process outlives the tests | a test's daemon or TUI escaped its watchdog |
+| Editor performance guard | typing into a 5,000-line page is over 40 ms p50, or a 300-line day takes over 50 ms to open |
+| Read performance guard | reads average over 60 ms on the runner |
+| Convergence actually ran | the convergence suite ran fewer than three tests |
+| Tests wrote nothing in the real home | anything under the home's thc folders is newer than a canary file touched before the tests |
+| Preflight | a change adds build output, a file over 512 KB, a stray binary, a home or scratch path, a private URL or something shaped like a credential |
+
+The performance guards sit at about ten times the targets: they catch an order-of-magnitude
+regression (a per-key whole-document scan once made typing 60 ms) without making feature work
+wait on benchmarks. Bringing numbers back to target is a dedicated pass, run with release builds
+and `hyperfine`. Preflight exists because a build folder once reached the public main branch and
+took a history rewrite to remove; it also runs as a pre-push hook.
+
+<Files files={[
+  ['crates/thc-core/tests/convergence.rs', 'several devices, random edits, random syncs: identical state'],
+  ['crates/thc-tui/src/goldens.rs', 'the editing goldens in caret notation'],
+  ['crates/thc-tui/src/fuzz.rs', 'the editor under random use, with shrinking'],
+  ['crates/thc-tui/src/flows/mod.rs', 'the flow harness: steps, anchors, invariants, replay, restore'],
+  ['crates/thc-tui/src/flows/emu.rs', 'the emulated terminal'],
+  ['crates/thc-tui/src/flows/monkey.rs', 'the seeded random walk'],
+  ['crates/thc-core/src/sandbox.rs', 'the <code>THC_TEST</code> guard: exit 70 outside the scratch roots'],
+  ['.github/workflows/ci.yml', 'the CI steps above'],
+  ['scripts/preflight.sh', 'what may never reach the public repository'],
+  ['docs/testing-flows.md', 'the full guide to writing flows'],
+]} />

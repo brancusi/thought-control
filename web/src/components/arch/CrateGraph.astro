@@ -1,0 +1,23 @@
+---
+// The workspace's crates and what each depends on. One binary; the editor engine is outside.
+---
+<svg class="art" viewBox="0 0 760 250" role="img" aria-labelledby="cg-t">
+  <title id="cg-t">Crate graph: thc depends on thc-tui, thc-daemon and thc-core; thc-tui on thc-core and the caretline crates; thc-daemon on thc-core.</title>
+  <defs><marker id="cg-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker></defs>
+  <rect x="290" y="16" width="180" height="50" class="e" /><text x="306" y="38" class="t">thc</text><text x="306" y="55" class="e">the one binary · clap</text>
+  <rect x="60" y="106" width="180" height="50" /><text x="76" y="128" class="t">thc-tui</text><text x="76" y="145">ratatui · Elm state</text>
+  <rect x="290" y="106" width="180" height="50" /><text x="306" y="128" class="t">thc-daemon</text><text x="306" y="145">watch · bus · alerts</text>
+  <rect x="290" y="186" width="180" height="50" class="fill" /><text x="306" y="208" class="t">thc-core</text><text x="306" y="225">model · log · store</text>
+  <rect x="530" y="96" width="220" height="140" class="dash" />
+  <text x="546" y="116" class="k">crates.io · own repo</text>
+  <text x="546" y="140" class="t">caretline</text><text x="546" y="155">the editor engine</text>
+  <text x="546" y="180" class="t">caretline-layers</text><text x="546" y="195">hints · spotlights</text>
+  <text x="546" y="218" class="t">caretline-tour</text><text x="546" y="231">walkthroughs</text>
+  <path d="M330 66 C 330 86, 150 82, 150 102" marker-end="url(#cg-a)" />
+  <path d="M380 66 V 102" marker-end="url(#cg-a)" />
+  <path d="M470 41 C 520 41, 600 50, 600 92" class="dash" marker-end="url(#cg-a)" /><text x="530" y="34" class="dim">schema</text>
+  <path d="M380 156 V 182" marker-end="url(#cg-a)" />
+  <path d="M150 156 C 150 200, 240 211, 286 211" marker-end="url(#cg-a)" />
+  <path d="M240 146 C 300 172, 470 172, 526 170" marker-end="url(#cg-a)" />
+  <text x="20" y="246" class="dim">arrows point at what a crate depends on</text>
+</svg>

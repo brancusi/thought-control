@@ -1,0 +1,165 @@
+---
+title: Agents and teams
+description: Agents use the same commands as people, and everything that makes that safe (attribution, tiers, preconditions, review, claims, messages) is built from the log and ordinary nodes rather than a second system.
+order: 108
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Files from '../../../components/arch/Files.astro';
+import Decision from '../../../components/arch/Decision.astro';
+import AgentWrite from '../../../components/arch/AgentWrite.astro';
+
+There is no agent API. An agent runs `thc`, the way it runs `git` or `gh`, and gets what a
+program needs from a CLI: JSON output, schemas, stable exit codes, safe retries and guarded
+writes. What makes it safe to let one loose in your notes is that every write it makes is
+attributed in the log, checked against a policy on this machine, and held for a person's
+verdict, and all three come from the architecture already described rather than new
+machinery. The [agents guide](../../agents/) is the how-to; this page is how it's built.
+
+## An agent's write
+
+<Fig n="1" wide caption="The life of an agent's write. Refusals stop it before anything is written; once logged, it waits in the review queue until a person accepts it or anyone reverts it.">
+  <AgentWrite />
+</Fig>
+
+**Attribution is in the envelope.** `THC_ACTOR=claude` makes every event the command writes
+carry `"actor":{"kind":"agent","name":"claude"}`. It is not a property someone can edit later;
+it is part of the immutable line. `thc log --by claude`, `thc review` and the TUI's `◆ claude`
+flash all read it from there. Nodes an agent *creates* also get `agent_role` and `session_id`
+properties when `THC_ROLE` and `THC_SESSION_ID` are set, so a task can be traced to the session
+that made it. That is writer input, stamped in `Vault::stamp`; replay never invents it.
+
+**Policy is per device.** `policy.rs` gives each actor a tier from the device config
+(`[actors.claude]` in `~/.config/thought/config.toml`), never from the vault, so a synced folder
+can't change what another machine allows. People default to `full`, agents to `write`:
+
+| Tier | May |
+|---|---|
+| `read` | read anything; every write refused, including steering the TUI |
+| `write` | the everyday verbs (`add`, `todo`, `set`, `done`, `mv`, `link`, `apply` up to 20 ops, `undo` of its own work, …) |
+| `full` | everything, including the classes below |
+
+Some writes fall into a class whatever command made them: `delete`, `move-root`,
+`undo-others`, `undo-bulk`, `apply-large` (over 20 ops), `conflict`, `views`. A tier can be
+adjusted with `allow`, `deny` and `confirm` lists of verbs and classes. A refusal exits 6 with
+the actor, tier, verb and the config line to change. It's a guard against mistakes, not a
+security boundary: anything that can run `thc` can set `THC_ACTOR=human`.
+
+## A contract a program can hold
+
+| What | How |
+|---|---|
+| Output | `--json` on every command, additive-only within a major version; `--fields a,b,c` to trim |
+| Schemas | `thc schema <cmd>` (inputs generated from clap, so they can't drift), `--all`, `--proto` for the sockets |
+| Exit codes | `0` ok · `1` error · `2` usage · `3` not found · `4` conflict or stale · `5` ambiguous id · `6` validation |
+| Errors | `{"error":{"kind","message","candidates"?}}` on stderr; a stale error adds `node`, `rev` and `changed[]` |
+| Ids | 12 random characters, any unique prefix of 4+ accepted; never sequential, never coordinated |
+| Instructions | `thc instructions <topic>` prints the agent guide from the binary itself |
+
+The guide lives in the binary (`instructions.rs`) so it can't fall out of step with the
+commands it describes. `thc setup claude` writes it into a project's `AGENTS.md` between
+markers; this repository's own `AGENTS.md` Part 1 is generated that way.
+
+## Retries and races
+
+Agents retry. Networks drop, sessions restart, a tool call times out after it succeeded. Two
+mechanisms make that harmless.
+
+**Keyed creates.** `--key <your-key>` turns a create into an idempotent one: the id is
+`id::from_key(key)`, an FNV-1a hash folded to 60 bits, the same on every device. If a node with
+that id exists, the command writes nothing and says so:
+
+```console
+$ thc todo "Fix the export" --key fix-export --json
+{"ok":true,"tx":null,"events":0,"nodes":[{"id":"vqyrezt39dfy","short":"vqyre", …}]}
+```
+
+Two devices that both create it offline still make one node, because replay keeps the first
+`node.create` of an id.
+
+**Guarded writes.** Every node in JSON carries `rev`, the id of its latest event. `--if-match
+<rev>` writes only if nothing changed since that read; `--expect field=value` writes only if a
+field still holds a value. Both are checked inside `Vault::transact`, under the write lock and
+after catching up, so the check and the write are one atomic step:
+
+```console
+$ thc set vqyre status=doing owner=codex --expect status=todo --json
+{"error":{"kind":"stale","message":"expected status=todo, found doing · nothing written",
+ "node":"vqyrezt39dfy","rev":"01M4FR…","changed":[{"field":"status","expected":"todo","found":"doing"}]}}
+$ echo $?
+4
+```
+
+## Review
+
+A transaction is **in the review queue** when its actor is an agent, it has no verdict, and it
+holds no review ops itself. `thc review` lists them with what each changed, field by field, and
+what someone changed afterwards.
+
+Verdicts are events too, the v2 ops `tx.review` and `tx.unreview`, so every device agrees on the
+queue. Each reviewed transaction has one verdict field, last-writer-wins like any other, with
+two rules enforced in two places:
+
+- **`accepted` counts only from a person.** The writer refuses an agent's accept, and replay
+  ignores one if it ever appears in a log. An agent can't approve its own work, even by
+  editing files.
+- **`reverted` is valid from anyone.** Undoing a transaction writes the inverse ops plus a
+  `tx.review … reverted` for it; undoing that undo withdraws the verdict. A revert keeps any
+  field someone changed after the agent did.
+
+<Decision id="AGT-1" title="Review is a verdict on transactions, not a staging area" why="Agent writes land immediately, so the board, the TUI and other agents see them at once. Holding them back would mean two versions of the vault: what is, and what is proposed." cost="A bad write is visible until someone reverts it. The revert is one command, keeps later edits, and is itself recorded.">
+An agent's changes are real the moment they're written. Review is a queue of verdicts over
+the log, and undo is the remedy.
+</Decision>
+
+## Teams on a board
+
+Several agents can work one project together, coordinated through `thc` itself. Every piece of
+it is an ordinary node, property or link; no event type was added for teams.
+
+| Concept | Built from |
+|---|---|
+| **The board** | a page in a vault (the project's `.thc.toml` `board` key, or the vault's capture page); `thc board --json` says which and why |
+| **The queue** | the board's outline order plus `blocks` links; `thc next` returns the first open, ready, unblocked task, `--role engineer` narrows it |
+| **A claim** | `thc set <id> status=doing owner=<you> session_id=<id> --expect status=todo`: a guarded write, so two agents can't both win |
+| **A message** | a plain note under a task (or on ¶ Messages) with `to` and `from` properties, its text starting `to: engineer (from claude):` |
+| **Read receipts** | a boolean property per reader, `read_<actor>=true`, so one engineer reading a role broadcast doesn't mark it read for another |
+| **Roles** | built-in cards (lead or pm, engineer, merger, designer, reviewer) plus the board's ¶ Roles page, one note per role; `thc prime --role` joins them |
+| **Progress** | notes under the task, one per finding; `thc done` plus a closing note, which then waits in review |
+
+`thc watch --for engineer` streams unread messages and newly ready tasks routed to a role, one
+JSON object per line. It reconciles what's already there on start and after a daemon reconnect,
+and never acknowledges or claims anything itself.
+
+`thc team up pm designer engineer --agent claude` starts one agent per role, each with
+`THC_ACTOR`, `THC_ROLE` and `THC_BOARD` set, in herdr panes, a WezTerm tab, or as printed shell
+commands. Launchers are argument arrays, never shell templates, and a launcher that would skip
+an agent's permission prompts is refused. A new board needs a lead first: the other roles wait
+(`waiting=first-plan`) until the lead's keyed First plan task is done and a person has accepted
+it in review.
+
+## Steering the person's screen
+
+An agent can also act on the TUI a person is looking at, through its socket ([the TUI as
+state](../tui/)): switch the view, open a page beside them, point at a row with a hint, run a
+walkthrough. The same rules hold. A read-tier agent can look but not steer. Every change names
+its actor, shows in the bar as `◆ claude changed your view`, and is one history step the person
+takes back with ⌘[. A page put beside the person never moves their keyboard, and a panel they
+pinned can't be closed by an agent. Layers drawn by an agent carry its name on the box's top
+edge, Esc clears them all, and `[layers] agent_limits` can cap how many, how long and how often.
+Nothing an agent does to the screen writes to the vault; only keys that edit do, exactly as from
+the keyboard.
+
+<Files files={[
+  ['crates/thc-core/src/policy.rs', 'tiers, verb classes, allow/deny/confirm, refusals'],
+  ['crates/thc-core/src/review.rs', 'the queue, per-field changes, the revert that keeps later edits'],
+  ['crates/thc/src/pre.rs', '<code>--if-match</code> and <code>--expect</code>, under the lock'],
+  ['crates/thc-core/src/id.rs', 'random ids and <code>from_key</code>'],
+  ['crates/thc-core/src/messages.rs', 'messages as notes, recipients, receipts'],
+  ['crates/thc-core/src/board.rs', 'which board a project uses'],
+  ['crates/thc/src/next.rs', '<code>thc next</code> and <code>thc board</code>'],
+  ['crates/thc/src/watch.rs', 'the read-only team stream'],
+  ['crates/thc/src/team_cmd.rs', '<code>thc team up</code>, <code>ls</code>, <code>down</code>'],
+  ['crates/thc/src/instructions.rs', 'the agent guide, built into the binary'],
+  ['crates/thc/src/schema.rs', 'JSON Schemas for every command and both sockets'],
+]} />

@@ -1,0 +1,185 @@
+---
+title: Replay and merge
+description: How every device turns the same log lines into the same state, whatever order the sync tool delivered them in, with no server to ask and nothing lost.
+order: 102
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import TotalOrder from '../../../components/arch/TotalOrder.astro';
+import TextConflict from '../../../components/arch/TextConflict.astro';
+
+There's no server deciding who won. Each device reads every device's log files, puts all the
+lines in one order that every device computes the same way, and applies them one by one to its
+own SQLite store. If the rules for applying a line depend only on the line and the state so far,
+the devices end up identical. That's the whole trick, and the rest of this page is the rules.
+
+<Facts items={[
+  ['1', 'total order, the same on every device'],
+  ['per field', 'last writer wins: text, position, each prop, each edge'],
+  ['0', 'clock reads, random numbers or timezones in replay'],
+  ['5 × 3 × 120', 'seeds × devices × random ops in the convergence test'],
+]} />
+
+## One order for everything
+
+Every event carries a **hybrid logical clock**, `[ms, counter]`. A writer takes the larger of
+the wall clock and the newest clock its store has seen; if the wall clock hasn't moved past it,
+the counter goes up instead:
+
+```rust
+pub fn tick_at(last: Hlc, now: u64) -> Hlc {
+    if now > last.0 { Hlc(now, 0) } else { Hlc(last.0, last.1 + 1) }
+}
+```
+
+So a device whose clock runs behind still writes events that sort after everything it has
+already seen, and a burst of ops in one millisecond keeps its order. Ties between devices break
+on the device id, then the event id. The comparison is a plain string:
+
+```rust
+format!("{:013}.{:06}.{}.{}", hlc.ms, hlc.counter, dev, eid)
+// "1791529974284.000001.mbp-7f3a.01M4FR3YGC1CZJV7J4FD1SJS8H"
+```
+
+That string is the event's `okey`, stored beside it. Sorting by it is the total order.
+
+<Fig n="1" wide caption="Two devices write offline. Once the files sync, each device sorts the six lines the same way and applies them in that order, so each field ends with the same winner everywhere.">
+  <TotalOrder />
+</Fig>
+
+## Per-field last writer wins
+
+The store keeps a **clock per field**: a `clocks` table of `(entity, field, okey)`, holding the
+order key of the event that last won that field. Applying an event asks, for each field it
+touches, whether it is newer than the field's clock (`Store::claim`). If so, it writes the field
+and moves the clock; if not, that field is left as it is.
+
+The fields are fine-grained on purpose, so concurrent edits to *different* parts of a node both
+survive:
+
+| Field | Changed by |
+|---|---|
+| `pos` (parent and order together) | `node.move` |
+| `text` | `node.text` |
+| `title`, and every property by name | `node.set`, `node.complete`, `node.skip` |
+| `del` | `node.delete`, `node.restore` |
+| `edge:<rel>:<dst>` | `edge.add`, `edge.remove`, one clock per edge |
+| an alert's `state` | `alert.ack`, `alert.snooze`, `alert.remove` |
+| `tx:<id>` `review` | `tx.review`, `tx.unreview` |
+
+One device can set `due` while another sets `priority` and a third moves the node: all three
+land. Two devices setting `due` offline end with the later one, on both.
+
+A few rules sit beside the clocks:
+
+- **Creates are first-wins.** A `node.create` for an id that exists is ignored. That's what
+  makes keyed ids work: two devices that both made today's journal day write the same create,
+  and the second is a no-op.
+- **Applying is idempotent.** An event whose `eid` is already in the `events` table is skipped,
+  so delivering a file twice changes nothing.
+- **Every applied event stores its inverse**, the ops that would undo exactly what it changed
+  (only the fields it won). Undo reads them later; see [The write path](../writes/).
+
+## Text conflicts
+
+Text is the one field where "the later one wins" could lose real work. So a `node.text` carries
+`base`, the `eid` of the text the writer started from. Two edits with the same base were made
+without seeing each other:
+
+<Fig n="2" wide caption="Both edits started from text revision a. The later one shows; the other is stored, not dropped, and the node is flagged until a person chooses.">
+  <TextConflict />
+</Fig>
+
+On replay, the later edit still wins the field, so every device shows the same text. The other
+version goes into the `conflicts` table with its value, and the node shows `≠` everywhere. An
+edit made *from* the current text resolves open text conflicts on that node. Choosing is the
+person's: `thc conflict resolve <id> --keep current|other|both`. Agents mention conflicts, and
+`thc text` refuses to write over one (exit 4) unless told which text to keep.
+
+## Moves that would loop
+
+Device A moves X under Y while device B moves Y under X. Each was fine locally; together they
+make a cycle. Replay checks every move against the tree as it stands: one that would make a node
+its own ancestor is **rejected** and recorded as a `parent` conflict. Whichever move sorts later
+is the one rejected, on every device. A later move of that node dismisses it.
+
+## A child under a deleted parent
+
+A `node.delete` tombstones a node and the descendants its writer knew about. If another device
+added a child meanwhile, that child is still live, under a deleted parent. Readers show it under
+its **nearest live ancestor** (or the inbox) and flag it as `rehomed` until a person decides:
+moving it keeps it, deleting it deletes it, and restoring the parent moves it back.
+
+No op records this. The `rehomed` table is derived from the events after each batch, so every
+device computes the same answer regardless of which line arrived first.
+
+## What the writer computes, so replay doesn't
+
+Replay never reads a clock, a random number, a timezone or the environment. Anything that would
+needs to be decided once, by the writer, and written into the event:
+
+- **Dates** are resolved at capture: `due:fri` is stored as `2026-10-09`.
+- **Recurrence**: completing a repeating task writes `node.complete` with `next`, the new
+  `scheduled` and `due`. A device in another timezone replays the same dates.
+- **Ids and order keys** are chosen by the builder, never derived during replay.
+- **Review verdicts** are checked on replay too: an agent's `accepted` is ignored, so a
+  misbehaving binary can't approve its own work on someone else's device.
+
+Alert *firing* is the one clock-driven thing, and it stays out of the log: whether an alert has
+fired on this device is local state the replay never touches.
+
+## Catching up
+
+The store remembers, per log file, how many bytes it has applied (`cursors`). `Vault::catch_up`
+compares those against the files on disk; when nothing changed it returns without taking a
+lock. Otherwise it reads only the new complete lines, sorts them, and applies them in one
+`BEGIN IMMEDIATE` transaction.
+
+Two things force a full rebuild instead:
+
+1. **A late arrival.** A new line sorts *before* events already applied (the laptop that was
+   offline for a week syncs). Rather than unpicking state, the store resets and replays every
+   line in order. At personal scale that is fast, and it is obviously correct.
+2. **A file that shrank,** which a sync tool can do while delivering. The cursors no longer make
+   sense, so it starts over.
+
+`thc rebuild` does the same on demand. The store is a cache: deleting it costs one replay.
+
+## Time travel for free
+
+Because the `events` table keeps every line, the past is a query away. `thc history <id>` reads
+one entity's events; `thc diff <id> --since 1d` compares; `thc q '…' --as-of=-2d` replays every
+event up to that moment into an in-memory store (`Vault::as_of`) and runs the query there.
+
+## Proof that it converges
+
+`crates/thc-core/tests/convergence.rs` simulates the real thing. Three devices make random
+concurrent edits (creates, text, moves, sets, tags, deletes, review verdicts, even an agent
+trying to accept its own work), and their logs are copied between them at random moments, the
+way Dropbox would. At the end every device must dump an identical state, and a from-scratch
+rebuild must equal the incremental result:
+
+```rust
+for (i, d) in devs.iter().enumerate().skip(1) {
+    assert_eq!(dump(&d.vault), first, "device {i} diverged (seed {seed})");
+}
+devs[1].vault.rebuild().unwrap();
+assert_eq!(dump(&devs[1].vault), before, "rebuild differs from incremental (seed {seed})");
+```
+
+Beside it are targeted cases: offline days, tags and pages that become one node after sync,
+tied sibling keys, a child of a concurrently deleted note, client-made ids from two editors, and
+two vaults that never cross. The suite must always pass; see [How it's tested](../testing/).
+
+<Files files={[
+  ['crates/thc-core/src/store.rs', '<code>Store::apply</code>, field clocks (<code>claim</code>), conflicts, rehoming, the schema'],
+  ['crates/thc-core/src/vault.rs', '<code>catch_up</code>, <code>rebuild</code>, <code>as_of</code>, cursors'],
+  ['crates/thc-core/src/hlc.rs', 'the clock and <code>order_key</code>'],
+  ['crates/thc-core/src/recur.rs', 'recurrence, computed by the writer'],
+  ['crates/thc-core/tests/convergence.rs', 'random multi-device sync must converge'],
+  ['docs/FORMAT.md', 'the merge rules, as the contract states them'],
+]} />
+
+Next: [The write path](../writes/), how a command becomes those lines in the first place.

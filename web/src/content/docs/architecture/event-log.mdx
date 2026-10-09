@@ -1,0 +1,178 @@
+---
+title: The event log
+description: The one thing thc never throws away. Every change is a JSON line appended to this device's own file, and everything else, the database included, is rebuilt from those lines.
+order: 101
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import VaultTree from '../../../components/arch/VaultTree.astro';
+import EnvelopeAnatomy from '../../../components/arch/EnvelopeAnatomy.astro';
+
+The log is the on-disk contract. The SQLite store, the Markdown export, every screen and every
+`--json` answer are derived from it, and `docs/FORMAT.md` is its specification. It changes only
+with a version bump, and it is deliberately boring: JSON Lines you can `grep`, `jq`, or rebuild
+from in fifty lines of any language.
+
+<Facts items={[
+  ['17', 'op types, from <code>node.create</code> to <code>tx.unreview</code>'],
+  ['v2', 'the format version; additive over v1'],
+  ['12', 'characters per id: 60 random bits'],
+  ['1', 'writer per file, ever'],
+]} />
+
+## The vault on disk
+
+<Fig n="1" caption="A vault is a plain folder. Only log/ is the truth; files/ holds attachments the log refers to, and drop/ and export/ are edges where plain text comes in and goes out.">
+  <VaultTree />
+</Fig>
+
+- **`thc-vault.toml`** marks the folder as a vault and holds its synced identity: `format`, an
+  `id` written once and never changed, a `name` and a `created` date. None of it is in the log.
+- **`log/<device>/<YYYY-MM>.jsonl`** is the log. A device's id is its short host name plus four
+  random characters (`mbp-7f3a`), kept in the local cache so it survives restarts. The month in
+  a file name is the UTC month of the event's clock.
+- **`files/`** holds attachments, named by a hash of their bytes, written once and never edited.
+  A note refers to one with an ordinary Markdown image in its text.
+- **`drop/`** is an inbox for files: any `.md` or `.txt` dropped there becomes inbox items.
+- **`export/`** is generated Markdown that Obsidian can open. thc never reads it back.
+
+The store is *not* here. It lives in the device's cache directory, because it is a cache: two
+devices with the same log build the same store, so there's nothing to sync.
+
+## One line, field by field
+
+Every change is one JSON object on one line: an envelope with the operation's fields flattened
+into it.
+
+<Fig n="2" wide caption="A real event, from thc todo run by an agent. The envelope says when, where, who, through what and as part of which transaction; the op says what.">
+  <EnvelopeAnatomy />
+</Fig>
+
+| Field | Meaning |
+|---|---|
+| `v` | The lowest format version that understands this event: `1`, or `2` for the `tx.*` ops. A v2 writer still stamps v1 ops `"v":1`, so older readers keep reading them |
+| `eid` | The event id, a ULID, unique across every device |
+| `hlc` | A hybrid logical clock, `[unix_ms, counter]`. See [Replay and merge](../replay/) |
+| `dev` | The device, which is also the directory the line lives in |
+| `actor` | `{"kind":"human"}` or `{"kind":"agent","name":"claude"}`, from `THC_ACTOR` |
+| `via` | The surface: `cli`, `tui`, `bar`, `edit`, `drop`, … |
+| `tx` | The transaction. Every event from one command shares it; undo and review work per transaction |
+| `op` | The operation's name. Its own fields sit beside it |
+
+## A transaction, as written
+
+One command is one transaction. This is the whole of what
+`THC_ACTOR=claude thc todo "Call the dentist due:fri #health !high"` appended, on the first
+write of the day (ids shortened):
+
+```json
+{"v":1,"eid":"01M4FR3YGCNH…","hlc":[1791529974284,0],"dev":"mbp-7f3a","actor":{"kind":"agent","name":"claude"},"via":"cli","tx":"01M4FR3YGC4M…","op":"node.create","id":"nshgnw2hmhc7","parent":null,"order":"V","text":"","props":{"journal":"2026-10-09"}}
+{"v":1,"eid":"01M4FR3YGC1C…","hlc":[1791529974284,1],…,"op":"node.create","id":"md78p9t6g9c7","parent":"nshgnw2hmhc7","order":"V","text":"Call the dentist #health","props":{"status":"todo","due":"2026-10-09","priority":"high"}}
+{"v":1,"eid":"01M4FR3YGCV8…","hlc":[1791529974284,2],…,"op":"node.create","id":"2tbj6654hfp8","parent":null,"order":"k","text":"","title":"health","props":{"tag":true}}
+{"v":1,"eid":"01M4FR3YGCN4…","hlc":[1791529974284,3],…,"op":"edge.add","src":"md78p9t6g9c7","rel":"tag","dst":"2tbj6654hfp8"}
+```
+
+Four lines: today's journal day (it didn't exist yet), the task under it with its fields already
+typed, the `health` tag, and the edge between them. All four share one `tx` and one millisecond;
+the clock's counter orders them. `due:fri` arrives as a date, never as text to parse again later.
+
+## The operations
+
+| op | Fields | Notes |
+|---|---|---|
+| `node.create` | `id, parent, order, text, title?, props?` | `order` is a base-62 fractional index. Replay keeps the first create of an id |
+| `node.text` | `id, text, base?` | `base` is the `eid` of the text this edit started from |
+| `node.set` | `id, props` | A `null` value unsets. Built-ins: `title status scheduled due priority repeat done_at journal tag style gap` |
+| `node.move` | `id, parent, order` | Rejected, and recorded as a conflict, if it would make a cycle |
+| `node.complete` | `id, at, occurrence?, next?` | With `next`, the node repeats: its dates advance and its status stays `todo` |
+| `node.skip` | `id, occurrence, next` | Skip one occurrence of a repeating node |
+| `node.delete` / `node.restore` | `id` | Soft delete; history is never lost |
+| `edge.add` / `edge.remove` | `src, rel, dst` | `rel` is `tag`, `mention`, `embed`, `blocks`, `relates`, … |
+| `alert.add` | `id, node, trigger` | An absolute `at`, or an `offset` from the node's `due` or `scheduled` |
+| `alert.ack` / `alert.remove` / `alert.snooze` | `id`, `until` for snooze | Acked or snoozed on one device stops the others once it syncs |
+| `prop.define` | `key, type` | `number`, `bool`, `date` or `text`. The first definition wins |
+| `tx.review` | `txs[], verdict` | v2. `accepted` or `reverted`, on other transactions. Changes no node |
+| `tx.unreview` | `txs[]` | v2. Withdraws a verdict, putting the transactions back in the queue |
+
+There's no "task" op and no "page" op. A task is a node with a `status`; a page is a root node
+with a `title`; a journal day is a root with a `journal` date; a tag is a root with `tag: true`.
+A line's form (bullet, paragraph, heading, quote, code) is either a `style` prop or lives in the
+text itself (`# `, `> `, three backticks), so every reader sees it the same way.
+
+## Ids
+
+A node id is 60 random bits written as 12 characters of Crockford base32: `0-9a-z` without
+`i l o u`, so it reads aloud and survives being typed. Any unique prefix of 4 or more
+characters works on the CLI, and input is forgiving (`I` and `L` read as `1`, `O` as `0`).
+Random ids need no coordination: two devices, or two agents in parallel, never collide.
+
+**Keyed ids** are for nodes every device would create the same way. The id is FNV-1a 64 over
+`thc-key:<key>`, folded to 60 bits (`id::from_key`), so two devices that create the same day
+offline produce the same `node.create`, and replay keeps one:
+
+| Node | Key |
+|---|---|
+| A journal day | `journal:2026-10-09` |
+| A tag | `tag:health` |
+| A page made by title or by a `[[link]]` | `page:offsite` |
+| The saved-views page and built-in views | fixed keys in `views.rs` |
+| An attachment | `file:` plus its path in the vault |
+| An agent's `--key` | whatever the agent passes |
+
+The writer uses a keyed id only while it's free. A page renamed away from a title keeps its id,
+so a new page with the old title gets a random one instead of reviving the renamed page; a
+deleted day isn't brought back by a new create either.
+
+That same rule makes agent retries safe. The second run below finds the keyed id taken and
+writes nothing:
+
+```sh
+$ thc todo "Book venue" --key offsite-venue --json
+{"ok":true,"tx":"01M4FR4JVEWJ…","events":1,"nodes":[{"id":"z8pbwpmhk414",…}]}
+$ thc todo "Book venue" --key offsite-venue --json
+{"ok":true,"tx":null,"events":0,"nodes":[{"id":"z8pbwpmhk414",…}]}
+```
+
+## Order keys
+
+Siblings are ordered by a fractional index: a base-62 string that sorts lexically, with
+`key_between(a, b)` always able to find a key strictly between two others. Moving a line never
+renumbers its siblings, so a move is one `node.move` event, not a rewrite of the list.
+
+Two devices appending offline can pick the same key after the same last sibling. Siblings then
+sort by `(order, id)`, so every reader agrees, and a later insert between the twins goes just
+after them rather than failing. Nothing fits between equal keys; nothing has to.
+
+## Readers are forgiving
+
+The log is written by many binaries over many years, through sync tools that deliver files
+whole, in pieces, or twice. Readers stay calm about all of it:
+
+- **A trailing partial line** is left alone and read once its newline arrives.
+- **A file name with a space** (`2026-10 (conflicted copy).jsonl`) is a sync tool's artefact
+  and is ignored.
+- **An unknown op, or a `v` above the reader's version,** is from a newer writer, not damage. It
+  is skipped silently. The store records which reader built it, and after an upgrade it replays
+  once from scratch, so ops it used to skip are applied.
+- **A malformed line** is reported (`thc doctor`), never guessed at.
+
+## Changing the format
+
+The rules are short. Additions that older readers can safely ignore (a new prop such as `gap`,
+attachment nodes, a reserved form) need no bump. A **new op type** needs a format version bump,
+and the event carries the lowest version that understands it. Replay must stay a pure function
+of the events: anything that depends on a clock, randomness or a timezone is computed by the
+writer and stored in the event.
+
+<Files files={[
+  ['docs/FORMAT.md', 'the specification: layout, envelope, ops, merge rules'],
+  ['crates/thc-core/src/event.rs', 'the <code>Event</code> and <code>Op</code> types, <code>KNOWN_OPS</code>, <code>FORMAT_VERSION</code>'],
+  ['crates/thc-core/src/log.rs', 'per-device files: append with flock and fsync, read complete lines'],
+  ['crates/thc-core/src/id.rs', 'random ids, keyed ids (<code>from_key</code>), normalizing typed ids'],
+  ['crates/thc-core/src/ord.rs', 'fractional order keys and <code>key_between</code>'],
+  ['crates/thc-core/src/hlc.rs', 'the hybrid logical clock and the total-order key'],
+]} />
+
+Next: [Replay and merge](../replay/), how every device turns these lines into the same state.

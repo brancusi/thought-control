@@ -1,0 +1,222 @@
+---
+title: The TUI as state
+description: Everything the TUI shows is decided by one serializable value, changed only by messages and drawn by a view that reads nothing else. So a person, an agent and a replay all drive it the same way.
+order: 106
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import ElmLoop from '../../../components/arch/ElmLoop.astro';
+import TuiFrame from '../../../components/TuiFrame.astro';
+
+The TUI is built in the Elm style: a **state**, **messages** that change it, a pure **update**
+that returns **effects**, and a pure **view**. That isn't decoration. It's what lets an agent
+open your view on a task, lets a test replay a whole session to the same bytes, and lets
+`thc ui render` draw a screen with no terminal at all.
+
+<Facts items={[
+  ['1', 'value decides the screen: <code>UiState</code>'],
+  ['1', 'door for every input: <code>Session::apply</code>'],
+  ['0', 'clocks, files or stores read by the view'],
+  ['100k', 'trace lines a running TUI keeps'],
+  ['10 ms', 'between checks for socket requests'],
+]} />
+
+## The loop
+
+<Fig n="1" wide caption="Every input is a message. The update writes the state and asks for effects; the runtime does the IO and answers with more messages. The view reads the state and data derived from the vault, nothing else.">
+  <ElmLoop />
+</Fig>
+
+## The state
+
+`UiState` (`ui_state.rs`) is plain serde data with strict parsing (`deny_unknown_fields`) and
+ordered maps, so the same state always serializes to the same bytes. `thc ui state --default`
+prints a fresh one with every field. The groups:
+
+| Group | Holds |
+|---|---|
+| The screen | `view`, `cursor`, `scroll`, `selected` (a stable key: a node id, `tag:x`, `view:x`, `tx:x`), `show_detail`, `focus`, `collapsed` |
+| Per-view choices | `tasks_filter` (a query, as `thc q` reads it), `search_terms`, `pages_filter`, `log_actor`, `review_lane`, `agenda_mode` |
+| Documents | `page_open`, `journal_date`, `document` (a caret anchor and scroll), `recent_docs` |
+| Input | `edit`, `prompt`, `awaiting`, `overlay` (palette, finder, move, capture, help…), `pending_keys` |
+| Notices | `toast`, `flashes`, `alert_toast_node` |
+| Time | `now_ms`, `utc_offset_min`, `today` |
+| History | the ⌘[ / ⌘] stack |
+| Beside you | `sidebar` (the panel stack) and `layers` (hints, spotlights, walkthroughs) |
+
+Just as important is what **isn't** in it:
+
+- **Data.** Rows, counts and previews are derived from the vault each time. A state names a node
+  by its id and never carries its text, so it can't go stale.
+- **The document's text and undo.** Those live in the editor's model ([the editor](../editor/)).
+  `document` carries only presentation: `caret_id`, `caret_byte`, `scroll`. A state file can't
+  smuggle in unsaved typing.
+- **Runtime handles.** The vault connection, channels, terminal capabilities, the last frame's
+  hit regions. They live on `App`, beside the state.
+
+## Messages and the one door
+
+Every input is a `Msg`: `tick`, `key`, `mouse`, `paste`, `resize`, `focus`, `set_state`,
+`patch`, `aside`, `layer`, `doc_view`, and the runtime's own `frame`, `idle`, `poll` and
+`external`. `Session::apply` (`session.rs`) is the only way in. It checks the message, applies
+it, lets the layout follow the caret and cursor at the session's size, moves `rev` by one,
+appends a trace line and reports effects.
+
+The live terminal loop, `THC_TUI_SNAPSHOT`, `thc ui render` and `thc ui replay` all drive a
+`Session`. There is no second path for "the real TUI".
+
+```json
+{"msg":"key","key":"<c-o>"}
+{"msg":"mouse","kind":"down","x":12,"y":5}
+{"msg":"patch","patch":{"view":"log"},"actor":"claude"}
+```
+
+## The pure update, and effects
+
+`update::action` takes `&mut UiState` and a few facts (the rows, whether a document is open)
+and returns `Vec<Effect>`. It can't reach a vault, a terminal, a channel, a clock or a file,
+because it isn't given one. When it needs the world, it asks:
+
+```rust
+pub(crate) enum Effect {
+    Reload,               // rebuild rows from the store
+    SaveDoc,              // save the open document's typing
+    MintIds { n: usize }, // node ids for the next edits: the model reads no randomness
+    WriteClipboard { text: String, notice: String },
+    SidebarLoad { key: PanelKey },
+    // …
+}
+```
+
+`runtime_effects.rs` performs each one and delivers the result as a message
+(`IdsMinted`, `ClipboardResult`, `PageIdsPersisted`), so even a failure is something the update
+sees and the trace records. Navigation in `update.rs` is tested as exactly that:
+`action(&mut ui, &facts, "go.tasks")` changes the state and returns `[Reload]`, nothing more.
+
+## The view, and the test that guards it
+
+The view (`ui.rs`, `editor_pane/view.rs`, `node_row.rs`) draws from the state plus derived data.
+Before each frame the runtime runs an explicit preparation stage (`derived::prepare`) that reads
+the store and fills render caches; the view only reads them.
+
+A test keeps it honest. `the_view_reads_no_store_clock_environment_or_file` scans the view's
+source and fails on any of these:
+
+```rust
+".store", "Instant::now", "Local::now", "SystemTime", "std::env", "env::var",
+"std::fs", "File::open", "std::process", "dates::today", "now_local", …
+```
+
+It's a blunt instrument (it reads source text), and that's the point: a helper that quietly
+read the store mid-draw would make two renders of one state differ, and the test names the line.
+
+## Time is a message
+
+Nothing in the update or the view reads a clock. Time arrives as `tick` messages, and toasts,
+flashes, double clicks, the which-key delay and the bar's clock are all measured against
+`UiState::now_ms`. A running TUI ticks before input and while something on screen waits on
+time. Pin `THC_NOW` and the clock never moves, so a render is the same every run.
+
+## Traces and replay
+
+A trace is JSON lines: a `state` line, then the messages. The `state` line also pins the vault,
+recording how many bytes of each log file had been read; since the log is append-only, cutting
+every file there gives back the vault exactly as it was.
+
+```sh
+thc tui --trace session.jsonl     # record
+thc ui replay session.jsonl       # the last frame, on a scratch copy of the vault
+thc ui replay session.jsonl --every --format ansi
+```
+
+Writes other processes made during the session (an agent's `thc add`, another device's sync)
+ride along on the next message as `_log`, copied exactly, so they land at the same point on
+replay. The TUI's own writes are left out: replaying its keys makes them again. With `THC_NOW`
+pinned, the same trace gives the same bytes every run, and its last frame is the live TUI's
+frame at the same `rev`.
+
+## Driving it from outside
+
+Every running TUI listens on a Unix socket (user-only, peer uid checked). `thc ui` finds the
+ones on the current vault. Requests join the same queue as your keys, so a session has one
+order of events.
+
+```sh
+thc ui state --raw | jq '{view, tasks_filter}'
+THC_ACTOR=claude thc ui patch '{"view":"tasks","tasks_filter":"status:open #health"}'
+thc ui render 100x24
+```
+
+A `patch` is an RFC 7396 merge patch, validated whole before anything changes: an unknown field
+is refused with the nearest known one (`'veiw' · did you mean 'view'?`), and a refused write
+changes nothing, not even `rev`. Pass `--if-rev N` to write only if nothing moved since you
+read (exit `4`, `stale`, if it did). An agent's change lands as a history step with a toast
+naming it, so ⌘[ takes it back. Agents can point without moving you, too: hints, highlights,
+spotlights and walkthroughs are **layers**, kept in the same state and replayed like the rest.
+
+<TuiFrame name="today" caption="A real frame, drawn by thc itself from a seeded sample vault with no terminal attached." />
+
+## The sidebar
+
+The sidebar is a stack of live panels beside the main view: a page, a day or a list. The stack
+is presentation state (`UiState::sidebar`), its rules (dedupe, move to top, the pinned group,
+the limit, reopen) are pure functions in `sidebar.rs`, and the owner's open choices sit in one
+`policy` module rather than scattered through branches:
+
+```rust
+pub const MAX_PANELS: usize = 8;
+pub const AGENTS_MOVE_FOCUS: bool = false; // an agent's panel never takes your keyboard
+pub const COLUMN_AT: u16 = 120;            // a column at 120 cells, a drawer from 90
+```
+
+A page panel is not a second editor. It's another caretline view on the same document as the
+main view: one text, one undo history, one save ([the editor](../editor/)).
+
+## One key table
+
+`keymap.rs` holds every key outside the overlays as a row: keys, a context (`Global`, `List`,
+`Tasks`, `Write`, `Sidebar`, …), an action id. A key is looked up through the active context
+stack, top first. The footer, help, the palette and `thc keys` all read the same rows, so the
+footer can't advertise a key that doesn't work. The document's editing keys are imported from
+caretline's command catalog (`editing_keys.rs`); thc's differences are explicit rows that win.
+Remaps (`thc keys --edit`) apply on top. See [every key](../../keys-reference/).
+
+## Themes
+
+`theme.rs` maps semantic tokens (accent, agent, overdue, conflict, done…) to ratatui styles.
+The themes are `redacted` and `newsprint` (this site's), `ember-dark` and `ember-light`, their
+`-256` variants for terminals without truecolor, and `ansi`, which uses only named colours so
+the terminal's own palette decides. `NO_COLOR` strips colours and keeps modifiers.
+
+## What isn't pure yet
+
+The direction is a pure `update(&mut UiState, Msg) -> Vec<Effect>` for everything. Honestly,
+some parts still run the older way, inside `Session::apply` with the vault in reach:
+
+- **Write actions** (done, status, dates, tags, move, delete, undo, review, capture) are `App`
+  methods that touch the store directly. They're single messages in the trace and replay
+  deterministically on the same vault, but they aren't update functions yet.
+- **The document's key path** drives the editor and saves through a writer thread. Its clock is
+  `now_ms`, so typing and idle saves replay, but new lines' ids are minted by the runtime and
+  aren't in the trace.
+- **Background work** (the daemon's push, the update check) runs as runtime code; what it
+  changes is caught between frames and recorded as an `external` patch.
+- **Frame preparation** reads the store every frame and isn't memoized on revisions everywhere.
+
+Each of these is recorded so traces stay exact. Moving them into `update` is ongoing work, one
+action at a time.
+
+<Files files={[
+  ['crates/thc-tui/src/ui_state.rs', '<code>UiState</code>: every field, strict parsing, merge patches'],
+  ['crates/thc-tui/src/session.rs', '<code>Msg</code>, <code>Session::apply</code>, traces and replay'],
+  ['crates/thc-tui/src/update.rs', 'the pure update and its <code>Effect</code>s'],
+  ['crates/thc-tui/src/runtime_effects.rs', 'where the IO happens'],
+  ['crates/thc-tui/src/derived.rs', 'render caches the runtime prepares'],
+  ['crates/thc-tui/src/session_tests.rs', 'the view-purity test and replay tests'],
+  ['crates/thc-tui/src/ui_server.rs', 'the socket, discovery and subscribers'],
+  ['crates/thc-tui/src/sidebar.rs', 'the stack as state, and its policy'],
+  ['crates/thc-tui/src/keymap.rs', 'the one key table'],
+  ['docs/ui-protocol.md', 'the full protocol reference'],
+]} />

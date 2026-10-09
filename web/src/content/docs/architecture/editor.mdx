@@ -1,0 +1,179 @@
+---
+title: The editor
+description: Pages and days are typed as plain text in caretline, an editor engine with its own repository. thc keeps a node id beside each line, gives tasks their meaning on the engine's extension points, and saves each change as one transaction.
+order: 107
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import DocViews from '../../../components/arch/DocViews.astro';
+
+A page or a journal day opens as one plain-text document you type into ([writing](../../writing/)).
+Underneath, each line is a node in the log. Two projects split that job cleanly:
+
+- **caretline** ([caretline.app](https://caretline.app)) owns the text: every block's shape, the
+  selection, motion, folds, undo and every editing rule. It knows nothing about tasks, vaults or
+  saving.
+- **thc** owns what the text means: which node each line is, whether it's saved, what a task
+  is, and how a change becomes events.
+
+<Facts items={[
+  ['1', '<code>Doc</code> per open page or day, however many views'],
+  ['5', 'task statuses, as one-character bullet tags'],
+  ['1', 'transaction per save'],
+  ['1.5 s', 'of quiet before an idle save'],
+  ['=0.4.0', 'caretline, pinned exactly from crates.io'],
+]} />
+
+## One document, many views
+
+<Fig n="1" wide caption="Three views on one Doc. Each view has its own caret, selection and scroll; the text, its shape and the undo history exist once. Saving reads thc's lines, not the screen.">
+  <DocViews />
+</Fig>
+
+A caretline `Doc` holds the document; a `View` holds a caret, a selection and a scroll on it.
+thc uses that split everywhere, so nothing is ever copied:
+
+- **The main view** is your caret.
+- **A sidebar panel** on the same page is a second view (`Doc::add_view`) on the same `Doc`:
+  one text, one undo history, one save. When the main view arrives at a page a panel holds, it
+  takes that `Doc` and adds its view; when it leaves, the `Doc` moves into the panel.
+- **An agent's view** (`thc ui doc open`) is a third. The agent types through its own caret
+  with ordinary engine edits, so your caret is mapped through them and stays where it was, and
+  its lines save exactly as yours do.
+
+A key pressed in a panel runs the very same editor code as in the main view: `App::with_panel`
+borrows the panel's document and view for the length of the key. There's no "panel editor".
+
+## What thc keeps beside each block
+
+The engine's blocks carry text and shape. Beside each, tied by the block's mark, thc keeps a
+`Line` (`editor/doc.rs`) with what the engine can't know:
+
+```rust
+pub struct Line {
+    pub id: String,             // the vault node
+    pub status: Option<String>, // a task's status
+    pub text: String,           // a read-only copy of the block's text
+    pub base: Option<String>,   // the text revision this line started from
+    pub saved: Option<String>,  // what the vault has
+    pub is_new: bool,
+    pub conflict: bool,         // shows as ≠
+    // …the saved parent, place, kind and meta
+}
+```
+
+A line's shape and text are re-read from the engine after every step, so the save diff and the
+drawing read plain strings. Nothing outside `editor/` touches the engine or the lines directly;
+`editor/mod.rs` is the one interface, grouped by purpose: reading, caret and selection, editing,
+the host's changes, saving.
+
+**Ids without randomness.** Enter, a split or a paste makes blocks that need node ids. The model
+mints none: it asks (`Effect::MintIds`), the runtime fills an `IdPool` ahead of input, and the
+engine draws from it. That keeps the editor's update free of randomness, like the rest of the
+[TUI's state](../tui/).
+
+## Tasks on extension points
+
+caretline knows that a bullet may carry a one-character tag (`- [c] `) and nothing about what
+it means. thc registers a host on every document (`editor/tasks.rs`):
+
+| Extension point | thc's use |
+|---|---|
+| Bullet tags | ` ` todo, `x` done, `/` doing, `w` waiting, `-` cancelled |
+| Host command | `thc.task_cycle` (⌃T): text → open task → done → text, over the caret's block or a selection |
+| Host command | `thc.set_status`, for a click on a box |
+| Input rule | `[ ] `, `[x] ` or `[] ` typed at a line's start makes it a task |
+| Decorator | draws the task's box in the hang |
+| Host effect | `thc.completed`: completing a task saves at once |
+
+So "task" never enters the engine. Upstream stays a text editor, and the task model lives in
+one file here.
+
+## Saving
+
+A line saves when the caret leaves it, and the line you're on saves after 1.5 s of quiet (an
+**idle save**). `Doc::plan_save` compares each line with what the vault has and makes block ops
+(`thc_core::outline`):
+
+```rust
+pub enum BlockOp {
+    Edit   { id, text, base, rev, raw }, // base: the text revision the edit started from
+    Create { id, parent, after, kind, text },
+    Move   { id, parent, after, rev },
+    Delete { id, rev },
+    Kind   { id, kind, rev },
+    Status { id, status, rev },
+    Gap    { id, gap, rev },
+}
+```
+
+`outline::plan` turns those into ordinary node ops, and the whole save is **one transaction**.
+Block ops are a writer's API, not a log format: they add no op types and no format version.
+What the writer guarantees:
+
+- **Edits carry their base.** If someone else changed the line meanwhile, replay records an
+  ordinary text conflict: both versions kept, `≠` on every device. Nothing is held back or lost.
+- **An idle save is `raw`.** The text is stored as typed, without reading tokens, so a half-typed
+  `due:fr` is never read as a date. Tokens are read when you leave the line.
+- **Client-made ids are idempotent.** A `Create` whose id already exists comes back `exists`,
+  never a second node, so a retried save is safe.
+- **Stale structure is skipped, not forced.** A `Move` or `Delete` with an outdated `rev` is left
+  out and reported with the node's current state; the rest of the save still lands.
+
+When the daemon is live, the TUI hands the save to a writer thread that sends it as
+`blocks.apply`, so typing never waits on a disk. Without it, the TUI writes inline under the
+device write lock. One save is out at a time; the next is planned when its result is in.
+
+## Changes from elsewhere
+
+An agent's `thc text`, the CLI or another device's sync can change a page you have open.
+`editor/patch.rs` takes the vault's blocks and folds them in:
+
+- Text changed on a line you aren't editing updates in place.
+- Text changed on the caret's line, or a line you've edited, is held until you leave it, then
+  announced. Your typing wins locally; the base makes the other side a kept conflict.
+- A kind, parent or place changed on a line you aren't on reopens the document, keeping what
+  you typed.
+- Notes new to the vault come in at their place; lines deleted elsewhere leave (the caret's line
+  only once you leave it). The caret never moves off its line.
+
+These changes enter the engine as one `External` message: they stay out of your undo history,
+and the history is transformed over them, so a later ⌘Z takes back only your own edits.
+
+## Keys come from the engine
+
+The editing keys are caretline's command catalog and default keymap (`editing_keys.rs`). thc
+imports each binding into its one key table and maps each caretline command (`move.left`,
+`history.undo`) to its own `write` action, so `thc keys`, help and the palette speak the
+engine's vocabulary and can't drift from it. thc's deliberate differences (⌃D, the system paste,
+Esc) are explicit rows that win over an imported one.
+
+## caretline first
+
+caretline is a separate project with its own repository, site and tests. The rule for working
+on both is strict:
+
+1. An engine bug found in thc is **fixed in caretline first**, with a test there.
+2. It's released, or pinned by git revision under `[patch.crates-io]` in the workspace
+   `Cargo.toml` until a release contains it.
+3. thc pulls it in. The engine is never patched inside this repository.
+
+thc depends on exact versions (`caretline = "=0.4.0"`, `caretline-layers = "=0.1.0"`,
+`caretline-tour = "=0.1.0"`), so an engine upgrade is always a deliberate change with its own
+review. caretline's [embedding docs](https://caretline.app/docs/embedding/) use thc as their
+case study.
+
+<Files files={[
+  ['crates/thc-tui/src/editor/mod.rs', 'the one interface to an open document'],
+  ['crates/thc-tui/src/editor/engine.rs', 'caretline: one outline document per page or day, the id pool'],
+  ['crates/thc-tui/src/editor/doc.rs', '<code>Line</code> and the save diff (<code>plan_save</code>)'],
+  ['crates/thc-tui/src/editor/tasks.rs', 'tasks on caretline\'s extension points'],
+  ['crates/thc-tui/src/editor/patch.rs', 'changes from elsewhere, folded in'],
+  ['crates/thc-tui/src/doc_app.rs', 'saving: the writer thread, idle saves, results'],
+  ['crates/thc-tui/src/sidebar_app.rs', 'one Doc, many views: panels and <code>with_panel</code>'],
+  ['crates/thc-tui/src/doc_view.rs', 'an agent\'s own view on the open document'],
+  ['crates/thc-tui/src/editing_keys.rs', 'caretline\'s commands in thc\'s key table'],
+  ['crates/thc-core/src/outline.rs', 'block ops → node ops, one transaction'],
+]} />

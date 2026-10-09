@@ -1,0 +1,28 @@
+---
+// How a user-flow test runs: each step goes through the one door and is checked; at the end,
+// the trace must replay and the saved state must restore to the same frames.
+---
+<svg class="art" viewBox="0 0 760 250" role="img" aria-labelledby="fs-t fs-d">
+  <title id="fs-t">A flow test, step by step</title>
+  <desc id="fs-d">Each step (a key, a click, a paste) goes through Session::apply, is drawn into an emulated terminal fed only ratatui's diffs, and every invariant is checked before the next step. At done(), the trace replays on scratch copies and the state restores on a fresh session, and both must draw the same frames.</desc>
+  <defs>
+    <marker id="fs-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+  <text x="20" y="34" class="k">every step</text>
+  <rect x="20" y="50" width="160" height="50" /><text x="34" y="71" class="t">a step</text><text x="34" y="88">key · click · paste</text>
+  <rect x="205" y="50" width="160" height="50" /><text x="219" y="71" class="t">Session::apply</text><text x="219" y="88">the one door</text>
+  <rect x="390" y="50" width="160" height="50" /><text x="404" y="71" class="t">emu terminal</text><text x="404" y="88">ratatui's diffs</text>
+  <rect x="575" y="50" width="165" height="50" class="e" /><text x="589" y="71" class="t">invariants</text><text x="589" y="88" class="e">after every step</text>
+  <path d="M180 75 H 201" marker-end="url(#fs-a)" />
+  <path d="M365 75 H 386" marker-end="url(#fs-a)" />
+  <path d="M550 75 H 571" marker-end="url(#fs-a)" />
+  <path d="M657 100 V 128 H 120 V 104" class="dash" marker-end="url(#fs-a)" /><text x="330" y="146" class="dim">next step</text>
+  <path d="M50 100 V 176" marker-end="url(#fs-a)" /><text x="58" y="150">last</text>
+  <rect x="20" y="180" width="160" height="50" /><text x="34" y="201" class="t">done()</text><text x="34" y="218">the flow ends</text>
+  <rect x="205" y="180" width="160" height="50" /><text x="219" y="201" class="t">replay trace</text><text x="219" y="218">scratch copies</text>
+  <rect x="390" y="180" width="160" height="50" /><text x="404" y="201" class="t">restore</text><text x="404" y="218">a fresh session</text>
+  <rect x="575" y="180" width="165" height="50" /><text x="589" y="201" class="t done">same frames</text><text x="589" y="218">or the flow fails</text>
+  <path d="M180 205 H 201" marker-end="url(#fs-a)" />
+  <path d="M365 205 H 386" marker-end="url(#fs-a)" />
+  <path d="M550 205 H 571" marker-end="url(#fs-a)" />
+</svg>

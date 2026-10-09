@@ -3,7 +3,9 @@ import Docs from '../../layouts/Docs.astro';
 import Icon from '../../components/Icon.astro';
 import { getCollection } from 'astro:content';
 import { u } from '../../lib/url';
-const docs = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
+const all = (await getCollection('docs')).sort((a, b) => a.data.order - b.data.order);
+const docs = all.filter((d) => d.data.group !== 'Architecture');
+const arch = all.filter((d) => d.data.group === 'Architecture' && d.id !== 'architecture');
 const icon: Record<string, string> = { Start: 'terminal', Guide: 'book', Reference: 'query' };
 ---
 <Docs title="Docs" description="The guide to Thought Control (thc): install it, write, find things, work with vaults and agents, and every key and query term." slug="">
@@ -13,4 +15,12 @@ const icon: Record<string, string> = { Start: 'terminal', Guide: 'book', Referen
     ))}
     <a class="cell" href={u('docs/keys-reference/')}><Icon name="key" /><h3>Every key</h3><p>The full key table, generated from the binary: the same table thc's help and footer read.</p></a>
   </div>
+  <a class="arch-band" href={u('docs/architecture/')}>
+    <div>
+      <p class="kicker" style="margin:0"><span class="blk" aria-hidden="true"></span>architecture</p>
+      <h3>How it all fits together</h3>
+      <p>The deep end: the event log, replay and merge, the write path, queries, the daemon, the TUI as state, the editor engine, agents, testing, and the decisions behind them, with diagrams.</p>
+    </div>
+    <div><ol>{arch.map((d) => <li>{d.data.title}</li>)}</ol></div>
+  </a>
 </Docs>

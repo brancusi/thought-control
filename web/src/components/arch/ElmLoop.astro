@@ -1,0 +1,53 @@
+---
+// The TUI's loop: every input is a message through Session::apply; the pure update changes
+// UiState and returns effects; the runtime performs them and answers with messages; the view
+// draws from the state plus derived data.
+---
+<svg class="art" viewBox="0 0 900 360" role="img" aria-labelledby="el-t el-d">
+  <title id="el-t">The TUI's Elm loop</title>
+  <desc id="el-d">Messages (keys, mouse, ticks, patches from agents, external changes) enter Session::apply. The pure update changes UiState and returns effects. runtime_effects performs the IO and sends results back as messages. The runtime prepares derived data from the vault; the view draws a frame from UiState and derived data only.</desc>
+  <defs>
+    <marker id="el-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+    <marker id="el-e" class="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+
+  <rect x="20" y="40" width="170" height="170" />
+  <text x="34" y="60" class="k">messages</text>
+  <text x="34" y="84" class="t">key · mouse · paste</text>
+  <text x="34" y="106">tick · resize · focus</text>
+  <text x="34" y="128" class="agent">patch · state.set</text>
+  <text x="34" y="150" class="agent">aside · layer</text>
+  <text x="34" y="172">external · poll</text>
+  <text x="34" y="194">frame · idle</text>
+
+  <rect x="215" y="40" width="185" height="60" class="e" />
+  <text x="229" y="64" class="t">Session::apply</text><text x="229" y="84" class="e">rev + 1 · a trace line</text>
+  <rect x="430" y="40" width="185" height="60" class="fill" />
+  <text x="444" y="64" class="t">update::action</text><text x="444" y="84">pure · → effects</text>
+  <rect x="645" y="40" width="235" height="60" class="fill" />
+  <text x="659" y="64" class="t">Effect</text><text x="659" y="84">Reload · SaveDoc · MintIds</text>
+
+  <rect x="430" y="150" width="185" height="60" class="e" />
+  <text x="444" y="174" class="t">UiState</text><text x="444" y="194" class="e">one value · serde</text>
+  <rect x="645" y="150" width="235" height="60" />
+  <text x="659" y="174" class="t">runtime_effects</text><text x="659" y="194">the IO: vault · clipboard</text>
+
+  <rect x="215" y="280" width="185" height="60" />
+  <text x="229" y="304" class="t">frame</text><text x="229" y="324">terminal · render</text>
+  <rect x="430" y="280" width="185" height="60" class="fill" />
+  <text x="444" y="304" class="t">view</text><text x="444" y="324">ui.rs · no IO</text>
+  <rect x="645" y="280" width="235" height="60" class="dash" />
+  <text x="659" y="304" class="t">derived</text><text x="659" y="324">rows · counts · images</text>
+
+  <path d="M190 70 H 211" marker-end="url(#el-a)" />
+  <path d="M400 70 H 426" marker-end="url(#el-a)" />
+  <path d="M615 70 H 641" marker-end="url(#el-a)" />
+  <path d="M522 100 V 146" class="e" marker-end="url(#el-e)" /><text x="530" y="128" class="e">writes</text>
+  <path d="M762 100 V 146" marker-end="url(#el-a)" /><text x="770" y="128">performs</text>
+  <path d="M762 210 V 276" marker-end="url(#el-a)" /><text x="770" y="248">prepares</text>
+  <path d="M522 210 V 276" marker-end="url(#el-a)" /><text x="530" y="248">reads</text>
+  <path d="M645 310 H 619" marker-end="url(#el-a)" />
+  <path d="M430 310 H 404" marker-end="url(#el-a)" />
+  <path d="M880 180 H 892 V 20 H 307 V 36" class="dash" marker-end="url(#el-a)" />
+  <text x="520" y="14">results come back as messages</text>
+</svg>
