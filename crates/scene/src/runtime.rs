@@ -6,7 +6,11 @@ use crate::model::{Source, Ui};
 use crate::state::{Effect, Msg, State, Stats, narrow, update};
 use crate::view;
 use anyhow::{Context, Result, bail};
-use ratatui::crossterm::event::{self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+use crate::view::Hit;
+use ratatui::crossterm::event::{
+    self, DisableMouseCapture, EnableMouseCapture, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers, MouseButton,
+    MouseEventKind,
+};
 use serde::Deserialize;
 use serde_json::{Value, json};
 use std::collections::{BTreeMap, BTreeSet};
@@ -24,6 +28,21 @@ pub enum Request {
     Push { ui: Ui },
     Patch { id: String, node: crate::model::Node },
     Key { key: String },
+    /// Replace the layers only (callouts, rings, spotlights).
+    Layers { layers: Vec<crate::model::LayerSpec> },
+    /// The mouse at a cell, as the terminal would report it: `move`, `click`, `up` or `down`
+    /// (the wheel).
+    Mouse { kind: String, x: u16, y: u16 },
+    /// The current frame, as text.
+    Screen,
+    /// Click a node as the mouse would: a row of it, or a tab.
+    Click {
+        id: String,
+        #[serde(default)]
+        row: Option<usize>,
+        #[serde(default)]
+        tab: Option<usize>,
+    },
     Get,
     State,
     Stats,
@@ -253,6 +272,10 @@ impl Driver {
             Request::Push { ui } => Msg::Push { ui },
             Request::Patch { id, node } => Msg::Patch { id, node },
             Request::Key { key } => Msg::Key { key },
+            Request::Layers { layers } => Msg::Layers { layers },
+            Request::Click { id, row, tab } => Msg::Click { id, row, tab },
+            // The loop answers these itself (they need the last frame).
+            Request::Mouse { .. } | Request::Screen => return json!({"ok": false}),
         };
         self.apply(st, msg);
         json!({"ok": st.status.is_none(), "version": st.version, "status": st.status})
@@ -274,6 +297,8 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
     let mut seen = file.as_deref().and_then(mtime);
 
     let mut term = ratatui::init();
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
+    let started = Instant::now();
     let res = (|| -> Result<()> {
         // Draw only when something changed, at most once per frame budget (120 fps).
         let budget = Duration::from_micros(8_333);
@@ -289,22 +314,43 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
         let mut dirty = true;
         let mut last_draw = Instant::now() - budget;
         let mut window = Window::new();
+        // What's under each cell in the last frame: the view's, for turning the mouse into messages.
+        let mut hits: Vec<Hit> = Vec::new();
+        let mut screens: Vec<Sender<Value>> = Vec::new();
         while !d.quit {
+            // Animations (a pulsing ring) need time to move: tick every frame while one shows.
+            let animating = st.ui.layers.iter().any(|l| l.pulse.is_some());
+            if animating && last_draw.elapsed() >= budget {
+                d.apply(&mut st, Msg::Tick { now_ms: started.elapsed().as_millis() as u64 });
+                dirty = true;
+            }
+            dirty |= !screens.is_empty();
             if dirty && last_draw.elapsed() >= budget {
                 let t = Instant::now();
-                term.draw(|f| view::draw(&st, f))?;
+                let mut text = None;
+                term.draw(|f| {
+                    hits = view::draw(&st, f);
+                    if !screens.is_empty() {
+                        text = Some(buffer_text(f.buffer_mut()));
+                    }
+                })?;
+                if let Some(text) = text {
+                    for s in screens.drain(..) {
+                        let _ = s.send(json!({"ok": true, "screen": text}));
+                    }
+                }
                 window.frame(t.elapsed());
                 last_draw = Instant::now();
                 dirty = false;
             }
             // Sleep until the next frame is due (when there's something to draw) or a while.
-            let wait = if dirty { budget.saturating_sub(last_draw.elapsed()) } else { Duration::from_millis(50) };
+            let wait = if dirty || animating { budget.saturating_sub(last_draw.elapsed()) } else { Duration::from_millis(50) };
             let mut batch = Vec::new();
             if let Ok(ev) = rx.recv_timeout(wait) {
                 batch.push(ev);
                 batch.extend(rx.try_iter().take(10_000));
             }
-            let n = apply_batch(batch, &mut d, &mut st);
+            let n = apply_batch(batch, &mut d, &mut st, &hits, &mut screens);
             window.msgs += n;
             dirty |= n > 0;
             d.tick(&mut st);
@@ -326,6 +372,7 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
         }
         Ok(())
     })();
+    let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     let _ = std::fs::remove_file(&socket);
     res
@@ -334,7 +381,7 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
 /// Apply a batch of queued events. A source's value replaces the last one, so of several queued
 /// values for one source only the newest is applied (the rest still count as received). Returns
 /// how many events arrived.
-fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State) -> usize {
+fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State, hits: &[Hit], screens: &mut Vec<Sender<Value>>) -> usize {
     let n = batch.len();
     let mut newest: BTreeMap<String, usize> = BTreeMap::new();
     for (i, ev) in batch.iter().enumerate() {
@@ -349,6 +396,25 @@ fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State) -> usize {
                 d.apply(st, m);
                 true
             }
+            Event::Request(Request::Screen, reply) => {
+                screens.push(reply);
+                true
+            }
+            Event::Request(Request::Mouse { kind, x, y }, reply) => {
+                let kind = match kind.as_str() {
+                    "click" => MouseEventKind::Down(MouseButton::Left),
+                    "up" => MouseEventKind::ScrollUp,
+                    "down" => MouseEventKind::ScrollDown,
+                    _ => MouseEventKind::Moved,
+                };
+                let msg = mouse(kind, x, y, hits, st);
+                let what = msg.as_ref().map(|m| serde_json::to_value(m).unwrap_or_default());
+                if let Some(m) = msg {
+                    d.apply(st, m);
+                }
+                let _ = reply.send(json!({"ok": true, "msg": what}));
+                true
+            }
             Event::Request(req, reply) => {
                 let _ = reply.send(d.request(st, req));
                 true
@@ -359,10 +425,39 @@ fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State) -> usize {
                 }
                 true
             }
+            Event::Term(TermEvent::Mouse(m)) => {
+                if let Some(msg) = mouse(m.kind, m.column, m.row, hits, st) {
+                    d.apply(st, msg);
+                }
+                true
+            }
             Event::Term(_) => true,
         };
     }
     n
+}
+
+/// A mouse event as a message, by what was drawn under it last frame (the innermost hit).
+fn mouse(kind: MouseEventKind, x: u16, y: u16, hits: &[Hit], st: &State) -> Option<Msg> {
+    let at = |want_row: bool| {
+        hits.iter().rev().find(|h| h.rect.contains(ratatui::layout::Position { x, y }) && (!want_row || h.row.is_some()))
+    };
+    match kind {
+        MouseEventKind::Down(MouseButton::Left) => {
+            let h = at(false)?;
+            Some(Msg::Click { id: h.id.clone(), row: h.row.filter(|r| *r < 1000), tab: h.tab })
+        }
+        MouseEventKind::ScrollDown | MouseEventKind::ScrollUp => {
+            let by = if kind == MouseEventKind::ScrollDown { 1 } else { -1 };
+            let h = hits.iter().rev().find(|h| h.row.is_none() && h.rect.contains(ratatui::layout::Position { x, y }))?;
+            Some(Msg::Scroll { id: h.id.clone(), by })
+        }
+        MouseEventKind::Moved | MouseEventKind::Drag(_) => {
+            let hover = at(true).map(|h| crate::state::Hover { id: h.id.clone(), row: h.row });
+            (hover != st.hover).then_some(Msg::Hover { hover })
+        }
+        _ => None,
+    }
 }
 
 /// Counts frames and messages over half-second windows.
@@ -454,6 +549,16 @@ pub fn send(socket: &Path, req: Value) -> Result<Value> {
     Ok(serde_json::from_str(&line)?)
 }
 
+fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {
+    let mut out = String::new();
+    for y in 0..buf.area.height {
+        let line: String = (0..buf.area.width).map(|x| buf[(x, y)].symbol().to_string()).collect();
+        out.push_str(line.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
 /// Render one frame as text without a terminal, after fetching sources and replaying keys.
 pub fn render(ui: Ui, width: u16, height: u16, keys: &[String]) -> Result<String> {
     use ratatui::{Terminal, backend::TestBackend};
@@ -465,7 +570,9 @@ pub fn render(ui: Ui, width: u16, height: u16, keys: &[String]) -> Result<String
         d.apply(&mut st, Msg::Key { key: k.clone() });
     }
     let mut term = Terminal::new(TestBackend::new(width, height))?;
-    term.draw(|f| view::draw(&st, f))?;
+    term.draw(|f| {
+        view::draw(&st, f);
+    })?;
     let buf = term.backend().buffer();
     let mut out = String::new();
     for y in 0..height {

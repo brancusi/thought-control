@@ -38,6 +38,12 @@ enum Cmd {
         #[arg(long, conflicts_with = "state")]
         stats: bool,
     },
+    /// The running screen's current frame, as text.
+    Screen,
+    /// Move, click or scroll the mouse on the running screen: `move|click|up|down X Y`.
+    Mouse { kind: String, x: u16, y: u16 },
+    /// Replace the running screen's layers with a JSON array from a file (`-` reads stdin).
+    Layers { file: PathBuf },
     /// Render a UI file to text without a terminal.
     Render {
         file: PathBuf,
@@ -75,6 +81,17 @@ fn main() -> Result<()> {
                 last = runtime::send(&socket, json!({"op": "key", "key": key}))?;
             }
             last
+        }
+        Cmd::Screen => {
+            let r = runtime::send(&socket, json!({"op": "screen"}))?;
+            print!("{}", r["screen"].as_str().unwrap_or_default());
+            return Ok(());
+        }
+        Cmd::Mouse { kind, x, y } => runtime::send(&socket, json!({"op": "mouse", "kind": kind, "x": x, "y": y}))?,
+        Cmd::Layers { file } => {
+            let raw = if file.as_os_str() == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&file)? };
+            let layers: serde_json::Value = serde_json::from_str(&raw)?;
+            runtime::send(&socket, json!({"op": "layers", "layers": layers}))?
         }
         Cmd::Get { state, stats } => {
             let op = if stats { "stats" } else if state { "state" } else { "get" };

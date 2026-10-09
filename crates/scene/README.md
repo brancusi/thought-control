@@ -64,3 +64,30 @@ Release build, a 170×52 terminal, measured on one machine:
 | 50k-row list replaced 20×/s | 20 | 0.18 ms | 20 |
 | patch storm, 1,000 patches/s | 116 | 0.22 ms | 1,000 |
 | push storm, whole UIs as fast as a client can send | 108 | 0.84 ms | ~6,200 |
+
+## Finance dashboard, mouse and layers
+
+`crates/scene/examples/finance/`: `fin.py` streams a made-up book (KPIs, a P&L statement, 16
+positions, sector returns, regions, cash bridge) at 10 Hz; `gen.py` writes `dashboard.json`, four
+tabs on that one stream; `tour.py` is an "analyst" agent that walks through it over the socket.
+
+```sh
+cargo run --release -p thc-scene -- run crates/scene/examples/finance/dashboard.json
+python3 crates/scene/examples/finance/tour.py        # from another terminal
+```
+
+- **Components** added: `chart` (lines on shared axes), `bars` (negatives hang below zero),
+  `gauge`, `big` (block-digit KPIs), `tabs`, `map` (a world map with points). Table columns take
+  `align` and `heat` (a cell's background from its value); `{±x}` in any template colours a value
+  by its sign. `theme` names the colours; `edge` picks the border.
+- **Mouse**: click focuses, selects a row or switches a tab; the wheel scrolls; hover highlights
+  the row under the pointer. A node's `tip` is a callout that follows the hovered row, filled
+  from it. `click` on a node runs an action. The view returns each frame's hit regions; the
+  runtime turns pointer events into `Click`, `Scroll` and `Hover` messages.
+- **Layers** (caretline-layers 0.2): `layers` in the UI, or `thc-scene layers file.json` /
+  `{"op":"layers"}`, places callouts, arrows, rings (`pulse` animates them) and spotlights on any
+  node (`on`) or row (`row`), each with its own `look` (colours and `edge`), signed by `by`. `bind`
+  fills a callout from live data.
+- **Master-detail**: `bind: "@positions"` is the selected row of node `positions`.
+- **Agents drive it** like a person: `click`, `mouse` (move, click, wheel at a cell) and `screen`
+  (the current frame as text, to see what's there).

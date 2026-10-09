@@ -215,13 +215,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "caretline-layers"
+version = "0.2.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "192c22c91ea3dc63413d5ab3b3f69d8a27f492a0ac984aa541192a743392d61c"
+dependencies = [
+ "serde",
+ "serde_json",
+ "unicode-segmentation",
+ "unicode-width 0.1.12",
+]
+
+[[package]]
 name = "caretline-tour"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bd0053710a741be243b683b8a3a15924ad934eaae5a233459ccfb4b0faee6344"
 dependencies = [
  "caretline",
- "caretline-layers",
+ "caretline-layers 0.1.0",
  "serde",
  "serde_json",
  "toml 1.1.6+spec-1.1.0",
@@ -2166,7 +2178,7 @@ name = "thc"
 version = "0.10.1"
 dependencies = [
  "anyhow",
- "caretline-layers",
+ "caretline-layers 0.1.0",
  "caretline-tour",
  "chrono",
  "clap",
@@ -2222,6 +2234,7 @@ name = "thc-scene"
 version = "0.10.1"
 dependencies = [
  "anyhow",
+ "caretline-layers 0.2.0",
  "clap",
  "ratatui",
  "serde",
@@ -2234,7 +2247,7 @@ version = "0.10.1"
 dependencies = [
  "anyhow",
  "caretline",
- "caretline-layers",
+ "caretline-layers 0.1.0",
  "caretline-tour",
  "chrono",
  "foldhash 0.2.0",

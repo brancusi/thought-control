@@ -20,6 +20,65 @@ pub struct Ui {
     /// Keys that work everywhere (a focused node's own `keys` win).
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub keys: BTreeMap<String, Action>,
+    /// Named colours every node can use, and the screen's own (`bg`, `fg`, `border`, `accent`,
+    /// `pos`, `neg`, `hover`).
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub theme: BTreeMap<String, String>,
+    /// Callouts, arrows, rings and spotlights over the screen, anchored to nodes and rows
+    /// (placed by caretline-layers).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub layers: Vec<LayerSpec>,
+}
+
+/// One layer, anchored to a node (`on`) or one of its rows (`row`).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct LayerSpec {
+    pub on: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<usize>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub text: Option<String>,
+    /// Fill `title` and `text` from this source (`"fin.kpi"`), so a callout shows live values.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bind: Option<String>,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub arrow: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub ring: bool,
+    /// The ring pulses with this period (ms).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pulse: Option<u32>,
+    /// Dim everything but the anchor and the box.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub spotlight: bool,
+    /// Sides to try, in order: `below`, `above`, `right`, `left`.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub place: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<u16>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<Look>,
+    /// Who placed it; drawn in the border (`◆ analyst`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub by: Option<String>,
+}
+
+/// How a layer looks: colours by name or `#rrggbb`, and the border.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Look {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accent: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fg: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ring: Option<String>,
+    /// `rounded` (default), `double`, `thick` or `plain`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<String>,
 }
 
 /// A node: what it is (`type` and its fields) plus the parts every node shares.
@@ -37,8 +96,20 @@ pub struct Node {
     pub title: Option<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub border: bool,
+    /// The border: `rounded` (default), `double`, `thick` or `plain`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub edge: Option<String>,
+    /// `left` (default), `center` or `right`, for text and big numbers.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub style: Option<Style>,
+    /// A callout that follows the mouse over this node's rows, filled from the hovered row.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tip: Option<Tip>,
+    /// What a click does (after focusing the node and selecting the clicked row).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub click: Option<Action>,
     /// The data source this node reads (a key of `Ui::data`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind: Option<String>,
@@ -59,6 +130,10 @@ impl Default for Node {
             style: None,
             bind: None,
             keys: BTreeMap::new(),
+            edge: None,
+            align: None,
+            tip: None,
+            click: None,
             kind: Kind::Text { text: String::new() },
         }
     }
@@ -96,6 +171,67 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         field: Option<String>,
     },
+    /// Lines over shared axes. Each series reads numbers from a bind (and `field` of each item).
+    Chart {
+        series: Vec<Series>,
+        /// Labels spread along the x axis.
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        labels: Vec<String>,
+    },
+    /// Bars over the bound array (or `items`): `label` is a template, `value` a path. Negative
+    /// values hang below a zero line.
+    Bars {
+        label: String,
+        value: String,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        items: Vec<Value>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<u16>,
+    },
+    /// A filled bar: `value` (a template giving a number) out of `max` (default 1).
+    Gauge {
+        value: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        max: Option<f64>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+    /// Large digits (a KPI): the filled template, in a 3-row block font.
+    Big { text: String },
+    /// One child at a time, picked by a row of tab titles (click one, or ←/→ when focused).
+    Tabs { tabs: Vec<String>, children: Vec<Node> },
+    /// A world map with a point per bound item at `lat`/`lon` (paths), labelled by `label`.
+    Map {
+        lat: String,
+        lon: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Series {
+    pub name: String,
+    pub bind: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub field: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub color: Option<String>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Tip {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub title: Option<String>,
+    pub text: String,
+}
+
+/// A cell's background from its value: `min` is the `neg` colour, `max` the `pos` colour.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct Heat {
+    pub value: String,
+    pub min: f64,
+    pub max: f64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -105,6 +241,10 @@ pub struct Column {
     pub value: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size: Option<Size>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub align: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub heat: Option<Heat>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -162,21 +302,38 @@ pub enum Action {
 impl Node {
     pub fn children(&self) -> &[Node] {
         match &self.kind {
-            Kind::Col { children } | Kind::Row { children } => children,
+            Kind::Col { children } | Kind::Row { children } | Kind::Tabs { children, .. } => children,
             _ => &[],
         }
     }
 
     pub fn children_mut(&mut self) -> Option<&mut Vec<Node>> {
         match &mut self.kind {
-            Kind::Col { children } | Kind::Row { children } => Some(children),
+            Kind::Col { children } | Kind::Row { children } | Kind::Tabs { children, .. } => Some(children),
             _ => None,
         }
     }
 
-    /// Lists and tables with an id take focus.
+    /// Lists, tables and tabs with an id take focus.
     pub fn focusable(&self) -> bool {
-        self.id.is_some() && matches!(self.kind, Kind::List { .. } | Kind::Table { .. })
+        self.id.is_some() && matches!(self.kind, Kind::List { .. } | Kind::Table { .. } | Kind::Tabs { .. })
+    }
+
+    /// Like `walk`, but only into the shown child of each tabs node (`tab` gives its index).
+    pub fn walk_shown<'a>(&'a self, tab: &dyn Fn(&Node) -> usize, out: &mut Vec<&'a Node>) {
+        out.push(self);
+        match &self.kind {
+            Kind::Tabs { children, .. } => {
+                if let Some(c) = children.get(tab(self).min(children.len().saturating_sub(1))) {
+                    c.walk_shown(tab, out);
+                }
+            }
+            _ => {
+                for c in self.children() {
+                    c.walk_shown(tab, out);
+                }
+            }
+        }
     }
 
     pub fn walk<'a>(&'a self, out: &mut Vec<&'a Node>) {
@@ -216,7 +373,7 @@ pub fn fill(template: &str, v: &Value) -> String {
         }
         match rest[i..].find('}') {
             Some(j) => {
-                out.push_str(&scalar(lookup(v, &rest[i + 1..i + j])));
+                out.push_str(&scalar(lookup(v, rest[i + 1..i + j].trim_start_matches('±'))));
                 rest = &rest[i + j + 1..];
             }
             None => {
@@ -227,6 +384,30 @@ pub fn fill(template: &str, v: &Value) -> String {
     }
     out.push_str(rest);
     out
+}
+
+/// A template as spans: `{±path}` is filled like `{path}` and marked with the sign of its number
+/// (`Some(true)` positive, `Some(false)` negative), for the view to colour.
+pub fn fill_spans(template: &str, v: &Value) -> Vec<(String, Option<bool>)> {
+    let mut out: Vec<(String, Option<bool>)> = Vec::new();
+    let mut rest = template;
+    while let Some(i) = rest.find("{±") {
+        let Some(j) = rest[i..].find('}') else { break };
+        out.push((fill(&rest[..i], v), None));
+        let value = lookup(v, &rest[i + "{±".len()..i + j]);
+        let text = scalar(value);
+        out.push((text.clone(), number(&text).map(|n| n >= 0.0)));
+        rest = &rest[i + j + 1..];
+    }
+    out.push((fill(rest, v), None));
+    out.retain(|(s, _)| !s.is_empty());
+    out
+}
+
+/// The number in a cell's text: `-1,234.5`, `+4.2%`, `$12k` → -1234.5, 4.2, 12.
+pub fn number(s: &str) -> Option<f64> {
+    let t: String = s.chars().filter(|c| c.is_ascii_digit() || matches!(c, '-' | '.' | '+')).collect();
+    t.parse().ok()
 }
 
 /// A dotted path into a value (`items`, `a.b`, `rows.0`); `.` or empty is the value itself.
@@ -261,6 +442,16 @@ mod tests {
         assert_eq!(fill("{text} · {due} · {a.b} · {tags} · {nope}", &v), "Buy milk · 2026-10-09 · 3 · x, y · ");
         assert_eq!(fill("{.}", &json!("plain")), "plain");
         assert_eq!(fill("{{literal}", &v), "{literal}");
+    }
+
+    #[test]
+    fn signed_placeholders_carry_their_sign() {
+        let v = json!({"pnl": "-1,204.50", "pct": 3.1});
+        let spans = fill_spans("P&L {±pnl} ({±pct}%)", &v);
+        assert_eq!(spans, vec![
+            ("P&L ".into(), None), ("-1,204.50".into(), Some(false)), (" (".into(), None),
+            ("3.1".into(), Some(true)), ("%)".into(), None)
+        ]);
     }
 
     #[test]

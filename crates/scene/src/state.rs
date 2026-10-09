@@ -2,7 +2,7 @@
 //! the terminal, the socket and child processes; it feeds messages in and carries effects out.
 //! `State` serializes, so `thc-scene get --state` shows exactly what is drawn.
 
-use crate::model::{Action, Kind, Node, Ui, lookup};
+use crate::model::{Action, Kind, LayerSpec, Node, Ui, lookup};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use std::collections::BTreeMap;
@@ -27,6 +27,19 @@ pub struct State {
     /// The runtime's measurements, also bindable as the `$stats` source.
     #[serde(default)]
     pub stats: Stats,
+    /// What the mouse is over.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hover: Option<Hover>,
+    /// The logical clock (ms), moved only by `Msg::Tick`; animations read it.
+    #[serde(default)]
+    pub now_ms: u64,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Hover {
+    pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub row: Option<usize>,
 }
 
 /// Frames and messages over the last measuring window (the runtime reports twice a second).
@@ -52,6 +65,9 @@ pub fn builtin(name: &str) -> bool {
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Local {
     pub selected: usize,
+    /// The shown child of a tabs node.
+    #[serde(default)]
+    pub tab: usize,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -77,6 +93,16 @@ pub enum Msg {
     Ran { argv: Vec<String>, result: Result<(), String> },
     /// The runtime's measurements.
     Stats { stats: Stats },
+    /// A click on a node (a row of it, or a tab title).
+    Click { id: String, row: Option<usize>, tab: Option<usize> },
+    /// The mouse moved over a node (a row of it), or off everything.
+    Hover { hover: Option<Hover> },
+    /// The wheel over a node: rows to move (negative is up).
+    Scroll { id: String, by: isize },
+    /// Animation time.
+    Tick { now_ms: u64 },
+    /// Replace the layers only.
+    Layers { layers: Vec<LayerSpec> },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -129,6 +155,45 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
             st.status = result.err().map(|e| format!("{}: {e}", argv.join(" ")));
             refresh(st)
         }
+        Msg::Click { id, row, tab } => {
+            let Some(n) = st.ui.root.find(&id) else { return vec![] };
+            let click = n.click.clone();
+            if n.focusable() {
+                st.focus = Some(id.clone());
+            }
+            let local = st.local.entry(id).or_default();
+            if let Some(r) = row {
+                local.selected = r;
+            }
+            if let Some(t) = tab {
+                local.tab = t;
+                settle(st);
+            }
+            match click {
+                Some(a) => act(st, a),
+                None => vec![],
+            }
+        }
+        Msg::Hover { hover } => {
+            st.hover = hover;
+            vec![]
+        }
+        Msg::Scroll { id, by } => {
+            if st.ui.root.find(&id).is_some_and(Node::focusable) {
+                st.focus = Some(id);
+                step(st, |sel, len| sel.saturating_add_signed(by).min(len.saturating_sub(1)))
+            } else {
+                vec![]
+            }
+        }
+        Msg::Tick { now_ms } => {
+            st.now_ms = now_ms;
+            vec![]
+        }
+        Msg::Layers { layers } => {
+            st.ui.layers = layers;
+            vec![]
+        }
         Msg::Key { key } => match resolve(st, &key) {
             Some(a) => act(st, a),
             None => vec![],
@@ -153,6 +218,8 @@ fn resolve(st: &State, key: &str) -> Option<Action> {
         "G" | "end" => "bottom",
         "tab" => "focus_next",
         "s-tab" => "focus_prev",
+        "h" | "left" => "tab_prev",
+        "l" | "right" => "tab_next",
         "r" => "refresh",
         _ => return None,
     };
@@ -179,6 +246,8 @@ fn act(st: &mut State, a: Action) -> Vec<Effect> {
             "up" => step(st, |sel, _| sel.saturating_sub(1)),
             "top" => step(st, |_, _| 0),
             "bottom" => step(st, |_, len| len.saturating_sub(1)),
+            "tab_next" => switch(st, 1),
+            "tab_prev" => switch(st, -1),
             "focus_next" => cycle(st, 1),
             "focus_prev" => cycle(st, -1),
             other => {
@@ -189,8 +258,21 @@ fn act(st: &mut State, a: Action) -> Vec<Effect> {
     }
 }
 
+/// Show the next or previous child of the focused tabs node.
+fn switch(st: &mut State, dir: isize) -> Vec<Effect> {
+    let Some(id) = st.focus.clone() else { return vec![] };
+    let n = match st.ui.root.find(&id).map(|n| &n.kind) {
+        Some(Kind::Tabs { children, .. }) => children.len() as isize,
+        _ => return vec![],
+    };
+    let local = st.local.entry(id).or_default();
+    local.tab = ((local.tab as isize + dir).rem_euclid(n.max(1))) as usize;
+    settle(st);
+    vec![]
+}
+
 fn cycle(st: &mut State, dir: isize) -> Vec<Effect> {
-    let ids = focus_order(&st.ui.root);
+    let ids = focus_order(st);
     if ids.is_empty() {
         return vec![];
     }
@@ -215,7 +297,7 @@ fn refresh(st: &State) -> Vec<Effect> {
 /// After any change: drop view state for ids that are gone, keep focus on something focusable,
 /// and keep each selection inside its list.
 fn settle(st: &mut State) {
-    let order = focus_order(&st.ui.root);
+    let order = focus_order(st);
     let mut all = Vec::new();
     st.ui.root.walk(&mut all);
     let ids: Vec<String> = all.iter().filter_map(|n| n.id.clone()).collect();
@@ -232,15 +314,31 @@ fn settle(st: &mut State) {
     }
 }
 
-pub fn focus_order(root: &Node) -> Vec<String> {
+/// The focusable nodes on screen, in tree order (hidden tabs left out).
+pub fn focus_order(st: &State) -> Vec<String> {
     let mut all = Vec::new();
-    root.walk(&mut all);
+    st.ui.root.walk_shown(&|n| tab_of(st, n), &mut all);
     all.into_iter().filter(|n| n.focusable()).filter_map(|n| n.id.clone()).collect()
+}
+
+/// The shown child of a tabs node.
+pub fn tab_of(st: &State, n: &Node) -> usize {
+    n.id.as_ref().and_then(|id| st.local.get(id)).map(|l| l.tab).unwrap_or(0)
 }
 
 /// The value a node is bound to, if it has one and it has arrived.
 pub fn bound<'a>(st: &'a State, n: &Node) -> Option<&'a Value> {
-    let (source, path) = split_bind(n.bind.as_deref()?);
+    value_of(st, n.bind.as_deref()?)
+}
+
+/// A bind's value: a source (and a path into it), or `@id` (and a path), the selected row of
+/// node `id`, so a detail panel follows a list's selection.
+pub fn value_of<'a>(st: &'a State, bind: &str) -> Option<&'a Value> {
+    let (source, path) = split_bind(bind);
+    if let Some(id) = source.strip_prefix('@') {
+        let n = st.ui.root.find(id)?;
+        return lookup(items(st, n).get(selected(st, id))?, path);
+    }
     match st.data.get(source)? {
         Slot::Ready { value } => lookup(value, path),
         _ => None,
@@ -257,7 +355,7 @@ pub fn split_bind(bind: &str) -> (&str, &str) {
 /// source is read in place, never copied per message or per frame.
 pub fn items<'a>(st: &'a State, n: &'a Node) -> &'a [Value] {
     let literal = match &n.kind {
-        Kind::List { items, .. } | Kind::Table { items, .. } => items,
+        Kind::List { items, .. } | Kind::Table { items, .. } | Kind::Bars { items, .. } => items,
         _ => return &[],
     };
     if !literal.is_empty() {
@@ -353,6 +451,38 @@ mod tests {
         update(&mut st, Msg::Push { ui });
         update(&mut st, Msg::Data { name: "feed".into(), result: Ok(json!({"rows": {"all": [1, 2, 3]}})) });
         assert_eq!(items(&st, st.ui.root.find("l").unwrap()).len(), 3);
+    }
+
+    #[test]
+    fn clicks_focus_select_and_switch_tabs_and_focus_skips_hidden_tabs() {
+        let mut st = State::default();
+        let ui = ui(json!({"root": {"type": "tabs", "id": "t", "tabs": ["A", "B"], "children": [
+            {"type": "list", "id": "a", "items": [1, 2, 3]},
+            {"type": "list", "id": "b", "items": [1, 2, 3], "click": {"run": ["echo", "{.}"]}}
+        ]}}));
+        update(&mut st, Msg::Push { ui });
+        assert_eq!(focus_order(&st), vec!["t", "a"]);
+        update(&mut st, Msg::Click { id: "t".into(), row: None, tab: Some(1) });
+        assert_eq!(focus_order(&st), vec!["t", "b"]);
+        let fx = update(&mut st, Msg::Click { id: "b".into(), row: Some(2), tab: None });
+        assert_eq!(st.focus.as_deref(), Some("b"));
+        assert_eq!(fx, vec![Effect::Run(vec!["echo".into(), "3".into()])]);
+        update(&mut st, Msg::Scroll { id: "b".into(), by: -5 });
+        assert_eq!(selected(&st, "b"), 0);
+    }
+
+    #[test]
+    fn an_at_bind_follows_another_nodes_selection() {
+        let mut st = State::default();
+        let ui = ui(json!({"root": {"type": "col", "children": [
+            {"type": "list", "id": "l", "items": [{"n": "a"}, {"n": "b"}]},
+            {"type": "text", "id": "d", "bind": "@l", "text": "{n}"}
+        ]}}));
+        update(&mut st, Msg::Push { ui });
+        let detail = |st: &State| crate::model::fill("{n}", bound(st, st.ui.root.find("d").unwrap()).unwrap());
+        assert_eq!(detail(&st), "a");
+        update(&mut st, Msg::Key { key: "j".into() });
+        assert_eq!(detail(&st), "b");
     }
 
     #[test]

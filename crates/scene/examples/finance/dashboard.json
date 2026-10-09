@@ -1,0 +1,911 @@
+{
+ "theme": {
+  "bg": "#0d1117",
+  "fg": "#c9d1d9",
+  "panel": "#161b22",
+  "border": "#30363d",
+  "accent": "#58a6ff",
+  "pos": "#3fb950",
+  "neg": "#f85149",
+  "hover": "#1f2a3a",
+  "dim": "#6e7681",
+  "gold": "#d29922",
+  "ring": "#2d4a6e"
+ },
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "text",
+      "text": " \u25c6 MERIDIAN CAPITAL",
+      "size": 20,
+      "style": {
+       "bold": true,
+       "fg": "accent"
+      }
+     },
+     {
+      "type": "text",
+      "text": "live \u00b7 {time} \u00b7 tick {tick}",
+      "bind": "fin",
+      "align": "right",
+      "style": {
+       "fg": "dim"
+      }
+     }
+    ],
+    "size": 1
+   },
+   {
+    "type": "tabs",
+    "id": "main",
+    "tabs": [
+     "Overview",
+     "P&L",
+     "Book",
+     "Risk & world"
+    ],
+    "children": [
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.kpi",
+            "text": "{rev}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "accent"
+            }
+           },
+           {
+            "type": "text",
+            "text": "{\u00b1rev_chg} YoY \u00b7 EBITDA {ebitda}",
+            "bind": "fin.kpi",
+            "size": 1,
+            "align": "center",
+            "style": {
+             "fg": "dim"
+            }
+           }
+          ],
+          "title": "Revenue \u00b7 Q3",
+          "size": "1*",
+          "id": "k-rev",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.kpi",
+            "text": "{gm}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "gold"
+            }
+           },
+           {
+            "type": "text",
+            "text": "{\u00b1gm_chg} pts vs Q2 \u00b7 net {net}",
+            "bind": "fin.kpi",
+            "size": 1,
+            "align": "center",
+            "style": {
+             "fg": "dim"
+            }
+           }
+          ],
+          "title": "Gross margin",
+          "size": "1*",
+          "id": "k-gm",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.kpi",
+            "text": "{cash}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "fg"
+            }
+           },
+           {
+            "type": "text",
+            "text": "runway {runway} \u00b7 burn $1.1M/mo",
+            "bind": "fin.kpi",
+            "size": 1,
+            "align": "center",
+            "style": {
+             "fg": "dim"
+            }
+           }
+          ],
+          "title": "Cash",
+          "size": "1*",
+          "id": "k-cash",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.kpi",
+            "text": "{\u00b1day}",
+            "align": "center",
+            "size": 3
+           },
+           {
+            "type": "text",
+            "text": "NAV {nav} \u00b7 MV {mv} \u00b7 uP&L {upnl}",
+            "bind": "fin.kpi",
+            "size": 1,
+            "align": "center",
+            "style": {
+             "fg": "dim"
+            }
+           }
+          ],
+          "title": "Book \u00b7 today",
+          "size": "1*",
+          "id": "k-day",
+          "style": {
+           "bg": "panel"
+          }
+         }
+        ],
+        "size": 6
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "chart",
+          "labels": [
+           "-300",
+           "-150",
+           "now"
+          ],
+          "series": [
+           {
+            "name": "book",
+            "bind": "fin.equity",
+            "color": "accent"
+           },
+           {
+            "name": "S&P",
+            "bind": "fin.bench",
+            "color": "dim"
+           }
+          ],
+          "title": "Equity vs benchmark \u00b7 300 ticks",
+          "size": "60%",
+          "id": "equity"
+         },
+         {
+          "type": "bars",
+          "id": "months",
+          "bind": "fin.months",
+          "label": "{m}",
+          "value": "net",
+          "tip": {
+           "title": "{m}",
+           "text": "revenue {rev_s}\nnet {\u00b1net_s}\ngross margin {gm}"
+          },
+          "title": "Net income by month ($K)"
+         }
+        ],
+        "size": "45%"
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "table",
+          "id": "pos",
+          "bind": "fin.positions",
+          "columns": [
+           {
+            "title": "sym",
+            "value": "{sym}",
+            "size": 6
+           },
+           {
+            "title": "qty",
+            "value": "{qty_s}",
+            "size": 7,
+            "align": "right"
+           },
+           {
+            "title": "last",
+            "value": "{px_s}",
+            "size": 9,
+            "align": "right"
+           },
+           {
+            "title": "mkt value",
+            "value": "{mv_s}",
+            "size": 10,
+            "align": "right"
+           },
+           {
+            "title": "day",
+            "value": "{day_s}",
+            "size": 8,
+            "align": "right",
+            "heat": {
+             "value": "{day}",
+             "min": -1.5,
+             "max": 1.5
+            }
+           },
+           {
+            "title": "day P&L",
+            "value": "{\u00b1dpnl_s}",
+            "size": 9,
+            "align": "right"
+           },
+           {
+            "title": "total",
+            "value": "{\u00b1ret_s}",
+            "size": 8,
+            "align": "right"
+           },
+           {
+            "title": "wt",
+            "value": "{w}",
+            "size": 6,
+            "align": "right"
+           }
+          ],
+          "tip": {
+           "title": "{sym} \u00b7 {name}",
+           "text": "{qty_s} @ {px_s} (cost {cost_s})\nMV {mv_s} \u00b7 weight {w}\nToday {\u00b1day_s} = {\u00b1dpnl_s}\nTotal {\u00b1ret_s} \u00b7 stop {stop}"
+          },
+          "title": "Positions \u00b7 click a row \u00b7 hover for detail"
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "col",
+            "children": [
+             {
+              "type": "text",
+              "text": "{sym}  {name}",
+              "bind": "@pos",
+              "size": 1,
+              "style": {
+               "bold": true,
+               "fg": "accent"
+              }
+             },
+             {
+              "type": "text",
+              "text": "last {px_s}   qty {qty_s}\nmkt value {mv_s}   weight {w}\nday {\u00b1day_s}   P&L {\u00b1dpnl_s}\ntotal {\u00b1ret_s}   stop {stop}",
+              "bind": "@pos",
+              "size": 5
+             },
+             {
+              "type": "gauge",
+              "bind": "@pos",
+              "value": "{w}",
+              "max": 25,
+              "label": "weight {w} of 25% cap",
+              "size": 1,
+              "style": {
+               "fg": "gold"
+              }
+             }
+            ],
+            "title": "Selected",
+            "size": 11,
+            "id": "detail"
+           },
+           {
+            "type": "col",
+            "children": [
+             {
+              "type": "gauge",
+              "bind": "fin.budget",
+              "value": "{rd}",
+              "label": "R&D",
+              "size": 1,
+              "style": {
+               "fg": "accent"
+              }
+             },
+             {
+              "type": "text",
+              "text": "",
+              "size": 1
+             },
+             {
+              "type": "gauge",
+              "bind": "fin.budget",
+              "value": "{sm}",
+              "label": "Sales & marketing",
+              "size": 1,
+              "style": {
+               "fg": "neg"
+              }
+             },
+             {
+              "type": "text",
+              "text": "",
+              "size": 1
+             },
+             {
+              "type": "gauge",
+              "bind": "fin.budget",
+              "value": "{ga}",
+              "label": "G&A",
+              "size": 1,
+              "style": {
+               "fg": "pos"
+              }
+             },
+             {
+              "type": "text",
+              "text": "",
+              "size": 1
+             },
+             {
+              "type": "gauge",
+              "bind": "fin.budget",
+              "value": "{hire}",
+              "label": "Hiring plan",
+              "size": 1,
+              "style": {
+               "fg": "gold"
+              }
+             }
+            ],
+            "title": "Budget used \u00b7 Q3",
+            "size": 10,
+            "id": "budget"
+           }
+          ]
+         }
+        ],
+        "size": "1*"
+       }
+      ]
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "table",
+          "id": "stmt-box",
+          "bind": "fin.stmt",
+          "columns": [
+           {
+            "title": "line",
+            "value": "{line}"
+           },
+           {
+            "title": "actual",
+            "value": "{a}",
+            "size": 9,
+            "align": "right"
+           },
+           {
+            "title": "budget",
+            "value": "{b}",
+            "size": 9,
+            "align": "right"
+           },
+           {
+            "title": "var",
+            "value": "{\u00b1v}",
+            "size": 8,
+            "align": "right"
+           },
+           {
+            "title": "var %",
+            "value": "{vp}",
+            "size": 8,
+            "align": "right",
+            "heat": {
+             "value": "{vn}",
+             "min": -15,
+             "max": 15
+            }
+           }
+          ],
+          "title": "Income statement \u00b7 Q3 ($K) \u00b7 var vs budget",
+          "size": "55%"
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "bars",
+            "id": "bridge",
+            "bind": "fin.cash_bridge",
+            "label": "{k}",
+            "value": "v",
+            "tip": {
+             "text": "{k}: {\u00b1v}K"
+            },
+            "title": "Cash bridge ($K)"
+           },
+           {
+            "type": "bars",
+            "id": "aging",
+            "bind": "fin.aging",
+            "label": "{b}",
+            "value": "v",
+            "style": {
+             "fg": "gold"
+            },
+            "tip": {
+             "text": "{b} days: ${v}K outstanding"
+            },
+            "title": "AR aging ($K)"
+           }
+          ]
+         }
+        ]
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "bars",
+          "id": "rev",
+          "bind": "fin.months",
+          "label": "{m}",
+          "value": "rev",
+          "style": {
+           "fg": "accent"
+          },
+          "tip": {
+           "title": "{m}",
+           "text": "revenue {rev_s} \u00b7 margin {gm}"
+          },
+          "title": "Revenue by month ($K)"
+         },
+         {
+          "type": "bars",
+          "id": "months",
+          "bind": "fin.months",
+          "label": "{m}",
+          "value": "net",
+          "tip": {
+           "title": "{m}",
+           "text": "revenue {rev_s}\nnet {\u00b1net_s}\ngross margin {gm}"
+          },
+          "title": "Net income by month ($K)"
+         }
+        ],
+        "size": "40%"
+       }
+      ]
+     },
+     {
+      "type": "row",
+      "children": [
+       {
+        "type": "table",
+        "id": "pos2",
+        "bind": "fin.positions",
+        "columns": [
+         {
+          "title": "sym",
+          "value": "{sym}",
+          "size": 6
+         },
+         {
+          "title": "qty",
+          "value": "{qty_s}",
+          "size": 7,
+          "align": "right"
+         },
+         {
+          "title": "last",
+          "value": "{px_s}",
+          "size": 9,
+          "align": "right"
+         },
+         {
+          "title": "mkt value",
+          "value": "{mv_s}",
+          "size": 10,
+          "align": "right"
+         },
+         {
+          "title": "day",
+          "value": "{day_s}",
+          "size": 8,
+          "align": "right",
+          "heat": {
+           "value": "{day}",
+           "min": -1.5,
+           "max": 1.5
+          }
+         },
+         {
+          "title": "day P&L",
+          "value": "{\u00b1dpnl_s}",
+          "size": 9,
+          "align": "right"
+         },
+         {
+          "title": "total",
+          "value": "{\u00b1ret_s}",
+          "size": 8,
+          "align": "right"
+         },
+         {
+          "title": "wt",
+          "value": "{w}",
+          "size": 6,
+          "align": "right"
+         }
+        ],
+        "tip": {
+         "title": "{sym} \u00b7 {name}",
+         "text": "{qty_s} @ {px_s} (cost {cost_s})\nMV {mv_s} \u00b7 weight {w}\nToday {\u00b1day_s} = {\u00b1dpnl_s}\nTotal {\u00b1ret_s} \u00b7 stop {stop}"
+        },
+        "title": "Positions \u00b7 click a row \u00b7 hover for detail",
+        "size": "65%"
+       },
+       {
+        "type": "col",
+        "children": [
+         {
+          "type": "table",
+          "id": "sectors",
+          "bind": "fin.sectors",
+          "columns": [
+           {
+            "title": "sector",
+            "value": "{s}"
+           },
+           {
+            "title": "1D",
+            "value": "{d}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{d}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "1W",
+            "value": "{w}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{w}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "1M",
+            "value": "{m}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{m}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "3M",
+            "value": "{q}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{q}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "YTD",
+            "value": "{y}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{y}",
+             "min": -3,
+             "max": 3
+            }
+           }
+          ],
+          "title": "Sector returns % \u00b7 heat"
+         },
+         {
+          "type": "list",
+          "id": "wire",
+          "bind": "fin.news",
+          "item": "{t}  {imp} {h}",
+          "style": {
+           "fg": "dim"
+          },
+          "title": "Wire"
+         }
+        ]
+       }
+      ]
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.risk",
+            "text": "{var}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "neg"
+            }
+           }
+          ],
+          "title": "VaR 99% \u00b7 1d",
+          "size": "1*",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.risk",
+            "text": "{beta}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "accent"
+            }
+           }
+          ],
+          "title": "Beta",
+          "size": "1*",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.risk",
+            "text": "{sharpe}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "pos"
+            }
+           }
+          ],
+          "title": "Sharpe",
+          "size": "1*",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.risk",
+            "text": "{dd}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "gold"
+            }
+           }
+          ],
+          "title": "Drawdown",
+          "size": "1*",
+          "style": {
+           "bg": "panel"
+          }
+         },
+         {
+          "type": "col",
+          "children": [
+           {
+            "type": "big",
+            "bind": "fin.risk",
+            "text": "{vol}",
+            "align": "center",
+            "size": 3,
+            "style": {
+             "fg": "fg"
+            }
+           }
+          ],
+          "title": "Vol (ann.)",
+          "size": "1*",
+          "style": {
+           "bg": "panel"
+          }
+         }
+        ],
+        "size": 5
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "chart",
+          "series": [
+           {
+            "name": "drawdown",
+            "bind": "fin.dd",
+            "color": "neg"
+           }
+          ],
+          "title": "Drawdown % from peak",
+          "size": "55%"
+         },
+         {
+          "type": "table",
+          "id": "sectors",
+          "bind": "fin.sectors",
+          "columns": [
+           {
+            "title": "sector",
+            "value": "{s}"
+           },
+           {
+            "title": "1D",
+            "value": "{d}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{d}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "1W",
+            "value": "{w}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{w}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "1M",
+            "value": "{m}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{m}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "3M",
+            "value": "{q}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{q}",
+             "min": -3,
+             "max": 3
+            }
+           },
+           {
+            "title": "YTD",
+            "value": "{y}",
+            "size": 7,
+            "align": "right",
+            "heat": {
+             "value": "{y}",
+             "min": -3,
+             "max": 3
+            }
+           }
+          ],
+          "title": "Sector returns % \u00b7 heat"
+         }
+        ],
+        "size": "50%"
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "map",
+          "id": "world",
+          "bind": "fin.regions",
+          "lat": "lat",
+          "lon": "lon",
+          "label": "{city}",
+          "tip": {
+           "title": "{city}",
+           "text": "revenue {rev} \u00b7 {share} of total"
+          },
+          "style": {
+           "fg": "gold"
+          },
+          "title": "Revenue by region \u00b7 hover a city"
+         },
+         {
+          "type": "list",
+          "id": "wire",
+          "bind": "fin.news",
+          "item": "{t}  {imp} {h}",
+          "style": {
+           "fg": "dim"
+          },
+          "title": "Wire"
+         }
+        ]
+       }
+      ]
+     }
+    ]
+   }
+  ]
+ },
+ "data": {
+  "fin": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/finance/fin.py",
+    "10"
+   ]
+  }
+ },
+ "keys": {
+  "1": {
+   "load": "crates/scene/examples/finance/dashboard.json"
+  }
+ }
+}
