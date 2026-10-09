@@ -1,0 +1,26 @@
+{
+  "root": {"type": "col", "children": [
+    {"type": "text", "id": "header", "size": 1, "style": {"bold": true, "fg": "cyan"},
+     "text": "thought control · board"},
+    {"type": "row", "children": [
+      {"type": "table", "id": "tasks", "title": "Open tasks  (x done · s snooze)", "bind": "tasks", "size": "65%",
+       "columns": [
+         {"title": "id", "value": "{short}", "size": 6},
+         {"title": "task", "value": "{text}"},
+         {"title": "due", "value": "{due}", "size": 11},
+         {"title": "pri", "value": "{priority}", "size": 5}
+       ],
+       "keys": {
+         "x": {"run": ["thc", "done", "{id}"]},
+         "s": {"run": ["thc", "set", "{id}", "due=+1d"]}
+       }},
+      {"type": "list", "id": "pages", "title": "Pages", "bind": "pages", "item": "¶ {title}",
+       "empty": "No pages yet."}
+    ]}
+  ]},
+  "data": {
+    "tasks": {"cmd": ["thc", "q", "status:open sort:due", "--json"], "path": "items", "every": 3},
+    "pages": {"cmd": ["thc", "q", "is:page sort:title", "--json"], "path": "items", "every": 10}
+  },
+  "keys": {"w": {"load": "crates/scene/examples/writer.json"}}
+}

@@ -1,0 +1,10 @@
+{
+  "root": {"type": "col", "children": [
+    {"type": "text", "size": 2, "style": {"italic": true, "dim": true},
+     "text": "writing — pages only. Nothing else exists here."},
+    {"type": "list", "id": "pages", "title": "Pages", "bind": "pages", "item": "{title}",
+     "empty": "No pages yet."}
+  ]},
+  "data": {"pages": {"cmd": ["thc", "q", "is:page sort:title", "--json"], "path": "items"}},
+  "keys": {"b": {"load": "crates/scene/examples/tasks.json"}}
+}

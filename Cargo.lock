@@ -2218,6 +2218,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "thc-scene"
+version = "0.10.1"
+dependencies = [
+ "anyhow",
+ "clap",
+ "ratatui",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "thc-tui"
 version = "0.10.1"
 dependencies = [
