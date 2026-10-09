@@ -1,0 +1,44 @@
+---
+// Two devices write offline; after sync every device sorts the same lines the same way and
+// applies them in that order, so the same field always ends with the same winner.
+const lane = (y: number) => y;
+const ev = [
+  // [letter, label, x, laneY]
+  ['A', 'create n1', 150, 64],
+  ['C', 'due = fri', 400, 64],
+  ['E', 'text · base a', 640, 64],
+  ['B', 'move n1', 270, 130],
+  ['D', 'due = mon', 510, 130],
+  ['F', 'text · base a', 690, 130],
+] as const;
+const merged = ['A', 'B', 'C', 'D', 'E', 'F'];
+const label: Record<string, string> = { A: 'create', B: 'move', C: 'due=fri', D: 'due=mon', E: 'text', F: 'text' };
+---
+<svg class="art" viewBox="0 0 860 330" role="img" aria-labelledby="to-t to-d">
+  <title id="to-t">Two devices, one order</title>
+  <desc id="to-d">Device mbp writes A, C and E; device mini writes B, D and F, offline. After sync each device sorts all six by hybrid logical clock, counter, device and event id, and applies A through F in that order. D's due date wins over C's because it is later; F's text wins and E's is kept as a conflict.</desc>
+  <defs><marker id="to-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path d="M1 1L9 5L1 9" /></marker></defs>
+  <text x="20" y="24" class="k">offline · each device appends to its own file</text>
+  <text x="20" y="68" class="t">mbp-7f3a</text>
+  <text x="20" y="134" class="t">mini-2c1d</text>
+  <path d={`M130 ${lane(64)} H 840`} class="faint" marker-end="url(#to-a)" />
+  <path d={`M130 ${lane(130)} H 840`} class="faint" marker-end="url(#to-a)" />
+  <text x="790" y="96" class="dim">hlc →</text>
+  {ev.map(([l, t, x, y]) => (
+    <g>
+      <rect x={x} y={y - 16} width={t.length * 6.9 + 44} height="28" class="fill" />
+      <text x={x + 10} y={y + 3} class="t e">{l}</text>
+      <text x={x + 28} y={y + 3}>{t}</text>
+    </g>
+  ))}
+  <text x="20" y="196" class="k">after sync · every device, the same sort: (ms, counter, dev, eid)</text>
+  {merged.map((l, i) => (
+    <g>
+      <rect x={20 + i * 136} y="210" width="112" height="34" class={i >= 4 ? 'e' : ''} />
+      <text x={32 + i * 136} y="232" class="t">{l}</text><text x={50 + i * 136} y="232">{label[l]}</text>
+      {i < 5 && <path d={`M${132 + i * 136} 227 H ${152 + i * 136}`} marker-end="url(#to-a)" />}
+    </g>
+  ))}
+  <text x="20" y="278" class="t">due</text><text x="70" y="278">D is later than C, so the node's due is mon, on every device</text>
+  <text x="20" y="302" class="t">text</text><text x="70" y="302">E and F share a base: F wins, E is kept in conflicts and the node shows ≠</text>
+</svg>

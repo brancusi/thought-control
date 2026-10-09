@@ -1,0 +1,94 @@
+---
+// The whole system on one sheet: the surfaces, thc-core's write and read paths, the daemon,
+// and what sits on disk (the synced vault and the local cache).
+---
+<svg class="art" viewBox="0 0 960 580" role="img" aria-labelledby="sm-t sm-d">
+  <title id="sm-t">thc, the whole system</title>
+  <desc id="sm-d">Agents, the CLI, the TUI and $EDITOR all enter thc-core. Writes go capture, builder, policy, transact; transact appends to this device's log and applies to the SQLite store. Reads go from the store through the query compiler and views to output. The daemon watches the log, fires alerts and pushes changes to the TUI and ThoughtBar. On disk, the vault folder is synced; the cache is local and rebuildable.</desc>
+  <defs>
+    <marker id="sm-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" /></marker>
+    <marker id="sm-e" class="e" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M1 1L9 5L1 9" /></marker>
+  </defs>
+
+  <text x="20" y="30" class="k">surfaces</text>
+  <g>
+    <rect x="20" y="44" width="172" height="56" class="agent" />
+    <text x="34" y="68" class="t agent">◆ agents</text><text x="34" y="86">claude · codex · you</text>
+    <rect x="207" y="44" width="172" height="56" />
+    <text x="221" y="68" class="t">thc</text><text x="221" y="86">the CLI · --json</text>
+    <rect x="394" y="44" width="172" height="56" />
+    <text x="408" y="68" class="t">thc tui</text><text x="408" y="86">Elm state · ui socket</text>
+    <rect x="581" y="44" width="172" height="56" />
+    <text x="595" y="68" class="t">$EDITOR · drop/</text><text x="595" y="86">plain text in and out</text>
+    <rect x="768" y="44" width="172" height="56" />
+    <text x="782" y="68" class="t">ThoughtBar</text><text x="782" y="86">menu bar · no files</text>
+  </g>
+  <path d="M192 72 H 203" class="agent" marker-end="url(#sm-a)" />
+  <path d="M106 44 C 106 18, 480 18, 480 40" class="agent dash" marker-end="url(#sm-a)" />
+  <text x="300" y="12" class="agent">ui socket: patch · keys · render · layers</text>
+  <path d="M293 100 V 142" marker-end="url(#sm-a)" />
+  <path d="M480 100 V 142" marker-end="url(#sm-a)" />
+  <path d="M667 100 V 142" marker-end="url(#sm-a)" />
+  <path d="M854 104 V 142" marker-start="url(#sm-a)" marker-end="url(#sm-a)" />
+  <text x="862" y="128">socket</text>
+
+  <!-- thc-core -->
+  <rect x="20" y="146" width="700" height="254" class="faint" />
+  <text x="36" y="168" class="big">thc-core</text><text x="104" y="168">the model, the log, the store, the query compiler</text>
+  <text x="40" y="192" class="k">writes →</text>
+  <rect x="40" y="198" width="150" height="50" class="fill" /><text x="54" y="219" class="t">capture</text><text x="54" y="236">parsed once</text>
+  <rect x="210" y="198" width="150" height="50" class="fill" /><text x="224" y="219" class="t">TxBuilder</text><text x="224" y="236">ids · order · dates</text>
+  <rect x="380" y="198" width="150" height="50" class="fill" /><text x="394" y="219" class="t">policy · --expect</text><text x="394" y="236">tiers · --if-match</text>
+  <rect x="550" y="198" width="150" height="50" class="e" /><text x="564" y="219" class="t">transact</text><text x="564" y="236" class="e">lock · HLC · fsync</text>
+  <path d="M190 223 H 206" marker-end="url(#sm-a)" />
+  <path d="M360 223 H 376" marker-end="url(#sm-a)" />
+  <path d="M530 223 H 546" marker-end="url(#sm-a)" />
+  <path d="M625 248 V 304" marker-end="url(#sm-a)" /><text x="632" y="282">apply</text>
+
+  <text x="40" y="302" class="k">← reads</text>
+  <rect x="40" y="308" width="150" height="50" class="fill" /><text x="54" y="329" class="t">out</text><text x="54" y="346">--json · --fields</text>
+  <rect x="210" y="308" width="150" height="50" class="fill" /><text x="224" y="329" class="t">views · why</text><text x="224" y="346">@today · reasons[]</text>
+  <rect x="380" y="308" width="150" height="50" class="fill" /><text x="394" y="329" class="t">query</text><text x="394" y="346">q → one SQL WHERE</text>
+  <rect x="550" y="308" width="150" height="50" class="dash" /><text x="564" y="329" class="t">store</text><text x="564" y="346">SQLite · a cache</text>
+  <path d="M550 333 H 534" marker-end="url(#sm-a)" />
+  <path d="M380 333 H 364" marker-end="url(#sm-a)" />
+  <path d="M210 333 H 194" marker-end="url(#sm-a)" />
+  <text x="40" y="386" class="dim">also: recurrence · dates · outline (documents ↔ ops) · review · federated vault queries</text>
+
+  <!-- the daemon -->
+  <rect x="750" y="146" width="190" height="254" class="faint" />
+  <text x="766" y="168" class="big">thc-daemon</text>
+  <text x="766" y="190" class="k">optional</text>
+  <text x="766" y="218">watch log/ (~100 ms)</text>
+  <text x="766" y="240">replay others' lines</text>
+  <text x="766" y="262">push changed · agenda</text>
+  <text x="766" y="284">alert scheduler</text>
+  <text x="766" y="306">Markdown export</text>
+  <text x="766" y="328">drop/ ingest</text>
+  <text x="766" y="350">one per vault, threads</text>
+  <text x="766" y="378" class="dim">a cache warmer, a bus,</text>
+  <text x="766" y="393" class="dim">an alarm clock</text>
+
+  <!-- arrows to disk -->
+  <path d="M700 223 H 735 V 462" class="e" marker-end="url(#sm-e)" /><text x="741" y="430" class="e">append</text>
+  <path d="M660 462 V 362" marker-end="url(#sm-a)" /><text x="596" y="438">replay</text>
+  <path d="M845 400 V 462" class="dash" marker-end="url(#sm-a)" /><text x="852" y="438">watch</text>
+  <path d="M575 358 V 420 H 300 V 444" class="dash faint" marker-end="url(#sm-a)" /><text x="420" y="414" class="dim">lives in</text>
+
+  <!-- disk -->
+  <rect x="20" y="446" width="360" height="118" class="dash" />
+  <text x="36" y="468" class="big">local cache</text><text x="128" y="468" class="dim">never synced</text>
+  <text x="36" y="494" class="t">store.db</text><text x="150" y="494">rebuildable from the log</text>
+  <text x="36" y="516" class="t">write.lock</text><text x="150" y="516">one writer per device</text>
+  <text x="36" y="538" class="t">daemon.json</text><text x="150" y="538">where the socket is</text>
+
+  <rect x="400" y="446" width="540" height="118" />
+  <text x="416" y="468" class="big">the vault</text><text x="488" y="468" class="dim">synced folder</text>
+  <rect x="600" y="466" width="326" height="40" class="e" />
+  <text x="612" y="490" class="t">log/&lt;device&gt;/YYYY-MM.jsonl</text><text x="824" y="490" class="e">append-only</text>
+  <text x="416" y="494" class="t">thc-vault.toml</text>
+  <text x="416" y="526" class="t">files/</text><text x="470" y="526">write-once</text>
+  <text x="600" y="526" class="t">drop/</text><text x="646" y="526">inbound</text>
+  <text x="740" y="526" class="t">export/</text><text x="800" y="526">never read back</text>
+  <text x="416" y="550" class="dim">one writer per directory: no conflicted copies</text>
+</svg>

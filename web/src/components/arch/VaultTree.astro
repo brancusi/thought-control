@@ -1,0 +1,27 @@
+---
+// The vault folder as it sits in Dropbox: one log directory per device, each written by one writer.
+---
+<svg class="art" viewBox="0 0 760 300" role="img" aria-labelledby="vt-t vt-d">
+  <title id="vt-t">The vault on disk</title>
+  <desc id="vt-d">A vault folder holds thc-vault.toml, a log directory with one subdirectory per device and one JSONL file per month, plus files, drop and export. Each device appends only to its own directory.</desc>
+  <text x="20" y="26" class="t">~/Dropbox/thought/</text>
+  <text x="36" y="50">├─ </text><text x="64" y="50" class="t">thc-vault.toml</text><text x="330" y="50" class="dim">format = 2 · id · name · created</text>
+  <text x="36" y="74">├─ </text><text x="64" y="74" class="t">log/</text>
+  <text x="36" y="98">│  ├─ </text><text x="92" y="98" class="t">mbp-7f3a/</text>
+  <text x="36" y="120">│  │  ├─ </text><text x="120" y="120">2026-09.jsonl</text>
+  <text x="36" y="142">│  │  └─ </text><text x="120" y="142" class="e">2026-10.jsonl</text>
+  <text x="36" y="166">│  └─ </text><text x="92" y="166" class="t">mini-2c1d/</text>
+  <text x="36" y="188">│     └─ </text><text x="120" y="188" class="e">2026-10.jsonl</text>
+  <text x="36" y="212">├─ </text><text x="64" y="212" class="t">files/2026/10/</text><text x="330" y="212" class="dim">attachments · &lt;hash&gt;-&lt;name&gt;, written once</text>
+  <text x="36" y="236">├─ </text><text x="64" y="236" class="t">drop/</text><text x="330" y="236" class="dim">any .md or .txt here becomes inbox items</text>
+  <text x="36" y="260">└─ </text><text x="64" y="260" class="t">export/</text><text x="330" y="260" class="dim">generated Markdown · never read back</text>
+  <rect x="320" y="84" width="420" height="114" class="e" />
+  <text x="334" y="106" class="t">one directory per device</text>
+  <text x="334" y="128">this Mac appends only to mbp-7f3a/,</text>
+  <text x="334" y="146">the mini only to mini-2c1d/. A sync tool</text>
+  <text x="334" y="164">sees one writer per file, so it never</text>
+  <text x="334" y="182">makes a "conflicted copy".</text>
+  <path d="M232 142 H 316" class="e dash" />
+  <path d="M232 188 H 316" class="e dash" />
+  <text x="20" y="290" class="dim">a file's month is the UTC month of its clocks · a name with a space is a sync artefact, ignored</text>
+</svg>

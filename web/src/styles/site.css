@@ -297,3 +297,84 @@ pre.shell .l-ps { color: var(--accent); user-select: none; }
 pre.shell .l-cmd { color: var(--text); }
 pre.shell .l-out { color: var(--muted); }
 pre.shell .l-com { color: var(--dim); }
+
+/* ---- architecture (docs/architecture/*): figures, decisions, source maps, fact strips ---- */
+.fig { margin: 2.4rem 0 2rem; border: 1px solid var(--line); background: var(--bg); }
+.fig__art { padding: 18px 18px 10px; }
+.fig__art svg { width: 100%; height: auto; display: block; }
+.fig--wide .fig__art { overflow-x: auto; }
+.fig--wide .fig__art svg { min-width: 680px; }
+.fig figcaption { border-top: 1px solid var(--line); padding: 9px 14px; color: var(--muted); font-size: 14px; line-height: 1.5; }
+.fig__n { font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin-right: 1.4ch; }
+.art .fill { fill: var(--surface); }
+.art .acidfill { fill: var(--acid); stroke: none; }
+.art text.on-acid { fill: var(--on-acid); font-weight: 700; }
+.art .dash { stroke-dasharray: 3 4; }
+.art .faint { stroke: var(--line); }
+.art text.k { font: 500 9.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; fill: var(--dim); }
+.art text.big { font: 800 13px var(--sans); fill: var(--text); }
+.art text.agent { fill: var(--agent); }
+.art .agent { stroke: var(--agent); }
+.art text.signal { fill: var(--signal); }
+.art .signal { stroke: var(--signal); }
+.art text.done { fill: var(--done); }
+.art marker path { fill: none; stroke: var(--muted); stroke-width: 1.4; }
+.art marker.e path { stroke: var(--accent); }
+:root[data-theme='light'] .art .acidfill { fill: var(--text); }
+:root[data-theme='light'] .art text.on-acid { fill: var(--bg); }
+@media (prefers-color-scheme: light) {
+  :root:not([data-theme='dark']) .art .acidfill { fill: var(--text); }
+  :root:not([data-theme='dark']) .art text.on-acid { fill: var(--bg); }
+}
+
+.decision { border: 1px solid var(--line); border-left: 4px solid var(--acid); padding: 20px 22px 18px; margin: 1.6rem 0; background: var(--bg); scroll-margin-top: 24px; }
+:root[data-theme='light'] .decision { border-left-color: var(--text); }
+@media (prefers-color-scheme: light) { :root:not([data-theme='dark']) .decision { border-left-color: var(--text); } }
+.decision header { display: flex; align-items: baseline; gap: 1.4ch; flex-wrap: wrap; }
+.decision h3 { margin: 0; flex: 1; min-width: 18ch; font-size: 19px; }
+.decision__id { font: 500 11px var(--mono); color: var(--accent); letter-spacing: 0.06em; }
+.decision .stamp { font-size: 11px; padding: 2px 8px 1px; border-width: 2px; --tilt: -3deg; }
+.decision__body { margin-top: 0.6rem; }
+.decision__body > :first-child { margin-top: 0; }
+.decision__body > :last-child { margin-bottom: 0; }
+.decision dl { display: grid; grid-template-columns: 6ch minmax(0, 1fr); gap: 6px 1.6ch; margin: 1rem 0 0; padding-top: 0.9rem; border-top: 1px dashed var(--line); font-size: 15px; }
+.decision dt { font: 500 10.5px/2 var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); }
+.decision dd { margin: 0; max-width: var(--measure); }
+
+.files { border: 1px solid var(--line); background: var(--surface); margin: 2rem 0; padding: 14px 18px 12px; }
+.files__h { font: 500 10.5px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+.files ul { list-style: none; margin: 0; padding: 0; }
+.prose .files li { margin: 0; padding: 5px 0; border-top: 1px solid var(--line); display: grid; grid-template-columns: minmax(0, 30ch) minmax(0, 1fr); gap: 2ch; max-width: none; font-size: 14.5px; }
+.prose .files li::marker { content: none; }
+.files li:first-child { border-top: 0; }
+.files a { text-decoration: none; }
+.files a code { background: none; border: 0; padding: 0; color: var(--accent); font-size: 12px; }
+.files a:hover code { text-decoration: underline; }
+@media (max-width: 640px) { .prose .files li { grid-template-columns: minmax(0, 1fr); gap: 0; } }
+
+.facts { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 150px), 1fr)); border-top: 1px solid var(--line); border-left: 1px solid var(--line); margin: 2rem 0; }
+.facts > div { border-right: 1px solid var(--line); border-bottom: 1px solid var(--line); padding: 14px 16px 12px; }
+.facts b { display: block; font: 900 30px/1 var(--sans); font-stretch: 66%; color: var(--text); text-transform: uppercase; }
+.facts span { display: block; margin-top: 6px; color: var(--muted); font-size: 13px; line-height: 1.4; }
+
+/* The rules of the house: numbered, one line each, acid numerals. */
+.laws { counter-reset: law; list-style: none; padding: 0 !important; margin: 1.6rem 0; border-top: 1px solid var(--line); }
+.prose .laws li { counter-increment: law; display: grid; grid-template-columns: 4ch minmax(0, 1fr); gap: 1ch; padding: 12px 0; margin: 0; border-bottom: 1px solid var(--line); max-width: none; }
+.prose .laws li::marker { content: none; }
+.laws li::before { content: counter(law, decimal-leading-zero); font: 700 13px/1.6 var(--mono); color: var(--accent); }
+.laws li > :first-child { margin-top: 0; }
+.laws li p { margin: 0; }
+
+/* Architecture: a lead-in band on the docs index. */
+.arch-band { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(0, 1fr); gap: 0; border: 1px solid var(--line); margin-top: 2rem; text-decoration: none; background: var(--bg); }
+.arch-band:hover { background: var(--surface); color: inherit; }
+.arch-band > div { padding: 22px; }
+.arch-band > div + div { border-left: 1px solid var(--line); }
+.arch-band h3 { margin: 10px 0 6px; font: 900 30px/0.95 var(--sans); font-stretch: 66%; text-transform: uppercase; }
+.arch-band:hover h3 { color: var(--accent); }
+.arch-band p { margin: 0; font-size: 15px; }
+.arch-band ol { margin: 0; padding-left: 0; list-style: none; font: 12px/2 var(--mono); color: var(--muted); counter-reset: a; }
+.arch-band ol li { counter-increment: a; }
+.arch-band ol li::before { content: counter(a, decimal-leading-zero) '  '; color: var(--accent); }
+@media (max-width: 720px) { .arch-band { grid-template-columns: minmax(0, 1fr); } .arch-band > div + div { border-left: 0; border-top: 1px solid var(--line); } }
+.prose td:first-child > code:only-child { white-space: nowrap; }

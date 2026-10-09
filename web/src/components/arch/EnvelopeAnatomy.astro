@@ -1,0 +1,36 @@
+---
+// One log line, field by field: the envelope every op is flattened into.
+const rows: [string, string, string, boolean?][] = [
+  ['{"v":1,', 'v', 'the lowest format version that reads it'],
+  [' "eid":"01M4FR3YGC1CZJV7…",', 'eid', 'event id · a ULID, unique everywhere'],
+  [' "hlc":[1791529974284,1],', 'hlc', 'hybrid logical clock · [ms, counter]'],
+  [' "dev":"mbp-7f3a",', 'dev', 'the device · also its log directory'],
+  [' "actor":{"kind":"agent","name":"claude"},', 'actor', 'who · human, or an agent by name', true],
+  [' "via":"cli",', 'via', 'which surface · cli, tui, bar, edit, drop'],
+  [' "tx":"01M4FR3YGC4MVN4E…",', 'tx', 'transaction · the unit of undo and review'],
+  [' "op":"node.create",', 'op', 'the operation, its fields flattened in', false],
+  [' "id":"md78p9t6g9c7","parent":"nshgnw2hmhc7",', '', ''],
+  [' "order":"V","text":"Call the dentist #health",', '', ''],
+  [' "props":{"status":"todo","due":"2026-10-09"}}', '', ''],
+];
+const y0 = 46, dy = 22;
+---
+<svg class="art" viewBox="0 0 840 316" role="img" aria-labelledby="ea-t ea-d">
+  <title id="ea-t">Anatomy of one log line</title>
+  <desc id="ea-d">A node.create event as written to the log, with each envelope field labelled: v, eid, hlc, dev, actor, via, tx and op, followed by the op's own fields.</desc>
+  <text x="20" y="22" class="k">one line of log/mbp-7f3a/2026-10.jsonl, wrapped for reading</text>
+  <rect x="20" y="30" width="390" height={rows.length * dy + 18} class="fill" />
+  {rows.map(([code, , ], i) => (
+    <text x="34" y={y0 + i * dy} class={i >= 7 ? 'e' : 't'} style="font-weight:400">{code}</text>
+  ))}
+  {rows.map(([, k, note, agent], i) => k && (
+    <g>
+      <path d={`M414 ${y0 + i * dy - 4} H 452`} class="faint" />
+      <text x="462" y={y0 + i * dy} class={agent ? 't agent' : 't'}>{k}</text>
+      <text x="520" y={y0 + i * dy} class="dim">{note}</text>
+    </g>
+  ))}
+  <path d={`M414 ${y0 + 8 * dy - 4} H 440 V ${y0 + 10 * dy - 4} H 414`} class="e" />
+  <text x="462" y={y0 + 9 * dy} class="e">the op's own fields: node.create's id, parent,</text>
+  <text x="462" y={y0 + 9 * dy + 16} class="e">order, text, props</text>
+</svg>

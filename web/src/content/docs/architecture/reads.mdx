@@ -1,0 +1,170 @@
+---
+title: Reads and queries
+description: How a question becomes one SQL statement over a store that is only a cache of the log, and how the same query runs across vaults, over full text, and against the past.
+order: 104
+group: Architecture
+---
+import Fig from '../../../components/arch/Fig.astro';
+import Facts from '../../../components/arch/Facts.astro';
+import Files from '../../../components/arch/Files.astro';
+import ReadPath from '../../../components/arch/ReadPath.astro';
+
+Writes are where the care goes; reads are where the speed goes. A read never touches the log
+and never needs the daemon. It opens this vault's SQLite store, runs one statement and prints.
+The query language is small enough to compile in a fraction of a millisecond, and every term
+can say in plain words what it means.
+
+<Facts items={[
+  ['1', 'SQL statement per query, per vault'],
+  ['0.1 ms', 'to compile and run a typical query on a small vault'],
+  ['2–3 ms', 'the target for a whole thc read, process start included'],
+  ['15', 'tables in the store, none of them synced'],
+]} />
+
+## The store
+
+The store is a materialized view of the log, kept in the local cache directory and never
+synced. `Store::apply` folds each event into it in total order; `thc rebuild` throws it away
+and replays everything. Its schema is one constant string in `store.rs`, and a fingerprint of
+that string lives in `PRAGMA user_version`: change the schema and the next open re-runs it.
+
+| Table | Holds |
+|---|---|
+| `nodes` | One row per node, with the hot fields as columns: `parent`, `ord`, `title`, `text`, `status`, `scheduled`, `due`, `priority`, `repeat`, `done_at`, `journal`, `deleted` |
+| `props` | Every other property, `(node, key, value)` |
+| `edges` | Links: `(src, rel, dst)` for `tag`, `mention`, `embed`, `blocks`, `relates`, … |
+| `clocks` | The order key that last won each `(entity, field)`: the merge's memory |
+| `events` | A full copy of the log with each event's inverse, for history, undo, review and time travel |
+| `alerts`, `conflicts`, `reviews`, `rehomed` | Replicated alert state, open text and move conflicts, review verdicts, nodes shown under a deleted parent |
+| `cursors` | How far into each device's log file this store has read |
+| `nodes_fts`, `fts_rows` | The full-text index and each node's row in it |
+
+The indexes are shaped by the views people actually open. `open_by_due` and `open_by_sched`
+are partial indexes over open tasks only, so "what's due this week" never scans done work.
+`open_by_status` covers the status, due and scheduled columns, so the TUI's counts come from
+the index alone (visiting each note's page once cost 35 ms at 600 open tasks).
+
+## A query, end to end
+
+<Fig n="1" wide caption="The read path. The query is scoped, parsed and compiled along the top; SQLite answers; rows come back along the bottom. With one vault the merge is skipped.">
+  <ReadPath />
+</Fig>
+
+The language (the [query language](../../query-language/) guide has every term) is a flat
+list of terms joined by an implicit `and`, with `or`, parentheses and a leading `-` for not.
+`query.rs` lexes it, parses it, and produces two things from one pass:
+
+- **`Compiled`**: one `WHERE` clause over `nodes n`, its bound parameters, and an `ORDER BY`.
+  Relative dates (`+3d`, `fri`, `eom`) are resolved here, once, against today. Tags become an
+  `EXISTS` over `edges`; custom properties a lookup in `props`; `under:` and `ancestor:(…)` a
+  recursive walk.
+- **`Ast`**: the same query as a tree in which every term carries `means` (for `--explain`)
+  and `short` (for the TUI's one-line summary under the filter box).
+
+```console
+$ thc q 'status:open due<=+3d #health sort:due' --explain=sql
+query    status:open due<=+3d #health sort:due
+means    open tasks
+         and due on or before Mon Oct 12
+         and tagged #health
+         sorted by due date, undated last
+matches  1 · 0.1 ms
+sql      SELECT … FROM nodes n WHERE n.deleted=0 AND n.is_tag=0 AND … AND
+         ((n.status IN ('todo','doing','waiting') AND (+n.due < '2026-10-13') AND
+         EXISTS (SELECT 1 FROM edges e JOIN nodes t ON t.id=e.dst
+                 WHERE e.src=n.id AND e.rel='tag' AND t.title='health' COLLATE NOCASE)))
+         ORDER BY n.due IS NULL, n.due ASC, n.scheduled IS NULL, n.scheduled ASC
+```
+
+Every compiled query starts with the same guard: no deleted nodes, no tag nodes, and nothing
+that is or lives under a node with a `system` property (the ¶ Views page, attachment nodes).
+That one clause is why system pages never leak into listings, whichever view asks.
+
+Mistakes fail early and kindly. An unknown value (`status:opn`) exits 6 with the closest
+match; a parse error carries the byte span it happened at, so a client can point at the exact place.
+
+## Views are nodes
+
+A saved view is a named query stored as a node under a hidden page, ¶ Views. Because it is a
+node, it syncs, has history, and undoes like a note. The page and the five built-in views
+(`@open`, `@week`, `@waiting`, `@claude`, `@ready`) have keyed ids, so two devices seeding on
+first run write the same creates and end up with one of each.
+
+`@name` inside a query expands to that view's query, so views compose:
+
+```sh
+$ thc view add work 'status:open #work sort:due'
+$ thc q '@work due<=+3d'
+```
+
+Today is not a view but a fixed composition: overdue, due today, scheduled today, doing, alerts
+firing today, done today. `why.rs` says, per row, why it is there, as a list (a row can be
+scheduled *and* have an alert). The codes are the `reasons[]` on every row of
+`thc today --json`: `overdue`, `due-today`, `scheduled`, `alert`, `alert-fired`, `repeating`,
+`doing`, `done-today`. Alerts are loaded once per listing, not twice per row.
+
+## Across vaults
+
+A vault is a project silo with its own log and its own store ([vaults](../../vaults/)). A
+query that names vaults (`vault:acme`, `vault:(acme or personal)`, `vault:*`, `-vault:side`)
+is **federated, not attached**:
+
+1. `federated.rs` splits the top-level `vault:` terms from the rest of the query.
+2. Each named vault opens its own store on its own thread and runs the remaining query there,
+   with its own ids, tags and statistics.
+3. The rows go into an in-memory table and are sorted by the query's own `ORDER BY`. Ties
+   keep each vault's order, vaults in registry order. Outline order (`sort:order`) is computed
+   in each row's source store first, since it depends on ancestors the query never matched.
+
+So a federated listing is ordered exactly as a single vault's would be, and every row carries
+the `vault` it came from. ATTACHing every store into one connection was the alternative; it
+would have mixed id spaces and query plans that belong to different databases.
+
+## Full text
+
+`thc search` runs over FTS5 (`unicode61`, diacritics removed). Each word becomes a quoted
+prefix term (`"dent"*`), results are ranked by FTS5's rank, and the same system-node guard
+applies. A node's FTS row id is kept in `fts_rows`, so reindexing one note deletes by row id
+instead of scanning: a 1,000-note paste into a 5,000-note page once spent a second there.
+
+## The past
+
+Because the store is derived, the past is just a shorter replay. `Vault::as_of` opens an
+in-memory store and applies every event up to a time, in order, from the `events` table:
+
+```sh
+$ thc q 'status:open #work' --as-of="last tue"
+$ thc history <id>          # the events for one node
+$ thc diff <id> --since 1d  # what changed, field by field
+```
+
+At personal scale this takes well under a second, so there is no versions table to keep in
+step. `--as-of` reads one vault and doesn't combine with `--explain`.
+
+## The output contract
+
+Rendering lives in the binary (`out.rs`), not the core. Human output is for people; `--json`
+is for programs and promises only additive change within a major version. Every node object
+carries `id`, `short`, `rev` and `vault`; nulls are omitted; `--fields id,short,due` trims each
+node to what you asked for. `thc schema <cmd>` prints the JSON Schema of a command's input
+(generated from its clap definition, so it can't drift) and its output.
+
+## Budgets
+
+A read should cost about what the operating system charges to start a process. Measured, a C
+program that opens SQLite and runs an indexed query over 20,000 rows takes about 2.3 ms; Rust
+starts like C, so a `thc` read targets 2–3 ms. The targets are written in `docs/SPEC.md` §8. CI
+holds a coarse guard at ten times that (60 ms mean on the runner) to catch an order-of-magnitude
+slip without making feature work wait on benchmarks.
+
+<Files files={[
+  ['crates/thc-core/src/store.rs', 'the schema, <code>Store::apply</code>, the merge clocks, FTS upkeep'],
+  ['crates/thc-core/src/query.rs', 'the lexer, parser, <code>Ast</code>, <code>compile</code> and <code>explain</code>'],
+  ['crates/thc-core/src/views.rs', '¶ Views, the built-in views, <code>@name</code> expansion'],
+  ['crates/thc-core/src/why.rs', 'why a row is in Today: the <code>reasons[]</code> codes'],
+  ['crates/thc-core/src/federated.rs', 'queries across vaults: scope, threads, the in-memory merge'],
+  ['crates/thc-core/src/vault.rs', '<code>Vault::as_of</code>: replay to a point in time'],
+  ['crates/thc/src/out.rs', 'node JSON, <code>--fields</code>, the vault on every row'],
+  ['crates/thc/src/schema.rs', '<code>thc schema</code>: inputs from clap, outputs from shared defs'],
+  ['scripts/bench-read-guard.py', 'CI\'s read guard'],
+]} />

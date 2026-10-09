@@ -1,0 +1,10 @@
+---
+// A numbered architecture figure: line art on the ink, a caption under it. `wide` keeps big
+// diagrams legible on a phone by letting the figure (never the page) scroll sideways.
+interface Props { n?: string | number; caption?: string; wide?: boolean }
+const { n, caption, wide = false } = Astro.props;
+---
+<figure class:list={['fig', { 'fig--wide': wide }]}>
+  <div class="fig__art"><slot /></div>
+  {(n || caption) && <figcaption>{n && <span class="fig__n">fig. {n}</span>}{caption}</figcaption>}
+</figure>

@@ -7,7 +7,7 @@ import { u } from '../lib/url';
   <header class="page-head">
     <p class="kicker"><span class="blk" aria-hidden="true"></span>under the hood</p>
     <h1>How it's built</h1>
-    <p class="lede">One Rust binary. An append-only log as the truth, a database you can delete, and an editor engine with a test for every rule about where the caret goes. A longer write-up is coming. Here are the highlights.</p>
+    <p class="lede">One Rust binary. An append-only log as the truth, a database you can delete, and an editor engine with a test for every rule about where the caret goes. Here are the highlights; the <a href={u('docs/architecture/')}>architecture docs</a> go all the way down.</p>
   </header>
 
   <figure class="arch">
@@ -52,7 +52,7 @@ Short one.
 ↓   Short one.  at `}<span class="accent">▮</span>{`Short`}</code></pre>
   <p class="muted">A golden test, as written: the caret at the start of a wrapped row, one <kbd>↓</kbd>, and where it must land. caretline runs 103 of these (22 for motion, 81 for editing), plus property tests over random documents: a motion without <kbd>⇧</kbd> never leaves a selection, cut then paste changes nothing, and changing a line into a task never moves another line.</p>
 
-  <p class="next">More soon: the full story of the data model. caretline has <a href="https://caretline.app">its own site</a>, with docs and a playground. Meanwhile, the <a href={u('docs/philosophy/')}>philosophy</a> explains the why.</p>
+  <p class="next">The full story, module by module and decision by decision, is in the <a href={u('docs/architecture/')}>architecture docs</a>. caretline has <a href="https://caretline.app">its own site</a>, with docs and a playground. Meanwhile, the <a href={u('docs/philosophy/')}>philosophy</a> explains the why.</p>
 </Base>
 <style>
   .arch { margin: 0 0 3rem; }
