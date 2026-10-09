@@ -34,6 +34,9 @@ enum Cmd {
     Get {
         #[arg(long)]
         state: bool,
+        /// Only the frame and message counters.
+        #[arg(long, conflicts_with = "state")]
+        stats: bool,
     },
     /// Render a UI file to text without a terminal.
     Render {
@@ -73,7 +76,10 @@ fn main() -> Result<()> {
             }
             last
         }
-        Cmd::Get { state } => runtime::send(&socket, json!({"op": if state { "state" } else { "get" }}))?,
+        Cmd::Get { state, stats } => {
+            let op = if stats { "stats" } else if state { "state" } else { "get" };
+            runtime::send(&socket, json!({"op": op}))?
+        }
     };
     println!("{}", serde_json::to_string_pretty(&reply)?);
     if reply.get("ok") == Some(&json!(false)) {

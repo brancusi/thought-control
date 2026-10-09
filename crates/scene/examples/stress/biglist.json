@@ -1,0 +1,35 @@
+{
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "text",
+    "size": 1,
+    "text": " big list \u00b7 50,000 rows replaced 20\u00d7/s \u00b7 hold j to scroll \u00b7 seq {seq}",
+    "style": {
+     "bold": true,
+     "fg": "yellow"
+    },
+    "bind": "b"
+   },
+   {
+    "type": "list",
+    "id": "big",
+    "title": "50k rows",
+    "bind": "b.items",
+    "item": "{i}  {v}"
+   }
+  ]
+ },
+ "data": {
+  "b": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/stress/feed.py",
+    "biglist",
+    "20"
+   ]
+  }
+ }
+}

@@ -24,6 +24,29 @@ pub struct State {
     /// How many UIs have been pushed (the first load counts).
     #[serde(default)]
     pub version: u64,
+    /// The runtime's measurements, also bindable as the `$stats` source.
+    #[serde(default)]
+    pub stats: Stats,
+}
+
+/// Frames and messages over the last measuring window (the runtime reports twice a second).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Stats {
+    /// Frames drawn per second.
+    pub fps: f64,
+    /// Mean time to build and draw one frame, in milliseconds.
+    pub draw_ms: f64,
+    /// Slowest frame in the window, in milliseconds.
+    pub max_ms: f64,
+    /// Messages applied per second (keys, data, pushes, patches).
+    pub msgs: f64,
+    /// Frames drawn since start.
+    pub frames: u64,
+}
+
+/// Sources whose names start with `$` are the runtime's own (`$stats`); a push keeps them.
+pub fn builtin(name: &str) -> bool {
+    name.starts_with('$')
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -52,6 +75,8 @@ pub enum Msg {
     Data { name: String, result: Result<Value, String> },
     /// A `run` finished.
     Ran { argv: Vec<String>, result: Result<(), String> },
+    /// The runtime's measurements.
+    Stats { stats: Stats },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -71,7 +96,7 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
             st.status = None;
             settle(st);
             // Sources can change with the UI; fetch them all again.
-            st.data.retain(|k, _| st.ui.data.contains_key(k));
+            st.data.retain(|k, _| builtin(k) || st.ui.data.contains_key(k));
             st.ui.data.keys().map(|k| Effect::Fetch(k.clone())).collect()
         }
         Msg::Patch { id, node } => {
@@ -92,6 +117,12 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
                 st.data.insert(name, slot);
                 settle(st);
             }
+            vec![]
+        }
+        Msg::Stats { stats } => {
+            let value = serde_json::to_value(&stats).unwrap_or_default();
+            st.data.insert("$stats".into(), Slot::Ready { value });
+            st.stats = stats;
             vec![]
         }
         Msg::Ran { argv, result } => {
@@ -209,24 +240,32 @@ pub fn focus_order(root: &Node) -> Vec<String> {
 
 /// The value a node is bound to, if it has one and it has arrived.
 pub fn bound<'a>(st: &'a State, n: &Node) -> Option<&'a Value> {
-    match st.data.get(n.bind.as_ref()?)? {
-        Slot::Ready { value } => Some(value),
+    let (source, path) = split_bind(n.bind.as_deref()?);
+    match st.data.get(source)? {
+        Slot::Ready { value } => lookup(value, path),
         _ => None,
     }
 }
 
-/// A list's or table's rows: its literal `items`, else its bound array.
-pub fn items(st: &State, n: &Node) -> Vec<Value> {
+/// `bind` is a source name, then optionally a path into its value: `"tick.rows"` reads `rows` of
+/// the `tick` source, so one source can feed many nodes.
+pub fn split_bind(bind: &str) -> (&str, &str) {
+    bind.split_once('.').unwrap_or((bind, ""))
+}
+
+/// A list's or table's rows: its literal `items`, else its bound array. Borrowed: a 50,000-row
+/// source is read in place, never copied per message or per frame.
+pub fn items<'a>(st: &'a State, n: &'a Node) -> &'a [Value] {
     let literal = match &n.kind {
         Kind::List { items, .. } | Kind::Table { items, .. } => items,
-        _ => return vec![],
+        _ => return &[],
     };
     if !literal.is_empty() {
-        return literal.clone();
+        return literal;
     }
     match bound(st, n) {
-        Some(Value::Array(a)) => a.clone(),
-        _ => vec![],
+        Some(Value::Array(a)) => a,
+        _ => &[],
     }
 }
 
@@ -238,7 +277,7 @@ pub fn selected(st: &State, id: &str) -> usize {
 pub fn selected_item(st: &State) -> Option<Value> {
     let id = st.focus.as_ref()?;
     let n = st.ui.root.find(id)?;
-    items(st, n).into_iter().nth(selected(st, id))
+    items(st, n).get(selected(st, id)).cloned()
 }
 
 /// A source's value from a command's stdout, narrowed by its `path`.
@@ -307,12 +346,22 @@ mod tests {
     }
 
     #[test]
+    fn a_bind_can_reach_into_its_source() {
+        let mut st = State::default();
+        let ui = ui(json!({"root": {"type": "list", "id": "l", "bind": "feed.rows.all"},
+                           "data": {"feed": {"value": null}}}));
+        update(&mut st, Msg::Push { ui });
+        update(&mut st, Msg::Data { name: "feed".into(), result: Ok(json!({"rows": {"all": [1, 2, 3]}})) });
+        assert_eq!(items(&st, st.ui.root.find("l").unwrap()).len(), 3);
+    }
+
+    #[test]
     fn patch_replaces_one_node() {
         let mut st = State::default();
         update(&mut st, Msg::Push { ui: two_lists() });
         let node: Node = serde_json::from_value(json!({"type": "list", "id": "a", "items": ["only"]})).unwrap();
         update(&mut st, Msg::Patch { id: "a".into(), node });
-        assert_eq!(items(&st, st.ui.root.find("a").unwrap()), vec![json!("only")]);
+        assert_eq!(items(&st, st.ui.root.find("a").unwrap()), &[json!("only")]);
         update(&mut st, Msg::Patch { id: "zz".into(), node: Node::default() });
         assert!(st.status.unwrap().contains("zz"));
     }

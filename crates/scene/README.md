@@ -45,3 +45,22 @@ thc-scene render crates/scene/examples/tasks.json --size 100x30 --keys j   # no 
 An `editor` component on caretline, a `thc` subcommand instead of a separate binary, policy on what
 a pushed UI may `run` (today: anything you could run yourself, over a socket only you can open),
 the existing TUI's screens rebuilt as UIs.
+
+## Stress demos
+
+`crates/scene/examples/stress/`: a 500 updates/s ticker, a 160×50 text plasma at 120 Hz and a
+50,000-row list replaced 20×/s (all `stream` sources fed by `feed.py`), plus `storm.py`, which
+drives the screen over its socket with 1,000 patches/s or whole random UIs as fast as it can.
+`play.sh` runs them all on the running screen and prints the counters. The status bar always
+shows fps, the mean and worst draw time and messages/s; UIs can bind them as `$stats`.
+
+Release build, a 170×52 terminal, measured on one machine:
+
+| demo | fps | draw | msgs/s |
+|---|---|---|---|
+| idle | 2 | 0.4 ms | 0 |
+| ticker (500 updates/s) | 114 | 0.23 ms | 500 |
+| plasma (120 frames/s of 8,000 cells) | 110 | 0.24 ms | 122 |
+| 50k-row list replaced 20×/s | 20 | 0.18 ms | 20 |
+| patch storm, 1,000 patches/s | 116 | 0.22 ms | 1,000 |
+| push storm, whole UIs as fast as a client can send | 108 | 0.84 ms | ~6,200 |

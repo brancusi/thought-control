@@ -1,0 +1,64 @@
+{
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "text",
+    "size": 1,
+    "text": " ticker \u00b7 38 symbols \u00b7 one stream at 500 updates/s \u00b7 seq {seq} \u00b7 last {last}",
+    "style": {
+     "bold": true,
+     "fg": "green"
+    },
+    "bind": "tick"
+   },
+   {
+    "type": "sparkline",
+    "title": "index \u00b7 240 ticks",
+    "bind": "tick.hist",
+    "size": 9,
+    "style": {
+     "fg": "green"
+    }
+   },
+   {
+    "type": "table",
+    "id": "rows",
+    "title": "Book",
+    "bind": "tick.rows",
+    "columns": [
+     {
+      "title": "sym",
+      "value": "{sym}",
+      "size": 8
+     },
+     {
+      "title": "px",
+      "value": "{px}",
+      "size": 10
+     },
+     {
+      "title": "chg",
+      "value": "{chg}",
+      "size": 8
+     },
+     {
+      "title": "",
+      "value": "{bar}"
+     }
+    ]
+   }
+  ]
+ },
+ "data": {
+  "tick": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/stress/feed.py",
+    "ticker",
+    "500"
+   ]
+  }
+ }
+}

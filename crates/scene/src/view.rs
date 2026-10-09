@@ -18,7 +18,11 @@ pub fn draw(st: &State, f: &mut Frame) {
             Style::default().add_modifier(Modifier::DIM),
         ),
     };
-    f.render_widget(Paragraph::new(line), status);
+    let s = &st.stats;
+    let meter = format!("{:>5.1} fps · draw {:.2}ms (max {:.1}) · {:>6.0} msg/s ", s.fps, s.draw_ms, s.max_ms, s.msgs);
+    let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(meter.chars().count() as u16)]).areas(status);
+    f.render_widget(Paragraph::new(line), left);
+    f.render_widget(Paragraph::new(Line::styled(meter, Style::default().fg(Color::Yellow))), right);
 }
 
 fn node(st: &State, n: &Node, f: &mut Frame, area: Rect) {
@@ -33,7 +37,8 @@ fn node(st: &State, n: &Node, f: &mut Frame, area: Rect) {
     };
     let style = style(n.style.as_ref());
     // A bound node whose source hasn't arrived (or failed) says so instead of drawing.
-    if let Some(name) = &n.bind {
+    if let Some(bind) = &n.bind {
+        let name = crate::state::split_bind(bind).0;
         match st.data.get(name) {
             Some(Slot::Error { message }) => {
                 let p = Paragraph::new(format!("{name}: {message}")).style(Style::default().fg(Color::Red));
@@ -58,8 +63,7 @@ fn node(st: &State, n: &Node, f: &mut Frame, area: Rect) {
             }
         }
         Kind::Text { text } => {
-            let v = bound(st, n).cloned().unwrap_or_default();
-            let lines: Vec<Line> = fill(text, &v).lines().map(|l| Line::from(l.to_string())).collect();
+            let lines: Vec<Line> = fill(text, bound(st, n).unwrap_or(&serde_json::Value::Null)).lines().map(|l| Line::from(l.to_string())).collect();
             f.render_widget(Paragraph::new(lines).style(style).wrap(Wrap { trim: false }), inner);
         }
         Kind::List { item, empty, .. } => {
@@ -68,23 +72,28 @@ fn node(st: &State, n: &Node, f: &mut Frame, area: Rect) {
                 let e = empty.clone().unwrap_or_else(|| "(nothing)".into());
                 return f.render_widget(Paragraph::new(e).style(Style::default().add_modifier(Modifier::DIM)), inner);
             }
+            let (from, sel) = window(n.id.as_ref().map(|id| selected(st, id)), inner.height as usize);
             let list: Vec<ListItem> = rows
                 .iter()
+                .skip(from)
+                .take(inner.height as usize)
                 .map(|r| ListItem::new(match item {
                     Some(t) => fill(t, r),
                     None => scalar(Some(r)),
                 }))
                 .collect();
-            let mut ls = ListState::default().with_selected(n.id.as_ref().map(|id| selected(st, id)));
+            let mut ls = ListState::default().with_selected(sel);
             let w = List::new(list).style(style).highlight_style(highlight(focused)).highlight_symbol("▸ ");
             f.render_stateful_widget(w, inner, &mut ls);
         }
         Kind::Table { columns, .. } => {
             let rows = items(st, n);
             let header = Row::new(columns.iter().map(|c| c.title.clone())).style(Style::default().add_modifier(Modifier::BOLD));
-            let body = rows.iter().map(|r| Row::new(columns.iter().map(|c| fill(&c.value, r))));
+            let visible = (inner.height as usize).saturating_sub(1);
+            let (from, sel) = window(n.id.as_ref().map(|id| selected(st, id)), visible);
+            let body = rows.iter().skip(from).take(visible).map(|r| Row::new(columns.iter().map(|c| fill(&c.value, r))));
             let widths: Vec<Constraint> = columns.iter().map(|c| constraint(c.size.as_ref())).collect();
-            let mut ts = TableState::default().with_selected(n.id.as_ref().map(|id| selected(st, id)));
+            let mut ts = TableState::default().with_selected(sel);
             let t = Table::new(body, widths).header(header).style(style).row_highlight_style(highlight(focused)).highlight_symbol("▸ ");
             f.render_stateful_widget(t, inner, &mut ts);
         }
@@ -110,6 +119,14 @@ fn node(st: &State, n: &Node, f: &mut Frame, area: Rect) {
             f.render_widget(Sparkline::default().data(&data).style(style), inner);
         }
     }
+}
+
+/// Only the rows that fit are built: the first one shown, and the selection within them. The
+/// selection sits on the last visible row once it passes the bottom (what ratatui does itself).
+fn window(selected: Option<usize>, height: usize) -> (usize, Option<usize>) {
+    let sel = selected.unwrap_or(0);
+    let from = (sel + 1).saturating_sub(height.max(1));
+    (from, selected.map(|s| s - from))
 }
 
 fn frame(n: &Node, focused: bool) -> Option<Block<'static>> {

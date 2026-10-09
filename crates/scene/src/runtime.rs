@@ -3,7 +3,7 @@
 //! the `Effect`s that come back.
 
 use crate::model::{Source, Ui};
-use crate::state::{Effect, Msg, State, narrow, update};
+use crate::state::{Effect, Msg, State, Stats, narrow, update};
 use crate::view;
 use anyhow::{Context, Result, bail};
 use ratatui::crossterm::event::{self, Event as TermEvent, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
@@ -13,8 +13,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::io::{BufRead, BufReader, Write};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::path::{Path, PathBuf};
-use std::process::Command;
-use std::sync::mpsc::{self, Receiver, Sender};
+use std::process::{Child, Command, Stdio};
+use std::sync::mpsc::{self, Sender};
 use std::time::{Duration, Instant, SystemTime};
 
 /// One request line on the control socket.
@@ -26,11 +26,14 @@ pub enum Request {
     Key { key: String },
     Get,
     State,
+    Stats,
 }
 
+/// Everything the loop reacts to arrives on one queue: terminal input, data, socket requests.
 enum Event {
     Msg(Msg),
     Request(Request, Sender<Value>),
+    Term(TermEvent),
 }
 
 pub fn default_socket() -> PathBuf {
@@ -50,6 +53,15 @@ pub fn load(path: &Path) -> Result<Ui> {
 pub fn fetch(src: &Source) -> Result<Value, String> {
     if let Some(v) = &src.value {
         return narrow(&v.to_string(), src.path.as_deref());
+    }
+    if let Some(argv) = &src.stream {
+        let mut child = spawn_stream(argv)?;
+        let mut line = String::new();
+        let read = BufReader::new(child.stdout.take().ok_or("no stdout")?).read_line(&mut line);
+        let _ = child.kill();
+        let _ = child.wait();
+        read.map_err(|e| e.to_string())?;
+        return narrow(&line, src.path.as_deref());
     }
     let mut cmd = match (&src.cmd, &src.shell) {
         (Some(argv), _) if !argv.is_empty() => {
@@ -72,6 +84,17 @@ pub fn fetch(src: &Source) -> Result<Value, String> {
     narrow(&String::from_utf8_lossy(&out.stdout), src.path.as_deref())
 }
 
+fn spawn_stream(argv: &[String]) -> Result<Child, String> {
+    let (bin, args) = argv.split_first().ok_or("stream: empty command")?;
+    Command::new(bin)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::null())
+        .spawn()
+        .map_err(|e| format!("{bin}: {e}"))
+}
+
 fn exec(argv: &[String]) -> Result<(), String> {
     let (bin, args) = argv.split_first().ok_or("run: empty command")?;
     let out = Command::new(bin).args(args).output().map_err(|e| e.to_string())?;
@@ -88,11 +111,26 @@ struct Driver {
     tx: Sender<Event>,
     in_flight: BTreeSet<String>,
     last_fetch: BTreeMap<String, Instant>,
+    /// Running `stream` sources, with the definition each was started from.
+    streams: BTreeMap<String, (Source, Child)>,
     quit: bool,
     blocking: bool,
 }
 
+impl Drop for Driver {
+    fn drop(&mut self) {
+        for (_, (_, mut c)) in std::mem::take(&mut self.streams) {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+}
+
 impl Driver {
+    fn new(tx: Sender<Event>, blocking: bool) -> Driver {
+        Driver { tx, in_flight: BTreeSet::new(), last_fetch: BTreeMap::new(), streams: BTreeMap::new(), quit: false, blocking }
+    }
+
     fn apply(&mut self, st: &mut State, msg: Msg) {
         if let Msg::Data { name, .. } = &msg {
             self.in_flight.remove(name);
@@ -110,6 +148,9 @@ impl Driver {
                     let result = fetch(src);
                     queue.extend(update(st, Msg::Data { name, result }));
                 }
+                Effect::Fetch(name) if st.ui.data.get(&name).is_some_and(|s| s.stream.is_some()) => {
+                    self.start_stream(st, name)
+                }
                 Effect::Fetch(name) => self.spawn_fetch(st, name),
                 Effect::Run(argv) => {
                     if self.blocking {
@@ -124,6 +165,52 @@ impl Driver {
                 }
             }
         }
+        self.reap(st);
+    }
+
+    /// Start a stream source unless it's already running from the same definition.
+    fn start_stream(&mut self, st: &mut State, name: String) {
+        let Some(src) = st.ui.data.get(&name).cloned() else { return };
+        if self.streams.get(&name).is_some_and(|(def, _)| *def == src) {
+            return;
+        }
+        let argv = src.stream.clone().unwrap_or_default();
+        let mut child = match spawn_stream(&argv) {
+            Ok(c) => c,
+            Err(e) => {
+                update(st, Msg::Data { name, result: Err(e) });
+                return;
+            }
+        };
+        let out = child.stdout.take().expect("piped");
+        let (tx, path, n) = (self.tx.clone(), src.path.clone(), name.clone());
+        std::thread::spawn(move || {
+            for line in BufReader::new(out).lines().map_while(Result::ok) {
+                if line.trim().is_empty() {
+                    continue;
+                }
+                let msg = Msg::Data { name: n.clone(), result: narrow(&line, path.as_deref()) };
+                if tx.send(Event::Msg(msg)).is_err() {
+                    return;
+                }
+            }
+        });
+        if let Some((_, mut old)) = self.streams.insert(name, (src, child)) {
+            let _ = old.kill();
+            let _ = old.wait();
+        }
+    }
+
+    /// Stop streams the UI no longer has (or has changed).
+    fn reap(&mut self, st: &State) {
+        let gone: Vec<String> =
+            self.streams.iter().filter(|(k, (def, _))| st.ui.data.get(*k) != Some(def)).map(|(k, _)| k.clone()).collect();
+        for k in gone {
+            if let Some((_, mut c)) = self.streams.remove(&k) {
+                let _ = c.kill();
+                let _ = c.wait();
+            }
+        }
     }
 
     /// Sources with `every` that are due.
@@ -133,9 +220,10 @@ impl Driver {
             .data
             .iter()
             .filter(|(k, s)| {
-                s.every.is_some_and(|secs| {
-                    self.last_fetch.get(*k).is_none_or(|t| t.elapsed() >= Duration::from_secs_f64(secs.max(0.2)))
-                })
+                s.stream.is_none()
+                    && s.every.is_some_and(|secs| {
+                        self.last_fetch.get(*k).is_none_or(|t| t.elapsed() >= Duration::from_secs_f64(secs.max(0.01)))
+                    })
             })
             .map(|(k, _)| k.clone())
             .collect();
@@ -161,6 +249,7 @@ impl Driver {
         let msg = match req {
             Request::Get => return serde_json::to_value(&st.ui).unwrap_or_default(),
             Request::State => return serde_json::to_value(&*st).unwrap_or_default(),
+            Request::Stats => return serde_json::to_value(&st.stats).unwrap_or_default(),
             Request::Push { ui } => Msg::Push { ui },
             Request::Patch { id, node } => Msg::Patch { id, node },
             Request::Key { key } => Msg::Key { key },
@@ -180,22 +269,44 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
     let (tx, rx) = mpsc::channel();
     serve(&socket, tx.clone())?;
     let mut st = State::default();
-    let mut d = Driver { tx, in_flight: BTreeSet::new(), last_fetch: BTreeMap::new(), quit: false, blocking: false };
+    let mut d = Driver::new(tx, false);
     d.apply(&mut st, Msg::Push { ui });
     let mut seen = file.as_deref().and_then(mtime);
 
     let mut term = ratatui::init();
     let res = (|| -> Result<()> {
-        while !d.quit {
-            term.draw(|f| view::draw(&st, f))?;
-            if event::poll(Duration::from_millis(50))?
-                && let TermEvent::Key(k) = event::read()?
-                && k.kind == KeyEventKind::Press
-                && let Some(key) = key_name(k)
-            {
-                d.apply(&mut st, Msg::Key { key });
+        // Draw only when something changed, at most once per frame budget (120 fps).
+        let budget = Duration::from_micros(8_333);
+        // Terminal input joins the same queue as everything else.
+        let input = d.tx.clone();
+        std::thread::spawn(move || {
+            while let Ok(ev) = event::read() {
+                if input.send(Event::Term(ev)).is_err() {
+                    return;
+                }
             }
-            drain(&rx, &mut d, &mut st);
+        });
+        let mut dirty = true;
+        let mut last_draw = Instant::now() - budget;
+        let mut window = Window::new();
+        while !d.quit {
+            if dirty && last_draw.elapsed() >= budget {
+                let t = Instant::now();
+                term.draw(|f| view::draw(&st, f))?;
+                window.frame(t.elapsed());
+                last_draw = Instant::now();
+                dirty = false;
+            }
+            // Sleep until the next frame is due (when there's something to draw) or a while.
+            let wait = if dirty { budget.saturating_sub(last_draw.elapsed()) } else { Duration::from_millis(50) };
+            let mut batch = Vec::new();
+            if let Ok(ev) = rx.recv_timeout(wait) {
+                batch.push(ev);
+                batch.extend(rx.try_iter().take(10_000));
+            }
+            let n = apply_batch(batch, &mut d, &mut st);
+            window.msgs += n;
+            dirty |= n > 0;
             d.tick(&mut st);
             if watch && let Some(p) = &file {
                 let now = mtime(p);
@@ -205,7 +316,12 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
                         Ok(ui) => d.apply(&mut st, Msg::Push { ui }),
                         Err(e) => st.status = Some(format!("{e:#}")),
                     }
+                    dirty = true;
                 }
+            }
+            if let Some(stats) = window.report(st.stats.frames) {
+                d.apply(&mut st, Msg::Stats { stats });
+                dirty = true;
             }
         }
         Ok(())
@@ -215,14 +331,76 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
     res
 }
 
-fn drain(rx: &Receiver<Event>, d: &mut Driver, st: &mut State) {
-    while let Ok(ev) = rx.try_recv() {
+/// Apply a batch of queued events. A source's value replaces the last one, so of several queued
+/// values for one source only the newest is applied (the rest still count as received). Returns
+/// how many events arrived.
+fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State) -> usize {
+    let n = batch.len();
+    let mut newest: BTreeMap<String, usize> = BTreeMap::new();
+    for (i, ev) in batch.iter().enumerate() {
+        if let Event::Msg(Msg::Data { name, .. }) = ev {
+            newest.insert(name.clone(), i);
+        }
+    }
+    for (i, ev) in batch.into_iter().enumerate() {
         match ev {
-            Event::Msg(m) => d.apply(st, m),
+            Event::Msg(Msg::Data { name, .. }) if newest.get(&name) != Some(&i) => d.in_flight.remove(&name),
+            Event::Msg(m) => {
+                d.apply(st, m);
+                true
+            }
             Event::Request(req, reply) => {
                 let _ = reply.send(d.request(st, req));
+                true
             }
+            Event::Term(TermEvent::Key(k)) if k.kind == KeyEventKind::Press => {
+                if let Some(key) = key_name(k) {
+                    d.apply(st, Msg::Key { key });
+                }
+                true
+            }
+            Event::Term(_) => true,
+        };
+    }
+    n
+}
+
+/// Counts frames and messages over half-second windows.
+struct Window {
+    start: Instant,
+    frames: u64,
+    draw: Duration,
+    max: Duration,
+    msgs: usize,
+}
+
+impl Window {
+    fn new() -> Window {
+        Window { start: Instant::now(), frames: 0, draw: Duration::ZERO, max: Duration::ZERO, msgs: 0 }
+    }
+
+    fn frame(&mut self, took: Duration) {
+        self.frames += 1;
+        self.draw += took;
+        self.max = self.max.max(took);
+    }
+
+    /// The window's numbers once it's half a second old (and a fresh window).
+    fn report(&mut self, total: u64) -> Option<Stats> {
+        let secs = self.start.elapsed().as_secs_f64();
+        if secs < 0.5 {
+            return None;
         }
+        let ms = |d: Duration| d.as_secs_f64() * 1000.0;
+        let stats = Stats {
+            fps: self.frames as f64 / secs,
+            draw_ms: if self.frames > 0 { ms(self.draw) / self.frames as f64 } else { 0.0 },
+            max_ms: ms(self.max),
+            msgs: self.msgs as f64 / secs,
+            frames: total + self.frames,
+        };
+        *self = Window::new();
+        Some(stats)
     }
 }
 
@@ -281,7 +459,7 @@ pub fn render(ui: Ui, width: u16, height: u16, keys: &[String]) -> Result<String
     use ratatui::{Terminal, backend::TestBackend};
     let (tx, _rx) = mpsc::channel();
     let mut st = State::default();
-    let mut d = Driver { tx, in_flight: BTreeSet::new(), last_fetch: BTreeMap::new(), quit: false, blocking: true };
+    let mut d = Driver::new(tx, true);
     d.apply(&mut st, Msg::Push { ui });
     for k in keys {
         d.apply(&mut st, Msg::Key { key: k.clone() });

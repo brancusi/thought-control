@@ -129,13 +129,16 @@ pub struct Style {
 }
 
 /// Where a source's value comes from. A command prints JSON on stdout; `path` picks a part of it
-/// (`"items"`); `every` re-runs it (seconds).
+/// (`"items"`); `every` re-runs it (seconds). A `stream` command keeps running and each JSON line
+/// it prints replaces the value: a live feed without a process per update.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Source {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub cmd: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub shell: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub stream: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub value: Option<Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
