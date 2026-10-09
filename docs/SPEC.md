@@ -543,7 +543,7 @@ docs/  SPEC.md · FORMAT.md (event log contract, versioned) · guide/
 > **Budgets are targets, not gates**. Feature
 > work doesn't run benchmarks; only CI's guards hold a merge, and they're set at about ten times
 > these targets to catch order-of-magnitude regressions (typing 40 ms p50, a day opening 50 ms,
-> reads 60 ms mean on the runner). A dedicated performance pass brings numbers back to target.
+> reads 60 ms mean in CI). A dedicated performance pass brings numbers back to target.
 
 **Measured on an Apple-silicon dev machine, average wall-clock time per run over 300 runs:**
 
