@@ -1,0 +1,166 @@
+{
+ "id": "perspective",
+ "name": "Perspective",
+ "group": "teaching-and-live-data",
+ "tagline": "WebAssembly streaming query engine with live grids, pivots and charts",
+ "links": {
+  "site": "https://perspective-dev.github.io",
+  "repo": "https://github.com/perspective-dev/perspective",
+  "docs": "https://perspective-dev.github.io/guide/",
+  "other": [
+   {
+    "label": "Benchmarks (published per release as Arrow)",
+    "url": "https://perspective-dev.github.io/guide/benchmarks.html"
+   },
+   {
+    "label": "Save/restore viewer config",
+    "url": "https://perspective-dev.github.io/guide/how_to/javascript/save_restore.html"
+   },
+   {
+    "label": "PR #3209: LLM agent for <perspective-viewer>",
+    "url": "https://github.com/perspective-dev/perspective/pull/3209"
+   },
+   {
+    "label": "OpenJS Foundation announcement",
+    "url": "https://openjsf.org/blog/perspective-joins-openjs"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Apache-2.0. Moved from FINOS (where J.P. Morgan contributed it) to the OpenJS Foundation as an Incubating Project (2025-10-30); repo moved from finos/perspective to perspective-dev/perspective."
+ },
+ "language": "C++ engine compiled to WebAssembly, Rust (viewer, client), TypeScript, Python bindings",
+ "backing": "OpenJS Foundation (incubating); originally J.P. Morgan; lead maintainer Andrew Stein (texodus, 3,883 commits), co-founder of The Prospective Company.",
+ "first_release": "2019-04",
+ "latest_release": {
+  "tag": "v5.5.1",
+  "date": "2026-09-18"
+ },
+ "adoption": {
+  "github_stars": 11282,
+  "stars_fetched": "2026-10-09",
+  "downloads": "npm/week: @perspective-dev/client 16,085, @finos/perspective 13,967, @perspective-dev/viewer 10,839; PyPI perspective-python 5,680/week (2026-10).",
+  "notable_users": [
+   "J.P. Morgan (origin)"
+  ],
+  "summary": "A niche but serious tool, strongest in financial services trading/analytics dashboards (OpenJS announcement). Download numbers are modest compared with general charting libraries."
+ },
+ "maintainability": {
+  "release_cadence": "Roughly weekly to biweekly in 2026: v5.0.0 2026-07-28, v5.2.0 2026-08-10, v5.3.0 2026-08-25, v5.4.0 2026-09-09, v5.5.0 2026-09-15, v5.5.1 2026-09-18.",
+  "contributors": "~104 (GitHub, incl. anonymous)",
+  "recent_activity": "100+ commits and 32 merged PRs since 2026-07-11.",
+  "bus_factor": "low-medium: texodus has ~3,900 commits vs 884 and 453 for the next two; foundation home mitigates.",
+  "summary": "Active with a fast major-version pace (v4 Oct 2025, v5 Jul 2026), but concentrated in one lead."
+ },
+ "architecture": {
+  "summary": "A C++ columnar engine (WASM in the browser, native in Python/Rust) holds Tables that accept incremental updates (Arrow, CSV, JSON); Views over a table (group_by, split_by, filters, sorts, ExprTK expressions, windows) recompute incrementally and notify on update. The client/server API is symmetric: the same calls work in-process, in a Web Worker, or over WebSocket, and large datasets can stay server-side with only the visible window streamed. <perspective-viewer> is a Custom Element whose whole configuration (plugin, columns, pivots, filters, expressions, theme) is a JSON ViewerConfig obtained with save() and applied with restore(). Virtual servers translate view configs into DuckDB, ClickHouse, PostgreSQL or Polars queries.",
+  "key_points": [
+   "Data path bypasses any UI code: table.update(arrow) on a socket feeds views and WebGL charts directly.",
+   "Viewer state is a serializable JSON value (save/restore), with generated JSON schemas for ViewerConfigUpdate/ViewerConfigInitial.",
+   "First-party LLM agent (PR #3209, merged 2026-08-07, shipped v5.2.0): agentConfig/agentPrompt drive the viewer through its public API (read schema, write ViewerConfig, choose plugin, author expressions); providers include Anthropic, OpenAI, Gemini, Ollama, WebLLM.",
+   "64-bit memory64 build for >4 GB in-browser datasets; OPFS/mmap column paging."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Benchmark suite runs in CI on every tagged release; raw per-iteration timings attached to each GitHub release as Arrow files (GitHub-hosted ubuntu-22.04 runner, Node 22, Superstore sample dataset).",
+    "source": "https://perspective-dev.github.io/guide/benchmarks.html"
+   },
+   {
+    "text": "v5.5.1 JS (WASM under Node), mean real time excluding outliers, computed by this research from benchmark-js.arrow: table.update(arrow) 46.9 ms; .table(arrow) 8.8 ms; .view() 0.72 ms; .view({group_by}) 33.6 ms; .view({expressions}) 2.1 ms; .to_arrow() 16.1 ms.",
+    "source": "https://github.com/perspective-dev/perspective/releases/latest/download/benchmark-js.arrow"
+   }
+  ],
+  "summary": "Measured, reproducible per-operation timings are published for every release, on a whole sample dataset (Superstore). No headline 'updates per second' or ticks-per-second figure is published, so streaming rate must be inferred; the updates bypass any model or UI framework."
+ },
+ "agent_usability": {
+  "how": "In-page: viewer.agentConfig({...provider, apiKey, docs}) then viewer.agentPrompt('Show me Sales by Region as a bar chart') runs tool calls against the viewer's public API; tool activity is emitted as perspective-agent-tool events. Externally: any agent that can call JS (or the Python/Rust client over WebSocket) can save()/restore() JSON configs and push table updates. No MCP server found.",
+  "integration_effort": "Low inside a web page (opt-in, bring a provider key or local model); for an external agent, a small bridge exposing restore/save/update.",
+  "readback": "save() returns full viewer config; view.to_json/to_arrow/to_columns return data; schema via table.schema().",
+  "granular_edits": "restore() accepts partial ViewerConfigUpdate; table.update() with an index patches rows in place.",
+  "history": "None; no undo or recorded history for viewer configs or data.",
+  "summary": "Streaming data and a JSON-addressable view config make it very agent-friendly; the built-in agent proves it, but it lives inside the browser page."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 3,
+  "readback": 4,
+  "granular_edits": 4,
+  "time_travel": 0,
+  "live_data_rate": 4,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 1,
+  "maturity": 4,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "Each viewer is a JSON config; a whole app layout is still host code.",
+  "agent_drivable": "First-party in-page agent API, but no external protocol/MCP.",
+  "live_data_rate": "Built for streaming and data bypasses the model, but no published ticks/second figure; per-op timings only.",
+  "pixel_graphics": "WebGL charting with 15+ chart types and tile maps.",
+  "teaching": "Not a teaching tool.",
+  "openness": "Apache-2.0 under the OpenJS Foundation."
+ },
+ "steelman": "Perspective is what live data viz looks like when it is engineered by people who had to show trading desks real-time books: a C++ incremental query engine in WebAssembly, so pivots, filters and expressions recompute on each update without a server round trip, and charts render in WebGL. The view is pure data: one JSON config captures everything a user built with drag and drop, and the same client API runs in-process, in a worker or over a socket, even against DuckDB or ClickHouse without copying data. It publishes reproducible benchmarks for every release as data you can open in Perspective itself. And it has already done the agent move properly: a first-party LLM agent that drives the viewer only through its public, schema-checked config API, with local-model support. It now sits in a neutral foundation under Apache-2.0.",
+ "weaknesses": [
+  "Browser/notebook only; no terminal renderer.",
+  "No published headline streaming rate; benchmarks are per-operation on a sample dataset, on shared CI runners.",
+  "Agent integration is in-page (needs a provider key or WebLLM), not an external protocol or MCP.",
+  "Concentrated maintainership (texodus ~3,900 commits); frequent major versions (v4 Oct 2025, v5 Jul 2026) and package renames (@finos to @perspective-dev) churn users.",
+  "Modest adoption outside finance (~16k/week npm for the main client)."
+ ],
+ "relation_to_scene": {
+  "overlap": "High-rate data streams that bypass the model, bound to views whose configuration is a JSON value an agent can read and rewrite.",
+  "scene_reinvents": "Incremental streaming tables with pivots/aggregates/expressions; if scene needs analytics over streams, Perspective's engine (also available as a Rust crate) already does it far better than ad-hoc stream coalescing.",
+  "borrow": [
+   "Generate JSON schemas for the config/patch types and hand them to the agent as tool parameter schemas (as PR #3209 does).",
+   "Ship a docs bundle (BM25-searchable JSON) with the binary for agent retrieval.",
+   "Publish benchmarks per release as data files, and view them in the tool itself.",
+   "Partial config updates (ViewerConfigUpdate) vs full initial config as two distinct typed operations."
+  ],
+  "gap_left": "Terminal-native rendering, agent control over a local socket of the whole UI (not one widget), screen-as-text readback, teaching tours and time travel.",
+  "verdict": "borrow",
+  "verdict_why": "Best-in-class streaming data component whose agent and schema patterns scene should copy; it is a web widget, not a terminal UI runtime, though its Rust crate could back a scene data source."
+ },
+ "sources": [
+  {
+   "title": "Perspective README",
+   "url": "https://github.com/perspective-dev/perspective"
+  },
+  {
+   "title": "Perspective benchmarks guide",
+   "url": "https://perspective-dev.github.io/guide/benchmarks.html"
+  },
+  {
+   "title": "benchmark-js.arrow (v5.5.1 release asset)",
+   "url": "https://github.com/perspective-dev/perspective/releases/latest/download/benchmark-js.arrow"
+  },
+  {
+   "title": "PR #3209 LLM Agent for <perspective-viewer>",
+   "url": "https://github.com/perspective-dev/perspective/pull/3209"
+  },
+  {
+   "title": "OpenJS: Perspective joins as Incubating Project (2025-10-30)",
+   "url": "https://openjsf.org/blog/perspective-joins-openjs"
+  },
+  {
+   "title": "Discussion #3077: joining OpenJS and v4.0.0",
+   "url": "https://github.com/perspective-dev/perspective/discussions/3077"
+  },
+  {
+   "title": "Save/restore docs",
+   "url": "https://perspective-dev.github.io/guide/how_to/javascript/save_restore.html"
+  },
+  {
+   "title": "GitHub API perspective-dev/perspective",
+   "url": "https://api.github.com/repos/perspective-dev/perspective"
+  },
+  {
+   "title": "npm downloads @perspective-dev/client",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@perspective-dev/client"
+  }
+ ]
+}

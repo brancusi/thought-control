@@ -1,0 +1,400 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { u } from '../../lib/url';
+import { AXES, COMPOSITES, GROUPS, GROUP_ORDER, VERDICTS, score, stars, type Dossier } from '../../lib/landscape';
+
+const all = (await getCollection('landscape')).map((e) => e.data as Dossier);
+const order = (d: Dossier) => GROUP_ORDER.indexOf(d.group) * 1000 - (d.adoption?.github_stars ?? 0) / 1e6;
+const tools = all.sort((a, b) => order(a) - order(b));
+const self = tools.find((t) => t.group === 'self')!;
+const others = tools.filter((t) => t.group !== 'self');
+const fetched = others.map((t) => t.adoption?.stars_fetched).filter(Boolean).sort().at(-1) ?? '2026-10-09';
+
+// What the page's script needs, and no more.
+const data = tools.map((t) => ({
+  id: t.id, name: t.name, short: t.name.replace(/\s*\(.*$/, '').replace(/ for agents$/, ''), group: t.group, tagline: t.tagline, scores: t.scores, planned: t.planned_scores ?? null,
+  stars: t.adoption?.github_stars ?? null, license: t.license?.spdx ?? null, verdict: t.relation_to_scene?.verdict ?? null,
+}));
+
+// Who leads each axis (not counting thc-scene): the honest part of the board.
+const leaders = AXES.map((a) => {
+  const best = Math.max(...others.map((t) => t.scores[a.key] ?? 0));
+  return { axis: a, best, who: others.filter((t) => (t.scores[a.key] ?? 0) === best && best > 0), self: self.scores[a.key] ?? 0 };
+});
+const byVerdict = Object.keys(VERDICTS).map((v) => ({ v, tools: others.filter((t) => t.relation_to_scene?.verdict === v) }));
+const borrows = others.flatMap((t) => (t.relation_to_scene?.borrow ?? []).map((b: string) => ({ t, b })));
+---
+<Base title="Landscape" description="Where thc-scene fits among terminal UI frameworks, agent UI specs, agent canvases, time-travel tools and live dashboards: a dossier on each, scored on one rubric, with the specific gap it fills." tab="hood">
+  <header class="page-head">
+    <p class="kicker"><span class="blk" aria-hidden="true"></span>landscape · {others.length} tools · data as of {fetched}</p>
+    <h1>What we're building, and what we're not</h1>
+    <p class="lede">thc-scene is a terminal UI that is one JSON value an agent can drive, see and change, a piece at a time. Plenty of good tools sit nearby. Each one has a dossier here, written to make the <strong>best case for that tool</strong>, scored on one rubric, with links out. The point isn't that scene wins. It's to find the <strong>one gap</strong> it fills, what it would only be reinventing, and what to borrow instead.</p>
+  </header>
+
+  <section class="gap">
+    <div class="scrap gap__card" style="--tilt:-0.6deg">
+      <span class="k">the gap, as the research found it</span>
+      <h2>A UI an agent writes as data, rewrites live, and watches stream.</h2>
+      <p>Every part of the loop exists somewhere, done better than scene does it today. <a href={u('landscape/a2ui/')}>A2UI</a> and <a href={u('landscape/json-render/')}>json-render</a> own the formats. <a href={u('landscape/ratatui/')}>ratatui</a> and <a href={u('landscape/opentui/')}>OpenTUI</a> own terminal rendering. <a href={u('landscape/redux-devtools/')}>Redux DevTools</a> has the richest time travel for people, <a href={u('landscape/langgraph-time-travel/')}>LangGraph</a> the cleanest history an agent can call (for agent state, not UI), <a href={u('landscape/rerun/')}>Rerun</a> the best split between a view written once and data streaming at kHz, and <a href={u('landscape/scrimba/')}>Scrimba</a> owns take-over teaching. The closest twin, <a href={u('landscape/raxol/')}>raxol</a>, already lets an agent operate a live terminal UI over MCP, see it as a widget tree, and step through its history.</p>
+      <p>What none of them does: let an agent <strong>write the whole UI as one value and rewrite any piece of it while it runs</strong>, bind it to live streams that never pass through the model, render it natively in the terminal with pixels where the terminal allows, and (planned) rewind, fork and replay it. That narrow combination is the gap. Most of the rest, scene should borrow.</p>
+    </div>
+  </section>
+
+  <div class="sec" id="map">the map</div>
+  <div class="map">
+    <div class="map__ctl">
+      <label>across <select data-ax="x">{[...AXES, ...COMPOSITES].map((a) => <option value={a.key} selected={a.key === 'agent_loop'}>{a.label}</option>)}</select></label>
+      <label>up <select data-ax="y">{[...AXES, ...COMPOSITES].map((a) => <option value={a.key} selected={a.key === 'live_ui'}>{a.label}</option>)}</select></label>
+      <span class="map__presets">
+        <button type="button" data-preset="agent_loop,live_ui">agent loop × live UI</button>
+        <button type="button" data-preset="time_travel,agent_drivable">time travel × agent</button>
+        <button type="button" data-preset="terminal_craft,ui_as_data">terminal × data</button>
+        <button type="button" data-preset="maturity,agent_loop">mature × agent</button>
+      </span>
+      <label class="map__planned"><input type="checkbox" data-planned /> show scene's planned scores</label>
+    </div>
+    <svg class="map__svg" viewBox="0 0 760 520" role="img" aria-label="Tools plotted on two chosen axes" data-map></svg>
+    <ul class="legend">{GROUP_ORDER.map((g) => <li class={`g-${g}`}><i></i>{GROUPS[g].label}</li>)}</ul>
+  </div>
+
+  <div class="sec" id="compare">compare</div>
+  <div class="cmp">
+    <div class="cmp__ctl">
+      <label>scene against <select data-cmp>{others.map((t) => <option value={t.id}>{t.name}</option>)}</select></label>
+    </div>
+    <div class="cmp__body">
+      <svg class="cmp__svg" viewBox="0 0 440 400" role="img" aria-label="Radar of scores for scene and the chosen tool" data-radar></svg>
+      <div class="cmp__text" data-cmp-text></div>
+    </div>
+  </div>
+
+  <div class="sec" id="matrix">the matrix</div>
+  <div class="mx__ctl">
+    <input type="search" placeholder="filter by name, license…" data-filter aria-label="Filter tools" />
+    <span class="chips">{GROUP_ORDER.filter((g) => g !== 'self').map((g) => <button type="button" class={`chip g-${g}`} data-group={g} aria-pressed="true"><i></i>{GROUPS[g].label}</button>)}</span>
+  </div>
+  <div class="mx__wrap">
+    <table class="mx" data-mx>
+      <thead><tr>
+        <th data-sort="name">tool</th><th data-sort="license">license</th><th data-sort="stars" class="n">stars</th>
+        {AXES.map((a) => <th data-sort={a.key} class="s" title={`${a.label}: ${a.rubric}`}>{a.short}</th>)}
+        <th data-sort="verdict">verdict</th>
+      </tr></thead>
+      <tbody>
+        {tools.map((t) => (
+          <tr class={`g-${t.group}${t.group === 'self' ? ' self' : ''}`} data-id={t.id} data-group={t.group} data-name={t.name} data-license={t.license?.spdx ?? ''} data-stars={t.adoption?.github_stars ?? -1} data-verdict={t.relation_to_scene?.verdict ?? ''} {...Object.fromEntries(AXES.map((a) => [`data-${a.key}`, t.scores[a.key] ?? 0]))}>
+            <td class="nm"><i></i><a href={u(`landscape/${t.id}/`)}>{t.name}</a><span>{t.tagline}</span></td>
+            <td class="lic" title={[t.license?.spdx, t.license?.notes].filter(Boolean).join(' · ')}>{(t.license?.spdx ?? '—').split(/;| \(|, /)[0]}</td>
+            <td class="n">{stars(t.adoption?.github_stars)}</td>
+            {AXES.map((a) => <td class="s" style={`--v:${(t.scores[a.key] ?? 0) / 5}`} title={`${a.label}: ${t.scores[a.key] ?? 0}/5${t.score_notes?.[a.key] ? ` · ${t.score_notes[a.key]}` : ''}`}>{t.scores[a.key] ?? 0}</td>)}
+            <td>{t.relation_to_scene?.verdict && t.group !== 'self' ? <span class={`stamp v-${t.relation_to_scene.verdict}`}>{t.relation_to_scene.verdict}</span> : <span class="dim">—</span>}</td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  </div>
+  <p class="muted small">Hover a column for its rubric, a cell for the reason behind the score. Click a header to sort.</p>
+
+  <div class="sec" id="leaders">who leads each axis</div>
+  <p class="muted">Not counting scene. Where someone else scores higher, that's where scene is reinventing, or should borrow.</p>
+  <div class="lead">
+    {leaders.map(({ axis, best, who, self: s }) => (
+      <div class="lead__row">
+        <span class="lead__ax" title={axis.rubric}>{axis.label}</span>
+        <span class="lead__who">{who.length ? who.map((t, i) => <>{i > 0 && ', '}<a href={u(`landscape/${t.id}/`)}>{t.name}</a></>) : <span class="dim">nobody yet</span>} <span class="dim">· {best}/5</span></span>
+        <span class={`lead__self ${s > best ? 'up' : s < best ? 'down' : ''}`}>scene {s}{self.planned_scores?.[axis.key] != null && self.planned_scores[axis.key] !== s ? <span class="dim"> → {self.planned_scores[axis.key]} planned</span> : null}</span>
+      </div>
+    ))}
+  </div>
+
+  <div class="sec" id="verdicts">use, adopt, borrow</div>
+  <div class="grid verdicts">
+    {byVerdict.filter((b) => b.tools.length).map(({ v, tools }) => (
+      <div class="cell">
+        <span class={`stamp v-${v}`}>{v}</span>
+        <p class="muted">{VERDICTS[v]}</p>
+        <ul>{tools.map((t) => <li><a href={u(`landscape/${t.id}/`)}>{t.name}</a> <span class="dim">· {t.relation_to_scene?.verdict_why}</span></li>)}</ul>
+      </div>
+    ))}
+  </div>
+  {borrows.length > 0 && (
+    <>
+      <h3 class="borrow__h">What to take, tool by tool</h3>
+      <ul class="borrow">{borrows.map(({ t, b }) => <li><a href={u(`landscape/${t.id}/`)}>{t.name}</a>: {b}</li>)}</ul>
+    </>
+  )}
+
+  <div class="sec" id="method">method</div>
+  <div class="method">
+    <p>Research agents wrote one dossier per tool from primary sources (repos, the GitHub, npm, crates.io and PyPI APIs, official docs, maintainers' posts), with the instruction to steelman: make the best honest case for each tool, and say plainly where it already does what scene does. Every score uses the same rubric; every claim in a dossier links to its source. Numbers are as of the date in each dossier. scene's own dossier follows the same rules, including a 0 where nothing is built yet; its planned scores are drawn separately, dashed.</p>
+    <table class="rubric">{AXES.map((a) => <tr><th>{a.label}</th><td>{a.rubric}</td></tr>)}</table>
+  </div>
+
+  <script type="application/json" id="ls-data" set:html={JSON.stringify({ tools: data, axes: AXES, composites: COMPOSITES, groups: GROUPS, base: u('landscape/') })} />
+</Base>
+
+<script>
+  type T = { id: string; name: string; short: string; group: string; tagline: string; scores: Record<string, number>; planned: Record<string, number> | null; stars: number | null; license: string | null; verdict: string | null };
+  const raw = JSON.parse(document.getElementById('ls-data')!.textContent!);
+  const tools: T[] = raw.tools;
+  const AX: { key: string; label: string; short: string }[] = raw.axes;
+  const CO: { key: string; label: string; of: string[] }[] = raw.composites;
+  const base: string = raw.base;
+  const NS = 'http://www.w3.org/2000/svg';
+  const el = (n: string, a: Record<string, any> = {}, txt?: string) => {
+    const e = document.createElementNS(NS, n);
+    for (const k in a) e.setAttribute(k, String(a[k]));
+    if (txt != null) e.textContent = txt;
+    return e;
+  };
+  const val = (t: T, key: string, planned = false) => {
+    const s = planned && t.planned ? t.planned : t.scores;
+    const c = CO.find((c) => c.key === key);
+    return c ? c.of.reduce((a, k) => a + (s[k] ?? 0), 0) / c.of.length : s[key] ?? 0;
+  };
+  const label = (key: string) => AX.find((a) => a.key === key)?.label ?? CO.find((c) => c.key === key)?.label ?? key;
+
+  // ---- the map --------------------------------------------------------------------------------
+  const svg = document.querySelector<SVGSVGElement>('[data-map]')!;
+  const sx = document.querySelector<HTMLSelectElement>('[data-ax="x"]')!;
+  const sy = document.querySelector<HTMLSelectElement>('[data-ax="y"]')!;
+  const planned = document.querySelector<HTMLInputElement>('[data-planned]')!;
+  const W = 760, H = 520, L = 64, R = 24, Tp = 20, B = 56;
+  const px = (v: number) => L + (v / 5) * (W - L - R);
+  const py = (v: number) => H - B - (v / 5) * (H - Tp - B);
+  function drawMap() {
+    svg.replaceChildren();
+    const xk = sx.value, yk = sy.value;
+    for (let i = 0; i <= 5; i++) {
+      svg.append(el('line', { x1: px(i), x2: px(i), y1: py(0), y2: py(5), class: 'gl' }));
+      svg.append(el('line', { x1: px(0), x2: px(5), y1: py(i), y2: py(i), class: 'gl' }));
+      svg.append(el('text', { x: px(i), y: py(0) + 18, class: 'tk', 'text-anchor': 'middle' }, String(i)));
+      svg.append(el('text', { x: px(0) - 12, y: py(i) + 4, class: 'tk', 'text-anchor': 'end' }, String(i)));
+    }
+    svg.append(el('text', { x: (px(0) + px(5)) / 2, y: H - 12, class: 'axl', 'text-anchor': 'middle' }, `${label(xk)} →`));
+    const yl = el('text', { x: 18, y: (py(0) + py(5)) / 2, class: 'axl', 'text-anchor': 'middle', transform: `rotate(-90 18 ${(py(0) + py(5)) / 2})` }, `${label(yk)} →`);
+    svg.append(yl);
+    // Spread tools that land on the same spot around it.
+    const spots = new Map<string, T[]>();
+    for (const t of tools) {
+      const k = `${val(t, xk).toFixed(2)},${val(t, yk).toFixed(2)}`;
+      spots.set(k, [...(spots.get(k) ?? []), t]);
+    }
+    if (planned.checked) {
+      const s = tools.find((t) => t.group === 'self');
+      if (s?.planned) {
+        const [x0, y0, x1, y1] = [px(val(s, xk)), py(val(s, yk)), px(val(s, xk, true)), py(val(s, yk, true))];
+        if (x0 !== x1 || y0 !== y1) {
+          svg.append(el('line', { x1: x0, y1: y0, x2: x1, y2: y1, class: 'plan' }));
+          svg.append(el('circle', { cx: x1, cy: y1, r: 9, class: 'dot g-self planned' }));
+        }
+      }
+    }
+    // Dots first (spread where several share a spot), then labels placed greedily: the first of
+    // right, left, above, below that doesn't overlap a label or dot already placed.
+    const placed: { x: number; y: number; t: T; r: number }[] = [];
+    for (const [, group] of spots) {
+      group.forEach((t, i) => {
+        const n = group.length, a = (Math.PI * 2 * i) / n - Math.PI / 2, off = n > 1 ? 10 + n * 2 : 0;
+        placed.push({ x: px(val(t, xk)) + Math.cos(a) * off, y: py(val(t, yk)) + Math.sin(a) * off, t, r: t.group === 'self' ? 9 : 6 });
+      });
+    }
+    const boxes: [number, number, number, number][] = placed.map((p) => [p.x - p.r, p.y - p.r, p.x + p.r, p.y + p.r]);
+    const hit = (b: [number, number, number, number]) => boxes.some((o) => b[0] < o[2] && b[2] > o[0] && b[1] < o[3] && b[3] > o[1]) || b[0] < 0 || b[2] > W || b[1] < 0 || b[3] > H - B + 4;
+    const self_ = placed.find((p) => p.t.group === 'self');
+    for (const p of [...(self_ ? [self_] : []), ...placed.filter((q) => q !== self_)]) {
+      const g = el('a', { href: `${base}${p.t.id}/`, class: `pt g-${p.t.group}` });
+      g.append(el('title', {}, `${p.t.name}: ${p.t.tagline}`));
+      g.append(el('circle', { cx: p.x, cy: p.y, r: p.r, class: 'dot' }));
+      const w = p.t.short.length * 6.8 + 4, h = 13;
+      const tries: [number, number, string][] = [[p.x + p.r + 4, p.y + 4, 'start'], [p.x - p.r - 4, p.y + 4, 'end'], [p.x, p.y - p.r - 6, 'middle'], [p.x, p.y + p.r + 14, 'middle'], [p.x + p.r + 4, p.y - 10, 'start'], [p.x + p.r + 4, p.y + 18, 'start']];
+      const box = ([x, y, anc]: [number, number, string]): [number, number, number, number] => {
+        const x0 = anc === 'start' ? x : anc === 'end' ? x - w : x - w / 2;
+        return [x0, y - h + 3, x0 + w, y + 3];
+      };
+      const pick = tries.find((c) => !hit(box(c))) ?? tries[0];
+      boxes.push(box(pick));
+      g.append(el('text', { x: pick[0], y: pick[1], class: 'nm', 'text-anchor': pick[2] }, p.t.short));
+      svg.append(g);
+    }
+  }
+  sx.addEventListener('change', drawMap);
+  sy.addEventListener('change', drawMap);
+  planned.addEventListener('change', drawMap);
+  document.querySelectorAll<HTMLButtonElement>('[data-preset]').forEach((b) =>
+    b.addEventListener('click', () => { const [x, y] = b.dataset.preset!.split(','); sx.value = x; sy.value = y; drawMap(); }));
+  drawMap();
+
+  // ---- the radar --------------------------------------------------------------------------------
+  const radar = document.querySelector<SVGSVGElement>('[data-radar]')!;
+  const pick = document.querySelector<HTMLSelectElement>('[data-cmp]')!;
+  const text = document.querySelector<HTMLElement>('[data-cmp-text]')!;
+  const self = tools.find((t) => t.group === 'self')!;
+  const pts = (s: Record<string, number>, cx: number, cy: number, r: number) =>
+    AX.map((a, i) => { const t = (Math.PI * 2 * i) / AX.length - Math.PI / 2, v = (s[a.key] ?? 0) / 5; return `${cx + Math.cos(t) * r * v},${cy + Math.sin(t) * r * v}`; }).join(' ');
+  function drawRadar() {
+    const o = tools.find((t) => t.id === pick.value)!;
+    radar.replaceChildren();
+    const cx = 220, cy = 200, r = 140;
+    for (let k = 1; k <= 5; k++) radar.append(el('polygon', { points: pts(Object.fromEntries(AX.map((a) => [a.key, k])), cx, cy, r), class: 'ring' }));
+    AX.forEach((a, i) => {
+      const t = (Math.PI * 2 * i) / AX.length - Math.PI / 2;
+      radar.append(el('line', { x1: cx, y1: cy, x2: cx + Math.cos(t) * r, y2: cy + Math.sin(t) * r, class: 'spoke' }));
+      const lx = cx + Math.cos(t) * (r + 26), ly = cy + Math.sin(t) * (r + 26);
+      radar.append(el('text', { x: lx, y: ly + 4, class: 'rl', 'text-anchor': Math.abs(Math.cos(t)) < 0.2 ? 'middle' : Math.cos(t) > 0 ? 'start' : 'end' }, a.short));
+    });
+    if (self.planned) radar.append(el('polygon', { points: pts(self.planned, cx, cy, r), class: 'poly self planned' }));
+    radar.append(el('polygon', { points: pts(o.scores, cx, cy, r), class: `poly other g-${o.group}` }));
+    radar.append(el('polygon', { points: pts(self.scores, cx, cy, r), class: 'poly self' }));
+    const more = AX.filter((a) => (o.scores[a.key] ?? 0) > (self.scores[a.key] ?? 0));
+    const less = AX.filter((a) => (o.scores[a.key] ?? 0) < (self.scores[a.key] ?? 0));
+    text.innerHTML = `<h3><a href="${base}${o.id}/">${o.name}</a></h3><p>${o.tagline}</p>
+      <p><b>Stronger than scene on</b> ${more.length ? more.map((a) => `${a.label} (${o.scores[a.key]} vs ${self.scores[a.key]})`).join(', ') : 'nothing on this rubric'}.</p>
+      <p><b>Weaker on</b> ${less.length ? less.map((a) => `${a.label} (${o.scores[a.key]} vs ${self.scores[a.key]})`).join(', ') : 'nothing'}.</p>
+      ${o.verdict ? `<p><span class="stamp v-${o.verdict}">${o.verdict}</span></p>` : ''}
+      <p class="legend2"><i class="sw self"></i>scene now <i class="sw planned"></i>scene planned <i class="sw other g-${o.group}"></i>${o.name}</p>`;
+  }
+  pick.addEventListener('change', drawRadar);
+  // Start with whichever tool is closest to scene: the most interesting comparison.
+  const dist = (t: T) => AX.reduce((a, x) => a + ((t.scores[x.key] ?? 0) - (self.scores[x.key] ?? 0)) ** 2, 0);
+  const closest = tools.filter((t) => t !== self).sort((a, b) => dist(a) - dist(b))[0];
+  if (closest) pick.value = closest.id;
+  drawRadar();
+
+  // ---- the matrix -------------------------------------------------------------------------------
+  const tbody = document.querySelector<HTMLTableSectionElement>('[data-mx] tbody')!;
+  const filter = document.querySelector<HTMLInputElement>('[data-filter]')!;
+  const chips = [...document.querySelectorAll<HTMLButtonElement>('.chip[data-group]')];
+  let sortKey = '', sortDir = -1;
+  function applyMatrix() {
+    const q = filter.value.toLowerCase().trim();
+    const on = new Set(chips.filter((c) => c.getAttribute('aria-pressed') === 'true').map((c) => c.dataset.group));
+    const rows = [...tbody.rows];
+    for (const r of rows) {
+      const g = r.dataset.group!;
+      const hit = !q || `${r.dataset.name} ${r.dataset.license} ${r.dataset.verdict}`.toLowerCase().includes(q);
+      r.hidden = !(g === 'self' || on.has(g)) || !hit;
+    }
+    if (sortKey) {
+      const v = (r: HTMLTableRowElement) => {
+        const x = r.getAttribute(`data-${sortKey}`) ?? '';
+        return isNaN(Number(x)) || x === '' ? x : Number(x);
+      };
+      rows.sort((a, b) => (a.dataset.group === 'self' ? -1 : b.dataset.group === 'self' ? 1 : (v(a) > v(b) ? 1 : v(a) < v(b) ? -1 : 0) * sortDir));
+      tbody.append(...rows);
+    }
+  }
+  filter.addEventListener('input', applyMatrix);
+  chips.forEach((c) => c.addEventListener('click', () => { c.setAttribute('aria-pressed', c.getAttribute('aria-pressed') === 'true' ? 'false' : 'true'); applyMatrix(); }));
+  document.querySelectorAll<HTMLElement>('[data-mx] th[data-sort]').forEach((th) =>
+    th.addEventListener('click', () => {
+      const k = th.dataset.sort!;
+      sortDir = sortKey === k ? -sortDir : k === 'name' || k === 'license' || k === 'verdict' ? 1 : -1;
+      sortKey = k;
+      document.querySelectorAll('[data-mx] th').forEach((h) => h.removeAttribute('aria-sort'));
+      th.setAttribute('aria-sort', sortDir > 0 ? 'ascending' : 'descending');
+      applyMatrix();
+    }));
+</script>
+
+<style is:global>
+  /* Group colours: the thc status palette, one per group; scene in acid. */
+  .g-self { --gc: var(--accent); }
+  .g-terminal-frameworks { --gc: var(--doing); }
+  .g-agent-ui-specs { --gc: var(--agent); }
+  .g-agent-canvases { --gc: var(--conflict); }
+  .g-time-travel { --gc: var(--today); }
+  .g-teaching-and-live-data { --gc: var(--done); }
+  .stamp { display: inline-block; font: 800 11px/1 var(--sans); font-stretch: 125%; letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 8px 4px; border: 2px solid currentColor; color: var(--signal); transform: rotate(-2deg); }
+  .stamp.v-use { color: var(--done); }
+  .stamp.v-adopt { color: var(--agent); }
+  .stamp.v-borrow { color: var(--today); }
+  .stamp.v-complement { color: var(--doing); }
+  .stamp.v-ignore { color: var(--dim); }
+</style>
+
+<style>
+  .small { font-size: 13px; }
+  .gap { margin: 2.5rem 0 0; }
+  .gap__card { max-width: 860px; }
+  .gap__card h2 { font: 800 clamp(22px, 3vw, 30px)/1.15 var(--sans); font-stretch: 105%; margin: 10px 0 12px; color: var(--paper-ink); }
+  .gap__card p { font-size: 15.5px; line-height: 1.6; }
+  .gap__note { font-size: 13px; opacity: 0.75; }
+
+  .map__ctl, .cmp__ctl, .mx__ctl { display: flex; flex-wrap: wrap; gap: 10px 18px; align-items: center; font: 12px var(--mono); color: var(--muted); margin-bottom: 14px; }
+  select, input[type='search'] { background: var(--surface); color: var(--text); border: 1px solid var(--line); font: 12px var(--mono); padding: 6px 8px; border-radius: 0; }
+  input[type='search'] { min-width: 240px; }
+  .map__presets { display: flex; gap: 8px; flex-wrap: wrap; }
+  .map__presets button, .chip { background: none; border: 1px solid var(--line); color: var(--muted); font: 11px/1.8 var(--mono); padding: 1px 9px; cursor: pointer; border-radius: 0; }
+  .map__presets button:hover, .chip:hover { color: var(--text); border-color: var(--muted); }
+  .map__planned { display: inline-flex; gap: 6px; align-items: center; }
+  .map__svg { width: 100%; height: auto; display: block; border: 1px solid var(--line); background: var(--surface); }
+  .map__svg :global(.gl) { stroke: var(--line); stroke-width: 1; }
+  .map__svg :global(.tk) { fill: var(--dim); font: 10px var(--mono); }
+  .map__svg :global(.axl) { fill: var(--muted); font: 11px var(--mono); letter-spacing: 0.04em; }
+  .map__svg :global(.pt) { text-decoration: none; }
+  .map__svg :global(.dot) { fill: var(--gc); stroke: var(--bg); stroke-width: 2; }
+  .map__svg :global(.dot.planned) { fill: none; stroke: var(--accent); stroke-dasharray: 3 3; }
+  .map__svg :global(.plan) { stroke: var(--accent); stroke-dasharray: 4 4; }
+  .map__svg :global(.nm) { fill: var(--body); font: 11px var(--mono); }
+  .map__svg :global(.pt:hover .nm) { fill: var(--text); text-decoration: underline; }
+  .map__svg :global(.g-self .nm) { fill: var(--accent); font-weight: 700; }
+  .legend, .legend2 { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 18px; font: 11.5px var(--mono); color: var(--muted); margin: 12px 0 0; }
+  .legend i, .chip i { display: inline-block; width: 9px; height: 9px; background: var(--gc); margin-right: 7px; vertical-align: 0; }
+  .chip[aria-pressed='false'] { opacity: 0.45; }
+
+  .cmp__body { display: grid; grid-template-columns: minmax(0, 440px) 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 760px) { .cmp__body { grid-template-columns: 1fr; } }
+  .cmp__svg { width: 100%; height: auto; border: 1px solid var(--line); background: var(--surface); }
+  .cmp__svg :global(.ring) { fill: none; stroke: var(--line); }
+  .cmp__svg :global(.spoke) { stroke: var(--line); }
+  .cmp__svg :global(.rl) { fill: var(--muted); font: 10.5px var(--mono); }
+  .cmp__svg :global(.poly) { fill-opacity: 0.16; stroke-width: 2; }
+  .cmp__svg :global(.poly.self) { fill: var(--accent); stroke: var(--accent); }
+  .cmp__svg :global(.poly.self.planned) { fill: none; stroke-dasharray: 4 4; stroke-width: 1.5; }
+  .cmp__svg :global(.poly.other) { fill: var(--gc); stroke: var(--gc); }
+  .cmp__text :global(h3) { margin: 0 0 4px; }
+  .cmp__text :global(p) { font-size: 15px; margin: 0 0 10px; }
+  .cmp__text :global(.legend2) { list-style: none; padding: 0; display: flex; flex-wrap: wrap; gap: 6px 4px; font: 11.5px var(--mono); color: var(--muted); align-items: center; }
+  .cmp__text :global(.sw) { display: inline-block; width: 18px; height: 3px; background: var(--gc, var(--accent)); margin: 0 6px 0 10px; }
+  .cmp__text :global(.sw.planned) { background: none; border-top: 2px dashed var(--accent); height: 0; }
+  .cmp__text :global(.sw.self) { background: var(--accent); }
+
+  .mx__wrap { overflow-x: auto; border: 1px solid var(--line); }
+  .mx { border-collapse: collapse; width: 100%; font: 12px/1.4 var(--mono); }
+  .mx th { position: sticky; top: 0; background: var(--surface); color: var(--muted); font-weight: 500; text-align: left; padding: 8px 6px; border-bottom: 1px solid var(--line); cursor: pointer; white-space: nowrap; }
+  .mx th[aria-sort] { color: var(--accent); }
+  .mx td { padding: 7px 6px; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .mx .n { text-align: right; white-space: nowrap; }
+  .mx td.s { text-align: center; color: var(--text); background: color-mix(in srgb, var(--accent) calc(var(--v) * 34%), transparent); min-width: 34px; }
+  .mx th.s { text-align: center; }
+  .mx .nm { min-width: 220px; }
+  .mx .nm i { display: inline-block; width: 8px; height: 8px; background: var(--gc); margin-right: 8px; }
+  .mx .nm a { font-weight: 700; }
+  .mx .nm span { display: block; color: var(--dim); font-size: 11px; margin-top: 2px; }
+  .mx tr.self td { background-color: var(--accent-tint); }
+  .mx tr.self td.s { background: color-mix(in srgb, var(--accent) calc(var(--v) * 34%), var(--accent-tint)); }
+  .mx .lic { color: var(--muted); max-width: 150px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; cursor: help; }
+  .mx td:last-child { padding-right: 14px; min-width: 104px; }
+  .mx :global(.stamp) { transform: none; font-size: 9.5px; padding: 3px 5px 2px; border-width: 1.5px; }
+
+  .lead { border-top: 1px solid var(--line); }
+  .lead__row { display: grid; grid-template-columns: 200px 1fr 190px; gap: 12px; padding: 10px 0; border-bottom: 1px solid var(--line); font-size: 15px; align-items: baseline; }
+  @media (max-width: 760px) { .lead__row { grid-template-columns: 1fr; gap: 2px; } }
+  .lead__ax { font: 12px var(--mono); color: var(--muted); }
+  .lead__self { font: 12px var(--mono); color: var(--muted); text-align: right; }
+  .lead__self.up { color: var(--accent); }
+  .lead__self.down { color: var(--signal); }
+  @media (max-width: 760px) { .lead__self { text-align: left; } }
+
+  .verdicts .cell ul { margin: 12px 0 0; padding-left: 1.1em; font-size: 14px; }
+  .verdicts .cell li { margin-bottom: 6px; }
+  .borrow__h { margin: 2.5rem 0 0.6rem; }
+  .borrow { font-size: 15px; columns: 2 380px; column-gap: 40px; padding-left: 1.1em; }
+  .borrow li { break-inside: avoid; margin-bottom: 8px; }
+  .method p { max-width: 75ch; }
+  .rubric { border-collapse: collapse; font-size: 14px; margin-top: 1.2rem; }
+  .rubric th { text-align: left; font: 12px var(--mono); color: var(--muted); padding: 7px 18px 7px 0; vertical-align: top; white-space: nowrap; font-weight: 500; }
+  .rubric td { padding: 7px 0; border-bottom: 1px solid var(--line); }
+</style>

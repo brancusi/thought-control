@@ -1,0 +1,154 @@
+{
+ "id": "phoenix-liveview",
+ "name": "Phoenix LiveView",
+ "group": "agent-canvases",
+ "tagline": "Server-rendered stateful UI that pushes minimal diffs over WebSockets",
+ "links": {
+  "site": "https://www.phoenixframework.org",
+  "repo": "https://github.com/phoenixframework/phoenix_live_view",
+  "docs": "https://hexdocs.pm/phoenix_live_view",
+  "other": [
+   {
+    "label": "Change tracking (assigns and HEEx)",
+    "url": "https://hexdocs.pm/phoenix_live_view/assigns-eex.html"
+   },
+   {
+    "label": "LiveView 1.0 announcement",
+    "url": "https://www.phoenixframework.org/blog/phoenix-liveview-1.0-released"
+   },
+   {
+    "label": "Dashbit: latency and rendering optimizations in LiveView",
+    "url": "https://dashbit.co/blog/latency-rendering-liveview"
+   },
+   {
+    "label": "Tidewave Phoenix (MCP for running Phoenix apps)",
+    "url": "https://github.com/tidewave-ai/tidewave_phoenix"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "MIT. Tidewave Phoenix MCP server is Apache-2.0 (open-source component of the commercial Tidewave product)."
+ },
+ "language": "Elixir (server) + JavaScript client",
+ "backing": "Phoenix core team (Chris McCord, José Valim and others); supported by companies including Dashbit and Fly.io (affiliations not re-verified here)",
+ "first_release": "2019-08",
+ "latest_release": {
+  "tag": "v1.2.12",
+  "date": "2026-09-16"
+ },
+ "adoption": {
+  "github_stars": 6833,
+  "stars_fetched": "2026-10-09",
+  "downloads": "Hex: 46.4M all-time, 3.97M recent (90 days), 399,787 last week (hex.pm API, 2026-10-09)",
+  "notable_users": [],
+  "summary": "The default UI layer for Phoenix apps and the de facto standard in the Elixir ecosystem; ~400k Hex downloads a week."
+ },
+ "maintainability": {
+  "release_cadence": "Every few weeks: v1.2.8 2026-07-27, v1.2.9 2026-08-10, v1.2.10 2026-08-20, v1.2.11 2026-08-27, v1.2.12 2026-09-16 (plus v1.1.33 backport)",
+  "contributors": "~603 (GitHub contributors API with anon, last page index)",
+  "recent_activity": "178 commits since 2026-07-11",
+  "bus_factor": "high: core team plus large contributor base",
+  "summary": "Mature, stable (1.0 in Dec 2024) and steadily maintained."
+ },
+ "architecture": {
+  "summary": "Each LiveView is a stateful server process holding assigns (state); events from the browser arrive as messages, handle_event/handle_info update assigns, and the HEEx template re-renders. Compile-time change tracking splits templates into static and dynamic parts: statics are sent once, and only changed dynamics are diffed and pushed as a compact JSON structure over a WebSocket; comprehensions send statics once regardless of item count, and streams send only inserted/deleted items. The JS client patches the DOM (morphdom). It is close to Elm in shape (state, messages, render) but state lives in an Erlang process, and the view is Elixir templates, not serializable data.",
+  "key_points": [
+   "Server owns state; client is a thin diff applier",
+   "Static/dynamic split + change tracking = small payloads for high-frequency updates",
+   "Streams and comprehensions keep large collections cheap",
+   "PubSub lets any process push updates into many live views",
+   "Phoenix.LiveViewTest drives a LiveView headlessly (render, element |> render_click, form submit) without a browser",
+   "Agent tooling comes from Tidewave: project_eval in the running app, logs, SQL, docs; LiveView 1.1+ debug HEEx annotations map DOM to source"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Static parts are sent once; only changed dynamic parts are re-sent; comprehension statics sent once regardless of item count",
+    "source": "https://hexdocs.pm/phoenix_live_view/assigns-eex.html"
+   },
+   {
+    "text": "Change tracking and rendering optimizations to reduce payload and latency",
+    "source": "https://dashbit.co/blog/latency-rendering-liveview"
+   }
+  ],
+  "summary": "Payload-minimization mechanisms are documented in detail; no official updates-per-second benchmark was found."
+ },
+ "agent_usability": {
+  "how": "No first-class agent protocol for the UI. Agents work through Tidewave's MCP server (execute Elixir in the running dev app, read logs, query DB), through LiveViewTest in code, or by browser automation of the rendered page.",
+  "integration_effort": "Add the tidewave dep and plug in dev; or write LiveViewTest scripts.",
+  "readback": "Via the DOM (browser tools / Tidewave Web), via LiveViewTest render (HTML), or by evaluating code to inspect assigns; no structured UI tree API for agents.",
+  "granular_edits": "The framework itself emits granular, server-originated diffs, but an agent cannot patch the UI; it can only send events or change state/code.",
+  "history": "None built in; no time travel or replay.",
+  "summary": "An excellent model for how a server pushes small, frequent UI updates, but not built for agents to drive."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 3,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 0,
+  "pixel_graphics": 4,
+  "teaching": 1,
+  "maturity": 5,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "declarative HEEx in a host language; the wire diff format is JSON but derived, not authored",
+  "agent_drivable": "only indirect: Tidewave code eval (dev only), LiveViewTest, browser automation",
+  "readback": "DOM/HTML readable via tools; assigns readable by code eval",
+  "granular_edits": "fine-grained diffs exist but one-way, server to client",
+  "live_data_rate": "built for frequent server pushes; no published rates",
+  "pixel_graphics": "browser renders anything (SVG, canvas via hooks)"
+ },
+ "steelman": "LiveView is the most battle-tested answer to 'a stateful server process owns the UI and pushes granular updates to a thin client at high frequency', which is precisely thc-scene's runtime shape. Its compile-time change tracking (statics once, dynamics only when their assigns change, comprehension statics once, streams for big lists) is a decade of hard-won engineering on minimizing what crosses the wire, and PubSub lets any producer fan updates into many views without the view polling. LiveViewTest shows that the same model can be driven headlessly and asserted on, and the BEAM process model gives isolation per view. With 400k weekly downloads and a stable 1.x, it is the reference for server-driven UI.",
+ "weaknesses": [
+  "Browser only; no terminal renderer (raxol bridges a TEA module to LiveView, not the reverse)",
+  "View is Elixir templates, not a serializable value an agent can author or push",
+  "No agent protocol for UI operations; Tidewave covers code eval, logs and DB in development, not UI control",
+  "No time travel or replay",
+  "Every interaction round-trips to the server; offline/latency-sensitive interactions need JS hooks"
+ ],
+ "relation_to_scene": {
+  "overlap": "Server-held state, messages, re-render, and pushing only what changed to the display at high frequency; data producers push into the UI without the view polling.",
+  "scene_reinvents": "Diff minimization: scene's id-keyed patches and stream coalescing are a simpler version of LiveView's static/dynamic change tracking. If scene ever renders to remote clients (web, SSH), LiveView's diff format and streams are the prior art.",
+  "borrow": [
+   "Static/dynamic split for scene templates: precompute static structure once, re-evaluate only bindings whose inputs changed",
+   "Streams semantics (insert/delete/reset by dom id with limits) for large live lists",
+   "PubSub-style topics for data sources so many scene views share one producer",
+   "A LiveViewTest-like headless driver API for scene (render, element(selector) |> click, assert)"
+  ],
+  "gap_left": "LiveView has no agent surface, no UI-as-data, no terminal output, no readback API and no time travel; scene is agent-first in the terminal.",
+  "verdict": "borrow",
+  "verdict_why": "Not a dependency for a Rust TUI, but its change-tracking and streams design is the best prior art for scene's high-frequency granular updates."
+ },
+ "sources": [
+  {
+   "title": "phoenixframework/phoenix_live_view",
+   "url": "https://github.com/phoenixframework/phoenix_live_view"
+  },
+  {
+   "title": "Assigns and HEEx templates: change tracking",
+   "url": "https://hexdocs.pm/phoenix_live_view/assigns-eex.html"
+  },
+  {
+   "title": "Phoenix LiveView 1.0.0 is here (2024-12-03)",
+   "url": "https://www.phoenixframework.org/blog/phoenix-liveview-1.0-released"
+  },
+  {
+   "title": "Dashbit: latency and rendering optimizations in Phoenix LiveView",
+   "url": "https://dashbit.co/blog/latency-rendering-liveview"
+  },
+  {
+   "title": "Hex package phoenix_live_view",
+   "url": "https://hex.pm/api/packages/phoenix_live_view"
+  },
+  {
+   "title": "tidewave-ai/tidewave_phoenix README",
+   "url": "https://github.com/tidewave-ai/tidewave_phoenix"
+  }
+ ]
+}

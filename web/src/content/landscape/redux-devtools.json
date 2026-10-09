@@ -1,0 +1,181 @@
+{
+ "id": "redux-devtools",
+ "name": "Redux DevTools",
+ "group": "time-travel",
+ "tagline": "Action log and time-travel debugger for Redux-style state stores",
+ "links": {
+  "site": "https://github.com/reduxjs/redux-devtools",
+  "repo": "https://github.com/reduxjs/redux-devtools",
+  "docs": "https://github.com/reduxjs/redux-devtools/tree/main/extension/docs",
+  "other": [
+   {
+    "label": "Extension options (maxAge, latency, features)",
+    "url": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Arguments.md"
+   },
+   {
+    "label": "Extension methods (connect/send/subscribe)",
+    "url": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Methods.md"
+   },
+   {
+    "label": "Lifted reducer source (instrument.ts)",
+    "url": "https://github.com/reduxjs/redux-devtools/blob/main/packages/redux-devtools-instrument/src/instrument.ts"
+   },
+   {
+    "label": "redux-mcp (third-party MCP bridge)",
+    "url": "https://github.com/n1snt/redux-mcp"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "MIT monorepo (extension, instrument, monitors, remote, CLI). No CLA found. Community project under the reduxjs org; no company owner."
+ },
+ "language": "TypeScript",
+ "backing": "Community (reduxjs org). Recent work is almost entirely one maintainer: markerikson authored 79 of the ~96 commits in the last 90 days, the rest mostly renovate[bot]. Originally by Dan Abramov (2015) and Mihail Diordiev (extension). GitHub Sponsors; no company funding.",
+ "first_release": "2015-07",
+ "latest_release": {
+  "tag": "@redux-devtools/extension@4.0.0",
+  "date": "2026-03-17"
+ },
+ "adoption": {
+  "github_stars": 14368,
+  "stars_fetched": "2026-10-09",
+  "downloads": "578,574/week @redux-devtools/extension + 803,312/week legacy redux-devtools-extension + 124,446/week @redux-devtools/core (npm, 2026-10-01..07)",
+  "notable_users": [
+   "Redux Toolkit (configureStore enables it by default)",
+   "NgRx Store DevTools",
+   "Zustand devtools middleware",
+   "Replay.io (ReduxActions MCP tool reads the same action/state model)"
+  ],
+  "summary": "The de facto devtools protocol for Redux and many non-Redux stores (Zustand, NgRx, MobX bridges speak to it). ~1.5M weekly npm downloads across its packages, plus the Chrome/Firefox extension."
+ },
+ "maintainability": {
+  "release_cadence": "Irregular, bursty. Browser extension 3.2.4 (2024-09-04), 3.2.5 (2024-09-16), 3.2.6 (2024-09-20), 3.2.7 (2024-09-21), 3.2.10 (2025-04-03); npm @redux-devtools/extension 4.0.0 (2026-03-17, ESM-only). A fix wave merged 2026-09-18..20 (MV3 service-worker reconnect, message chunking, import errors) is not yet tagged.",
+  "contributors": "126 (GitHub contributors API, incl. anonymous)",
+  "recent_activity": "~96 commits in the last 90 days (79 by markerikson, 14 renovate[bot]); several PRs merged 2026-09-19/20; 143 open issues.",
+  "bus_factor": "low: one active human maintainer does nearly all current work",
+  "summary": "Mature and recently revived (Sept 2026 fix wave for Manifest V3), but effectively single-maintainer; features have been stable for years."
+ },
+ "architecture": {
+  "summary": "A store enhancer 'lifts' the app's reducer: every app action is wrapped as PERFORM_ACTION in a lifted store whose state is {actionsById, stagedActionIds, skippedActionIds, committedState, currentStateIndex, computedStates, isLocked, isPaused}. Time travel is just more actions on the lifted store (JUMP_TO_STATE, JUMP_TO_ACTION, TOGGLE_ACTION, SET_ACTIONS_ACTIVE, REORDER_ACTION, SWEEP, COMMIT, ROLLBACK, RESET, IMPORT_STATE, LOCK_CHANGES, PAUSE_RECORDING); skipping or reordering recomputes computedStates from the first invalidated index by re-running the pure reducer. The browser extension relays the lifted state to monitors (inspector, log, chart, slider, RTK Query, trace, test tab) over postMessage; @redux-devtools/remote + redux-devtools-cli carry the same messages over a socket for React Native or remote apps.",
+  "key_points": [
+   "History is itself a reducer over a serializable lifted state: devtools commands are messages, not side channels.",
+   "computedStates caches every state; maxAge (default 50) bounds the window and COMMIT folds old actions into committedState.",
+   "skip/reorder = recompute from minInvalidatedStateIndex with the pure reducer (requires reducer purity).",
+   "lock blocks non-monitor dispatches and side effects while travelling; persist keeps history across reloads (debug_session URL key).",
+   "Import/export of the whole lifted state as JSON; serialize options plus __serializedType__ revive custom types.",
+   "Test tab generates Jest/Mocha/Ava/Tape test code from a selected action and the states around it.",
+   "trace: optional stack trace per action, opened in the editor via the Trace tab.",
+   "features{} flag set can restrict a production build to e.g. export-only."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "latency (default 500 ms): actions dispatched within the interval are batched and sent at once; set 0 to send instantly, raise it (and lower maxAge) for perf issues.",
+    "source": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Arguments.md#latency"
+   },
+   {
+    "text": "maxAge (default 50): maximum actions stored in the history; oldest removed. 'It's critical for performance.'",
+    "source": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Arguments.md#maxage"
+   }
+  ],
+  "summary": "No published throughput numbers. The documented knobs (500 ms batching, 50-action window) show the design budget: a human-paced inspector, not a high-rate recorder. Large states cost serialization on every relay; Sept 2026 fixes added size-based message chunking."
+ },
+ "agent_usability": {
+  "how": "No first-party agent surface. Programmatically, any client of the extension (window.__REDUX_DEVTOOLS_EXTENSION__.connect: init/send/subscribe) or of the remote socket protocol (@redux-devtools/remote / redux-devtools-cli) can receive the lifted state and send DISPATCH messages carrying lifted actions (JUMP_TO_ACTION, TOGGLE_ACTION, IMPORT_STATE…). Third-party redux-mcp (3 stars, 2026-06) exposes MCP tools to read state, list observed actions, dispatch actions and reset history over a WebSocket runtime; it does not expose jump/skip. Replay.io's ReduxActions MCP tool reads actions and per-dispatch state from a recording, post hoc.",
+  "integration_effort": "Moderate: register the store with redux-mcp (one import + registerStoresForMCP) for read/dispatch; for real time travel an agent would need a custom bridge that speaks the remote protocol and sends lifted actions. Nothing off the shelf.",
+  "readback": "App state (JSON) and the action list are readable via the extension/remote message stream or redux-mcp. The rendered UI is not; that needs a browser tool.",
+  "granular_edits": "Dispatch arbitrary actions (the app's own update messages). No UI patching; state edits only through the app's reducer or IMPORT_STATE of a whole lifted state.",
+  "history": "Model supports jump, skip (toggle), reorder, sweep, commit, rollback, import/export, lock, pause. These are reachable by protocol messages, but no maintained agent tool calls them; redux-mcp offers only 'reset history'. No fork: there is one linear staged action list.",
+  "summary": "The best-documented human time-travel model in frontend, with history ops already expressed as serializable messages; agent access exists only as thin third-party read/dispatch bridges."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 2,
+  "time_travel": 3,
+  "live_data_rate": 2,
+  "terminal_native": 0,
+  "pixel_graphics": 0,
+  "teaching": 2,
+  "maturity": 5,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "App state and action log are JSON; the UI itself is React code outside the tool's model.",
+  "agent_drivable": "Remote socket protocol + third-party redux-mcp (read/dispatch/reset) — real but thin and unofficial.",
+  "readback": "Structured app state/action history readable; no rendered view.",
+  "time_travel": "Full human time travel; the ops are messages an agent could send, but no agent tool exposes seek/skip/fork today.",
+  "live_data_rate": "Default 500 ms batching and 50-action window; built for human pace.",
+  "teaching": "Watching actions flow is a classic way to teach Redux, but no tour/narration features.",
+  "openness": "MIT, community org, no company or CLA."
+ },
+ "steelman": "Redux DevTools proved, at ecosystem scale, that time travel is cheap when state changes only through serializable messages and a pure reducer: the whole debugger is just another reducer whose state is {actions, skipped ids, committed state, cursor, cached states}, so jump, skip, reorder, commit, import/export and persist all fall out of a few dozen lines rather than bespoke recorder machinery. It is the lingua franca other stores (Zustand, NgRx, MobX bridges) adopt rather than reinvent, it carries over a socket for remote and React Native apps, it can generate regression tests from a recorded action, and its 'features' flags let a production build ship export-only bug reports. A fan would say thc-scene's time travel should simply be 'Redux DevTools' lifted reducer, for a terminal UI, exposed to agents' — and that the hard design questions (bounded history, committing old actions, locking side effects while travelling, reviving custom types on import) were answered here a decade ago.",
+ "weaknesses": [
+  "History window is small by default (maxAge 50) and states are cached whole, so long sessions need tuning (Arguments.md).",
+  "Time travel re-renders but cannot undo side effects; components re-dispatching on rewind is a known pitfall (zalmoxisus/redux-devtools-extension#685; 'time travel sends wrong state' reduxjs/redux-devtools#712).",
+  "Requires serializable state and pure reducers; non-serializable values need custom serialize/replacer config.",
+  "No first-party agent/MCP surface; the only MCP bridge (n1snt/redux-mcp, 3 stars) reads/dispatches and resets but cannot jump or skip.",
+  "Bus factor of one: ~80% of the last 90 days of commits are a single maintainer; the browser extension's last tagged release is 3.2.10 (2025-04-03).",
+  "Linear history only: no named branches/forks; reorder/skip mutate the one timeline."
+ ],
+ "relation_to_scene": {
+  "overlap": "Same Elm/Redux premise as thc-scene: serializable State, explicit messages, pure update. Its lifted-state history is exactly the record thc-scene plans (message log + cursor + cached states) and its import/export is the planned export/import.",
+  "scene_reinvents": "The history data model and its ops (jump, skip/toggle, commit with a bounded window, import/export, lock while travelling, pause recording). If scene builds a message log with seek, it is re-deriving instrument.ts; it should copy the shape deliberately rather than rediscover it.",
+  "borrow": [
+   "Model history as a lifted reducer: history ops are messages (JUMP_TO_ACTION, TOGGLE_ACTION, COMMIT, IMPORT_STATE…) applied by a pure function, so they replay and test like everything else.",
+   "stagedActionIds + skippedActionIds + minInvalidatedStateIndex: skip/reorder by recomputing from the first invalidated index.",
+   "maxAge + COMMIT: bounded window with old messages folded into a committed base state.",
+   "lock: suppress effects (data-source commands, exec) while the cursor is in the past.",
+   "features flags per surface (e.g. export-only for untrusted agents).",
+   "Test generation from a selected message range (scene: emit a replay test from a history slice)."
+  ],
+  "gap_left": "No agent-callable history API (seek/diff/fork/screen_at), no rendered-frame readback at a past point, no fork/branch, no terminal or pixel output, and no teaching/narration layer.",
+  "verdict": "borrow",
+  "verdict_why": "It is the reference design for message-log time travel, but it is a browser-extension debugger for JS stores, not something a Rust terminal UI can use."
+ },
+ "sources": [
+  {
+   "title": "reduxjs/redux-devtools (GitHub API: stars, license, releases, commits)",
+   "url": "https://github.com/reduxjs/redux-devtools"
+  },
+  {
+   "title": "Extension API Arguments (maxAge, latency, features, shouldStartLocked)",
+   "url": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Arguments.md"
+  },
+  {
+   "title": "Extension API Methods (connect, send, subscribe)",
+   "url": "https://github.com/reduxjs/redux-devtools/blob/main/extension/docs/API/Methods.md"
+  },
+  {
+   "title": "instrument.ts lifted reducer",
+   "url": "https://github.com/reduxjs/redux-devtools/blob/main/packages/redux-devtools-instrument/src/instrument.ts"
+  },
+  {
+   "title": "How to time travel debugging at redux-devtools (hmos.dev)",
+   "url": "https://hmos.dev/en/how-to-time-travel-debugging-at-redux-devtools"
+  },
+  {
+   "title": "Using Redux DevTools in production (features flags, export from prod)",
+   "url": "https://medium.com/@zalmoxis/using-redux-devtools-in-production-4c5b56c5600f"
+  },
+  {
+   "title": "n1snt/redux-mcp README",
+   "url": "https://github.com/n1snt/redux-mcp"
+  },
+  {
+   "title": "Guidelines to play nice with time travel #685",
+   "url": "https://github.com/zalmoxisus/redux-devtools-extension/issues/685"
+  },
+  {
+   "title": "time travel sends wrong state #712",
+   "url": "https://github.com/reduxjs/redux-devtools/issues/712"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@redux-devtools/extension"
+  }
+ ]
+}

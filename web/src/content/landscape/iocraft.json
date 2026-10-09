@@ -1,0 +1,137 @@
+{
+ "id": "iocraft",
+ "name": "iocraft",
+ "group": "terminal-frameworks",
+ "tagline": "React-style declarative TUIs and CLI output for Rust",
+ "links": {
+  "site": "https://github.com/ccbrown/iocraft",
+  "repo": "https://github.com/ccbrown/iocraft",
+  "docs": "https://docs.rs/iocraft/",
+  "other": [
+   {
+    "label": "HN launch",
+    "url": "https://news.ycombinator.com/item?id=41632566"
+   },
+   {
+    "label": "Rust forum announcement",
+    "url": "https://users.rust-lang.org/t/iocraft-new-tui-cli-library-with-react-like-style/119236"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT OR Apache-2.0",
+  "notes": "Dual-licensed at the user's option (GitHub reports Apache-2.0)."
+ },
+ "language": "Rust",
+ "backing": "Individual: Chris Brown (ccbrown).",
+ "first_release": "2024-09",
+ "latest_release": {
+  "tag": "iocraft-v0.9.1",
+  "date": "2026-09-04"
+ },
+ "adoption": {
+  "github_stars": 1557,
+  "stars_fetched": "2026-10-09",
+  "downloads": "187k all-time, 53k in the last 90 days (crates.io); 15 reverse dependencies",
+  "notable_users": [
+   "moonrepo moon and proto (via starbase_console)",
+   "cachix devenv"
+  ],
+  "summary": "Small but real adoption in Rust developer tooling."
+ },
+ "maintainability": {
+  "release_cadence": "Every few weeks to months: v0.8.2 2026-04-28, v0.8.3 05-23, v0.8.4 07-13, v0.8.5 08-20, v0.9.0/0.9.1 09-04.",
+  "contributors": "~27 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "~28 commits, 26 merged PRs since 2026-07-11 (GitHub API)",
+  "bus_factor": "low: ccbrown has ~194 of the commits; next human contributor 9",
+  "summary": "Actively maintained single-author project."
+ },
+ "architecture": {
+  "summary": "React/Dioxus-style component model in Rust: an element! macro declares trees of components (View, Text, TextInput, …), #[component] functions receive props and Hooks (use_state, use_future, use_context, use_terminal_events), and the runtime re-renders on state change. Layout is flexbox via taffy. The same tree can be printed once to any output (logs, non-TTY), rendered as an inline animated region, or run fullscreen; props and context can be passed by reference to avoid cloning.",
+  "key_points": [
+   "element! macro + #[component] + hooks",
+   "taffy flexbox layout",
+   "Static print, inline render_loop, or fullscreen",
+   "Works on Unix and Windows terminals",
+   "Elements can be rendered to a string (print/to_string) for non-TTY output"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers."
+ },
+ "agent_usability": {
+  "how": "Code generation only.",
+  "integration_effort": "Same as any library: the app author builds a control channel.",
+  "readback": "Elements can be rendered to a string; otherwise screen scraping.",
+  "granular_edits": "None from outside.",
+  "history": "None.",
+  "summary": "Pleasant declarative Rust API, no agent surface."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 1,
+  "readback": 2,
+  "granular_edits": 0,
+  "time_travel": 0,
+  "live_data_rate": 2,
+  "terminal_native": 5,
+  "pixel_graphics": 0,
+  "teaching": 1,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Declarative macro in Rust; not serializable",
+  "readback": "Render-to-string for tests only",
+  "live_data_rate": "No numbers; hook-driven rerender",
+  "maturity": "Used in production by moonrepo and devenv, small ecosystem",
+  "openness": "Permissive, single-maintainer control"
+ },
+ "steelman": "iocraft is the answer for Rust developers who find ratatui's immediate mode too low-level: you write components with props, state and hooks like React, lay them out with flexbox (taffy), and get one tree that can be printed to a log, animated inline in a CLI or run as a fullscreen app on Unix and Windows. That inline/print-first design suits developer tools — which is why moonrepo's moon and proto and cachix's devenv use it — and the API is small, readable and dual-licensed MIT/Apache.",
+ "weaknesses": [
+  "Single maintainer",
+  "Small widget set compared with ratatui",
+  "No images/pixel support",
+  "No introspection or agent protocol",
+  "No published performance data",
+  "Rust's ownership rules limit how React-like it can be (HN discussion)"
+ ],
+ "relation_to_scene": {
+  "overlap": "Rust, declarative component tree, flexbox layout, inline-or-fullscreen rendering.",
+  "scene_reinvents": "Little — scene's declarative tree is data, not a macro DSL; component vocabulary overlaps.",
+  "borrow": [
+   "Inline (non-fullscreen) render mode and print-once mode for one-shot scene output",
+   "taffy as a flexbox engine if scene needs richer layout"
+  ],
+  "gap_left": "Everything agent-facing: serializable UI, socket control, readback, streams, pixels, hot-swap, time travel.",
+  "verdict": "ignore",
+  "verdict_why": "A code-first Rust alternative to ratatui; nothing scene would build on, only minor ideas to borrow."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/ccbrown/iocraft",
+   "url": "https://api.github.com/repos/ccbrown/iocraft"
+  },
+  {
+   "title": "iocraft README",
+   "url": "https://github.com/ccbrown/iocraft"
+  },
+  {
+   "title": "crates.io iocraft",
+   "url": "https://crates.io/api/v1/crates/iocraft"
+  },
+  {
+   "title": "crates.io reverse dependencies",
+   "url": "https://crates.io/api/v1/crates/iocraft/reverse_dependencies"
+  },
+  {
+   "title": "HN: Iocraft",
+   "url": "https://news.ycombinator.com/item?id=41632566"
+  },
+  {
+   "title": "HN: React model in Rust TUI libraries",
+   "url": "https://news.ycombinator.com/item?id=46903131"
+  }
+ ]
+}

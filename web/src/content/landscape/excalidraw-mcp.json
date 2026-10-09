@@ -1,0 +1,143 @@
+{
+ "id": "excalidraw-mcp",
+ "name": "Excalidraw MCP (official MCP App + community mcp_excalidraw)",
+ "group": "agent-canvases",
+ "tagline": "Agents draw, inspect and edit Excalidraw diagrams over MCP",
+ "links": {
+  "site": "https://mcp.excalidraw.com",
+  "repo": "https://github.com/excalidraw/excalidraw-mcp",
+  "docs": "https://github.com/yctimlin/mcp_excalidraw#mcp-tools-26-total",
+  "other": [
+   {
+    "label": "Community mcp_excalidraw (mcp-excalidraw-server)",
+    "url": "https://github.com/yctimlin/mcp_excalidraw"
+   },
+   {
+    "label": "Excalidraw",
+    "url": "https://github.com/excalidraw/excalidraw"
+   },
+   {
+    "label": "MCP Apps extension",
+    "url": "https://modelcontextprotocol.io/docs/extensions/apps"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "Official excalidraw-mcp README says MIT but the repo has no LICENSE file (GitHub reports no license). Community mcp_excalidraw is MIT with a LICENSE file. Excalidraw itself is MIT."
+ },
+ "language": "TypeScript",
+ "backing": "Official: Excalidraw (company behind excalidraw.com; repo originated as antonpk1/excalidraw-mcp-app). Community: individual (yctimlin) with 25 contributors.",
+ "first_release": "2026-02",
+ "latest_release": {
+  "tag": "v0.3.2",
+  "date": "2026-02-09"
+ },
+ "adoption": {
+  "github_stars": 5493,
+  "stars_fetched": "2026-10-09",
+  "downloads": "Community mcp-excalidraw-server: 5,145/week npm (2026-10-01..07). @excalidraw/excalidraw: 675,606/week npm. Official MCP is mainly used via the hosted remote endpoint (no download count).",
+  "notable_users": [],
+  "summary": "Official MCP App: 5.5k stars, 518 forks, works in Claude, ChatGPT, VS Code, Goose. Community server: 2.5k stars, actively released (v2.1.x, Oct 2026)."
+ },
+ "maintainability": {
+  "release_cadence": "Official: v0.1.0 2026-02-04 to v0.3.2 2026-02-09, then no releases; last push 2026-03-24. Community: v2.1.0 2026-10-03, v2.1.1 and v2.1.2 2026-10-04",
+  "contributors": "Official: 5; community: 25",
+  "recent_activity": "Official: none since 2026-03-24. Community: 35 commits since 2026-07-11, pushed 2026-10-09",
+  "bus_factor": "low for both: official is a small widget side project; community is one main maintainer",
+  "summary": "The official MCP App was a burst in February 2026; the community server is the actively maintained, more capable one."
+ },
+ "architecture": {
+  "summary": "Official: an MCP Apps server with two tools, read_me (format cheat-sheet) and create_view (a JSON array of Excalidraw elements rendered into a ui:// iframe with draw-on animation and camera moves). It is a declarative re-send model: each create_view returns a checkpointId; later calls start with {type:'restoreCheckpoint', id} and add elements or {type:'delete', ids} pseudo-elements, and user edits in fullscreen are saved back to the checkpoint. Community: a local canvas server (Excalidraw web UI + REST + WebSocket sync) fronted by an MCP stdio server with 26 tools, a CLI with JSON in/out, and an agent skill; screenshots render headlessly since v2.1.",
+  "key_points": [
+   "Scene is a JSON array of elements with ids; .excalidraw files are portable artifacts",
+   "Official tools: read_me, create_view; checkpoints + delete pseudo-elements; 'animation mode' (delete and replace in place with camera nudges)",
+   "Community tools: create_element, get_element, update_element, delete_element, query_elements, batch_create_elements, duplicate_elements, align/distribute/group/ungroup/lock/unlock, describe_scene, get_canvas_screenshot, export_scene, import_scene, export_to_image, export_to_excalidraw_url, create_from_mermaid, clear_canvas, snapshot_scene, restore_snapshot, set_viewport, read_diagram_guide, get_resource",
+   "Community readback: describe (structured text: ids, positions, labels, connections) and screenshot (PNG/SVG)",
+   "Community state: in-memory by default, EXCALIDRAW_DATA_DIR for restart recovery; named snapshots"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers."
+ },
+ "agent_usability": {
+  "how": "MCP (official: remote https://mcp.excalidraw.com or local stdio, MCP Apps UI; community: stdio MCP 26 tools, CLI `npx -y mcp-excalidraw-server <cmd>`, REST API).",
+  "integration_effort": "One connector URL (official) or one `claude mcp add` / npx command (community).",
+  "readback": "Official: none for the model beyond its own checkpoints. Community: describe_scene (structured) and get_canvas_screenshot (image).",
+  "granular_edits": "Official: coarse (restore checkpoint, delete by id, append). Community: per-element update by id, query by type/bbox/filter.",
+  "history": "Official: checkpoints per create_view. Community: named snapshots save/list/restore. Excalidraw's own undo/redo is human-facing.",
+  "summary": "The community server is a near-complete 'agent-editable live canvas' with structured and visual readback; the official one is a polished one-shot widget."
+ },
+ "scores": {
+  "ui_as_data": 5,
+  "agent_drivable": 5,
+  "readback": 5,
+  "granular_edits": 5,
+  "time_travel": 3,
+  "live_data_rate": 2,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 2,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "the diagram is entirely a JSON element list (it is a diagram, not an app UI)",
+  "agent_drivable": "community server: create/change/operate a live canvas via MCP, CLI or REST",
+  "readback": "community: structured describe + rendered screenshot",
+  "granular_edits": "community update_element by id; official only coarse checkpoint/delete",
+  "time_travel": "checkpoints/named snapshots the agent can restore; no history log or seek",
+  "live_data_rate": "WebSocket sync of agent-paced edits; no data streams",
+  "maturity": "official widely reachable but dormant since March; community actively used (5k npm/week)",
+  "openness": "MIT, controlled by a company (official) or one maintainer (community)"
+ },
+ "steelman": "Excalidraw over MCP is the cleanest proof that 'the picture is a JSON value' makes agents good at visual work. The official MCP App needed only two tools and a cheat-sheet to get agents in Claude, ChatGPT and VS Code drawing animated, hand-drawn diagrams inline, and its checkpoint plus delete-pseudo-element trick is a token-cheap patch protocol that even supports in-place animation. The community server goes all the way: 26 tools for per-element CRUD, layout, structured scene description and headless screenshots, so an agent draws, looks, fixes truncated labels and looks again; diagrams export as .excalidraw files into the repo. It is MIT, trivial to install, and actively used.",
+ "weaknesses": [
+  "Diagrams, not application UIs: no input widgets, data binding or keyboard-driven apps",
+  "Official server: model cannot see the canvas or user edits except via checkpoints; dormant since March 2026; no LICENSE file despite MIT claim",
+  "Community server: in-memory by default; Mermaid conversion still needs a browser tab",
+  "Web-only rendering; no terminal surface",
+  "No real history log or replay, only snapshots"
+ ],
+ "relation_to_scene": {
+  "overlap": "Whole surface as a JSON value, id-addressed element edits, structured plus rendered readback, snapshots, agent-driven animation and explanation.",
+  "scene_reinvents": "Little for scene's core, but the community server's draw-look-fix loop and the official checkpoint/delete patch format are proven agent ergonomics scene should mirror rather than reinvent.",
+  "borrow": [
+   "A read_me / guide tool that returns the format cheat-sheet before first use",
+   "Checkpoint ids returned from every push so the agent can say 'start from checkpoint X, delete ids a,b, add these' instead of resending",
+   "describe_scene: a compact text description (ids, positions, labels, connections) distinct from the raw screen",
+   "query_elements by type/bbox/filter for addressing scene nodes",
+   "Named snapshots save/list/restore as a stopgap before full time travel"
+  ],
+  "gap_left": "No terminal rendering, no app interactivity (keys, focus, lists), no live data sources, no hot-swap; scene is a running terminal application, not a diagram.",
+  "verdict": "borrow",
+  "verdict_why": "Different medium, but its agent protocol details (cheat-sheet tool, checkpoint-relative patches, describe vs screenshot) are battle-tested patterns scene can copy."
+ },
+ "sources": [
+  {
+   "title": "excalidraw/excalidraw-mcp README",
+   "url": "https://github.com/excalidraw/excalidraw-mcp"
+  },
+  {
+   "title": "excalidraw-mcp src/server.ts",
+   "url": "https://github.com/excalidraw/excalidraw-mcp/blob/main/src/server.ts"
+  },
+  {
+   "title": "yctimlin/mcp_excalidraw README",
+   "url": "https://github.com/yctimlin/mcp_excalidraw"
+  },
+  {
+   "title": "GitHub API repos/excalidraw/excalidraw-mcp",
+   "url": "https://api.github.com/repos/excalidraw/excalidraw-mcp"
+  },
+  {
+   "title": "GitHub API repos/yctimlin/mcp_excalidraw",
+   "url": "https://api.github.com/repos/yctimlin/mcp_excalidraw"
+  },
+  {
+   "title": "npm downloads mcp-excalidraw-server",
+   "url": "https://api.npmjs.org/downloads/point/last-week/mcp-excalidraw-server"
+  }
+ ]
+}

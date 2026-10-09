@@ -1,0 +1,99 @@
+{
+  "id": "thc-scene",
+  "name": "thc-scene",
+  "group": "self",
+  "tagline": "A live terminal UI, as one JSON value an agent drives",
+  "links": {
+    "site": "https://thoughtcontrol.app",
+    "repo": "https://github.com/brancusi/thought-control",
+    "docs": null,
+    "other": [{ "label": "caretline, the editor engine underneath", "url": "https://caretline.app" }]
+  },
+  "license": { "spdx": "MIT", "notes": "Same as thc. The scene crate is on a prototype branch and not yet published." },
+  "language": "Rust",
+  "backing": "One author (Thought Control), with agents doing much of the building.",
+  "first_release": null,
+  "latest_release": { "tag": null, "date": null },
+  "adoption": {
+    "github_stars": null,
+    "stars_fetched": "2026-10-09",
+    "downloads": null,
+    "notable_users": ["thc itself (its Today screen, rebuilt cell for cell)"],
+    "summary": "Unreleased. Used only in demos so far: a thc Today rebuild, a finance dashboard, stress tests and a pixel tour."
+  },
+  "maintainability": {
+    "release_cadence": "None yet.",
+    "contributors": "1",
+    "recent_activity": "Built in October 2026 on a branch of thought-control.",
+    "bus_factor": "low: one author",
+    "summary": "A prototype with tests and measured numbers, but one person and no release."
+  },
+  "architecture": {
+    "summary": "The whole UI is one serializable value: a tree of components, data sources bound to shell commands, JSON-line streams or literals, keys, a theme and callout layers. Elm architecture: a serializable State, a pure update that returns effects, a pure view that returns the frame plus hit regions and pictures. A runtime owns the terminal, a local control socket, child processes and the pixel layer. It sits on caretline (a Helix-model editing engine) and caretline-layers (placement for callouts, arrows and spotlights).",
+    "key_points": [
+      "Push a whole UI, or patch one node by id; view state (selection, focus) survives by id, like React keys",
+      "Read the current frame as text, or the full state, from outside",
+      "Keys, mouse and clicks injected like a person's",
+      "`upgrade`: the running screen saves its state, execs a new binary and carries on",
+      "Templates with theme-token styles, value maps and conditionals; data values can't inject styles",
+      "Kitty graphics: cards beneath text, anti-aliased plots, SVG rendered with resvg, PNGs; cells everywhere else"
+    ]
+  },
+  "performance": {
+    "claims": [
+      { "text": "About 6,000 whole-UI pushes a second from one client while drawing ~108 fps (release build, 170×52).", "source": "crates/scene/README.md" },
+      { "text": "1,000 patches a second applied with every frame under 1 ms; a 50,000-row list replaced 20 times a second draws in 0.18 ms.", "source": "crates/scene/README.md" },
+      { "text": "With a 15 Hz pixel plot, frames take ~7 ms: rasterising on the main thread. Not yet moved to a worker.", "source": "crates/scene/README.md" }
+    ],
+    "summary": "Measured by its own stress suite on one machine; not independently reproduced."
+  },
+  "agent_usability": {
+    "how": "A local Unix socket with JSON-line requests: push, patch, key, mouse, click, layers, screen, state, stats, upgrade. A CLI wraps each one. No MCP server yet.",
+    "integration_effort": "Write one JSON UI and point its sources at commands; send ops over the socket. An MCP server is the planned way in for any agent.",
+    "readback": "Yes: `screen` (the frame as text) and `state` (everything, as JSON).",
+    "granular_edits": "Yes: `patch` replaces one node by id; streams update one source; keys and clicks move selections.",
+    "history": "Not yet. State is serializable and every input is a message, so it's designed (history, state_at, screen_at, diff, seek, fork, replay, export/import) but not built.",
+    "summary": "Built for agents to drive and to see. The parts a standard would give it (MCP, A2UI input) are missing."
+  },
+  "scores": {
+    "ui_as_data": 5, "agent_drivable": 5, "readback": 5, "granular_edits": 5, "time_travel": 0,
+    "live_data_rate": 5, "terminal_native": 5, "pixel_graphics": 4, "teaching": 3, "maturity": 1, "openness": 4
+  },
+  "planned_scores": {
+    "ui_as_data": 5, "agent_drivable": 5, "readback": 5, "granular_edits": 5, "time_travel": 5,
+    "live_data_rate": 5, "terminal_native": 5, "pixel_graphics": 4, "teaching": 5, "maturity": 1, "openness": 4
+  },
+  "score_notes": {
+    "time_travel": "0 today. Planned: an agent can read, seek, fork and replay (see the design).",
+    "teaching": "Callouts, spotlights and scripted tours work today; record, take over and rewind are planned.",
+    "pixel_graphics": "Rich, but only where the terminal speaks the kitty graphics protocol (Ghostty, kitty, iTerm2, VS Code)",
+    "maturity": "A prototype: one author, no release.",
+    "openness": "MIT, but single-author and not yet published."
+  },
+  "steelman": "The best case: an agent can write a terminal UI as one small JSON value, drive it like a person, see exactly what it drew, change one piece at a time, and keep live data flowing at thousands of updates a second without that data ever passing through the model. It has already reproduced a hand-written production screen cell for cell, so a generated UI doesn't have to look generated. Nothing else found pairs that loop with a terminal-native renderer and a pixel layer.",
+  "weaknesses": [
+    "A prototype by one author, unreleased, untested by anyone else.",
+    "Its own format: no A2UI, json-render or MCP Apps input yet, against standards with real momentum.",
+    "Data sources run shell commands: the opposite of the field's 'data, not code' safety stance. Needs a command policy before anyone pushes untrusted UIs.",
+    "Fullscreen only: loses the terminal's native scrollback, search and selection, which agent CLIs have been moving back toward.",
+    "Pixel features need kitty-graphics terminals (a minority).",
+    "No MCP server yet, so agents need the socket or the CLI."
+  ],
+  "relation_to_scene": {
+    "overlap": "—",
+    "scene_reinvents": "Declarative UI formats (A2UI, json-render), terminal rendering (ratatui underneath), patch protocols (JSON Patch).",
+    "borrow": [
+      "A2UI's updateComponents and JSON Patch as input",
+      "LangGraph's checkpoint vocabulary and Redux DevTools' verbs for time travel",
+      "Rerun's split between a view written once and data streamed at high rates",
+      "Scrimba's take-over model for tours"
+    ],
+    "gap_left": "A live UI that an agent writes, drives, reads back and will be able to rewind: one value, terminal-native, fed by streams that bypass the model.",
+    "verdict": "complement",
+    "verdict_why": "The thing being positioned."
+  },
+  "sources": [
+    { "title": "thought-control repository", "url": "https://github.com/brancusi/thought-control" },
+    { "title": "caretline", "url": "https://caretline.app" }
+  ]
+}

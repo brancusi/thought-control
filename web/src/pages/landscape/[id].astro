@@ -1,0 +1,208 @@
+---
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { u } from '../../lib/url';
+import { AXES, GROUPS, GROUP_ORDER, VERDICTS, radarPoints, stars, host, type Dossier } from '../../lib/landscape';
+
+export async function getStaticPaths() {
+  const order = (d: any) => GROUP_ORDER.indexOf(d.group) * 1000 - (d.adoption?.github_stars ?? 0) / 1e6;
+  const all = (await getCollection('landscape')).map((e) => e.data as Dossier).sort((a, b) => order(a) - order(b));
+  const self = all.find((d) => d.group === 'self');
+  return all.map((d, i) => ({ params: { id: d.id }, props: { d, self, prev: all[i - 1] ?? null, next: all[i + 1] ?? null } }));
+}
+const { d, self, prev, next } = Astro.props as { d: Dossier; self: Dossier | undefined; prev: Dossier | null; next: Dossier | null };
+const isSelf = d.group === 'self';
+const L = d.links ?? {};
+const rel = d.relation_to_scene ?? {};
+const au = d.agent_usability ?? {};
+const ad = d.adoption ?? {};
+const mt = d.maintainability ?? {};
+const ar = d.architecture ?? {};
+const pf = d.performance ?? {};
+const cx = 210, cy = 190, r = 130;
+const ring = (k: number) => radarPoints(Object.fromEntries(AXES.map((a) => [a.key, k])), cx, cy, r);
+const facts: [string, any][] = [
+  ['license', d.license?.spdx ? (d.license.notes ? (d.license.notes.startsWith(d.license.spdx) ? d.license.notes : `${d.license.spdx} · ${d.license.notes}`) : d.license.spdx) : null],
+  ['language', d.language],
+  ['backing', d.backing],
+  ['stars', ad.github_stars != null ? `${ad.github_stars.toLocaleString('en-US')}${ad.stars_fetched ? ` (as of ${ad.stars_fetched})` : ''}` : null],
+  ['downloads', ad.downloads],
+  ['latest release', d.latest_release?.tag ? `${d.latest_release.tag}${d.latest_release.date ? `, ${d.latest_release.date}` : ''}` : null],
+  ['first release', d.first_release],
+];
+---
+<Base title={`${d.name} · Landscape`} description={`${d.name}: ${d.tagline}. A steelman dossier: adoption, maintainability, architecture, performance, license, how agents use it, and how it relates to thc-scene.`} tab="hood">
+  <nav class="crumbs"><a href={u('landscape/')}>landscape</a> <span class="dim">/</span> <span class={`g g-${d.group}`}><i></i>{GROUPS[d.group]?.label ?? d.group}</span></nav>
+  <header class="page-head">
+    <h1>{d.name}</h1>
+    <p class="lede">{d.tagline}.</p>
+    <p class="out">
+      {L.site && <a href={L.site} rel="noopener">{host(L.site)} ↗</a>}
+      {L.repo && <a href={L.repo} rel="noopener">repo ↗</a>}
+      {L.docs && <a href={L.docs} rel="noopener">docs ↗</a>}
+      {(L.other ?? []).map((o: any) => <a href={o.url} rel="noopener">{o.label} ↗</a>)}
+    </p>
+  </header>
+
+  <div class="top2">
+    <dl class="facts">
+      {facts.filter(([, v]) => v).map(([k, v]) => <><dt>{k}</dt><dd>{v}</dd></>)}
+    </dl>
+    {!isSelf && rel.verdict && (
+      <div class="verdict">
+        <span class={`stamp v-${rel.verdict}`}>{rel.verdict}</span>
+        <p>{rel.verdict_why}</p>
+        <p class="dim small">{VERDICTS[rel.verdict]}</p>
+      </div>
+    )}
+  </div>
+
+  <div class="scrap steel" style="--tilt:0.4deg">
+    <span class="k">{isSelf ? 'the case for it' : 'the steelman: the best honest case for it'}</span>
+    <p>{d.steelman}</p>
+  </div>
+
+  <div class="sec">scores</div>
+  <div class="scores">
+    <svg viewBox="0 0 420 380" class="radar" role="img" aria-label={`Scores for ${d.name}${self && !isSelf ? ' against thc-scene' : ''}`}>
+      {[1, 2, 3, 4, 5].map((k) => <polygon points={ring(k)} class="ring" />)}
+      {AXES.map((a, i) => {
+        const t = (Math.PI * 2 * i) / AXES.length - Math.PI / 2;
+        const lx = cx + Math.cos(t) * (r + 24), ly = cy + Math.sin(t) * (r + 24);
+        return <><line x1={cx} y1={cy} x2={cx + Math.cos(t) * r} y2={cy + Math.sin(t) * r} class="spoke" /><text x={lx} y={ly + 4} class="rl" text-anchor={Math.abs(Math.cos(t)) < 0.2 ? 'middle' : Math.cos(t) > 0 ? 'start' : 'end'}>{a.short}</text></>;
+      })}
+      {self && self.planned_scores && <polygon points={radarPoints(self.planned_scores, cx, cy, r)} class="poly self planned" />}
+      {self && !isSelf && <polygon points={radarPoints(self.scores, cx, cy, r)} class="poly self faint" />}
+      <polygon points={radarPoints(d.scores, cx, cy, r)} class={`poly ${isSelf ? 'self' : `other g-${d.group}`}`} />
+    </svg>
+    <table class="sc">
+      {AXES.map((a) => (
+        <tr>
+          <th title={a.rubric}>{a.label}</th>
+          <td class="v"><span class="bar" style={`--v:${(d.scores[a.key] ?? 0) / 5}`}></span>{d.scores[a.key] ?? 0}{isSelf && d.planned_scores?.[a.key] !== d.scores[a.key] ? <span class="dim"> → {d.planned_scores?.[a.key]}</span> : null}{!isSelf && self ? <span class="dim cmpv"> scene {self.scores[a.key]}</span> : null}</td>
+          <td class="why">{d.score_notes?.[a.key] ?? ''}</td>
+        </tr>
+      ))}
+    </table>
+  </div>
+  <p class="legend2">{!isSelf && <><i class={`sw g-${d.group}`}></i>{d.name} </>}<i class="sw self"></i>scene now <i class="sw planned"></i>scene planned</p>
+
+  <div class="sec">how agents use it</div>
+  <div class="grid two">
+    <div class="cell"><h3>How</h3><p>{au.how ?? '—'}</p></div>
+    <div class="cell"><h3>Wiring it in</h3><p>{au.integration_effort ?? '—'}</p></div>
+    <div class="cell"><h3>Seeing the result</h3><p>{au.readback ?? '—'}</p></div>
+    <div class="cell"><h3>Small edits</h3><p>{au.granular_edits ?? '—'}</p></div>
+    <div class="cell"><h3>History</h3><p>{au.history ?? '—'}</p></div>
+    <div class="cell"><h3>In short</h3><p>{au.summary ?? '—'}</p></div>
+  </div>
+
+  <div class="sec">architecture</div>
+  <p class="body">{ar.summary}</p>
+  {ar.key_points?.length > 0 && <ul class="pts">{ar.key_points.map((k: string) => <li>{k}</li>)}</ul>}
+
+  <div class="sec">performance</div>
+  <p class="body">{pf.summary}</p>
+  {pf.claims?.length > 0 && <ul class="pts">{pf.claims.map((c: any) => <li>{c.text} {c.source && (c.source.startsWith('http') ? <a href={c.source} rel="noopener" class="src">{host(c.source)} ↗</a> : <span class="dim src">({c.source})</span>)}</li>)}</ul>}
+
+  <div class="sec">adoption and upkeep</div>
+  <div class="grid two">
+    <div class="cell"><h3>Adoption</h3><p>{ad.summary}</p>{ad.notable_users?.length > 0 && <p class="dim small">Used by: {ad.notable_users.join(', ')}</p>}</div>
+    <div class="cell"><h3>Maintainability</h3><p>{mt.summary}</p><p class="dim small">{[mt.release_cadence && `Releases: ${mt.release_cadence}`, mt.contributors && `Contributors: ${mt.contributors}`, mt.recent_activity && `Recent: ${mt.recent_activity}`, mt.bus_factor && `Bus factor: ${mt.bus_factor}`].filter(Boolean).join(' · ')}</p></div>
+  </div>
+
+  {d.weaknesses?.length > 0 && (
+    <>
+      <div class="sec">weaknesses</div>
+      <ul class="pts">{d.weaknesses.map((w: string) => <li>{w}</li>)}</ul>
+    </>
+  )}
+
+  {!isSelf && (
+    <>
+      <div class="sec">and thc-scene</div>
+      <div class="grid two">
+        <div class="cell"><h3>Overlap</h3><p>{rel.overlap}</p></div>
+        <div class="cell"><h3>What scene would be reinventing</h3><p>{rel.scene_reinvents}</p></div>
+        <div class="cell"><h3>The gap it leaves</h3><p>{rel.gap_left}</p></div>
+        <div class="cell"><h3>What to borrow</h3>{rel.borrow?.length ? <ul>{rel.borrow.map((b: string) => <li>{b}</li>)}</ul> : <p>—</p>}</div>
+      </div>
+    </>
+  )}
+
+  {d.sources?.length > 0 && (
+    <>
+      <div class="sec">sources</div>
+      <ol class="srcs">{d.sources.map((s: any) => <li><a href={s.url} rel="noopener">{s.title || host(s.url)}</a> <span class="dim">{host(s.url)}</span></li>)}</ol>
+    </>
+  )}
+
+  <nav class="pn">
+    {prev ? <a href={u(`landscape/${prev.id}/`)}>← {prev.name}</a> : <span></span>}
+    <a href={u('landscape/')}>all tools</a>
+    {next ? <a href={u(`landscape/${next.id}/`)}>{next.name} →</a> : <span></span>}
+  </nav>
+</Base>
+
+<style is:global>
+  .g-self { --gc: var(--accent); }
+  .g-terminal-frameworks { --gc: var(--doing); }
+  .g-agent-ui-specs { --gc: var(--agent); }
+  .g-agent-canvases { --gc: var(--conflict); }
+  .g-time-travel { --gc: var(--today); }
+  .g-teaching-and-live-data { --gc: var(--done); }
+  .stamp { display: inline-block; font: 800 11px/1 var(--sans); font-stretch: 125%; letter-spacing: 0.1em; text-transform: uppercase; padding: 5px 8px 4px; border: 2px solid currentColor; color: var(--signal); transform: rotate(-2deg); }
+  .stamp.v-use { color: var(--done); }
+  .stamp.v-adopt { color: var(--agent); }
+  .stamp.v-borrow { color: var(--today); }
+  .stamp.v-complement { color: var(--doing); }
+  .stamp.v-ignore { color: var(--dim); }
+</style>
+
+<style>
+  .small { font-size: 13px; }
+  .crumbs { font: 12px var(--mono); color: var(--muted); margin: 2.2rem 0 0; }
+  .crumbs .g i { display: inline-block; width: 8px; height: 8px; background: var(--gc); margin-right: 6px; }
+  .out { display: flex; flex-wrap: wrap; gap: 8px 18px; font: 13px var(--mono); }
+  .top2 { display: grid; grid-template-columns: 1fr 260px; gap: 28px; margin: 2rem 0; align-items: start; }
+  @media (max-width: 760px) { .top2 { grid-template-columns: 1fr; } }
+  .facts { display: grid; grid-template-columns: 130px 1fr; gap: 6px 16px; margin: 0; font-size: 15px; }
+  .facts dt { font: 12px/1.9 var(--mono); color: var(--muted); }
+  .facts dd { margin: 0; }
+  .verdict p { margin: 10px 0 0; font-size: 15px; }
+  .steel { max-width: 860px; margin: 1rem 0 0; }
+  .steel p { font-size: 16.5px; line-height: 1.6; margin: 10px 0 0; }
+  .scores { display: grid; grid-template-columns: minmax(0, 400px) 1fr; gap: 28px; align-items: start; }
+  @media (max-width: 860px) { .scores { grid-template-columns: 1fr; } }
+  .radar { width: 100%; height: auto; border: 1px solid var(--line); background: var(--surface); }
+  .radar .ring { fill: none; stroke: var(--line); }
+  .radar .spoke { stroke: var(--line); }
+  .radar .rl { fill: var(--muted); font: 10.5px var(--mono); }
+  .radar .poly { fill-opacity: 0.18; stroke-width: 2; }
+  .radar .poly.self { fill: var(--accent); stroke: var(--accent); }
+  .radar .poly.self.faint { fill-opacity: 0.05; stroke-width: 1; stroke-opacity: 0.7; }
+  .radar .poly.self.planned { fill: none; stroke-dasharray: 4 4; stroke-width: 1.2; }
+  .radar .poly.other { fill: var(--gc); stroke: var(--gc); }
+  .sc { border-collapse: collapse; width: 100%; font-size: 14px; }
+  .sc th { text-align: left; font: 12px var(--mono); color: var(--muted); font-weight: 500; padding: 7px 14px 7px 0; white-space: nowrap; vertical-align: top; cursor: help; }
+  .sc td { padding: 7px 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+  .sc .v { font: 12px var(--mono); color: var(--text); white-space: nowrap; padding-right: 14px; }
+  .sc .bar { display: inline-block; width: 50px; height: 7px; margin-right: 8px; background: linear-gradient(90deg, var(--gc, var(--accent)) calc(var(--v) * 100%), var(--line) 0); vertical-align: 0; }
+  .sc .cmpv { margin-left: 8px; }
+  .sc .why { color: var(--muted); }
+  .legend2 { font: 11.5px var(--mono); color: var(--muted); margin-top: 10px; }
+  .legend2 .sw { display: inline-block; width: 18px; height: 3px; background: var(--gc); vertical-align: 3px; margin: 0 6px 0 4px; }
+  .legend2 .sw.self { background: var(--accent); }
+  .legend2 .sw.planned { background: none; border-top: 2px dashed var(--accent); }
+  .grid.two { grid-template-columns: repeat(auto-fill, minmax(min(100%, 420px), 1fr)); }
+  .grid.two h3 { margin-top: 0; }
+  .grid.two ul { margin: 0; padding-left: 1.1em; font-size: 15px; }
+  .body { max-width: 75ch; }
+  .pts { max-width: 80ch; padding-left: 1.1em; }
+  .pts li { margin-bottom: 6px; }
+  .src { font: 11.5px var(--mono); margin-left: 4px; }
+  .srcs { font-size: 14px; padding-left: 1.6em; columns: 2 420px; column-gap: 40px; }
+  .srcs li { margin-bottom: 6px; break-inside: avoid; }
+  .srcs .dim { font: 11px var(--mono); margin-left: 6px; }
+  .pn { display: flex; justify-content: space-between; margin-top: 4rem; font: 13px var(--mono); border-top: 1px solid var(--line); padding-top: 1rem; }
+</style>

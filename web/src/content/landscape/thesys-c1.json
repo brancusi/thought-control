@@ -1,0 +1,132 @@
+{
+ "id": "thesys-c1",
+ "name": "Thesys C1 (now OpenUI Cloud) and OpenUI",
+ "group": "agent-ui-specs",
+ "tagline": "Hosted generative-UI API plus open compact UI language",
+ "links": {
+  "site": "https://www.thesys.dev/",
+  "repo": "https://github.com/thesysdev/openui",
+  "docs": "https://www.openui.com/",
+  "other": [
+   {
+    "label": "OpenUI Cloud (formerly C1 API)",
+    "url": "https://www.thesys.dev/openui-cloud"
+   },
+   {
+    "label": "OpenUI playground",
+    "url": "https://www.openui.com/playground"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "OpenUI (framework, OpenUI Lang, renderers) is MIT. C1 / OpenUI Cloud and OpenUI Gateway are proprietary hosted services."
+ },
+ "language": "TypeScript",
+ "backing": "Thesys (company); funding not verified",
+ "first_release": "2026-03",
+ "latest_release": {
+  "tag": "@openuidev/react-lang 0.3.2",
+  "date": "2026-10-08"
+ },
+ "adoption": {
+  "github_stars": 10546,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@openuidev/react-lang 135,398/week (npm, week ending 2026-10-07); site claims 642,626/month",
+  "notable_users": [
+   "Entelligence (Ask Ellie), per thesys.dev",
+   "CTRLAgent, FieldCamp (logos on thesys.dev)"
+  ],
+  "summary": "Commercial generative-UI API rebranded as OpenUI Cloud, with an open-source OpenUI framework that is growing quickly (10.5k stars)."
+ },
+ "maintainability": {
+  "release_cadence": "Frequent package releases (five packages released 2026-10-08)",
+  "contributors": "~50 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "361 commits on main since 2026-07-11 (GitHub API)",
+  "bus_factor": "medium: one company",
+  "summary": "Active open-source repo backed by a commercial product."
+ },
+ "architecture": {
+  "summary": "C1 was an OpenAI-compatible LLM API that returns UI (charts, forms, tables, cards) instead of text, rendered by Thesys's React SDK. It is now 'OpenUI Cloud', built on the open OpenUI framework: developers define a component library (Zod-typed), generate a system prompt from it, the model streams OpenUI Lang (a compact text language, not JSON), and React/Vue/Svelte/Angular renderers draw it progressively. @openuidev/a2ui offers an A2UI v1.0 client with OpenUI Lang component payloads; @openuidev/langchain streams OpenUI through AG-UI.",
+  "key_points": [
+   "OpenUI Lang: compact, streaming-first, claims up to 67% fewer tokens than JSON formats",
+   "Library-driven prompts and controlled rendering (only registered components)",
+   "Hosted extras: validation/correction/fallback, gateway across models, observability",
+   "No terminal renderer"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "OpenUI Lang uses 55-67% fewer tokens than Vercel json-render and Thesys C1 JSON across seven scenarios (tiktoken, GPT-5 encoder)",
+    "source": "https://github.com/thesysdev/openui"
+   },
+   {
+    "text": "3x faster renders compared to JSON renderers",
+    "source": "https://www.thesys.dev/"
+   }
+  ],
+  "summary": "Token benchmark is published in the repo (reproducible); render-speed and user-preference claims are marketing without published method."
+ },
+ "agent_usability": {
+  "how": "Generation API/SDK: the model outputs UI as OpenUI Lang (or C1 responses) that a client renders; no live control channel.",
+  "integration_effort": "Low for web apps: swap the LLM endpoint (C1) or add the OpenUI renderer and prompt.",
+  "readback": "Not documented beyond normal chat/app state (not verified).",
+  "granular_edits": "Not documented; responses are regenerated per turn (not verified).",
+  "history": "None documented.",
+  "summary": "Optimised for cheap, fast generation of web UI, not for operating a live interface."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 2,
+  "readback": 1,
+  "granular_edits": 1,
+  "time_travel": 0,
+  "live_data_rate": 1,
+  "terminal_native": 0,
+  "pixel_graphics": 3,
+  "teaching": 0,
+  "maturity": 3,
+  "openness": 3
+ },
+ "score_notes": {
+  "ui_as_data": "OpenUI Lang is a serializable text format, but not JSON.",
+  "agent_drivable": "More than code generation (constrained DSL rendered safely) but no protocol to change a live instance.",
+  "readback": "No readback mechanism found in docs reviewed.",
+  "pixel_graphics": "Web charts and components.",
+  "openness": "MIT framework, proprietary hosted API."
+ },
+ "steelman": "Thesys attacks the real cost of generative UI: tokens and latency. OpenUI Lang is a purpose-built compact language that, by its own reproducible tiktoken benchmark, needs roughly half to a third of the tokens of json-render or C1's own old JSON, which means faster first paint and cheaper turns. The framework is MIT, renders in four web frameworks, interoperates with A2UI and AG-UI, and the hosted OpenUI Cloud adds the unglamorous production parts (validation, correction, fallbacks, model gateway, observability) teams otherwise build themselves.",
+ "weaknesses": [
+  "C1 itself is a proprietary SaaS; the brand has shifted (C1 -> OpenUI Cloud), so 'C1' docs and APIs may move",
+  "Another UI dialect (OpenUI Lang) beside A2UI and json-render",
+  "Web-only; no terminal renderer",
+  "No readback, patching or history for agents (not documented)",
+  "Customer list and performance claims beyond the token benchmark are marketing"
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent-generated UI constrained to a trusted component library.",
+  "scene_reinvents": "Little; scene does not target model-generated UI token cost.",
+  "borrow": [
+   "A compact text form for agent-written scenes to cut tokens (the token benchmark is a useful yardstick)",
+   "Prompt generation from the component library"
+  ],
+  "gap_left": "Terminal rendering, live control, readback, data streams bypassing the model, pixels, history.",
+  "verdict": "ignore",
+  "verdict_why": "A web generation service; only its compact-language token-cost lesson applies to scene."
+ },
+ "sources": [
+  {
+   "title": "Thesys homepage (OpenUI Cloud, formerly C1 API)",
+   "url": "https://www.thesys.dev/"
+  },
+  {
+   "title": "thesysdev/openui README (token benchmark)",
+   "url": "https://github.com/thesysdev/openui"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@openuidev/react-lang"
+  }
+ ]
+}

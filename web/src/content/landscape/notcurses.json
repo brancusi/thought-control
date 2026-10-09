@@ -1,0 +1,151 @@
+{
+ "id": "notcurses",
+ "name": "Notcurses",
+ "group": "terminal-frameworks",
+ "tagline": "C TUI library for maximal terminals: pixels, video, planes, threads",
+ "links": {
+  "site": "https://notcurses.com/",
+  "repo": "https://github.com/dankamongmen/notcurses",
+  "docs": "https://notcurses.com/",
+  "other": [
+   {
+    "label": "Hacking the Planet with Notcurses (book PDF)",
+    "url": "https://nick-black.com/htp-notcurses.pdf"
+   },
+   {
+    "label": "dankwiki: Notcurses (terminal performance table)",
+    "url": "https://nick-black.com/dankwiki/index.php?title=Notcurses"
+   },
+   {
+    "label": "Rust bindings libnotcurses-sys",
+    "url": "https://github.com/dankamongmen/libnotcurses-sys"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "COPYRIGHT file is Apache-2.0; GitHub API reports NOASSERTION because of the file layout."
+ },
+ "language": "C (C++ wrappers; Python and Rust bindings)",
+ "backing": "Individual: Nick Black (dankamongmen); GitHub Sponsors.",
+ "first_release": "2019-11",
+ "latest_release": {
+  "tag": "v3.0.17",
+  "date": "2025-10-28"
+ },
+ "adoption": {
+  "github_stars": 4740,
+  "stars_fetched": "2026-10-09",
+  "downloads": "Distributed mainly via distro packages (Repology); Rust libnotcurses-sys 169k all-time, 954 in the last 90 days (crates.io)",
+  "notable_users": [],
+  "summary": "Respected and widely packaged, but no prominent applications found; best known for notcurses-demo and the author's own tools (ncls, ncplayer)."
+ },
+ "maintainability": {
+  "release_cadence": "Slowing: v3.0.12 2025-01-09, v3.0.13 01-11, v3.0.14 04-27, v3.0.15 04-30, v3.0.16 05-04, v3.0.17 10-28; nothing since.",
+  "contributors": "~50 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "0 commits and 0 merged PRs since 2026-07-11; 33 commits in the past year, last 2026-05-18 (GitHub API); 332 open issues",
+  "bus_factor": "low: Nick Black has ~7,950 of the commits",
+  "summary": "Feature-complete and stable at 3.x but in maintenance mode with a single author."
+ },
+ "architecture": {
+  "summary": "Notcurses abandons the X/Open Curses API: drawing happens on z-ordered ncplanes grouped into piles; notcurses_render composites planes (with transparency, blending) into a frame and rasterizes only the damage to the terminal. Cells are grapheme-cluster based with 24-bit color quantized as needed. ncvisuals load images/video (FFmpeg or OpenImageIO) and blit via the best available method — Sixel, Kitty, Linux framebuffer, or Unicode half/quadrant/sextant/octant/braille blitters. Thread safety was a design goal. Higher-level widgets (menus, readers, plots, reels, trees, selectors) are built in.",
+  "key_points": [
+   "z-ordered planes and piles with alpha/blending",
+   "Pixel blitting via Sixel, Kitty, fbcon; Unicode blitters down to octants",
+   "Video playback via FFmpeg",
+   "Thread-safe C API; Python and Rust bindings",
+   "Assumes the most capable terminal and steps down",
+   "Can read back rendered cells (ncplane_contents, notcurses_at_yx)"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "'fast as shit' (README)",
+    "source": "https://github.com/dankamongmen/notcurses"
+   },
+   {
+    "text": "notcurses-demo benchmark per terminal (old builds): kitty 0.15.0 682.3 FPS / 72.9 s, alacritty 0.4.1 553.7 FPS / 74.0 s, VTE 205.9 FPS, xterm 11.87 FPS",
+    "source": "https://nick-black.com/dankwiki/index.php?title=Notcurses"
+   }
+  ],
+  "summary": "The only project in this group with a published, reproducible frame-rate methodology (notcurses-demo, three runs per terminal), though the table is from ~2019-2020 terminal versions."
+ },
+ "agent_usability": {
+  "how": "Code generation (C/Python/Rust). No protocol or socket.",
+  "integration_effort": "High: C API, manual memory, app must add its own control layer.",
+  "readback": "In-process the app can read rendered cells (notcurses_at_yx, ncplane_contents); otherwise screen scraping.",
+  "granular_edits": "None from outside.",
+  "history": "None.",
+  "summary": "A powerful renderer with no agent story."
+ },
+ "scores": {
+  "ui_as_data": 0,
+  "agent_drivable": 1,
+  "readback": 2,
+  "granular_edits": 0,
+  "time_travel": 0,
+  "live_data_rate": 4,
+  "terminal_native": 5,
+  "pixel_graphics": 5,
+  "teaching": 1,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Imperative C API on planes",
+  "readback": "Cell readback exists but only in-process",
+  "live_data_rate": "Published hundreds of FPS (old measurements)",
+  "pixel_graphics": "Sixel/Kitty/fbcon bitmaps, video, plane compositing with alpha: the richest pixel story in the group",
+  "maturity": "Stable 3.x, widely packaged, few visible production users, slowing maintenance",
+  "openness": "Apache-2.0 but a one-person project"
+ },
+ "steelman": "Notcurses is the most ambitious terminal graphics engine ever shipped: z-ordered planes with transparency composited into each frame, images and full video blitted through Sixel, Kitty or the Linux framebuffer, and a ladder of Unicode blitters (half-blocks to octants and braille) when pixels are unavailable — all thread-safe, all with 24-bit colour quantized per terminal, and measured with a published per-terminal benchmark methodology. It 'assumes the maximum and steps down', which is exactly the right stance for an agent-era terminal that wants pixels. It has a free guidebook, Python and Rust bindings, and is widely packaged across distributions (Repology).",
+ "weaknesses": [
+  "Single author; no release since 2025-10-28 and no commits since 2026-05-18",
+  "332 open issues",
+  "C API with manual lifetimes; heavy optional multimedia deps (FFmpeg/OIIO)",
+  "No widget-level declarative model or agent surface",
+  "Performance table measured on 2019-2020 terminal versions",
+  "Few visible production users"
+ ],
+ "relation_to_scene": {
+  "overlap": "Pixel layer under/over text, capability probing with cell fallbacks, compositing of layers.",
+  "scene_reinvents": "Plane compositing with alpha and the pixel-protocol ladder with Unicode blitter fallbacks — Notcurses solved these years ago (in C).",
+  "borrow": [
+   "The blitter ladder (pixel → octant/sextant/quadrant/half-block/braille) as scene's pixel fallback",
+   "'Assume the maximum and step down' only on positive terminal confirmation (it won't use bitmaps unless the terminal says so)",
+   "Planes/piles as a mental model for scene's callout and card layers",
+   "notcurses-demo-style per-terminal benchmark methodology"
+  ],
+  "gap_left": "Serializable UI, live agent control and readback, streams, hot-swap, time travel, modern maintenance.",
+  "verdict": "borrow",
+  "verdict_why": "Its graphics engineering is the reference for scene's pixel layer, but it's a C library in maintenance mode with no agent model."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/dankamongmen/notcurses",
+   "url": "https://api.github.com/repos/dankamongmen/notcurses"
+  },
+  {
+   "title": "Notcurses README",
+   "url": "https://github.com/dankamongmen/notcurses"
+  },
+  {
+   "title": "COPYRIGHT (Apache-2.0)",
+   "url": "https://github.com/dankamongmen/notcurses/blob/master/COPYRIGHT"
+  },
+  {
+   "title": "dankwiki Notcurses (performance table)",
+   "url": "https://nick-black.com/dankwiki/index.php?title=Notcurses"
+  },
+  {
+   "title": "LWN: Hacking the planet with Notcurses",
+   "url": "https://lwn.net/Articles/815475/"
+  },
+  {
+   "title": "crates.io libnotcurses-sys",
+   "url": "https://crates.io/api/v1/crates/libnotcurses-sys"
+  }
+ ]
+}

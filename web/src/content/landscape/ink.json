@@ -1,0 +1,177 @@
+{
+ "id": "ink",
+ "name": "Ink",
+ "group": "terminal-frameworks",
+ "tagline": "React for interactive command-line apps",
+ "links": {
+  "site": "https://github.com/vadimdemedes/ink",
+  "repo": "https://github.com/vadimdemedes/ink",
+  "docs": "https://github.com/vadimdemedes/ink#readme",
+  "other": [
+   {
+    "label": "ink-testing-library",
+    "url": "https://github.com/vadimdemedes/ink-testing-library"
+   },
+   {
+    "label": "Claude Code renderer rewrite (issue #769 comment)",
+    "url": "https://github.com/anthropics/claude-code/issues/769#issuecomment-3667315590"
+   },
+   {
+    "label": "Claude Code fullscreen renderer docs",
+    "url": "https://code.claude.com/docs/en/fullscreen"
+   },
+   {
+    "label": "v8.0.0 release",
+    "url": "https://github.com/vadimdemedes/ink/releases/tag/v8.0.0"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": ""
+ },
+ "language": "TypeScript / JavaScript (React reconciler, Yoga layout)",
+ "backing": "Individuals: Vadim Demedes (creator) and Sindre Sorhus (most active maintainer recently). No company.",
+ "first_release": "2017-07",
+ "latest_release": {
+  "tag": "v8.0.0",
+  "date": "2026-10-03"
+ },
+ "adoption": {
+  "github_stars": 40079,
+  "stars_fetched": "2026-10-09",
+  "downloads": "7.79M/week npm (api.npmjs.org, 2026-10-01..07)",
+  "notable_users": [
+   "Claude Code (originally; now React on Anthropic's own renderer)",
+   "Gemini CLI",
+   "GitHub Copilot CLI",
+   "Cloudflare Wrangler",
+   "Shopify CLI",
+   "Prisma",
+   "Canva CLI",
+   "Linear (internal)",
+   "Qodo Command",
+   "A2UI's terminal renderer (a2ui-ink) and json-render's @json-render/ink"
+  ],
+  "summary": "The default terminal renderer for the JS agent wave; README lists Claude Code, Gemini CLI and Copilot CLI first."
+ },
+ "maintainability": {
+  "release_cadence": "Active: v7.0.4 2026-05-24, v7.0.5 05-29, v7.0.6 06-12, v7.1.0 06-17, v7.1.1 07-16, v8.0.0 10-03.",
+  "contributors": "~181 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "~89 commits, 28 merged PRs since 2026-07-11 (GitHub API)",
+  "bus_factor": "medium: two well-known maintainers, no company; very wide downstream use",
+  "summary": "Revived and moving fast in 2026 (v7 overhauled input, v8 requires React 19.3+, adds scroll offsets and finer incremental rendering)."
+ },
+ "architecture": {
+  "summary": "A custom React reconciler builds a tree of Box/Text host nodes laid out with Yoga (flexbox); on each commit Ink renders the tree to a string and writes it to stdout, either redrawing the dynamic region or, with incrementalRendering, only changed lines (v8 skips unchanged line prefixes). <Static> writes permanent output above the live region, which is what lets CLIs keep native scrollback. Hooks (useInput, usePaste, useFocus, useBoxMetrics, useWindowSize) give input and measurement; options cover alternateScreen, maxFps (default 30), concurrent React, kitty keyboard, screen-reader output.",
+  "key_points": [
+   "Full React: components, hooks, context, Suspense, concurrent mode",
+   "Yoga flexbox layout",
+   "Inline (scrollback-preserving) by default; alternateScreen optional",
+   "maxFps throttle, default 30",
+   "React DevTools integration: inspect and edit props live in a running CLI",
+   "ink-testing-library: render() returns lastFrame(), frames[], stdin.write()"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "maxFps default 30; incrementalRendering 'can reduce flickering and improve performance'",
+    "source": "https://github.com/vadimdemedes/ink#maxfps"
+   },
+   {
+    "text": "Claude Code left Ink's renderer: '<Static> creates a hard boundary… updates were suppressed or triggered full redraws'; Anthropic's React-based rewrite (cell diffing, double buffering, damage tracking, DEC 2026) cut offscreen flicker ~85%",
+    "source": "https://github.com/anthropics/claude-code/issues/769#issuecomment-3667315590"
+   },
+   {
+    "text": "Claude Code later added a fullscreen NO_FLICKER renderer that virtualizes the viewport; default for users first seen on/after 2026-05-06",
+    "source": "https://code.claude.com/docs/en/fullscreen"
+   }
+  ],
+  "summary": "Ink publishes no benchmarks; the best public evidence is negative (Claude Code's rewrite) plus upstream fixes (incremental rendering, PR #781; v8 prefix skipping)."
+ },
+ "agent_usability": {
+  "how": "Code generation (agents write Ink/React fluently). Live: React DevTools over its WebSocket backend can inspect the tree and edit props of a running CLI (DEV=true). Declarative-UI projects use Ink as the terminal target: A2UI (a2ui-ink) and json-render (@json-render/ink) map JSON specs onto Ink components.",
+  "integration_effort": "Low for code-gen; for live control you either speak the React DevTools protocol or put a JSON spec layer (A2UI/json-render) in front of Ink.",
+  "readback": "React DevTools shows the component tree and props; ink-testing-library gives lastFrame() text in tests; otherwise screen scraping.",
+  "granular_edits": "DevTools prop edits (human-oriented); via json-render/A2UI, spec-level patches.",
+  "history": "None built in.",
+  "summary": "Not agent-drivable by itself, but the de facto terminal backend that JSON agent-UI specs compile to."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 2,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 0,
+  "teaching": 1,
+  "maturity": 5,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "JSX; A2UI/json-render add a JSON layer on top, but that is not Ink",
+  "agent_drivable": "React DevTools live prop editing is an API, but human-oriented; no agent protocol",
+  "readback": "Structured tree via DevTools; lastFrame() in tests",
+  "live_data_rate": "30 fps default cap; no throughput numbers",
+  "pixel_graphics": "No image support in core found",
+  "openness": "MIT, individual community maintainers"
+ },
+ "steelman": "Ink made the terminal a React target, and that single idea is why the agent CLI wave happened in JavaScript: Claude Code, Gemini CLI, Copilot CLI, Wrangler, Shopify and Prisma all shipped on it, and 7.8M installs a week follow. Every frontend engineer — and every model — already knows how to write it; components, hooks, context and Suspense just work, with Yoga flexbox for layout. Its default inline mode with <Static> output keeps native scrollback, selection and Cmd+F, a trade-off Anthropic explicitly defended for Claude Code. Ink is also where declarative agent UI lands in the terminal today: A2UI's official terminal renderer and json-render both target Ink, so a JSON spec from an agent becomes a live Ink tree with no new runtime. React DevTools lets you inspect and edit a running CLI's props live. In 2026 it is actively maintained again, with incremental rendering, kitty keyboard, scroll views and screen-reader support.",
+ "weaknesses": [
+  "Line-oriented string rendering: Anthropic left it for a cell-diffing renderer because <Static> 'fights React's model' and caused full redraws",
+  "Node/React runtime cost; maxFps 30 default",
+  "No images/pixel graphics",
+  "No agent protocol or structured readback outside DevTools/tests",
+  "Maintained by individuals; breaking majors in 2026 (v7, v8)"
+ ],
+ "relation_to_scene": {
+  "overlap": "Declarative component tree, keyed reconciliation preserving view state (scene's ids work like React keys), terminal renderer for JSON agent-UI specs (via A2UI/json-render).",
+  "scene_reinvents": "Reconciliation keyed by id and a component vocabulary; for JS hosts, A2UI+Ink already gives 'agent sends JSON, terminal renders it'.",
+  "borrow": [
+   "<Static>/inline mode: an optional non-fullscreen scene mode that keeps native scrollback",
+   "ink-testing-library's lastFrame()/frames[] as the shape of scene's screen readback",
+   "React DevTools' live prop editing as a model for patch-by-id UX",
+   "Interop: accept the same JSON A2UI/json-render emit to Ink"
+  ],
+  "gap_left": "Cell-level diffing renderer, socket control of a live instance, readback of state + screen, data streams that bypass the model, pixel layer, hot-swap, time travel.",
+  "verdict": "complement",
+  "verdict_why": "Ink is the terminal target of the JS/A2UI world; scene should interoperate with the specs that target Ink rather than compete with Ink itself."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/vadimdemedes/ink",
+   "url": "https://api.github.com/repos/vadimdemedes/ink"
+  },
+  {
+   "title": "npm downloads ink last week",
+   "url": "https://api.npmjs.org/downloads/point/last-week/ink"
+  },
+  {
+   "title": "Ink README (users, options, DevTools)",
+   "url": "https://github.com/vadimdemedes/ink"
+  },
+  {
+   "title": "Ink v8.0.0 release notes",
+   "url": "https://github.com/vadimdemedes/ink/releases/tag/v8.0.0"
+  },
+  {
+   "title": "Claude Code renderer rewrite comment (2025-12-17)",
+   "url": "https://github.com/anthropics/claude-code/issues/769#issuecomment-3667315590"
+  },
+  {
+   "title": "Claude Code fullscreen rendering docs",
+   "url": "https://code.claude.com/docs/en/fullscreen"
+  },
+  {
+   "title": "The Signature Flicker (Peter Steinberger)",
+   "url": "https://steipete.me/posts/2025/signature-flicker"
+  },
+  {
+   "title": "Heise: Ink 7.0 revises input handling",
+   "url": "https://www.heise.de/en/news/React-in-the-Terminal-Ink-7-0-fundamentally-revises-input-handling-11249949.html"
+  }
+ ]
+}

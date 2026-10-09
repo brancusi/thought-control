@@ -1,0 +1,175 @@
+{
+ "id": "a2ui",
+ "name": "A2UI (Agent-to-User Interface)",
+ "group": "agent-ui-specs",
+ "tagline": "Declarative JSON UI protocol agents stream to native renderers",
+ "links": {
+  "site": "https://a2ui.org/",
+  "repo": "https://github.com/a2ui-project/a2ui",
+  "docs": "https://a2ui.org/specification/v0.9.1-a2ui/",
+  "other": [
+   {
+    "label": "Google Developers Blog launch post (2025-12-15)",
+    "url": "https://developers.googleblog.com/introducing-a2ui-an-open-project-for-agent-driven-interfaces/"
+   },
+   {
+    "label": "Ecosystem renderers list",
+    "url": "https://a2ui.org/ecosystem/renderers/"
+   },
+   {
+    "label": "a2ui-ink (community Ink renderer)",
+    "url": "https://github.com/kokoro-ele/a2ui-ink"
+   },
+   {
+    "label": "a2ui-tui / Liangdi/a2ui (unofficial Rust, ratatui backend)",
+    "url": "https://github.com/Liangdi/a2ui"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Contributions require the Google CLA (CONTRIBUTING.md). Repo moved from google/A2UI to the a2ui-project org but contribution rules, style guides and 'go/a2ui-internal' references are still Google's."
+ },
+ "language": "Spec (JSON Schema); renderers in TypeScript (Lit, React, Angular), Dart (Flutter GenUI), Kotlin (Jetpack Compose alpha); agent SDKs in Python",
+ "backing": "Google (created it; Opal, Gemini Enterprise, Flutter, ADK teams), with CopilotKit/AG-UI as day-zero partner and community renderers",
+ "first_release": "2025-12",
+ "latest_release": {
+  "tag": "spec v0.9.1 (current), v1.0 RC; npm @a2ui/lit & @a2ui/react 0.12.0 (2026-09-28); python a2ui-agent-sdk v0.8.0",
+  "date": "2026-10-08"
+ },
+ "adoption": {
+  "github_stars": 16649,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@a2ui/lit 424,533/week, @a2ui/react 111,837/week, @a2ui/angular 10,407/week (npm, week ending 2026-10-07)",
+  "notable_users": [
+   "Google Opal",
+   "Gemini Enterprise",
+   "Flutter GenUI SDK",
+   "Google ADK",
+   "CopilotKit / AG-UI",
+   "AG2",
+   "Jetpack Compose (androidx a2ui, alpha)",
+   "Vercel json-render (A2UI catalog mode)",
+   "Thesys OpenUI (@openuidev/a2ui)"
+  ],
+  "summary": "The generative-UI spec with the broadest renderer reach (web, Flutter, Android, community Swift/Vue/Svelte/Ink/Rust) and Google production use; npm numbers are high for a ~10-month-old public project."
+ },
+ "maintainability": {
+  "release_cadence": "Per-package tags, roughly every 1-2 weeks (python a2ui-core v0.2.0 2026-09-28, v0.3.0 2026-10-08; a2ui-agent-sdk v0.7.0 2026-09-28, v0.8.0 2026-10-08); spec versions v0.8 -> v0.9 -> v0.9.1 -> v1.0 RC",
+  "contributors": "~99 (GitHub contributors API incl. anonymous, 2026-10-09)",
+  "recent_activity": "484 commits on main since 2026-07-11 (GitHub API); last push 2026-10-09",
+  "bus_factor": "high: Google team plus CopilotKit and a wide community renderer ecosystem",
+  "summary": "Very active monorepo with spec, renderers and SDKs; README still labels it 'early stage public preview' and says to expect changes."
+ },
+ "architecture": {
+  "summary": "A server streams JSONL messages, each with exactly one of createSurface, updateComponents, updateDataModel, deleteSurface. Components form a flat adjacency list (each has an id; parents reference children by id), so the model can emit them in any order and patch one by id. Props bind to a separate per-surface data model through JSON Pointers (relative paths inside list templates); the client renders with its own native widgets from a negotiated catalog. User actions go back to the server as named events, optionally carrying the full data model (sendDataModel); v1.0 RC adds client-to-server RPC (actionResponse) and action ids.",
+  "key_points": [
+   "Security: 'declarative data format, not executable code'; agents may only use pre-approved catalog components",
+   "Transport-agnostic: A2A, AG-UI, MCP, WebSocket, REST bindings; MIME type application/a2ui+json (v0.9.1)",
+   "Data model separate from component tree: updateDataModel {surfaceId, path (JSON Pointer), value}",
+   "Catalog negotiation and custom catalogs (v0.9); client-side functions; validation-failed error format",
+   "Maintained renderers: Lit, React, Angular, Flutter GenUI; Compose alpha; SwiftUI planned",
+   "Terminal: no maintained renderer. Community kokoro-ele/a2ui-ink (@evanyu/a2ui-ink, v0.9, 4 stars, 3 npm downloads/week) and unofficial Rust Liangdi/a2ui (crate a2ui-tui 0.3.1, 676 downloads, 15 stars, ratatui + Slint/egui/Bevy/Iced/Dioxus)"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published rendering or update-rate numbers. Pass-1 landscape notes report one third-party data point (an A2UI dashboard taking ~40 s and ~46k tokens to generate) whose source was not re-verified here."
+ },
+ "agent_usability": {
+  "how": "The agent (via an SDK such as the Python a2ui-agent-sdk or ADK) emits A2UI JSONL messages over a transport; the host renders them. Agents generate it directly with an LLM prompted with the catalog schema.",
+  "integration_effort": "Moderate: pick a transport (A2A/AG-UI/MCP), host a renderer in a supported framework, register a catalog. For a terminal you would need to write or adopt a renderer.",
+  "readback": "Partial: with sendDataModel the client attaches the surface's full data model to every message it sends (i.e. on user actions). No standard way for the agent to read the rendered view or the component tree back on demand.",
+  "granular_edits": "Yes: updateComponents upserts components by id; updateDataModel writes a value at a JSON Pointer path. Cheap and addressable.",
+  "history": "None in the protocol; no history, seek or replay.",
+  "summary": "Built for agents to create and patch a live surface by id, one-way plus user-action events; weak readback and no time travel."
+ },
+ "scores": {
+  "ui_as_data": 5,
+  "agent_drivable": 4,
+  "readback": 2,
+  "granular_edits": 4,
+  "time_travel": 0,
+  "live_data_rate": 2,
+  "terminal_native": 2,
+  "pixel_graphics": 3,
+  "teaching": 0,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "agent_drivable": "Agent creates, patches and deletes live surfaces over a protocol; cannot operate the UI (no key/click injection), so 4 not 5.",
+  "readback": "Only the data model, and only piggybacked on user actions (sendDataModel); no frame or tree readback.",
+  "granular_edits": "Id-addressed component upserts and JSON-Pointer data writes; no removal op for single components or batching semantics beyond replace.",
+  "live_data_rate": "updateDataModel can be pushed any time, but no numbers and data normally flows through the agent/server.",
+  "terminal_native": "Only community terminal renderers (Ink, 4 stars; Rust a2ui-tui, 676 downloads); none maintained by the project.",
+  "pixel_graphics": "Basic catalog has Image/Video etc.; rich graphics depend on custom catalog components in web/Flutter renderers.",
+  "maturity": "Production in Google products, but README says 'early stage public preview'; v1.0 still RC.",
+  "openness": "Apache-2.0 but Google CLA and Google-run project; not foundation-governed."
+ },
+ "steelman": "A2UI is the closest thing the agent world has to HTML for native UI, and it already has gravity: Google ships it in Opal and Gemini Enterprise, Flutter and Jetpack Compose carry first-party renderers, CopilotKit/AG-UI, Vercel's json-render and Thesys's OpenUI all speak it, and the npm renderers move half a million downloads a week less than a year after launch. Its design choices are exactly the ones an agent needs: a flat id-keyed component list the model can stream in any order and patch one node at a time, a separate JSON-Pointer data model so data changes don't resend structure, catalog negotiation so a host only ever renders components it trusts, and a hard 'data, not code' security line that lets a remote agent paint UI across a trust boundary. One payload renders on web, mobile and (via community work) the terminal. If you're building agent UI and want anyone else's agent to be able to target you, A2UI is the format to accept.",
+ "weaknesses": [
+  "Still 'early stage public preview' per README; v0.8 -> v0.9 was a 'philosophical shift' and v1.0 renames theme to surfaceProperties, so payloads churn",
+  "No maintained terminal renderer; the Ink one has 4 stars and 3 weekly downloads, the Rust one 676 total downloads",
+  "Readback is limited to the data model attached to user actions; agents can't inspect what was rendered",
+  "No history, undo or replay in the protocol",
+  "Generation is costly when the model writes whole surfaces (one reported dashboard ~46k tokens/~40 s; competitors such as OpenUI Lang claim 55-67% fewer tokens than JSON formats)",
+  "Google CLA and Google-internal process; not under a neutral foundation"
+ ],
+ "relation_to_scene": {
+  "overlap": "Same core idea: UI as a serializable JSON value with stable component ids, a separate data model bound by paths, small id-addressed updates, and a trusted component catalog.",
+  "scene_reinvents": "The wire format. A2UI already solved 'flat id list + JSON Pointer data model + catalog + streaming' and has multi-renderer reach; scene's own JSON shape is another dialect agents must learn.",
+  "borrow": [
+   "Accept A2UI v0.9.1/v1.0 JSONL (createSurface/updateComponents/updateDataModel/deleteSurface) as an input adapter mapped onto scene components",
+   "Catalog negotiation (catalogId) to advertise which components scene renders",
+   "sendDataModel-style data model echo on actions",
+   "application/a2ui+json MIME type for MCP resources",
+   "Treat agent-pushed specs as data-only (no command data sources) unless a local policy allows"
+  ],
+  "gap_left": "A long-lived terminal process the agent can operate and observe: key/mouse injection, screen-as-text readback, full-state reads, command/stream data sources at thousands of updates/s bypassing the model, kitty pixel layers, callouts/tours, hot binary upgrade and planned time travel. A2UI is a format; it has no maintained terminal renderer and no readback or history.",
+  "verdict": "adopt",
+  "verdict_why": "Make A2UI an accepted input format for scene so agents trained on the standard can target it, while scene supplies the terminal renderer and control/readback/time-travel layer A2UI lacks."
+ },
+ "sources": [
+  {
+   "title": "a2ui-project/a2ui README",
+   "url": "https://github.com/a2ui-project/a2ui"
+  },
+  {
+   "title": "A2UI home (spec versions table)",
+   "url": "https://a2ui.org/"
+  },
+  {
+   "title": "A2UI v0.9.1 specification",
+   "url": "https://a2ui.org/specification/v0.9.1-a2ui/"
+  },
+  {
+   "title": "A2UI renderers",
+   "url": "https://a2ui.org/reference/renderers/"
+  },
+  {
+   "title": "A2UI ecosystem renderers",
+   "url": "https://a2ui.org/ecosystem/renderers/"
+  },
+  {
+   "title": "A2UI in the World",
+   "url": "https://a2ui.org/ecosystem/a2ui-in-the-world/"
+  },
+  {
+   "title": "Introducing A2UI (Google Developers Blog, 2025-12-15)",
+   "url": "https://developers.googleblog.com/introducing-a2ui-an-open-project-for-agent-driven-interfaces/"
+  },
+  {
+   "title": "A2UI CONTRIBUTING (Google CLA)",
+   "url": "https://github.com/a2ui-project/a2ui/blob/main/CONTRIBUTING.md"
+  },
+  {
+   "title": "crates.io a2ui-tui",
+   "url": "https://crates.io/crates/a2ui-tui"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@a2ui/lit"
+  }
+ ]
+}

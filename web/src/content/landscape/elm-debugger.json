@@ -1,0 +1,170 @@
+{
+ "id": "elm-debugger",
+ "name": "Elm time-travel debugger",
+ "group": "time-travel",
+ "tagline": "Built-in Elm debugger: message history, jump back, export a session",
+ "links": {
+  "site": "https://elm-lang.org",
+  "repo": "https://github.com/elm/browser",
+  "docs": "https://elm-lang.org/news/the-perfect-bug-report",
+  "other": [
+   {
+    "label": "Debugger source (elm/browser src/Debugger)",
+    "url": "https://github.com/elm/browser/tree/master/src/Debugger"
+   },
+   {
+    "label": "Time Travel made Easy (2014, Elm Reactor)",
+    "url": "https://elm-lang.org/news/time-travel-made-easy"
+   },
+   {
+    "label": "Decoding an Elm 0.19 history export",
+    "url": "https://medium.com/espark-engineering-blog/understanding-an-elm-0-19-history-export-1bca38613840"
+   },
+   {
+    "label": "Another step towards Elm 1.0 (2026-10-05)",
+    "url": "https://elm-lang.org/news/another-step-towards-elm-v1"
+   },
+   {
+    "label": "elm/compiler",
+    "url": "https://github.com/elm/compiler"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "BSD-3-Clause",
+  "notes": "elm/browser and elm/compiler are BSD-3-Clause. Development is BDFL-controlled (Evan Czaplicki); outside contributions rarely merged."
+ },
+ "language": "Elm (debugger UI) + Haskell (compiler emits --debug instrumentation)",
+ "backing": "Evan Czaplicki; funded via Acadia (described in the 2026-10-05 post as 'the Patreon for Elm' and the server-side Elm effort).",
+ "first_release": "2016-11",
+ "latest_release": {
+  "tag": "elm/compiler 0.19.3 (debugger code unchanged since elm/browser 1.0.2)",
+  "date": "2026-10-02"
+ },
+ "adoption": {
+  "github_stars": 331,
+  "stars_fetched": "2026-10-09",
+  "downloads": "35,523/week npm 'elm' installer (2026-10-01..07); elm/compiler has 7,913 stars",
+  "notable_users": [
+   "NoRedInk",
+   "Rakuten",
+   "IBM",
+   "Microsoft (listed on elm-lang.org)"
+  ],
+  "summary": "Every Elm developer has it (on by default in elm reactor, --debug elsewhere), but Elm itself is niche. Stars above are for elm/browser, the package containing the debugger."
+ },
+ "maintainability": {
+  "release_cadence": "Compiler: 0.19.0 (2018-08-21), 0.19.1 (2019-10-21), then 0.19.2 (2026-07-06, faster builds) and 0.19.3 (2026-10-02, 'correct by construction' internals); post says a faster release cycle is planned. elm/browser (debugger): last commit 2019-11-06, tag 1.0.2.",
+  "contributors": "elm/browser 19; elm/compiler 106 (GitHub contributors API)",
+  "recent_activity": "elm/compiler ~74 commits in last 90 days; elm/browser none since 2019.",
+  "bus_factor": "low: one designer/maintainer decides everything",
+  "summary": "Elm woke up in 2026 (two compiler releases, roadmap toward 1.0 aligned with the Acadia compiler) but the debugger has not changed in nearly seven years."
+ },
+ "architecture": {
+  "summary": "Compiling with --debug wraps the program: every Msg passes through the debugger, which keeps History = {snapshots: Array {model, messages}, recent: {model, messages}, numMessages}. A model snapshot is kept every 31 messages (maxSnapshotSize); jumping to message n restores the nearest earlier snapshot and replays the pure update for the remaining messages. While paused, the app is frozen behind an overlay; Resume returns to the latest state (no branching). Export writes {metadata: {versions, types of Msg and aliases/unions}, history: [msgs]} as JSON; import checks the type metadata against the current program and explains incompatibilities before replaying.",
+  "key_points": [
+   "Debugger messages: UserMsg, Jump Int, SliderJump Int, Resume, Import, Export, Upload, plus UI messages (Up/Down, layout, drag).",
+   "Snapshots every 31 messages bound memory; seek = nearest snapshot + replay.",
+   "Export contains messages only — no model, no outgoing commands, no init flags; import reruns update from init.",
+   "Type metadata in the export lets the compiler-generated decoder reject incompatible histories with a readable error, instead of a runtime exception.",
+   "Works when Elm is embedded in a larger JS page; JS and the server do not travel with it.",
+   "Model viewer (Expando) renders the whole model as an expandable tree at any point."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "maxSnapshotSize = 31: chosen so 62 messages fill a 27-inch monitor while keeping few model snapshots; 'Performance and memory use seems good.'",
+    "source": "https://github.com/elm/browser/blob/master/src/Debugger/History.elm"
+   }
+  ],
+  "summary": "No published numbers. The only design budget in source is one snapshot per 31 messages."
+ },
+ "agent_usability": {
+  "how": "None directly. The debugger is an in-page UI; there is no API, socket or MCP. An agent can only (a) generate Elm code, (b) read or write a history export JSON file, which a human imports in the browser, or (c) drive the page with a generic browser tool.",
+  "integration_effort": "High: would need a custom port/JS bridge or browser automation; the debugger's internal Msg type is not exposed.",
+  "readback": "Only via an exported JSON file (messages + type metadata, not the model) or screenshots of the page.",
+  "granular_edits": "None. An agent could hand-edit an export (remove or alter messages) and have it imported, which is a crude edit-and-replay.",
+  "history": "Human: jump to any message, slider scrub, resume, import, export. Agent: none beyond the export file.",
+  "summary": "A beautifully minimal human debugger whose one agent-relevant artifact is the message-only export file."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 1,
+  "readback": 1,
+  "granular_edits": 0,
+  "time_travel": 3,
+  "live_data_rate": 1,
+  "terminal_native": 0,
+  "pixel_graphics": 0,
+  "teaching": 3,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "View is Elm code; only the message history is exported as data.",
+  "agent_drivable": "Agent can write code or craft an export file; nothing live.",
+  "readback": "Export file (messages only) or screenshots.",
+  "time_travel": "Human seek/jump/scrub + import/export; no fork, no agent access.",
+  "teaching": "Evan explicitly positions it as a tool for beginners to watch messages arrive and the model evolve; no tours/narration.",
+  "maturity": "Shipped since 2016 and used in production Elm shops, but frozen since 2019 and Elm is niche.",
+  "openness": "BSD-3, but single-person control and a closed contribution model."
+ },
+ "steelman": "Elm's debugger is the purest demonstration that time travel is a property of the architecture, not a feature you build: because every change is a typed message through a pure update, the debugger is a small Elm program (six modules in elm/browser) that keeps a snapshot every 31 messages and replay the rest, and Evan's 2016 insight still holds — import/export is THE feature. A QA tester presses Export and the developer gets 'the perfect bug report', the exact session from clicks to HTTP responses, replayable in another browser. Better still, the export carries the program's message types, so an incompatible history is rejected with a friendly explanation instead of corrupting state — something JS tools cannot guarantee. And it doubles as a teaching tool: beginners literally watch messages arrive and the model change. A fan would say thc-scene needs nothing more than this, plus an agent-facing API.",
+ "weaknesses": [
+  "Debugger frozen since elm/browser 1.0.2 (last commit 2019-11-06); no new features despite the 2026 compiler releases.",
+  "Exports omit the model, commands and init flags, so a replay can diverge if flags or server responses differ (eSpark analysis).",
+  "Exports contain everything the user typed (passwords, drafts) and need custom sanitizing (eSpark).",
+  "Linear only: Resume discards the paused position; no fork, no branch from a past point.",
+  "No programmatic or agent interface at all.",
+  "Elm's small ecosystem and BDFL governance limit adoption; JS interop and the server do not time-travel."
+ ],
+ "relation_to_scene": {
+  "overlap": "Identical architecture (serializable model, typed messages, pure update, pure view). scene's planned export/import and seek are this debugger's core features.",
+  "scene_reinvents": "Snapshot-every-N + replay seek, and import/export of a message log. These are solved and small; scene should copy them, not design them afresh.",
+  "borrow": [
+   "Snapshot every N messages (Elm uses 31) and seek by replaying from the nearest snapshot.",
+   "Export = metadata (program/format version + message schema) + message list; validate the schema on import and explain incompatibilities in plain words.",
+   "Decide explicitly what an export omits (Elm omits model, effects, flags) — scene should include its initial pushed UI and data-source outputs so replay is deterministic.",
+   "Freeze input and show an overlay while paused in the past.",
+   "Message-level redaction hook before export (Elm lacked one; eSpark had to build it)."
+  ],
+  "gap_left": "No agent API, no fork, no rendered-frame-at-time readback, no live data, no terminal, no narration/takeover.",
+  "verdict": "borrow",
+  "verdict_why": "Same architecture as scene and the cleanest import/export design, but unusable outside Elm in a browser and closed to agents."
+ },
+ "sources": [
+  {
+   "title": "The Perfect Bug Report — Elm 0.18 (2016-11-14)",
+   "url": "https://elm-lang.org/news/the-perfect-bug-report"
+  },
+  {
+   "title": "Time Travel made Easy (Elm Reactor, 2014)",
+   "url": "https://elm-lang.org/news/time-travel-made-easy"
+  },
+  {
+   "title": "elm/browser Debugger/History.elm (maxSnapshotSize, History type)",
+   "url": "https://github.com/elm/browser/blob/master/src/Debugger/History.elm"
+  },
+  {
+   "title": "elm/browser Debugger/Main.elm (Msg type)",
+   "url": "https://github.com/elm/browser/blob/master/src/Debugger/Main.elm"
+  },
+  {
+   "title": "Decoding an Elm 0.19 History Export (eSpark)",
+   "url": "https://medium.com/espark-engineering-blog/understanding-an-elm-0-19-history-export-1bca38613840"
+  },
+  {
+   "title": "Another step towards Elm 1.0 (2026-10-05)",
+   "url": "https://elm-lang.org/news/another-step-towards-elm-v1"
+  },
+  {
+   "title": "elm/compiler releases 0.19.2 / 0.19.3",
+   "url": "https://github.com/elm/compiler/releases"
+  },
+  {
+   "title": "elm-lang.org home (company logos)",
+   "url": "https://elm-lang.org/"
+  }
+ ]
+}

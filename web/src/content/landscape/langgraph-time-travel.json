@@ -1,0 +1,173 @@
+{
+ "id": "langgraph-time-travel",
+ "name": "LangGraph time travel",
+ "group": "time-travel",
+ "tagline": "Checkpointed agent state you can list, replay and fork by API",
+ "links": {
+  "site": "https://www.langchain.com/langgraph",
+  "repo": "https://github.com/langchain-ai/langgraph",
+  "docs": "https://docs.langchain.com/oss/python/langgraph/use-time-travel",
+  "other": [
+   {
+    "label": "Persistence / checkpointers",
+    "url": "https://docs.langchain.com/oss/python/langgraph/persistence"
+   },
+   {
+    "label": "Time travel via the server API",
+    "url": "https://docs.langchain.com/langsmith/human-in-the-loop-time-travel"
+   },
+   {
+    "label": "Frontend time travel (useStream forkFrom)",
+    "url": "https://docs.langchain.com/oss/python/langchain/frontend/time-travel"
+   },
+   {
+    "label": "LangSmith Studio (formerly LangGraph Studio)",
+    "url": "https://docs.langchain.com/langsmith/studio"
+   },
+   {
+    "label": "MCP endpoint in Agent Server",
+    "url": "https://docs.langchain.com/langsmith/server-mcp"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "LangGraph library and checkpointers are MIT. Agent Server (LangSmith Deployment, formerly LangGraph Platform) and LangSmith Studio (formerly LangGraph Studio) are proprietary/commercial; `langgraph dev` runs a local server usable with Studio."
+ },
+ "language": "Python, TypeScript",
+ "backing": "LangChain, Inc. $125M Series B at a $1.25B valuation (Oct 2025) led by IVP, with Sequoia, Benchmark, CapitalG and others.",
+ "first_release": "2024-01",
+ "latest_release": {
+  "tag": "1.2.14",
+  "date": "2026-10-06"
+ },
+ "adoption": {
+  "github_stars": 42962,
+  "stars_fetched": "2026-10-09",
+  "downloads": "11,996,778/week PyPI langgraph; 11,020,655/week langgraph-checkpoint (pypistats recent); 3,725,541/week npm @langchain/langgraph (2026-10-01..07)",
+  "notable_users": [
+   "Klarna",
+   "Replit",
+   "Elastic (named in README)"
+  ],
+  "summary": "Among the most-used agent orchestration frameworks; checkpointing (and hence time travel) is on in any graph compiled with a checkpointer. first_release is the first PyPI upload (0.0.8, 2024-01-08)."
+ },
+ "maintainability": {
+  "release_cadence": "Weekly-ish patches: 1.2.10 (2026-07-28), 1.2.11 (2026-08-11), 1.2.12 (2026-09-21), 1.2.13 (2026-10-05), 1.2.14 (2026-10-06); 1.0.0 on 2025-10-17. CLI and SDK release separately.",
+  "contributors": "289 (GitHub contributors API, incl. anonymous)",
+  "recent_activity": "~151 commits in the last 90 days; pushed 2026-10-09.",
+  "bus_factor": "high: well-funded company team",
+  "summary": "Stable 1.x API, very active, company-backed."
+ },
+ "architecture": {
+  "summary": "A graph of nodes runs in 'super-steps'; with a checkpointer (InMemorySaver, SQLite, Postgres, …) LangGraph persists a checkpoint after each step, keyed by thread_id and checkpoint_id, with a parent pointer. A StateSnapshot holds values (full state), next (nodes to run), tasks, config and metadata. Time travel = resume from any prior checkpoint: replay re-executes downstream nodes (LLM calls fire again); fork calls update_state on a past checkpoint, which writes a NEW checkpoint branching from it (via the named node's reducers) rather than rolling back. The same operations are exposed over the Agent Server REST API and SDKs, and rendered by LangSmith Studio and the useStream frontend hooks.",
+  "key_points": [
+   "get_state(config) / get_state_history(config) (reverse chronological) read any checkpoint.",
+   "invoke(None, checkpoint_config) = replay from that point; nodes before it are not re-run.",
+   "update_state(config, values, as_node=…) = fork: new checkpoint on a branch, history kept; as_node controls which node 'produced' the update and where execution resumes.",
+   "Interrupts re-trigger during time travel; you can fork between interrupts to change a later human answer.",
+   "Server API: POST /threads, POST /threads/{id}/runs/wait, GET /threads/{id}/history, POST /threads/{id}/state with checkpoint_id; SDK client.threads.get_history / update_state; frontend submit(..., {forkFrom: {checkpointId}}).",
+   "Studio: visual graph, per-step state inspection, edit state and re-run from a step."
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers for checkpoint write/read cost or history query speed found. Checkpoints store full state per super-step (with per-channel versioning), so cost scales with state size and step count."
+ },
+ "agent_usability": {
+  "how": "Plain Python/JS API and an HTTP API (Agent Server) any agent or tool can call: list history, get state at a checkpoint, update_state (fork), resume (replay). Agent Server also exposes deployed graphs as MCP tools at /mcp, but those tools run the agent; history operations are not exposed as MCP tools.",
+  "integration_effort": "Low for code: a checkpointer at compile time. For an external coding agent: call the REST API or write SDK code; no off-the-shelf MCP for history.",
+  "readback": "Full structured state (values, next, tasks, metadata, parent) at every checkpoint; no rendered view (it is not a UI).",
+  "granular_edits": "update_state with a partial values dict, applied through reducers as a named node, at a chosen checkpoint — targeted, keyed edits that become new checkpoints.",
+  "history": "Read (history list), seek (state at checkpoint_id), fork (update_state on a past checkpoint), replay (invoke from a checkpoint) — all API-callable. Replay is re-execution, not deterministic playback.",
+  "summary": "The clearest complete set of agent-callable history operations found (read, seek, fork, replay), for agent workflow state rather than UI."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 3,
+  "readback": 4,
+  "granular_edits": 4,
+  "time_travel": 5,
+  "live_data_rate": 2,
+  "terminal_native": 0,
+  "pixel_graphics": 0,
+  "teaching": 1,
+  "maturity": 5,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Not a UI tool; state is serializable but Studio's UI is not data.",
+  "agent_drivable": "REST/SDK API drives runs and state; MCP exposes runs only.",
+  "readback": "Structured state at every checkpoint; no rendering.",
+  "granular_edits": "Keyed partial state updates via reducers at a chosen checkpoint.",
+  "time_travel": "Read, seek, fork and replay are all callable by an agent through the API.",
+  "live_data_rate": "Streams tokens/updates per step; not a high-rate data tool.",
+  "maturity": "~12M PyPI downloads/week; a standard for agent orchestration.",
+  "openness": "MIT library; Studio and Agent Server are commercial."
+ },
+ "steelman": "LangGraph made time travel a first-class, boring API for millions of production agent runs: every super-step is a checkpoint with an id and a parent, get_state_history lists them, invoke from a checkpoint replays, and update_state forks — creating a new branch instead of destroying history, with as_node controlling exactly where execution resumes. The same four verbs exist in Python, JS, REST and a React hook (forkFrom), and Studio renders them for humans. It also faced the hard truth scene must face: replay of effectful steps re-executes and may differ, and human-in-the-loop interrupts re-fire — and documented the semantics plainly. A fan would say: this is the exact read/seek/fork/replay contract thc-scene's plan describes, battle-tested at ~12M weekly downloads; copy the verbs and semantics.",
+ "weaknesses": [
+  "Replay re-executes nodes after the checkpoint; LLM calls, API requests and interrupts fire again and 'may return different results' (docs) — not deterministic playback.",
+  "Checkpoints are per super-step, not per fine-grained message; no rendered view of what a user saw.",
+  "History operations are not exposed as MCP tools; Agent Server /mcp exposes agents as tools only.",
+  "Studio and Agent Server are commercial (LangSmith); the free path is local `langgraph dev`.",
+  "Full-state checkpoints grow with state size; no published performance numbers.",
+  "Known rough edges, e.g. 'time travel then invoke, checkpoint id no longer updates' (#4987)."
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent-callable read/seek/fork/replay over serializable state with ids and parent pointers — the same verbs scene plans (history, state_at, fork, replay).",
+  "scene_reinvents": "The API contract and semantics of branching time travel (fork creates a new branch, never rollback; replay from a point; as-if-produced-by attribution). scene should adopt these semantics rather than invent new ones.",
+  "borrow": [
+   "Checkpoint = {id, parent_id, values, next, metadata}; history listed newest-first; every checkpoint addressable.",
+   "Fork never mutates: update_state on a past point writes a new child checkpoint; the original timeline stays intact.",
+   "as_node: record who/what produced a forked change (scene: agent, user, data source) and resume accordingly.",
+   "Explicit, documented replay semantics for effects (scene: data-source commands re-run vs replayed from the log; default to the log).",
+   "Same verbs across library, REST and frontend hook (forkFrom) — scene: socket ops, MCP tools and TUI keys share one model."
+  ],
+  "gap_left": "No UI at all: no rendered frame at a checkpoint, no terminal, no live interactive surface for a person, no teaching; time travel is over agent workflow state, not a screen.",
+  "verdict": "borrow",
+  "verdict_why": "The best-specified agent-facing fork/replay API, applied to a different kind of state; scene should copy its verbs and semantics."
+ },
+ "sources": [
+  {
+   "title": "Use time-travel (LangGraph docs)",
+   "url": "https://docs.langchain.com/oss/python/langgraph/use-time-travel"
+  },
+  {
+   "title": "Time travel using the server API",
+   "url": "https://docs.langchain.com/langsmith/human-in-the-loop-time-travel"
+  },
+  {
+   "title": "Frontend time travel (useStream)",
+   "url": "https://docs.langchain.com/oss/python/langchain/frontend/time-travel"
+  },
+  {
+   "title": "Persistence",
+   "url": "https://docs.langchain.com/oss/python/langgraph/persistence"
+  },
+  {
+   "title": "LangSmith Studio",
+   "url": "https://docs.langchain.com/langsmith/studio"
+  },
+  {
+   "title": "MCP endpoint in Agent Server",
+   "url": "https://docs.langchain.com/langsmith/server-mcp"
+  },
+  {
+   "title": "langchain-ai/langgraph (GitHub API: stars, license, releases)",
+   "url": "https://github.com/langchain-ai/langgraph"
+  },
+  {
+   "title": "LangChain raises $125M (Series B)",
+   "url": "https://www.langchain.com/blog/series-b"
+  },
+  {
+   "title": "Issue #4987 time travel then invoke",
+   "url": "https://github.com/langchain-ai/langgraph/issues/4987"
+  },
+  {
+   "title": "pypistats langgraph",
+   "url": "https://pypistats.org/packages/langgraph"
+  }
+ ]
+}

@@ -1,0 +1,156 @@
+{
+ "id": "json-render",
+ "name": "json-render",
+ "group": "agent-ui-specs",
+ "tagline": "Catalog-constrained JSON specs, streamed as patches, rendered anywhere",
+ "links": {
+  "site": "https://json-render.dev/",
+  "repo": "https://github.com/vercel-labs/json-render",
+  "docs": "https://json-render.dev/docs/quick-start",
+  "other": [
+   {
+    "label": "SpecStream (streaming)",
+    "url": "https://json-render.dev/docs/streaming"
+   },
+   {
+    "label": "@json-render/ink",
+    "url": "https://json-render.dev/docs/api/ink"
+   },
+   {
+    "label": "Devtools",
+    "url": "https://json-render.dev/docs/devtools"
+   },
+   {
+    "label": "A2UI integration",
+    "url": "https://json-render.dev/docs/a2ui"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Vercel Labs project (company-controlled; 'Labs' badge)."
+ },
+ "language": "TypeScript",
+ "backing": "Vercel (Vercel Labs)",
+ "first_release": "2026-01",
+ "latest_release": {
+  "tag": "v0.21.0",
+  "date": "2026-09-18"
+ },
+ "adoption": {
+  "github_stars": 18596,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@json-render/core 2,053,601/week, @json-render/react 1,123,031/week, @json-render/ink 136,966/week (npm, week ending 2026-10-07)",
+  "notable_users": [
+   "Listed as an ecosystem A2UI renderer on a2ui.org"
+  ],
+  "summary": "Fast uptake: 18.6k stars and ~2M weekly core downloads within nine months; named production users were not found."
+ },
+ "maintainability": {
+  "release_cadence": "Roughly monthly minors: v0.17.0 2026-04-11, v0.18.0 2026-04-17, v0.19.0 2026-05-12, v0.20.0 2026-08-18, v0.21.0 2026-09-18",
+  "contributors": "~22 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "Only 12 commits on main since 2026-07-11 (GitHub API), despite two releases; last push 2026-10-07",
+  "bus_factor": "low-medium: small contributor base inside one company's Labs org; main-branch activity has slowed",
+  "summary": "Broad package surface (~30 packages) maintained by a small team; cadence has slowed since spring."
+ },
+ "architecture": {
+  "summary": "A spec is a flat map: {root, elements: {key: {type, props, children[], visible, watch}}} constrained by a Zod catalog the developer defines (catalog.prompt() turns it into a system prompt). Props can be expressions ($state, $bindState, $cond/$then/$else, $template, $computed) over a JSON state model; actions (incl. built-in setState) and watchers react to state. The model streams SpecStream: JSONL RFC 6902 JSON Patch ops into the spec, compiled incrementally by createSpecStreamCompiler. Renderers exist for React, Vue, Svelte, Solid, React Native, Next.js, Remotion, React PDF/Email, Satori images, React Three Fiber, and Ink.",
+  "key_points": [
+   "Guardrail: AI may only use catalog components/actions; output validated against Zod schemas",
+   "SpecStream = RFC 6902 patches with JSON Pointer paths like /elements/card-1/props",
+   "State store adapters (Redux, Zustand, Jotai, XState) - state can live in an external store",
+   "Devtools panel: spec tree, inline state editor, action timeline, stream/patch log (500-event ring buffer), DOM picker",
+   "@json-render/ink: terminal renderer with ~25 standard components (Box, Text, Table, Sparkline, BarChart, Select, Tabs, TextInput...)",
+   "@json-render/mcp: MCP Apps integration; @json-render/yaml: YAML wire format with edit modes; A2UI catalogs supported via schema-agnostic core"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers. A competitor's tiktoken benchmark (OpenUI) measures json-render specs as 2-3x the tokens of OpenUI Lang for the same UIs."
+ },
+ "agent_usability": {
+  "how": "Code-level library: the LLM (e.g. via AI SDK streamText) is prompted with catalog.prompt() and emits JSONL patches that the host app compiles and renders. MCP Apps integration package lets the same spec render in Claude/ChatGPT.",
+  "integration_effort": "Low for TS apps: define catalog + registry, stream the model's output into useUIStream/createSpecStreamCompiler.",
+  "readback": "The host holds the spec and state as plain JSON, so it can feed them back to the model; no standard readback channel or rendered-view capture. Devtools is human-facing.",
+  "granular_edits": "Yes, in principle: RFC 6902 patches addressed by element key and JSON Pointer; setState by path. In practice edits arrive in generation streams rather than over a live control channel.",
+  "history": "Devtools records actions and stream patches for inspection; no seek, undo, fork or replay API.",
+  "summary": "Excellent format and generation pipeline for agents; control of a running instance is left to the host app."
+ },
+ "scores": {
+  "ui_as_data": 5,
+  "agent_drivable": 3,
+  "readback": 3,
+  "granular_edits": 4,
+  "time_travel": 2,
+  "live_data_rate": 2,
+  "terminal_native": 3,
+  "pixel_graphics": 3,
+  "teaching": 0,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "agent_drivable": "Agent output is a patch stream the app applies; no generic socket/MCP to operate a live instance (keys, clicks).",
+  "readback": "Spec and state are plain JSON the host can return to the model, but nothing standard does it.",
+  "time_travel": "Devtools action/stream logs are inspection only.",
+  "terminal_native": "Official Ink renderer with 137k weekly downloads; web-first project.",
+  "pixel_graphics": "Images (Satori), 3D (R3F) and video (Remotion) via separate renderer packages; Ink renderer is text-only (Unicode sparklines/bars).",
+  "maturity": "Huge downloads but < 1 year old, 0.x, no named production users found."
+ },
+ "steelman": "json-render is the most practical generative-UI toolkit shipping today: you write a Zod catalog once and get a system prompt, validation, streaming, and renderers for every surface Vercel's audience cares about, including the terminal through Ink. Its spec is a plain JSON value with keyed elements, its streaming format is standard RFC 6902 JSON Patch, its expressions ($state, $bindState, $cond, $template, $computed) give real interactivity without shipping code, and the same catalog can speak A2UI or render inside MCP Apps. Two million weekly downloads in nine months says developers find this the shortest path from 'model output' to 'safe, interactive UI'.",
+ "weaknesses": [
+  "Main-branch activity is low (12 commits in the last 90 days) and the contributor base small (~22) for ~30 packages",
+  "Vercel Labs project, 0.x; API churn and abandonment risk are both real",
+  "No live control channel: no key/click injection, no screen readback, no instance addressing beyond what the host builds",
+  "Token-heavy compared to compact DSLs (OpenUI benchmark: 55-67% more tokens than OpenUI Lang)",
+  "Ink renderer inherits Ink's full-redraw/flicker trade-offs and has no pixel graphics"
+ ],
+ "relation_to_scene": {
+  "overlap": "UI as a JSON value of keyed elements, state model with path bindings, conditional visibility/templates, patches by JSON Pointer, a terminal renderer.",
+  "scene_reinvents": "Template expressions ($state/$cond/$template/$computed), catalog-to-prompt generation, and streamed JSON-Patch construction; scene has its own versions of each.",
+  "borrow": [
+   "RFC 6902 JSON Patch as scene's patch op (or an accepted alternative) so SpecStream output can drive scene",
+   "catalog.prompt(): generate the agent's system prompt from scene's component schema",
+   "Expression vocabulary ($state, $bindState, $cond, $template) as a compatibility layer",
+   "Devtools-style action and patch log as the seed of scene's time-travel UI",
+   "Publish a json-render catalog that targets scene components"
+  ],
+  "gap_left": "A running terminal instance the agent can operate and read back (keys, mouse, screen text, state), high-rate data streams that bypass the model, kitty pixel graphics, callouts/tours, hot upgrade, time travel.",
+  "verdict": "borrow",
+  "verdict_why": "Its format ideas and patch stream are worth matching, but it is a TS library for embedding in apps, not a drivable terminal surface."
+ },
+ "sources": [
+  {
+   "title": "vercel-labs/json-render README",
+   "url": "https://github.com/vercel-labs/json-render"
+  },
+  {
+   "title": "Streaming (SpecStream)",
+   "url": "https://json-render.dev/docs/streaming"
+  },
+  {
+   "title": "Generation modes",
+   "url": "https://json-render.dev/docs/generation-modes"
+  },
+  {
+   "title": "@json-render/ink API",
+   "url": "https://json-render.dev/docs/api/ink"
+  },
+  {
+   "title": "Devtools",
+   "url": "https://json-render.dev/docs/devtools"
+  },
+  {
+   "title": "A2UI integration",
+   "url": "https://json-render.dev/docs/a2ui"
+  },
+  {
+   "title": "OpenUI token benchmark (competitor claim)",
+   "url": "https://github.com/thesysdev/openui"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@json-render/core"
+  }
+ ]
+}

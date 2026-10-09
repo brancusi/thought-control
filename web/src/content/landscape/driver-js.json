@@ -1,0 +1,166 @@
+{
+ "id": "driver-js",
+ "name": "driver.js",
+ "group": "teaching-and-live-data",
+ "tagline": "Tiny dependency-free product tours, highlights and hints for web pages",
+ "links": {
+  "site": "https://driverjs.com",
+  "repo": "https://github.com/nilbuild/driver.js",
+  "docs": "https://driverjs.com/docs/api",
+  "other": [
+   {
+    "label": "Changelog",
+    "url": "https://driverjs.com/docs/changelog"
+   },
+   {
+    "label": "Shepherd (AGPL-3.0 / commercial)",
+    "url": "https://github.com/shipshapecode/shepherd"
+   },
+   {
+    "label": "Intro.js (AGPL-3.0 / commercial)",
+    "url": "https://github.com/usablica/intro.js"
+   },
+   {
+    "label": "Inline Manual driver.js JSON tour builder",
+    "url": "https://inlinemanual.com/driverjs/"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "driver.js is MIT. Peers are copyleft-plus-commercial: Shepherd switched from MIT to AGPL-3.0 at 14.0.1 (2024-10-10, npm) with commercial licences at $50 and $300 lifetime tiers; Intro.js has been AGPL-3.0 since 2.5.0 (2017) with commercial licences $9.99 / $49.99 / $299.99 lifetime (introjs.com)."
+ },
+ "language": "TypeScript",
+ "backing": "Individual: Kamran Ahmed's project (also of roadmap.sh); repo now resolves to nilbuild/driver.js, where account nilbuild holds 579 of the commits.",
+ "first_release": "2018-03",
+ "latest_release": {
+  "tag": "1.9.0",
+  "date": "2026-10-03"
+ },
+ "adoption": {
+  "github_stars": 26897,
+  "stars_fetched": "2026-10-09",
+  "downloads": "2,310,356/week npm driver.js (api.npmjs.org, 2026-10-01..07); Shepherd 334,642/week; Intro.js 178,899/week.",
+  "notable_users": [],
+  "summary": "The most-downloaded open tour library by a wide margin (~7x Shepherd, ~13x Intro.js on npm); site claims '4M+ monthly downloads, used by tens of thousands of projects'. Stars: driver.js 26.9k, Intro.js 23.5k, Shepherd 13.8k."
+ },
+ "maintainability": {
+  "release_cadence": "Revived in 2026: 1.5.0 2026-06-23, 1.6.0 2026-06-25, 1.7.0 2026-07-13, 1.8.0 2026-07-17, 1.9.0 2026-10-03.",
+  "contributors": "~56 (GitHub, incl. anonymous)",
+  "recent_activity": "50 commits since 2026-07-11, mostly direct pushes (2 merged PRs).",
+  "bus_factor": "low: one maintainer authors nearly all commits.",
+  "summary": "Actively maintained again after a quieter period, with a careful changelog, but a one-person project."
+ },
+ "architecture": {
+  "summary": "A driver instance takes a config of steps (element selector plus popover title/description/side/align) and hooks. It draws an SVG overlay with a cut-out around the target element, scrolls it into view and positions a popover. The instance exposes an imperative API (drive, moveNext/Previous/To, highlight, setSteps, setConfig, getState, getActiveIndex, refresh, destroy). Since 1.8 a separate `driver.js/hints` entry adds pulsing beacons (~5 KB gzip).",
+  "key_points": [
+   "Steps are plain objects (JSON-able apart from hook functions); tour builders export/import them as JSON.",
+   "Structured readback: getState(), getActiveStep(), getActiveIndex(), isActive().",
+   "Interactive tours: advanceOnClick, waitForElement, async steps, multi-page tours.",
+   "~5 KB, no dependencies, accessible keyboard handling."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "A few lines of code and ~5kb is all it takes. No dependencies.",
+    "source": "https://driverjs.com/"
+   },
+   {
+    "text": "Hints entry ~5KB gzip; tsdown build sizes within ±2% of vite build.",
+    "source": "https://driverjs.com/docs/changelog"
+   }
+  ],
+  "summary": "Only bundle-size claims; no runtime benchmarks (none needed at this scale)."
+ },
+ "agent_usability": {
+  "how": "No MCP server or protocol. An agent either generates a steps config (common: Claude Code skills and JSON tour builders exist) or, via browser automation (Playwright/CDP), calls the live driverObj methods in the page.",
+  "integration_effort": "Low for code generation; medium for live control (needs a browser harness that evaluates JS in the page).",
+  "readback": "getState/getActiveStep give structured tour state; page state requires DOM or screenshots.",
+  "granular_edits": "setSteps/setConfig replace config; moveTo(i) and highlight(step) target one step; no per-step id patching.",
+  "history": "movePrevious/moveTo only; no recording.",
+  "summary": "Simple, scriptable, JSON-friendly tours that an agent can generate easily and steer if it already controls the browser."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 3,
+  "time_travel": 2,
+  "live_data_rate": 0,
+  "terminal_native": 0,
+  "pixel_graphics": 4,
+  "teaching": 4,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Tour = array of step objects; serializable except hook callbacks.",
+  "agent_drivable": "Callable JS API but no protocol; agents need their own browser harness.",
+  "readback": "Structured getState, but only from inside the page.",
+  "teaching": "Tours, highlights, hints, interactive steps; no narration/recording.",
+  "openness": "MIT, single-maintainer control. Shepherd and Intro.js would score 2 (AGPL plus paid commercial licence)."
+ },
+ "steelman": "driver.js is the default answer to 'walk a user through this screen' for a reason: 5 KB, no dependencies, MIT, and an API small enough to learn in ten minutes. A tour is just an array of step objects, which makes it trivially generated by an LLM or a visual builder and stored as JSON. It handles the hard UX details (cut-out overlays, scrolling, popover placement, waiting for late elements, click-to-advance, keyboard and ARIA) and now ships hints for ambient guidance. With 2.3M weekly downloads it dwarfs Shepherd and Intro.js, and unlike both it carries no AGPL obligation or licence fee, so it is the one you can embed anywhere. Any agent that already drives a browser can run, steer and read back a driver.js tour today.",
+ "weaknesses": [
+  "Web DOM only; nothing for terminals or canvas UIs.",
+  "Single maintainer (nilbuild ~579 commits); quiet periods before the 2026 revival.",
+  "No narration, recording or replay; a tour is a static script.",
+  "No external protocol: agent control means owning a browser automation layer.",
+  "Peers' licences (Shepherd AGPL since 2024-10, Intro.js AGPL since 2017) show the category's monetisation pressure."
+ ],
+ "relation_to_scene": {
+  "overlap": "Spotlight/callout layers anchored to UI elements, step sequencing, popovers with next/previous, click-to-advance.",
+  "scene_reinvents": "The tour UX vocabulary: cut-out spotlight, popover side/align, advanceOnClick, waitForElement, skipMissingElement, hints/beacons. driver.js has years of edge cases settled.",
+  "borrow": [
+   "Step schema: {element, popover:{title, description, side, align}, data} plus advanceOnClick / waitForElement / skipMissingElement semantics.",
+   "Instance API names: drive, moveNext, movePrevious, moveTo, getState, highlight, refresh, destroy.",
+   "Hints as a separate lightweight layer (beacons) distinct from modal tours."
+  ],
+  "gap_left": "Terminal-native tours anchored to node ids that an agent creates and narrates live over a socket, with take-over and rewind; driver.js is a web page script with no agent protocol or history.",
+  "verdict": "borrow",
+  "verdict_why": "Its step model and UX rules are the right reference for caretline-tour; the library itself can't run in a terminal."
+ },
+ "sources": [
+  {
+   "title": "driver.js API reference",
+   "url": "https://driverjs.com/docs/api"
+  },
+  {
+   "title": "driver.js changelog",
+   "url": "https://driverjs.com/docs/changelog"
+  },
+  {
+   "title": "driver.js homepage",
+   "url": "https://driverjs.com/"
+  },
+  {
+   "title": "GitHub API nilbuild/driver.js",
+   "url": "https://api.github.com/repos/nilbuild/driver.js"
+  },
+  {
+   "title": "npm downloads driver.js",
+   "url": "https://api.npmjs.org/downloads/point/last-week/driver.js"
+  },
+  {
+   "title": "Shepherd LICENSE",
+   "url": "https://github.com/shipshapecode/shepherd/blob/main/LICENSE.md"
+  },
+  {
+   "title": "Shepherd pricing",
+   "url": "https://shepherdjs.dev/pricing"
+  },
+  {
+   "title": "Intro.js commercial licence",
+   "url": "https://introjs.com/#commercial"
+  },
+  {
+   "title": "Intro.js LICENSE",
+   "url": "https://github.com/usablica/intro.js/blob/master/license.md"
+  },
+  {
+   "title": "npm registry shepherd.js (license change at 14.0.1)",
+   "url": "https://registry.npmjs.org/shepherd.js"
+  }
+ ]
+}

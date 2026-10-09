@@ -1,0 +1,181 @@
+{
+ "id": "terminal-recording",
+ "name": "asciinema + Charm VHS",
+ "group": "teaching-and-live-data",
+ "tagline": "Terminal sessions as text event logs, and scripted demo tapes",
+ "links": {
+  "site": "https://asciinema.org",
+  "repo": "https://github.com/asciinema/asciinema",
+  "docs": "https://docs.asciinema.org/manual/asciicast/v3/",
+  "other": [
+   {
+    "label": "asciinema 3.0 announcement",
+    "url": "https://blog.asciinema.org/post/three-point-o/"
+   },
+   {
+    "label": "asciinema player API",
+    "url": "https://docs.asciinema.org/manual/player/api/"
+   },
+   {
+    "label": "asciinema-player repo",
+    "url": "https://github.com/asciinema/asciinema-player"
+   },
+   {
+    "label": "asciinema-server repo",
+    "url": "https://github.com/asciinema/asciinema-server"
+   },
+   {
+    "label": "Charm VHS repo",
+    "url": "https://github.com/charmbracelet/vhs"
+   },
+   {
+    "label": "terminal-mcp (records agent sessions to asciicast)",
+    "url": "https://github.com/elleryfamilia/terminal-mcp"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "GPL-3.0 (asciinema CLI); Apache-2.0 (asciinema-player, asciinema-server); MIT (VHS)",
+  "notes": "asciinema CLI is copyleft GPL-3.0; player and server are Apache-2.0; VHS is MIT. The asciicast format is an open, documented spec."
+ },
+ "language": "Rust (asciinema CLI 3.x), JavaScript/Rust-WASM (player), Elixir (server), Go (VHS)",
+ "backing": "asciinema: individual, Marcin Kulik (ku1ik, ~1,497 of CLI commits), community-funded asciinema.org. VHS: Charm (charmbracelet, venture-backed company), main author Maas Lalani.",
+ "first_release": "2011-11",
+ "latest_release": {
+  "tag": "asciinema v3.2.1 / VHS v0.12.1",
+  "date": "2026-09-24"
+ },
+ "adoption": {
+  "github_stars": 17866,
+  "stars_fetched": "2026-10-09",
+  "downloads": "asciinema-player 531,041/week npm; asciinema 1,109,044/week PyPI (legacy 2.x Python package, likely CI-heavy); VHS downloads not measured. Stars: asciinema 17.9k, VHS 21.1k, player 2.9k, server 2.5k.",
+  "notable_users": [
+   "Charm's own READMEs (VHS GIFs)",
+   "Countless CLI project READMEs and docs (asciinema embeds)"
+  ],
+  "summary": "asciinema is the de facto standard for sharing terminal sessions since 2011; VHS is the standard way to script reproducible terminal demo GIFs for READMEs."
+ },
+ "maintainability": {
+  "release_cadence": "asciinema CLI: v3.0.0 2025-09-15, v3.0.1 2025-10-24, v3.1.0 2026-01-14, v3.2.0 2026-03-01, v3.2.1 2026-06-16. Player: v3.17.0 2026-06-30. VHS: v0.9.0 2025-01-15, v0.10.0 2025-06-17, v0.11.0 2026-03-10, v0.12.0 2026-09-09, v0.12.1 2026-09-24.",
+  "contributors": "asciinema CLI ~66; VHS ~63 (GitHub, incl. anonymous)",
+  "recent_activity": "Since 2026-07-11: asciinema 7 commits, 0 merged PRs; VHS 10 commits, 8 merged PRs.",
+  "bus_factor": "low for asciinema (one author); medium for VHS (Charm company, one main author).",
+  "summary": "Both mature and slow-moving by design; asciinema got a major Rust rewrite and live streaming in 3.0 (Sept 2025)."
+ },
+ "architecture": {
+  "summary": "asciinema records a PTY session as asciicast v3: newline-delimited JSON with a header (terminal size, theme, env, tags) and events [interval, code, data] where codes are o (output), i (input), m (marker), r (resize), x (exit). The player is a terminal emulator in the browser that replays the byte stream, so text stays selectable, and it exposes seek (to a time or marker), play/pause, getCurrentTime and marker/input events. asciinema 3 adds live streaming (local HTTP server or relay via asciinema server) with adaptive buffering, and servers can record streams. VHS instead runs a scripted 'tape' (Type, Enter, Sleep, Wait /regex/, Hide/Show, Screenshot, Source, Env, Require, Set Width/Rows/Cols/Theme) in a headless terminal (ttyd + browser) and writes GIF/MP4/WebM/PNG frames, or .txt/.ascii text output used as golden files for integration tests; `vhs record` turns a live session into a tape, and a built-in SSH server renders tapes remotely.",
+  "key_points": [
+   "Record text events, not pixels: tiny, crisp, copyable, diffable recordings (asciicast).",
+   "Markers + pauseOnMarkers + seek({marker}) give chaptered, step-through playback for teaching.",
+   "VHS tapes are declarative, deterministic demo scripts; .ascii output gives a text readback for tests.",
+   "Live streaming (asciinema 3) turns the same format into a real-time broadcast."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Rust rewrite resulted in faster startup (no number given).",
+    "source": "https://blog.asciinema.org/post/three-point-o/"
+   },
+   {
+    "text": "Player implements adaptive buffering that measures network latency in real time for live streams (no figures).",
+    "source": "https://blog.asciinema.org/post/three-point-o/"
+   }
+  ],
+  "summary": "No published throughput or latency numbers for either tool."
+ },
+ "agent_usability": {
+  "how": "CLI and file formats. An agent can write a VHS tape and run `vhs demo.tape` (several Claude Code skills do exactly this), compare .ascii golden output, or run `asciinema rec` around a command and read the .cast JSONL. Third-party MCP terminals (e.g. terminal-mcp) record agent sessions to asciicast. No official MCP server for either.",
+  "integration_effort": "Low: both are single binaries with text formats; VHS needs ttyd and ffmpeg.",
+  "readback": "Full: a .cast file is the complete event log (an agent can replay it through a VT parser to get any frame as text); VHS .txt/.ascii outputs give frame text, Screenshot gives PNG. Post hoc, not of a live UI.",
+  "granular_edits": "Edit tape lines and re-render the whole demo; asciicast events can be edited as JSON lines. No live patching.",
+  "history": "The recording is history: seek to time or marker via player API; no fork or branch.",
+  "summary": "Excellent at turning terminal activity into an open, agent-readable record or a scripted demo; neither controls a live UI."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 2,
+  "readback": 4,
+  "granular_edits": 2,
+  "time_travel": 4,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 2,
+  "teaching": 4,
+  "maturity": 5,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Recordings (asciicast JSONL) and tapes are plain data, but they record bytes/keystrokes, not a UI model.",
+  "agent_drivable": "Agent writes tapes or runs CLIs; no control of a live instance.",
+  "readback": "Complete structured event log and text frames, but after the fact.",
+  "time_travel": "Agent can read whole history and seek by time/marker; no fork/replay-with-changes.",
+  "live_data_rate": "asciinema stream relays live terminal output in real time; no numbers.",
+  "pixel_graphics": "VHS renders GIF/MP4 via a headless browser; asciinema player renders in browser; no in-terminal pixels.",
+  "teaching": "Markers, pause-on-markers, selectable text; viewer cannot take over.",
+  "openness": "Open formats; asciinema CLI is GPL-3.0 (copyleft), VHS MIT, player/server Apache-2.0."
+ },
+ "steelman": "These two tools are why terminal teaching material looks good. asciinema established, fifteen years ago, that a terminal session should be recorded as text events, not video: recordings are kilobytes, perfectly crisp at any size, copy-pasteable, searchable, and now an open JSON-lines spec with markers that a player can pause on and seek to, plus live streaming in 3.0. VHS made demos reproducible: a tape is a short declarative script you check into git, rerun on every release, and even use as a golden-file integration test via .ascii output. Together they cover recording real sessions and authoring ideal ones, both in formats an agent can read and write today without any special integration. If a terminal teaching story needs a recording format, asciicast is the obvious interchange standard rather than something to reinvent.",
+ "weaknesses": [
+  "Recordings capture bytes, not UI semantics: no node ids, no state, so an agent can't ask 'what is selected' without re-emulating the terminal.",
+  "Viewer can't take over: playback is passive (no fork into a live session).",
+  "VHS depends on ttyd and ffmpeg and renders through a headless browser, so output pixels come from xterm.js, not the user's terminal (e.g. no kitty graphics).",
+  "asciinema is essentially one maintainer; recent activity is low (7 commits since 2026-07-11).",
+  "asciinema CLI is GPL-3.0, which limits embedding the recorder in permissive projects."
+ ],
+ "relation_to_scene": {
+  "overlap": "Terminal-native recording and replay for teaching; scripted, deterministic demos; text readback of frames.",
+  "scene_reinvents": "A replayable terminal recording format with markers and seek, and a scripted demo DSL; asciicast and VHS tapes already exist, are open and widely supported.",
+  "borrow": [
+   "Export scene history to asciicast v3 (with m markers for tour steps) so any asciinema player or site can play it.",
+   "VHS-style tape vocabulary (Type, Sleep, Wait /regex/, Hide/Show, Screenshot) for scripted scene tours and golden tests.",
+   "Player API shape: seek({marker: 'next'}), getCurrentTime, marker events, pauseOnMarkers.",
+   "Live streaming of a scene session with adaptive buffering, as in asciinema stream."
+  ],
+  "gap_left": "Semantic, state-level history: recording messages and serializable State (not bytes), so an agent can read state_at, diff, fork at the playhead and let a learner take over a live UI, including pixel layers; neither tool records UI state or allows take-over.",
+  "verdict": "complement",
+  "verdict_why": "Use asciicast as an export target and VHS-style tapes as a scripting idiom; scene's state-level time travel and take-over are what these byte recorders cannot do."
+ },
+ "sources": [
+  {
+   "title": "asciicast v3 spec",
+   "url": "https://docs.asciinema.org/manual/asciicast/v3/"
+  },
+  {
+   "title": "asciinema 3.0 announcement (2025-09-15)",
+   "url": "https://blog.asciinema.org/post/three-point-o/"
+  },
+  {
+   "title": "asciinema player API",
+   "url": "https://docs.asciinema.org/manual/player/api/"
+  },
+  {
+   "title": "VHS README",
+   "url": "https://github.com/charmbracelet/vhs"
+  },
+  {
+   "title": "VHS v0.12.0 release notes",
+   "url": "https://github.com/charmbracelet/vhs/releases/tag/v0.12.0"
+  },
+  {
+   "title": "GitHub API asciinema/asciinema",
+   "url": "https://api.github.com/repos/asciinema/asciinema"
+  },
+  {
+   "title": "GitHub API charmbracelet/vhs",
+   "url": "https://api.github.com/repos/charmbracelet/vhs"
+  },
+  {
+   "title": "npm downloads asciinema-player",
+   "url": "https://api.npmjs.org/downloads/point/last-week/asciinema-player"
+  },
+  {
+   "title": "terminal-mcp (asciicast recording for agents)",
+   "url": "https://github.com/elleryfamilia/terminal-mcp"
+  },
+  {
+   "title": "conorbronsdon/demo-gif-skill (agent skill using VHS)",
+   "url": "https://github.com/conorbronsdon/demo-gif-skill"
+  }
+ ]
+}
