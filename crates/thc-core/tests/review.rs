@@ -9,7 +9,7 @@ use thc_core::review;
 use thc_core::vault::{self, Paths, Vault};
 
 fn open() -> (Vault, std::path::PathBuf) {
-    let root = std::env::temp_dir().join(format!("thc-review-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-review-{}", thc_core::id::new_id()));
     vault::init(&root.join("v"), None, None).unwrap();
     let paths = Paths { vault: root.join("v"), cache: root.join("cache") };
     (Vault::open(paths, human(), "test").unwrap(), root)

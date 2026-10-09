@@ -8,7 +8,7 @@ use thc_core::vault::{self, Paths, Vault};
 #[test]
 #[ignore]
 fn render_a_5000_block_page() {
-    let root = std::env::temp_dir().join(format!("thc-operf-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-operf-{}", thc_core::id::new_id()));
     vault::init(&root.join("v"), None, None).unwrap();
     let mut v = Vault::open(Paths { vault: root.join("v"), cache: root.join("cache") }, Actor { kind: "human".into(), name: None }, "test").unwrap();
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 3).unwrap();

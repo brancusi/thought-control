@@ -7,7 +7,6 @@
 //! rows to the screen and records where clicks go.
 
 use crate::app::{App, Focus};
-use crate::editor::{DocRow, ViewGeometry};
 use crate::sidebar::{Layout, PanelKey, PanelKind, policy};
 use crate::text::width;
 use crate::theme::Token;
@@ -18,9 +17,6 @@ use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Paragraph;
 use thc_core::outline::Kind;
-
-const MARKS: usize = crate::editor::MARKS as usize;
-const HANG: usize = crate::editor::HANG as usize;
 
 /// A header's parts a click acts on.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -45,12 +41,17 @@ pub struct PreparedPanel {
     pub body: Vec<Line<'static>>,
     /// The doc view's rect on screen (for the engine's hit-testing), when it shows one.
     pub view: Option<Rect>,
+    pub editor: Option<crate::doc_ui::PreparedDoc>,
     /// The caret's cell on screen, when it's in the view.
     pub caret: Option<(u16, u16)>,
     /// A `↓ N more` row's y.
     pub more_y: Option<u16>,
     /// A list panel's rows on screen: (y, row index).
     pub rows: Vec<(u16, usize)>,
+    /// Overlay compatibility aliases, copied from the one shared editor preparation.
+    pub frame: Option<caretline::Frame>,
+    pub frame_at: Option<(u16, u16)>,
+    pub line_rows: Vec<(u16, u16, u16, String)>,
 }
 
 /// The sidebar, laid out for one frame.
@@ -99,39 +100,11 @@ fn layout_key(app: &App, key: &PanelKey, parts: impl std::hash::Hash) -> Option<
     Some(h.finish())
 }
 
-/// Lay a doc panel's view out at `w` columns and `h` rows (metas on their own row where they
-/// don't fit beside the text). The rows it lays out to, counting no further than `cap`.
-fn lay_out(app: &mut App, key: &PanelKey, w: u16, h: u16, cap: usize) -> Option<usize> {
-    let column = w.saturating_sub((MARKS + HANG) as u16 + 1).max(10);
-    let (d, _) = app.panel_doc_mut(key)?;
-    let mut g = ViewGeometry { width: w.max(1), height: h.max(1), column, extra_rows: Vec::new(), typewriter: false };
-    d.set_view(&g);
-    let with_meta: Vec<(usize, String)> = d.blocks().iter().enumerate().filter(|(_, l)| !l.meta.is_empty()).map(|(i, l)| (i, l.meta.clone())).collect();
-    let ends = d.first_row_ends(&with_meta.iter().map(|(i, _)| *i).collect::<Vec<_>>());
-    for ((i, meta), end) in with_meta.iter().zip(ends) {
-        let l = &d.blocks()[*i];
-        let m = crate::doc_ui::marker_len(l).min(end.min(l.text.len()));
-        let used = MARKS + HANG + l.depth * 4 + width(&l.text[m..end.min(l.text.len())]);
-        if used + 2 + width(meta) > w as usize {
-            g.extra_rows.push((*i, 1));
-        }
-    }
-    if !g.extra_rows.is_empty() {
-        d.set_view(&g);
-    }
-    let total = d.rows_capped(cap);
-    app.main_view_current();
-    Some(total)
-}
-
 /// A panel's cached layout (`Derived::sidebar_cache`).
 #[derive(Default)]
 pub struct PanelCache {
     measure_key: u64,
     natural: usize,
-    rows_key: u64,
-    lines: Vec<Line<'static>>,
-    cursor: Option<(u16, u16)>,
 }
 
 fn measure(app: &mut App, key: &PanelKey, w: u16, cap: usize) -> Measure {
@@ -147,12 +120,10 @@ fn measure(app: &mut App, key: &PanelKey, w: u16, cap: usize) -> Measure {
     let rows = match app.derived.sidebar_cache.get(key).filter(|c| c.measure_key == mk) {
         Some(c) => c.natural,
         None => {
-            let rows = lay_out(app, key, w, cap.min(u16::MAX as usize) as u16, cap).unwrap_or(1);
+            let rows = app.with_panel(key, |a| crate::editor_pane::view::natural_rows(a, w, cap)).unwrap_or(1);
             let c = app.derived.sidebar_cache.entry(key.clone()).or_default();
             c.measure_key = mk;
             c.natural = rows;
-            // The view was laid out at another height: the rows go again.
-            c.rows_key = 0;
             rows
         }
     };
@@ -212,11 +183,10 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         return;
     }
     let s_w = area.width;
-    let view_w = s_w.saturating_sub(2);
     let active = app.ui.sidebar.active_key();
     let sidebar_focus = app.ui.focus == Focus::Sidebar;
     let cap = area.height as usize + 1;
-    let measures: Vec<Measure> = keys.iter().map(|k| measure(app, k, view_w, cap)).collect();
+    let measures: Vec<Measure> = keys.iter().map(|k| measure(app, k, s_w, cap)).collect();
     app.derived.sidebar_cache.retain(|k, _| keys.contains(k));
     let natural: Vec<(u16, bool, bool)> = keys
         .iter()
@@ -331,9 +301,11 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         let body_h = body_h.min(area.bottom().saturating_sub(y));
         let mut body: Vec<Line<'static>> = Vec::new();
         let mut view = None;
+        let mut editor = None;
         let mut caret = None;
         let mut more_y = None;
         let mut list_rows_at = Vec::new();
+        let mut line_rows = Vec::new();
         if !folded && body_h > 0 {
             let m = &measures[i];
             if let Some(why) = app.panels.get(key).and_then(|rt| rt.problem.clone()) {
@@ -342,11 +314,21 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
                 let capped = body_h < m.natural && !focused && Some(key) != active.as_ref();
                 let linked_row = m.linked > 0 && body_h >= 2 && !capped;
                 let doc_h = body_h - linked_row as u16 - capped as u16;
-                let (lines, cur) = doc_rows(app, key, view_w, doc_h.max(1));
-                let r = Rect { x: area.x + 1, y: body_y, width: view_w, height: doc_h.max(1) };
-                view = Some(r);
-                caret = cur.map(|(cx, cy)| (r.x + cx, r.y + cy));
-                body.extend(lines.into_iter().take(doc_h as usize));
+                let r = Rect { x: area.x, y: body_y, width: s_w, height: doc_h.max(1) };
+                editor = app.with_panel(key, |a| {
+                    let main_link = a.derived.data.overlay.link.take();
+                    a.derived.data.overlay.link = if a.main.link_open {
+                        a.link_query().map(|(_, q)| { let (m, create) = a.link_matches(&q); (q, m, create) })
+                    } else { None };
+                    crate::editor_pane::view::prepare(a, r);
+                    a.derived.data.overlay.link = main_link;
+                    let prepared = a.derived.doc.take();
+                    if let (Some(p), Some(doc)) = (prepared.as_ref(), a.doc.as_ref()) { line_rows = p.line_rows(doc); }
+                    prepared
+                }).flatten();
+                if let Some(p) = editor.as_mut() { p.popup_bounds(area); }
+                view = editor.as_ref().map(|p| p.view_rect());
+                caret = editor.as_ref().and_then(|p| p.cursor_cell());
                 while body.len() < doc_h as usize {
                     body.push(Line::raw(""));
                 }
@@ -365,7 +347,9 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
             }
         }
         y = body_y + body.len() as u16;
-        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, caret, more_y, rows: list_rows_at });
+        let frame = editor.as_ref().map(|p| p.frame.clone());
+        let frame_at = editor.as_ref().map(|p| p.frame_at);
+        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, editor, caret, more_y, rows: list_rows_at, frame, frame_at, line_rows });
         // A blank row between panels.
         y += 1;
     }
@@ -443,123 +427,6 @@ fn list_rows(app: &mut App, key: &PanelKey, s_w: u16, h: u16, focused: bool, y0:
 }
 
 /// A doc panel's rows at `w` × `h`, styled, and its caret's cell in the view.
-fn doc_rows(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
-    // The same inputs as last frame: the same rows (a panel costs nothing while you type
-    // elsewhere).
-    let now = app.ui.now_ms;
-    let inputs = app.panel_doc(key).map(|d| {
-        let live = d.blocks().iter().any(|l| l.flash_until.is_some_and(|t| t > now) || app.ui.flashes.get(&l.id).is_some_and(|(t, _)| now.saturating_sub(*t) < 3000));
-        (w, h, live, app.theme.ascii, app.theme.is_ansi())
-    });
-    let view_inputs = app.panel_doc_mut(key).map(|(d, _)| (d.caret(), d.anchor(), d.scroll_anchor(), d.scroll_free()));
-    app.main_view_current();
-    let rk = layout_key(app, key, (inputs, view_inputs.map(|(c, a, s, f)| (c.line, c.byte, a.map(|a| (a.line, a.byte)), s, f)))).unwrap_or(1);
-    if let Some(c) = app.derived.sidebar_cache.get(key).filter(|c| c.rows_key == rk && rk != 0) {
-        return (c.lines.clone(), c.cursor);
-    }
-    let r = doc_rows_fresh(app, key, w, h);
-    let c = app.derived.sidebar_cache.entry(key.clone()).or_default();
-    c.rows_key = rk;
-    c.lines = r.0.clone();
-    c.cursor = r.1;
-    r
-}
-
-fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
-    lay_out(app, key, w, h, h as usize + 1);
-    let th = app.theme;
-    let journal = key.kind == PanelKind::Day;
-    let mut out = Vec::new();
-    let mut cursor = None;
-    let now = app.ui.now_ms;
-    // Rows changed elsewhere in the last 3 s get the live tint (§4.3).
-    let live: std::collections::HashSet<String> = if th.is_ansi() { Default::default() } else { app.ui.flashes.iter().filter(|(_, (t, _))| now.saturating_sub(*t) < 3000).map(|(id, _)| id.clone()).collect() };
-    let shown: Vec<usize> = match app.panel_doc_mut(key) {
-        Some((d, _)) => d.frame().rows.iter().filter_map(|r| if let DocRow::Text { line, .. } = r { Some(*line) } else { None }).collect(),
-        None => return (out, None),
-    };
-    app.main_view_current();
-    let forms: std::collections::HashMap<usize, crate::doc_ui::Form> = match app.panel_doc(key) {
-        Some(d) => shown.iter().map(|&i| (i, crate::doc_ui::form(app, &d.blocks()[i]))).collect(),
-        None => return (out, None),
-    };
-    let Some((d, _)) = app.panel_doc_mut(key) else { return (out, None) };
-    let frame = d.frame();
-    let sel = d.selection();
-    let blocks = d.blocks();
-    let empty = blocks.len() == 1 && blocks[0].text.is_empty() && blocks[0].is_new;
-    let extra: std::collections::HashSet<usize> = frame.rows.iter().filter_map(|r| if let DocRow::Extra { line, index: 0 } = r { Some(*line) } else { None }).collect();
-    for r in frame.rows.iter().take(h as usize) {
-        match *r {
-            DocRow::Text { line, start, end, first, .. } => {
-                let l = &blocks[line];
-                let fm = &forms[&line];
-                let mut spans: Vec<Span<'static>> = vec![Span::raw(" ")];
-                let mark = if l.conflict {
-                    Span::styled("≠ ", th.s(Token::Conflict))
-                } else if l.remote_text.is_some() {
-                    Span::styled("◆ ", th.s(Token::Agent))
-                } else if l.save_error.is_some() {
-                    Span::styled("◌ ", th.s(Token::Muted))
-                } else {
-                    Span::raw("  ")
-                };
-                spans.push(if first { mark } else { Span::raw("  ") });
-                spans.push(Span::raw(" ".repeat(l.depth * 4)));
-                spans.push(if first { Span::styled(format!("{:>4}", fm.hang), fm.hang_style) } else { Span::raw("    ") });
-                if empty {
-                    let msg = if journal { "Nothing here yet · type to start the day" } else { "This page is empty." };
-                    spans.push(Span::styled(msg, th.s(Token::Muted)));
-                    out.push(Line::from(spans));
-                    continue;
-                }
-                let start = if first { start.max(crate::doc_ui::marker_len(l)).min(end) } else { start };
-                let text = &l.text[start..end];
-                let (sa, sb) = match sel {
-                    Some((s, e)) if line >= s.line && line <= e.line => {
-                        let a = if line == s.line { s.byte.clamp(start, end) } else { start };
-                        let b = if line == e.line { e.byte.clamp(start, end) } else { end };
-                        (a - start, b - start)
-                    }
-                    _ => (0, 0),
-                };
-                let base = fm.text_style;
-                if sa < sb {
-                    spans.extend(crate::ui::text_spans(&th, &text[..sa], base, ""));
-                    spans.push(Span::styled(text[sa..sb].to_string(), base.patch(th.fill(Token::Selection))));
-                    spans.extend(crate::ui::text_spans(&th, &text[sb..], base, ""));
-                } else {
-                    spans.extend(crate::ui::text_spans(&th, text, base, ""));
-                }
-                if first && !l.meta.is_empty() && !extra.contains(&line) {
-                    let used: usize = spans.iter().map(|s| width(&s.content)).sum();
-                    let pad = (w as usize + 1).saturating_sub(used + width(&l.meta)).max(2);
-                    let flashing = l.flash_until.is_some_and(|t| t > now);
-                    spans.push(Span::raw(" ".repeat(pad)));
-                    spans.push(Span::styled(l.meta.clone(), th.s(if flashing { Token::Accent } else { Token::Muted })));
-                }
-                if live.contains(&l.id) {
-                    out.push(Line::from(spans).patch_style(th.fill(Token::AgentTint)));
-                } else {
-                    out.push(Line::from(spans));
-                }
-            }
-            DocRow::Extra { line, index: 0 } if !blocks[line].meta.is_empty() => {
-                let meta = blocks[line].meta.clone();
-                let pad = (w as usize + 1).saturating_sub(width(&meta));
-                out.push(Line::from(vec![Span::raw(" ".repeat(pad)), Span::styled(meta, th.s(Token::Muted))]));
-            }
-            DocRow::Gap { .. } | DocRow::Extra { .. } => out.push(Line::raw("")),
-            DocRow::Past => {}
-        }
-    }
-    if let Some((cx, cy)) = frame.cursor {
-        cursor = Some((cx, cy));
-    }
-    app.main_view_current();
-    (out, cursor)
-}
-
 /// Draw the prepared sidebar in `area`, with the divider left of it.
 pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, divider: Option<Rect>) {
     let th = app.theme;
@@ -586,6 +453,18 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, div
         if h > 0 {
             f.render_widget(Paragraph::new(pp.body.clone()), Rect { x: area.x, y: pp.body_y, width: area.width, height: h });
         }
+        if let (Some(prepared), Some(d), Some(editor)) = (&pp.editor, app.panel_doc(&pp.key), app.panel_editor(&pp.key)) {
+            let saved = (render.doc_view, std::mem::take(&mut render.doc_hits), render.doc_scrollbar);
+            let here = sidebar_focus && active.as_ref() == Some(&pp.key);
+            let start = render.click_targets.len();
+            crate::editor_pane::view::draw_pane(render, f, app, prepared, d, editor, here, true);
+            render.panel_targets.push((pp.key.clone(), render.click_targets[start..].to_vec()));
+            if let Some(b) = render.doc_scrollbar { render.panel_scrollbars.push((pp.key.clone(), b)); }
+            render.panel_hits.push((pp.key.clone(), std::mem::take(&mut render.doc_hits)));
+            render.doc_view = saved.0;
+            render.doc_hits = saved.1;
+            render.doc_scrollbar = saved.2;
+        }
         for &(y, row) in &pp.rows {
             if y < area.bottom() {
                 crate::ui::target(render, area.x, area.right(), y, Click::PanelRow(i, row));
@@ -594,16 +473,49 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, div
         if let Some(my) = pp.more_y.filter(|y| *y < area.bottom()) {
             crate::ui::target(render, area.x, area.right(), my, Click::Panel(i, Part::More));
         }
+        // Layers' anchors: the panel, and a doc panel's lines (layers_ui.rs).
+        {
+            let bottom = p
+                .panels
+                .get(i + 1)
+                .map_or(area.bottom(), |n| n.header_y.saturating_sub(1))
+                .min(area.bottom());
+            render.anchors.put(
+                caretline_layers::AnchorKey::host("panel", &i.to_string()),
+                caretline_layers::Rect::new(
+                    area.x,
+                    pp.header_y,
+                    area.width,
+                    bottom.saturating_sub(pp.header_y).max(1),
+                ),
+            );
+            for (y, x, w, id) in &pp.line_rows {
+                render.anchors.put(
+                    caretline_layers::AnchorKey::host("row", id),
+                    caretline_layers::Rect::new(*x, *y, *w, 1),
+                );
+            }
+        }
         if let Some(v) = pp.view {
             render.panel_views.push((pp.key.clone(), v));
         }
         // The caret: the live one in the focused panel, a cell of `selection` elsewhere (§5.1).
-        if let Some((cx, cy)) = pp.caret.filter(|&(_, y)| y < area.bottom() && pp.view.is_some_and(|v| y < v.bottom())) {
+        if let Some((cx, cy)) = pp.caret.filter(|&(_, y)| pp.editor.is_none() && y < area.bottom() && pp.view.is_some_and(|v| y < v.bottom())) {
             let here = sidebar_focus && active.as_ref() == Some(&pp.key);
             if here && crate::ui::caret_allowed(app) {
                 f.set_cursor_position((cx.min(area.right() - 1), cy));
             } else {
                 unfocused_caret(f, &th, cx.min(area.right() - 1), cy);
+            }
+        }
+    }
+    // Popup chrome is last so no later panel header/body can cover the active menu.
+    if sidebar_focus {
+        if let Some(pp) = p.panels.iter().find(|pp| active.as_ref() == Some(&pp.key)) {
+            if let (Some(prepared), Some(editor)) = (&pp.editor, app.panel_editor(&pp.key)) {
+                let start = render.click_targets.len();
+                crate::editor_pane::view::draw_popup(render, f, app, prepared, editor);
+                render.panel_targets.push((pp.key.clone(), render.click_targets[start..].to_vec()));
             }
         }
     }
@@ -641,10 +553,10 @@ pub fn draw_drawer(render: &mut RenderOutput, f: &mut Frame, app: &App, rect: Re
     let lines: Vec<Line> = (0..edge.height).map(|_| Line::styled(g.vsep, th.s(Token::Line).patch(raised))).collect();
     f.render_widget(Paragraph::new(lines), edge);
     let inner = Rect { x: rect.x + 1, width: rect.width - 1, ..rect };
+    // Remove only main targets under the drawer before adding the panel's own targets.
+    render.click_targets.retain(|t| !(t.y >= rect.y && t.y < rect.bottom() && t.x0 >= rect.x && t.x1 <= rect.right()));
     draw(render, f, app, inner, None);
     patch_bg(f, inner, raised);
-    // Clicks under the drawer belong to it, not to the main view beneath.
-    render.click_targets.retain(|t| !(t.y >= rect.y && t.y < rect.bottom() && t.x0 >= rect.x && t.x1 <= rect.right()) || matches!(t.what, Click::Panel(..)));
 }
 
 /// Replace (under 90 columns, §6.4): the sidebar takes the body, under its back row

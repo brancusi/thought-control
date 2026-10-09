@@ -29,7 +29,7 @@ fn run(root: &Path, args: &[&str], stdin: Option<&str>) -> (i32, String, String)
 
 #[test]
 fn bare_m_is_rejected_everywhere() {
-    let root = std::env::temp_dir().join(format!("thc-barem-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-barem-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());
@@ -82,7 +82,7 @@ fn bare_m_is_rejected_everywhere() {
 /// AGENTS.md and `thc instructions` say: in capture text and in --due.
 #[test]
 fn an_unreadable_date_exits_6() {
-    let dir = std::env::temp_dir().join(format!("thc-fryday-{}", std::process::id()));
+    let dir = thc_core::scratch::dir(&format!("thc-fryday-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).unwrap();
     let run = |args: &[&str]| common::thc().args(args).current_dir(&dir).env("THC_VAULT", dir.join("v")).env("THC_CACHE_DIR", dir.join("c")).env_remove("THC_ACTOR").output().unwrap();

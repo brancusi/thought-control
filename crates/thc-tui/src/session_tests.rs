@@ -145,6 +145,23 @@ fn a_pushed_state_changes_the_frame_steps_history_and_says_who() {
 }
 
 #[test]
+fn resizing_does_not_follow_the_main_caret_while_a_panel_owns_the_keyboard() {
+    let (_scratch, vault) = seeded("inactive-main-reflow");
+    let mut s = session(vault, (160, 32));
+    for msg in crate::script::parse("<c-o>Lisbon flat<cr>", false).unwrap() { s.apply(msg).unwrap(); }
+    s.apply(Msg::Paste { text: "word ".repeat(600).trim_end().to_string() }).unwrap();
+    s.apply(Msg::Key { key: "<c-end>".into() }).unwrap();
+    s.apply(Msg::Aside { target: "Garden".into(), pin: false, fold: false, close: false, actor: None }).unwrap();
+    s.apply(Msg::Key { key: "<m-s>".into() }).unwrap();
+    frame(&mut s);
+    assert_eq!(s.app.ui.focus, crate::app::Focus::Sidebar);
+    let top = s.app.doc.as_ref().unwrap().scroll_anchor();
+    s.apply(Msg::Resize { w: 120, h: 32 }).unwrap();
+    frame(&mut s);
+    assert_eq!(s.app.doc.as_ref().unwrap().scroll_anchor(), top, "main must not follow its offscreen caret during panel reflow");
+}
+
+#[test]
 fn rendering_at_another_size_leaves_the_state_alone() {
     let (_s, vault) = seeded("render");
     let mut s = session(vault, (100, 30));
@@ -223,6 +240,7 @@ fn the_view_reads_no_store_clock_environment_or_file() {
     let files = [
         ("ui.rs", view_part(include_str!("ui.rs"), "// ---- runtime: frame preparation")),
         ("doc_ui.rs", view_part(include_str!("doc_ui.rs"), "#[cfg(test)]")),
+        ("editor_pane/view.rs", view_part(include_str!("editor_pane/view.rs"), "#[cfg(test)]")),
         ("node_row.rs", view_part(include_str!("node_row.rs"), "#[cfg(test)]")),
     ];
     let mut found = Vec::new();

@@ -316,6 +316,25 @@ focus or close or unpin a pinned panel (exit 6).
 
 ## Part 2: Working on this repo
 
+### How we write code here
+
+These rules come first; every review checks them.
+
+- **One source of truth.** State is normalized: a document, node or query lives in one place,
+  and everything else holds a reference (an id) to it. Never copy state between owners, never
+  swap it in and out, never keep a parallel version "for this case".
+- **Elm architecture everywhere.** Serializable state, messages, a pure `update` that returns
+  effects, and a pure `view`. Runtime handles (files, sockets, threads) stay outside the state.
+  If it isn't in the state, it can't be replayed, patched or tested, so treat that as a bug.
+- **Components are instantiated, not forked.** The same component (an editor pane, a list) is
+  used wherever that thing appears, with its own small view state pointing at a shared leaf.
+  Differences between places are data (a role, a policy, a size), never a second code path.
+- **Special cases are a smell.** A guard like `if in_panel`, a deferred action, a field swap, a
+  one-off branch or "edge-case gymnastics" means the model is wrong. Flag it, and fix the model
+  so the case disappears, instead of adding another guard.
+- **Get things for free.** Before writing code, ask what correct modelling would give us for
+  free (replay, agent control, undo, sync, tests). Prefer the change that deletes code.
+
 - **Layout:**
   - `crates/thc-core` holds the model, event log, merge/replay, store, query, capture,
     dates, recurrence, edit round-trip and export.
@@ -351,7 +370,8 @@ focus or close or unpin a pinned panel (exit 6).
 - **The sidebar** (docs/design/sidebar.md in the internal repo): `sidebar.rs` is the stack as
   UiState with its pure rules (and `policy`, the owner's open choices in one place),
   `update::sidebar` the pure update, `sidebar_app.rs` the runtime (a doc panel is a caretline
-  view on a shared `Doc`; `App::with_panel` runs a key through it), `sidebar_ui.rs` the drawing.
+  view on a shared `Doc`; `App::with_panel` borrows it for the shared `editor_pane` update),
+  `sidebar_ui.rs` the container drawing; document bodies use `editor_pane::view`.
   Its keys are the `sidebar` context of the keymap. Acceptance checks and goldens:
   `crates/thc/tests/sidebar.rs` (`THC_UPDATE_GOLDENS=1` regenerates).
 - **Fixtures:** `scripts/seed-sample.sh [--conflict] <vault>` seeds sample data. `--conflict` also
@@ -383,14 +403,11 @@ focus or close or unpin a pinned panel (exit 6).
 - **caretline (the editor engine):** caretline lives at brancusi/caretline; engine bugs found in
   thc are fixed there first, released or pinned, then pulled into thc. Never patch the engine
   inside thought-control.
-  - thc depends on `caretline = "0.3"` (crates.io) in `crates/thc-tui/Cargo.toml`.
-  - A fix not yet released is pinned in the root `Cargo.toml`:
-    `[patch.crates-io] caretline = { git = "https://github.com/brancusi/caretline", rev = "<sha>" }`.
-    Bump the rev when thc needs a newer engine commit (merged on brancusi/caretline main), and
-    remove the patch once a caretline release contains it.
-  - Working on both at once: point the patch at your caretline checkout
-    (`caretline = { path = "../caretline/crates/caretline" }`), never commit that, then land
-    the engine PR in brancusi/caretline and pin its merged rev here.
+  - thc depends on `caretline = "=0.4.0"`, `caretline-layers = "=0.1.0"` and
+    `caretline-tour = "=0.1.0"` in `crates/thc-tui/Cargo.toml`.
+  - All three come from crates.io. An engine fix not yet released is pinned by git revision
+    under `[patch.crates-io]` in the root Cargo.toml and removed once a release contains it.
+    For local work on both repos, use a path patch to your caretline checkout and don't commit it.
 - **Keys:** one table (`crates/thc-tui/src/keymap.rs`, keymap.md) drives dispatch, the footer, help,
   the palette and `thc keys`. The write context's editing keys and their words come from caretline's
   command catalog and default keymap (`crates/thc-tui/src/editing_keys.rs`); thc's own differences are

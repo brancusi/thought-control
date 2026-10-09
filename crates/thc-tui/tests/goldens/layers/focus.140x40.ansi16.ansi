@@ -1,0 +1,40 @@
+[0;2m [[0;1;2m•[0;2m] [0;1;2;7m acme [0;2m   Today   Inbox 3   [0;1;2mTasks[0;2m   Pages   Journal   Search   Log                                                    Wed Oct 7 · 10:00 [0m
+[0;2m───────────────────────────────[0;1;2m━━━━━━━[0;2m──────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0;2m [0;1;2mq› [0;2mstatus:open sort:due                                                                                                            6 tasks [0m
+[0;2m                                                                                                                                            [0m
+[0;2m  id         task                                         due               sched       pri    where          by                            [0m
+[0;1;2m▌[0;2;7m 7x3rj  [ ] Buy groceries                                tomorrow          —           —      —              you                           [0m
+[0;2m  rrft8  [ ] Finish the sign-up flow                      fri               —           [0;1;2mhigh[0;2m   ¶ Launch plan  you  [0;1;94m╭─ ◆ claude ────────────╮[0m
+[0;2m  mxzq1  [ ] Write the getting-started guide              mon               —           —      ¶ Launch plan  you  [0;1;94m│[0m [0;1;94mNext week[0m             [0;1;94m│[0m
+[0;2m  frjjs  [ ] Book the dentist                             tue               —           —      —              you  [0;1;94m│[0m These go out once     [0;1;94m│[0m
+[0;2m [0m [0;1;2;4matmev[0;1;4m  [ ] Send the invites                             [0;1;2;4mOct 16[0;1;4m            [0;1;2;4m—[0;1;4m           [0;1;2;4m—[0;1;4m      [0;1;2;4m¶ Launch plan[0;1;4m  [0;1;2;4myou[0;1;94m◀[0;1;2;94m─[0;1;94m┤[0m sign-up works.        [0;1;94m│[0m
+[0;2m  1chbt  [ ] Renew the passport                           —                 —           —      —              you  [0;1;94m╰───────────────────────╯[0m
+[0;2m                                                                                                                                            [0m
+[0;2m saved  1 open status:open  2 this week status:open due<=+7d  3 waiting status:waiting sort:updated-  +2 more                    f then 1-5 [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0;2m                                                                                                                                            [0m
+[0m tasks[0;2m · status:open sort:due[0m                                                         [0;2m○ local · daemon offline   [0m:daemon start[0;2m   thc 0.10.1[0m [0m

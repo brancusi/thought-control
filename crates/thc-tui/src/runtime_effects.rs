@@ -19,6 +19,15 @@ fn perform(app: &mut App, effect: Effect) {
                 std::fs::write(app.vault.paths.cache.join("tui.toml"), format!("page_ids = {visible}\n")).map_err(|e| e.to_string());
             dispatch(app, Msg::PageIdsPersisted { result });
         }
+        Effect::WriteDocumentMode { on } => {
+            // A snapshot or test session never writes this device's choice.
+            let result = if crate::SNAPSHOT.with(|s| s.get()) {
+                Ok(())
+            } else {
+                std::fs::write(crate::app::document_mode_file(&app.vault.paths.cache), format!("document_mode = {on}\n")).map_err(|e| e.to_string())
+            };
+            dispatch(app, Msg::DocumentModePersisted { result });
+        }
         Effect::Reload => {
             let _ = app.reload();
         }
@@ -66,7 +75,7 @@ pub(crate) fn sidebar_op(app: &mut App, op: update::SidebarOp) {
 
 pub(crate) fn dispatch(app: &mut App, msg: Msg) {
     let effects = update::update(
-        Fields { page_ids: Some(&mut app.ui.page_ids), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, toast: &mut app.ui.toast, doc: app.doc.as_mut() },
+        Fields { page_ids: Some(&mut app.ui.page_ids), document_mode: Some(&mut app.ui.document_mode), cursor: app.ui.cursor, scroll: &mut app.ui.scroll, toast: &mut app.ui.toast, doc: app.doc.as_mut() },
         msg,
     );
     run(app, effects);
@@ -86,11 +95,18 @@ pub(crate) fn toggle_page_ids(app: &mut App) {
     dispatch(app, Msg::TogglePageIds { at: app.ui.now_ms });
 }
 
+thread_local! {
+    /// What a snapshot or test session copied (`set_clipboard` never reaches the real one there).
+    pub(crate) static SNAPSHOT_CLIPBOARD: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
 /// OSC 52 always (it reaches the local clipboard over SSH where the terminal allows); on a local
 /// session also the platform tool, which works where OSC 52 is off (Terminal.app, tmux).
 fn set_clipboard(text: &str) -> Result<(), String> {
     use std::io::Write;
     if crate::SNAPSHOT.with(|s| s.get()) {
+        // Never the real clipboard; a test reads what would have gone there.
+        SNAPSHOT_CLIPBOARD.with(|c| *c.borrow_mut() = Some(text.to_string()));
         return Ok(());
     }
     let osc = format!("\x1b]52;c;{}\x07", crate::doc_keys::base64(text.as_bytes()));

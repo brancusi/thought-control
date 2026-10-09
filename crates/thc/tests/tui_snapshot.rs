@@ -36,7 +36,7 @@ fn snap(root: &Path, keys: &str, write: bool) -> String {
 
 #[test]
 fn snapshots_never_write_to_the_real_vault() {
-    let root = std::env::temp_dir().join(format!("thc-snap-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-snap-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());
@@ -57,7 +57,7 @@ fn snapshots_never_write_to_the_real_vault() {
 /// After an in-place update the new binary opens where the old one was, with the toast.
 #[test]
 fn an_update_resumes_where_it_was() {
-    let root = std::env::temp_dir().join(format!("thc-resume-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-resume-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());
@@ -84,7 +84,7 @@ fn an_update_resumes_where_it_was() {
 #[test]
 fn a_256_colour_terminal_gets_the_256_colour_theme() {
     // tui-handoff.md §1.2: no COLORTERM, TERM says 256 colours -> ember-dark-256 (indexed).
-    let root = std::env::temp_dir().join(format!("thc-256-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-256-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |env: &[(&str, &str)], args: &[&str]| {
@@ -116,7 +116,7 @@ fn a_256_colour_terminal_gets_the_256_colour_theme() {
 
 #[test]
 fn first_run_and_review_3_copy() {
-    let root = std::env::temp_dir().join(format!("thc-first-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-first-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |env: &[(&str, &str)], args: &[&str]| {

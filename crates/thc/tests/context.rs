@@ -23,7 +23,7 @@ fn json(s: &str) -> Value {
 
 #[test]
 fn contexts_filter_people_not_agents() {
-    let root = std::env::temp_dir().join(format!("thc-ctx-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-ctx-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());
@@ -79,7 +79,7 @@ fn contexts_filter_people_not_agents() {
 /// results, `applied` is true and `hidden` is what it removed. Search and pages never filter.
 #[test]
 fn every_filterable_listing_says_its_context() {
-    let root = std::env::temp_dir().join(format!("thc-ctx-json-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-ctx-json-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());
@@ -138,7 +138,7 @@ fn every_filterable_listing_says_its_context() {
 
 #[test]
 fn capture_echo_names_the_context_parent() {
-    let root = std::env::temp_dir().join(format!("thc-ctx-under-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-ctx-under-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

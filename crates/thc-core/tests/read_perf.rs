@@ -62,7 +62,7 @@ fn cached_metadata_statements_observe_later_writes() {
 
 #[test]
 fn large_local_batch_refreshes_statistics_without_prior_queries() {
-    let root = std::env::temp_dir().join(format!("thc-read-stats-{}", thc_core::id::new_id()));
+    let root = thc_core::scratch::dir(&format!("thc-read-stats-{}", thc_core::id::new_id()));
     vault::init(&root.join("vault"), None, None).unwrap();
     let mut v = Vault::open(Paths { vault: root.join("vault"), cache: root.join("cache") }, Actor { kind: "human".into(), name: None }, "test").unwrap();
     let today = dates::today();

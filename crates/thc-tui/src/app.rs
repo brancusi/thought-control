@@ -54,7 +54,9 @@ pub enum Row {
     Empty { l1: String, l2: String },
     Muted(String),
     /// A styled, non-selectable line with an optional right-aligned muted note.
-    Note { parts: Vec<(String, Token)>, right: Option<String> },
+    /// `narrow`: the parts instead on a main area under 120 columns (decided when drawn, so
+    /// the rows don't depend on the width they were last read at; cjn86).
+    Note { parts: Vec<(String, Token)>, right: Option<String>, narrow: Option<Vec<(String, Token)>> },
     Blank,
     /// A new line being written in place (tui-handoff §10); never saved while empty.
     Editing,
@@ -389,9 +391,17 @@ pub struct App {
     pub doc: Option<crate::editor::Doc>,
     /// The journal opened with no day ever written: the footer says `just type`.
     pub doc_first_ever: bool,
+    /// A remembered scroll (row, scrolled freely) for the document just opened, put on at its
+    /// first layout: rows count as the view's width wraps them, which a view not yet laid out
+    /// doesn't have (vw384, zszv1).
+    pub doc_pending_scroll: Option<(usize, bool)>,
     /// A ⌘ key has arrived from this terminal (now or in an earlier session: <cache>/cmd-seen,
     /// per TERM_PROGRAM and version), so ⌘ keys are known to reach thc (keymap.md §7.0).
     pub cmd_seen: bool,
+    /// The first drag's hint (mouse.md §7), until shown once on this device: the key that
+    /// gives the terminal's own selection. Read at start (<cache>/mouse-hint-shown,
+    /// TERM_PROGRAM) and carried in a trace's `env`, so a replay draws it as the live TUI did.
+    pub drag_hint: Option<String>,
     /// Terminal images drawn last (and overlay coverage), reconciled with RenderOutput.
     pub images_drawn: (Vec<crate::images::Place>, bool),
     /// A history step into another vault: restored once the TUI has reopened there.
@@ -405,7 +415,6 @@ pub struct App {
     /// `[tui]` settings from ~/.config/thought/config.toml.
     pub tui_prefs: TuiPrefs,
     /// A save waiting for the frame to be drawn first (leaving a line offline).
-    pub doc_save_after_frame: bool,
     /// A newer thc the last release check found (the bar's `update 0.7.1 · :update`).
     pub update_available: Option<String>,
     /// A newer thc installed on disk under this running one (`thc update` in another window):
@@ -434,6 +443,11 @@ pub struct App {
     pub rail: Vec<RailItem>,
     /// The daemon said something changed that has no transaction (a conflict): refresh.
     pub(crate) live_dirty: bool,
+    /// The open page laid out ahead, in idle time, at the width a sidebar column would leave
+    /// it: (the document, that geometry, the next note to lay out; None when all are done).
+    pub(crate) prewarm: Option<(String, crate::editor::ViewGeometry, Option<usize>)>,
+    /// Where the last poll's time went (THC_TUI_TRACE's slow-key log).
+    pub(crate) poll_split: Vec<(&'static str, f64)>,
     /// The daemon pushed a change: poll now, not at the next interval.
     pub poll_wanted: bool,
     last_agent_tx: Option<String>,
@@ -467,9 +481,23 @@ pub struct App {
     pub sidebar_col: Option<u16>,
     /// The sidebar's place this frame when it isn't a column: the drawer's or replace's rect.
     pub sidebar_over: Option<(crate::sidebar::Layout, ratatui::layout::Rect)>,
+    /// Where the main view's caret was drawn last layout: it stays on that row when the
+    /// geometry changes under it (doc_ui::prepare).
+    pub caret_pin: Option<crate::doc_ui::CaretPin>,
+    /// The pointer rests on a link's title (main view or a panel): the terminal is asked to
+    /// report ⇧ with clicks there (cmd_click::ShiftCapture).
+    pub pointer_on_link: bool,
+    /// The terminal's width at the last layout (screen_width is the main area's).
+    pub term_width: u16,
     /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
     /// would drop).
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
+    /// The agent policy for layers (`[layers] agent_limits`; a trace records it in `env`).
+    pub layer_limits: crate::layers::AgentLimits,
+    /// The keymap actions run in this message (a walkthrough's `command` predicates).
+    pub ran_actions: Vec<String>,
+    /// The last `doc_view` message's result, for the socket's reply.
+    pub doc_view_reply: Option<serde_json::Value>,
 }
 
 impl std::ops::Deref for App {
@@ -541,6 +569,7 @@ pub const PALETTE: &[PaletteItem] = &[
     PaletteItem { label: "What's new", action: "changes", cmd: ":changes" },
     PaletteItem { label: "About thc (version, vault, changelog)", action: "about", cmd: ":about" },
     PaletteItem { label: "Focus: what it shows", action: "focus.overlay", cmd: "" },
+    PaletteItem { label: "Document mode on / off (Enter: line break)", action: "doc.toggle_document_mode", cmd: "" },
     PaletteItem { label: "Mouse capture on / off", action: "mouse.toggle", cmd: "" },
     PaletteItem { label: "Help", action: "help.context", cmd: "" },
     PaletteItem { label: "Remap keys in $EDITOR", action: "keys.remap", cmd: ":remap" },
@@ -593,6 +622,11 @@ pub struct OtherVault {
 /// This device's view scopes (view-explain.md §2), beside the vault caches.
 fn scopes_file(cache: &std::path::Path) -> std::path::PathBuf {
     cache.parent().unwrap_or(cache).join("scopes.json")
+}
+
+/// This device's document mode, beside the vault caches (every vault on the device).
+pub(crate) fn document_mode_file(cache: &std::path::Path) -> std::path::PathBuf {
+    cache.parent().unwrap_or(cache).join("writing.toml")
 }
 
 fn load_scopes(cache: &std::path::Path) -> std::collections::BTreeMap<String, String> {
@@ -720,32 +754,21 @@ impl App {
             awaiting: None,
             overlay: None,
             toast: None,
-            doc_write: false,
-            doc_line_id: None,
             paste_plain: false,
             focus_mode: false,
-            link_sel: None,
-            link_open: false,
-            doc_vsel: None,
-            doc_footer_cur: None,
+            document_mode: false,
             focus_cfg: prefs.focus,
             focus_hint_shown: false,
             write_alt_hint: false,
-            doc_parked: false,
             doc_back: None,
-            last_drop: None,
             hover: None,
             scroll_drag: false,
             doc_scroll_free: false,
-            drag_from: None,
             history: history,
             scope_override: load_scopes(&vault_cache),
-            click_link: None,
             last_click: None,
-            near_miss: None,
             about_new: false,
             meta_hint: false,
-            doc_announce: None,
             update_state: UpdateState::Idle,
             flashes: Default::default(),
             show_detail: true,
@@ -799,11 +822,12 @@ impl App {
             doc_saver: None,
             tui_prefs: prefs.clone(),
             doc_first_ever: false,
+            doc_pending_scroll: None,
             cmd_seen: crate::keymap::cmd_seen_cached(&vault_cache),
+            drag_hint: crate::doc_keys::drag_hint_pending(&vault_cache),
             images_drawn: (Vec::new(), false),
             hist_pending: None,
             kitty: false,
-            doc_save_after_frame: false,
             update_available: thc_core::release::available(env!("CARGO_PKG_VERSION")),
             installed: None,
             exe_seen: std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok()),
@@ -823,6 +847,8 @@ impl App {
             live_txs: Vec::new(),
             rail: Vec::new(),
             live_dirty: false,
+            poll_split: Vec::new(),
+            prewarm: None,
             poll_wanted: false,
             last_agent_tx: None,
             screen_width: 80,
@@ -841,9 +867,22 @@ impl App {
             in_list: None,
             sidebar_col: None,
             sidebar_over: None,
+            caret_pin: None,
+            pointer_on_link: false,
+            term_width: 0,
             sidebar_drag: None,
+            layer_limits: crate::layers::AgentLimits::parse(
+                thc_core::settings::current()
+                    .str("layers.agent_limits")
+                    .unwrap_or("off"),
+            ),
+            doc_view_reply: None,
+            ran_actions: Vec::new(),
         };
         app.load_page_ids();
+        // The tours this device has seen (layers.rs).
+        app.ui.layers.tour.seen = crate::layers::load_seen(&app.vault.paths.cache);
+        app.load_document_mode();
         if !deferred {
             app.reload()?;
         }
@@ -1170,12 +1209,24 @@ impl App {
                 tags.insert(i, *v);
             }
         }
+        // Tasks: the order on screen goes into the state (`tasks_order`).
+        if self.view == View::Tasks {
+            let ids: Vec<String> = out.iter().filter_map(|(r, _)| match r {
+                Row::Node { node, .. } => Some(node.id.clone()),
+                _ => None,
+            }).collect();
+            self.ui.tasks_order = Some((self.tasks_filter.clone(), ids));
+        }
         self.rows = out.into_iter().map(|(r, _)| r).collect();
         self.restore_cursor();
         Ok(())
     }
 
     pub fn reload(&mut self) -> Result<()> {
+        // The Tasks order lasts while you stay on the list (`tasks_order`).
+        if self.view != View::Tasks || self.doc.is_some() {
+            self.ui.tasks_order = None;
+        }
         // The other vaults' changes (their logs, a few stat calls when nothing moved).
         for o in self.others.iter_mut() {
             let _ = o.vault.catch_up();
@@ -1311,6 +1362,22 @@ impl App {
     /// `.` (§10.5): show or hide IDs on pages and Journal days, remembered on this device.
     pub fn toggle_page_ids(&mut self) {
         crate::runtime_effects::toggle_page_ids(self);
+    }
+
+    /// Document mode (`space t D`, the palette): Enter and ⇧Enter swap (writing.md §1). A pure update
+    /// on the state; remembering it on this device is its effect (update.rs).
+    pub fn toggle_document_mode(&mut self) {
+        crate::runtime_effects::dispatch(self, crate::update::Msg::ToggleDocumentMode { at: self.ui.now_ms });
+    }
+
+    /// This device's document mode (`toggle_document_mode`); off when it never chose. A
+    /// snapshot or test session starts off, whatever this device chose.
+    pub fn load_document_mode(&mut self) {
+        if crate::SNAPSHOT.with(|s| s.get()) {
+            return;
+        }
+        let t: Option<toml::Table> = std::fs::read_to_string(document_mode_file(&self.vault.paths.cache)).ok().and_then(|t| t.parse().ok());
+        self.ui.document_mode = t.and_then(|t| t.get("document_mode")?.as_bool()).unwrap_or(false);
     }
 
     /// This device's choice (`<cache>/tui.toml`), else `[tui] page_ids` in device config.
@@ -1942,7 +2009,7 @@ impl App {
                 return;
             }
             let label = run.iter().map(|d| d.format("%a %b %-d").to_string()).collect::<Vec<_>>().join(" · ");
-            rows.push(Row::Note { parts: vec![(label, Token::Muted)], right: Some("nothing scheduled".into()) });
+            rows.push(Row::Note { parts: vec![(label, Token::Muted)], right: Some("nothing scheduled".into()), narrow: None });
             run.clear();
         };
         for i in 0..7 {
@@ -2001,10 +2068,48 @@ impl App {
         Ok(rows)
     }
 
+    /// The query's tasks in the order you've been looking at: each where it was (one no longer
+    /// matching too, as it is now; deleted, it goes), and a new one after the task before it
+    /// in the query's order (at the top when none is). As `reload_stable` keeps a list.
+    fn in_tasks_order(&self, query: Vec<Node>, order: &[String]) -> Vec<Node> {
+        let mut by_id: HashMap<String, Node> = query.iter().map(|n| (n.id.clone(), n.clone())).collect();
+        let mut out: Vec<Node> = Vec::new();
+        for id in order {
+            match by_id.remove(id) {
+                Some(n) => out.push(n),
+                None => {
+                    if let Some(n) = self.vault.store.node(id).ok().flatten().filter(|n| !n.deleted) {
+                        out.push(n);
+                    }
+                }
+            }
+        }
+        let mut prev: Option<String> = None;
+        for n in query {
+            if by_id.contains_key(&n.id) {
+                let at = prev.as_ref().and_then(|p| out.iter().position(|o| &o.id == p)).map_or(0, |i| i + 1);
+                prev = Some(n.id.clone());
+                out.insert(at, n);
+            } else {
+                prev = Some(n.id);
+            }
+        }
+        out
+    }
+
     fn rows_tasks(&mut self, projection: &mut RowProjection) -> Result<Vec<Row>> {
         let started = Instant::now();
         let nodes = match self.vault.store.query(&self.tasks_filter, self.today, 500).map(|n| self.cf(n, projection)) {
-            Ok(n) => n,
+            Ok(n) => match self.ui.tasks_order.clone() {
+                // The order you've been looking at (the state's `tasks_order`, so a fresh
+                // session draws it too; cjn86).
+                Some((filter, order)) if filter == self.tasks_filter => self.in_tasks_order(n, &order),
+                Some(_) => {
+                    self.ui.tasks_order = None;
+                    n
+                }
+                None => n,
+            },
             Err(e) => {
                 let msg = friendly_error(&e);
                 // `unknown status "opn" · did you mean open?` -> bad token + fix
@@ -2044,18 +2149,19 @@ impl App {
             };
             rows.push(Row::Blank);
             let mut parts = vec![("saved".to_string(), Token::Muted)];
-            let wide = self.screen_width >= 120;
+            let mut narrow = parts.clone();
             let slots = self.view_slots();
             for (slot, v) in &slots {
-                parts.push((format!("  {slot}"), Token::Text));
-                parts.push((format!(" {}", v.title.clone().unwrap_or_else(|| v.name.clone())), Token::Muted));
-                if wide {
-                    let short = v.query.replace(" sort:due", "");
-                    parts.push((format!(" {short}"), Token::Muted));
+                for p in [&mut parts, &mut narrow] {
+                    p.push((format!("  {slot}"), Token::Text));
+                    p.push((format!(" {}", v.title.clone().unwrap_or_else(|| v.name.clone())), Token::Muted));
                 }
+                // Wide, each view's query too.
+                let short = v.query.replace(" sort:due", "");
+                parts.push((format!(" {short}"), Token::Muted));
             }
             let max = slots.last().map(|(n, _)| *n).unwrap_or(1);
-            rows.push(Row::Note { parts, right: Some(format!("f then 1-{max}")) });
+            rows.push(Row::Note { parts, right: Some(format!("f then 1-{max}")), narrow: Some(narrow) });
             rows
         };
         self.tasks_last_good = rows.clone();
@@ -2165,7 +2271,7 @@ impl App {
         if !f.is_empty() {
             let n = rows.iter().filter(|r| matches!(r, Row::Node { .. })).count();
             rows.push(Row::Blank);
-            rows.push(Row::Note { parts: vec![(format!("{n} page{} · fuzzy: {}", if n == 1 { "" } else { "s" }, self.pages_filter), Token::Muted)], right: None });
+            rows.push(Row::Note { parts: vec![(format!("{n} page{} · fuzzy: {}", if n == 1 { "" } else { "s" }, self.pages_filter), Token::Muted)], right: None, narrow: None });
             return Ok(rows);
         }
         let mut st = s.conn.prepare(
@@ -2184,7 +2290,7 @@ impl App {
                 parts.push((format!("#{name}"), Token::Tag));
                 parts.push((format!(" {c}"), Token::Muted));
             }
-            rows.push(Row::Note { parts, right: None });
+            rows.push(Row::Note { parts, right: None, narrow: None });
         }
         let mut st = s.conn.prepare(
             "SELECT j.journal, (SELECT count(*) FROM nodes c WHERE c.parent=j.id AND c.deleted=0) AS n FROM nodes j \
@@ -2205,7 +2311,7 @@ impl App {
                     parts.push((format!(" {} {c}", g.sep), Token::Muted));
                 }
             }
-            rows.push(Row::Note { parts, right: None });
+            rows.push(Row::Note { parts, right: None, narrow: None });
         }
         Ok(rows)
     }
@@ -2429,6 +2535,12 @@ impl App {
     }
 
     pub fn open_compare(&mut self) {
+        if self.in_panel.is_some() {
+            if let Some(id) = self.selected.clone() {
+                self.panel_defer.push(crate::sidebar_app::Deferred::Compare(id));
+            }
+            return;
+        }
         let details = self.vault.store.conflict_details(None).unwrap_or_default();
         let target = self.selected_id().and_then(|id| details.iter().find(|d| d.node == id).cloned());
         match target.or_else(|| details.first().cloned()) {
@@ -3771,6 +3883,13 @@ impl App {
     /// Poll the log for changes from other processes (agents, other devices via sync). True when
     /// it found some (and reloaded): the session records that as a `poll` message.
     pub fn poll_external(&mut self) -> Result<bool> {
+        let mut at = Instant::now();
+        let mut split = |name: &'static str, out: &mut Vec<(&'static str, f64)>| {
+            let now = Instant::now();
+            out.push((name, (now - at).as_secs_f64() * 1000.0));
+            at = now;
+        };
+        self.poll_split.clear();
         // The other vaults a cross-vault view shows: their changes reload it.
         let mut others_moved = false;
         for o in self.others.iter_mut() {
@@ -3781,18 +3900,22 @@ impl App {
         if others_moved {
             self.reload_stable()?;
         }
+        split("others", &mut self.poll_split);
         let sizes = self.vault.log.files()?;
         let changed = sizes != self.log_sizes;
         self.log_sizes = sizes;
+        split("files", &mut self.poll_split);
         if changed {
             self.vault.catch_up()?;
         }
+        split("catch_up", &mut self.poll_split);
         // What arrived from elsewhere since the last poll: what this vault's catch-ups took in
         // (a local save catches up first, too) and what the daemon pushed. Not a watermark:
         // another device's events arrive with older times, and a rebuild renumbers rows.
         let news = self.vault.take_news();
         let txs = std::mem::take(&mut self.live_txs);
         let dirty = std::mem::take(&mut self.live_dirty);
+        split("news", &mut self.poll_split);
         if !news.foreign() && txs.is_empty() && !dirty {
             return Ok(others_moved);
         }
@@ -3835,7 +3958,7 @@ impl App {
             self.info(format!("{n} change{} synced", if n == 1 { "" } else { "s" }));
         }
         // On the caret's line §9's copy wins, with who.
-        if let Some(edited) = self.doc_announce.take() {
+        if let Some(edited) = self.main.announce.take() {
             let who = agent_events.first().map(|e| format!("{}{}{}", g.agent, g.agent_sep, e.actor.trim_start_matches("agent:"))).unwrap_or_else(|| "• another device".into());
             let text = if edited { " changed this line too · both versions are kept" } else { " changed this line · it updates when you leave it" };
             self.toast_parts(ToastKind::Agent, vec![(who, Token::Agent), (text.into(), Token::Text)]);
@@ -4253,6 +4376,9 @@ impl App {
 
     /// `:update`: run the verified `thc update` in the background; the bar shows progress.
     pub fn start_update(&mut self) {
+        if self.ui.teaching_demo {
+            return self.info("Updates are disabled in the teaching sandbox");
+        }
         // Already installed under us: reload in place, nothing to download.
         if let Some(v) = self.installed.clone() {
             if self.edit.is_some() {
@@ -4364,4 +4490,28 @@ pub type TuiPrefs = thc_core::tui_config::TuiConfig;
 pub enum RailItem {
     Page { id: String, title: String, open: usize },
     Day { date: NaiveDate, count: usize },
+}
+
+impl App {
+    /// Idle time: lay the open page out ahead at the width a sidebar column would leave it, a
+    /// slice at a time, so opening a panel beside a long page only sums rows it already has.
+    /// Nothing on screen changes (it fills a cache). True: more to do.
+    pub(crate) fn prewarm_step(&mut self, area: ratatui::layout::Rect, budget: std::time::Duration) -> bool {
+        if self.sidebar_col.is_some() {
+            return false;
+        }
+        let Some(g) = crate::ui::doc_geometry_beside(self, area) else { return false };
+        let Some(d) = self.doc.as_mut() else { return false };
+        let key = crate::doc_app::caret_key(&d.target);
+        let next = match &self.prewarm {
+            Some((k, pg, next)) if *k == key && *pg == g => match next {
+                Some(n) => *n,
+                None => return false,
+            },
+            _ => 0,
+        };
+        let left = d.prewarm_rows(&g, next, budget);
+        self.prewarm = Some((key, g, left));
+        left.is_some()
+    }
 }

@@ -37,20 +37,27 @@ run() { # label keys thc-args...
 }
 echo "== 5,000-line page"
 run "open         " "" p "Big page"
-run "type at top  " "$typing" p "Big page"
-run "type middle  " "$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
-run "PgDn x200    " "$(printf '<pgdn>%.0s' $(seq 1 200))" p "Big page"
-run "paste 1000   " "<paste:$(cat "$S/paste.md")>" p "Big page"
+# A page opens on a fresh line after its notes (doc_app::arrive): ⌃Home goes to the top.
+run "type at top  " "<c-home>$typing" p "Big page"
+run "type middle  " "<c-home>$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
+run "PgDn x200    " "<c-home>$(printf '<pgdn>%.0s' $(seq 1 200))" p "Big page"
+run "paste 1000   " "<c-home><paste:$(cat "$S/paste.md")>" p "Big page"
 echo "== 300-line journal day"
 run "open         " "" j
 run "type at end  " "$typing" j
+# Layers (layers.rs): three agent layers over the page while typing: a hint at the caret, a
+# highlight on a text range (its anchor follows every edit) and a hint at the screen's centre.
+layers='<layer:{"op":"hint.show","anchor":"caret","text":"typing here","actor":"bench"}><layer:{"op":"highlight","anchor":{"text":{"from":40,"to":60}},"actor":"bench"}><layer:{"op":"hint.show","anchor":"screen:center","title":"A note","text":"three layers while you type","actor":"bench"}>'
+echo "== 5,000-line page, three agent layers"
+run "type at top  " "$layers$typing" p "Big page"
+run "type middle  " "$layers$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
 # The sidebar (sidebar.md): three doc panels beside the page (today's journal, a small page,
 # and the big page itself, a second view of the same document) while typing in the main view.
 "$THC" page new "Small page" >/dev/null
 aside='<m-:>aside today<cr><esc><m-:>aside Small page<cr><esc><m-:>aside Big page<cr><esc>'
 echo "== 5,000-line page, three doc panels open"
 run "open         " "$aside" p "Big page"
-run "type at top  " "$aside$typing" p "Big page"
-run "type middle  " "$aside$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
+run "type at top  " "$aside<c-home>$typing" p "Big page"
+run "type middle  " "$aside<c-home>$(printf '<pgdn>%.0s' $(seq 1 125))$typing" p "Big page"
 echo "== 300-line journal day, three doc panels open"
 run "type at end  " "$aside$typing" j

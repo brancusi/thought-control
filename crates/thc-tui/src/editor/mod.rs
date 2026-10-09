@@ -127,6 +127,10 @@ impl Doc {
     /// the line above it is (None: there's no line above).
     pub fn place_anchor(&self) -> Option<Anchor> {
         let l = self.line();
+        // The fresh line the document arrived with: coming back is arriving again (None).
+        if l.is_new && l.text.is_empty() && self.fresh_end.as_deref() == Some(l.id.as_str()) {
+            return None;
+        }
         if l.is_new && l.text.is_empty() {
             let p = self.caret().line.checked_sub(1).and_then(|i| self.lines().get(i))?;
             return Some(Anchor { id: p.id.clone(), byte: p.text.len() });
@@ -176,13 +180,22 @@ impl Doc {
 
     /// Drop view `id` (another becomes current when it was). False: it's the last view.
     pub fn remove_view(&mut self, id: ViewId) -> bool {
+        self.rows.borrow_mut().remove(&id);
         self.engine.remove_view(id)
     }
 
     /// The current view takes id `id`: a document moving from the main view to a panel, or
     /// back. False: another view has that id.
     pub fn rename_view(&mut self, id: ViewId) -> bool {
-        self.engine.rename_view(id)
+        let was = self.current_view();
+        let ok = self.engine.rename_view(id);
+        if ok && was != id {
+            let mut rows = self.rows.borrow_mut();
+            if let Some(r) = rows.remove(&was) {
+                rows.insert(id, r);
+            }
+        }
+        ok
     }
 
     /// Run `f` through view `id`, then go back to the view that was current. None: no such
@@ -265,9 +278,28 @@ impl Doc {
         self.engine.select(extend.then(|| anchor.unwrap_or(caret)), p);
     }
 
-    /// A drag from `from` to `to`: selects between them.
-    pub fn drag(&mut self, from: BlockPos, to: BlockPos) {
-        self.engine.select(Some(from), to);
+    /// A drag with the button held, at cell (`col`, `row`) of the view: the selection extends
+    /// there from where the press put the caret; on the view's first or last text row (or past
+    /// it) the view scrolls a row (caretline `Msg::Drag`).
+    pub fn drag_to(&mut self, col: u16, row: u16) {
+        self.run(caretline::Msg::Drag { col, row });
+        // The pointer moves the view a row at a time, no more: no margin pulled after it.
+        self.hold_view();
+    }
+
+    /// One caretline message through the current view (an agent's own view, doc_view.rs).
+    pub fn run_msg(&mut self, msg: caretline::Msg) -> Vec<caretline::Effect> {
+        self.run(msg)
+    }
+
+    /// Line `i`'s text as engine chars (`from..to`), for text anchors.
+    pub fn char_range(&mut self, i: usize) -> Option<(usize, usize)> {
+        self.engine.flush();
+        let len = self.lines().get(i)?.text.len();
+        Some((
+            self.engine.char_of(BlockPos { line: i, byte: 0 }),
+            self.engine.char_of(BlockPos { line: i, byte: len }),
+        ))
     }
 
     /// Put the caret back at a held place. False: its note isn't here.
@@ -282,6 +314,83 @@ impl Doc {
         true
     }
 
+    /// The fresh line the document arrived with (doc_app::arrive) is still at its end, empty.
+    pub fn has_fresh_end(&self) -> bool {
+        self.fresh_end.as_deref().is_some_and(|id| self.lines().last().is_some_and(|l| l.id == id && l.is_new && l.text.is_empty()))
+    }
+
+    /// Where the caret's line is when it's empty and not saved (and not the fresh line at the
+    /// end, which `fresh_end` keeps): after which saved note, how deep, what kind.
+    pub fn new_caret_line(&self) -> Option<crate::ui_state::NewCaretLine> {
+        let i = self.caret().line;
+        let l = self.lines().get(i)?;
+        if !l.is_new || !l.text.trim().is_empty() || (self.has_fresh_end() && i + 1 == self.lines().len()) {
+            return None;
+        }
+        let after = self.lines()[..i].iter().rev().find(|p| !p.is_new).map(|p| p.id.clone());
+        Some(crate::ui_state::NewCaretLine { after, depth: l.depth, kind: l.kind() })
+    }
+
+    /// The blank space the caret's saved note ends with: the vault trims it (a note never ends
+    /// in a space or a line break), the caret's line keeps it until it's left.
+    pub fn caret_tail(&self) -> Option<String> {
+        let l = self.lines().get(self.caret().line).filter(|l| !l.is_new)?;
+        let tail = &l.text[l.text.trim_end().len()..];
+        (!tail.is_empty()).then(|| tail.to_string())
+    }
+
+    /// Note `id` ends with `tail` again (blank space its save trimmed), the caret at `byte`.
+    pub fn restore_caret_tail(&mut self, id: &str, tail: &str, byte: usize) {
+        let Some(i) = self.lines().iter().position(|l| l.id == id) else { return };
+        if !tail.trim().is_empty() || self.lines()[i].text.ends_with(tail) {
+            return;
+        }
+        self.lines_mut()[i].text.push_str(tail);
+        self.touch_content();
+        let t = &self.lines()[i].text;
+        let b = (0..=byte.min(t.len())).rev().find(|x| t.is_char_boundary(*x)).unwrap_or(0);
+        self.set_caret(BlockPos { line: i, byte: b });
+    }
+
+    /// The caret on an empty, unsaved line after note `after` (None: at the top), `depth` deep:
+    /// an empty line there already is used (the fresh one the document arrived with, if it's
+    /// there), else one is put in; a fresh line at the end elsewhere goes unless `keep_fresh_end`.
+    /// False: no `after`.
+    pub fn caret_to_new_line(&mut self, after: Option<&str>, depth: usize, kind: Kind, keep_fresh_end: bool) -> bool {
+        let at = match after {
+            Some(id) => match self.lines().iter().position(|l| l.id == id) {
+                Some(i) => i + 1,
+                None => return false,
+            },
+            None => 0,
+        };
+        let empty = |l: &Line| l.is_new && l.text.trim().is_empty();
+        let n = self.lines().len();
+        // The fresh line at the end, when it isn't the one wanted.
+        if !keep_fresh_end && n > 1 && at + 1 < n && self.lines().last().is_some_and(empty) {
+            self.lines_mut().pop();
+            self.fresh_end = None;
+        }
+        // An unsaved caret line and a remembered fresh end are distinct stops, even when
+        // reload initially supplied only the fresh end at this position.
+        let is_fresh = self.fresh_end.as_deref() == self.lines().get(at).map(|l| l.id.as_str());
+        if !self.lines().get(at).is_some_and(empty) || keep_fresh_end && is_fresh {
+            let mut l = Line::new(depth, kind, "");
+            l.id = self.take_id();
+            self.lines_mut().insert(at, l);
+        } else if self.lines()[at].depth != depth || self.lines()[at].kind() != kind {
+            let l = &mut self.lines_mut()[at];
+            l.depth = depth;
+            l.kind = kind;
+            l.status = (kind == Kind::Task).then(|| "todo".to_string());
+        }
+        if at + 1 < self.lines().len() && !keep_fresh_end {
+            self.fresh_end = None;
+        }
+        self.set_caret(BlockPos { line: at, byte: 0 });
+        true
+    }
+
     /// The caret memory when a document opens: back where it was, if that note is still here.
     /// `drop_fresh_end`: a journal day opened on a fresh line at its end doesn't need it when
     /// the caret goes back elsewhere. The caret's line index, or None.
@@ -290,6 +399,7 @@ impl Doc {
         let n = self.lines().len();
         if drop_fresh_end && n > 1 && self.lines().last().is_some_and(|l| l.is_new && l.text.is_empty()) && i + 1 < n {
             self.lines_mut().pop();
+            self.fresh_end = None;
         }
         let b = a.byte.min(self.lines()[i].text.len());
         let b = (0..=b).rev().find(|x| self.lines()[i].text.is_char_boundary(*x)).unwrap_or(0);
@@ -300,7 +410,7 @@ impl Doc {
     /// A page opens at its top (on an empty line, when it has none).
     pub fn caret_to_start(&mut self) {
         if self.lines().is_empty() {
-            self.lines_mut().push(Line::new(0, Kind::Para, ""));
+            self.lines_mut().push(Line::new(0, Kind::Bullet, ""));
         }
         self.set_caret(BlockPos { line: 0, byte: 0 });
     }

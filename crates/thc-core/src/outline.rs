@@ -206,7 +206,24 @@ fn render_with(store: &Store, root: &str, with_rev: bool) -> Result<Vec<Block>> 
     store.conn.execute_batch("CREATE TEMP TABLE IF NOT EXISTS render_sub(id TEXT PRIMARY KEY) WITHOUT ROWID; DELETE FROM temp.render_sub;")?;
     store.conn.execute(&format!("INSERT INTO temp.render_sub {SUBTREE}"), [root])?;
     const IN_SUB: &str = "SELECT id FROM temp.render_sub";
-    let nodes = store.nodes_where(&format!("n.id IN ({IN_SUB}) ORDER BY n.ord, n.id"), &[])?;
+    // Each node with its text's event (one pass, not a second lookup per node), sorted here:
+    // SQLite's sorter over whole node rows took a third of the query (vw384). Byte order, as
+    // `ORDER BY n.ord, n.id` compares TEXT.
+    let cols = crate::model::NODE_COLS.split(',').count();
+    let mut with_eid: Vec<(Node, Option<String>)> = {
+        let mut st = store.conn.prepare(&format!("SELECT {}, n.text_eid FROM nodes n WHERE n.id IN ({IN_SUB})", crate::model::NODE_COLS))?;
+        let v = st.query_map([], |r| Ok((Node::from_row(r)?, r.get::<_, Option<String>>(cols)?)))?.collect::<Result<Vec<_>, _>>()?;
+        v
+    };
+    // (Indices are sorted, not the rows: moving whole nodes about cost more than comparing.)
+    let mut order: Vec<usize> = (0..with_eid.len()).collect();
+    order.sort_unstable_by(|&a, &b| {
+        let (a, b) = (&with_eid[a].0, &with_eid[b].0);
+        (a.ord.as_str(), a.id.as_str()).cmp(&(b.ord.as_str(), b.id.as_str()))
+    });
+    let text_rev: HashMap<String, String> = with_eid.iter_mut().filter_map(|(n, e)| Some((n.id.clone(), e.take()?))).collect();
+    let mut slots: Vec<Option<Node>> = with_eid.into_iter().map(|(n, _)| Some(n)).collect();
+    let nodes: Vec<Node> = order.into_iter().filter_map(|i| slots[i].take()).collect();
     let pairs = |sql: &str| -> Result<Vec<(String, String)>> {
         let mut st = store.conn.prepare(sql)?;
         let v = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, Option<String>>(1)?.unwrap_or_default())))?.collect::<Result<Vec<_>, _>>()?;
@@ -225,7 +242,6 @@ fn render_with(store: &Store, root: &str, with_rev: bool) -> Result<Vec<Block>> 
     for (n, t) in pairs(&format!("SELECT e.src, t.title FROM edges e JOIN nodes t ON t.id=e.dst WHERE e.rel='tag' AND t.title IS NOT NULL AND e.src IN ({IN_SUB}) ORDER BY t.title"))? {
         tags.entry(n).or_default().push(t);
     }
-    let text_rev: HashMap<String, String> = pairs(&format!("SELECT id, text_eid FROM nodes WHERE id IN ({IN_SUB})"))?.into_iter().collect();
     // SQLite returns the row of the max() for bare columns: each entity's latest event.
     let rev: HashMap<String, String> = if with_rev {
         pairs(&format!("SELECT entity, eid FROM (SELECT entity, eid, max(okey) FROM events WHERE entity IN ({IN_SUB}) GROUP BY entity)"))?.into_iter().collect()

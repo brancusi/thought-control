@@ -10,7 +10,7 @@ use thc_core::{
 };
 
 fn root(name: &str) -> PathBuf {
-    let p = std::env::temp_dir().join(format!("thc-usage-{name}-{}", thc_core::id::new_id()));
+    let p = thc_core::scratch::dir(&format!("thc-usage-{name}-{}", thc_core::id::new_id()));
     fs::create_dir_all(&p).unwrap();
     p
 }

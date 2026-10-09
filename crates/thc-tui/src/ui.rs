@@ -192,6 +192,9 @@ pub struct RenderOutput {
     pub image_places: Vec<crate::images::Place>,
     /// Each doc panel's view on screen, for the engine's hit-testing (sidebar_ui.rs).
     pub panel_views: Vec<(crate::sidebar::PanelKey, Rect)>,
+    pub panel_hits: Vec<(crate::sidebar::PanelKey, Vec<crate::doc_ui::HitRow>)>,
+    pub panel_targets: Vec<(crate::sidebar::PanelKey, Vec<Target>)>,
+    pub panel_scrollbars: Vec<(crate::sidebar::PanelKey, (u16, u16, usize, u16, u16))>,
     pub list_height: usize,
     pub doc_scrollbar: Option<(u16, u16, usize, u16, u16)>,
     pub list_scrollbar: Option<(u16, u16, usize, u16, u16)>,
@@ -200,6 +203,11 @@ pub struct RenderOutput {
     pub about: crate::about::Out,
     pub size: Rect,
     pub cells: Option<ratatui::buffer::Buffer>,
+    /// Where this frame drew what layers anchor to (layers_ui.rs): put while drawing, the rest
+    /// collected from the click targets when layers show.
+    pub anchors: caretline_layers::AnchorMap,
+    /// The layers placed this frame (clicks on their boxes and buttons go to them).
+    pub layer_plan: Option<caretline_layers::Plan>,
     hint_actions: Vec<(String, &'static str)>,
     drawing_row: Option<usize>,
 }
@@ -234,6 +242,13 @@ pub fn draw(f: &mut Frame, app: &App) -> RenderOutput {
     let mut output = RenderOutput { size: f.area(), ..RenderOutput::default() };
     let render = &mut output;
     draw_frame(render, f, app);
+    // Layers over everything (layers_ui.rs).
+    if let Some(mut p) = crate::layers_ui::plan(render, f.buffer_mut(), app) {
+        if !crate::layers_ui::compact(f.buffer_mut(), &mut p, app) {
+            crate::layers_ui::draw(f.buffer_mut(), &mut p, app);
+        }
+        render.layer_plan = Some(p);
+    }
     // Hover (mouse.md §6): the target under the pointer turns accent; colour only, never layout.
     if let Some((hx, hy)) = app.hover {
         let accent = app.theme.s(Token::Accent).fg;
@@ -338,7 +353,22 @@ fn draw_frame(render: &mut RenderOutput, f: &mut Frame, app: &App) {
             let detail = Rect { x: content.x + lw + 2, width: main_w.saturating_sub(lw + 2), ..content };
             let lines: Vec<Line> = (0..sep.height).map(|_| Line::styled(th.glyphs().vsep, th.s(Token::Line))).collect();
             f.render_widget(Paragraph::new(lines), sep);
-            if app.doc.is_some() { draw_document(render, f, app, list) } else { draw_content(render, f, app, list) }
+            if app.doc.is_some() {
+                draw_document(render, f, app, list)
+            } else {
+                draw_content(render, f, app, list)
+            }
+            render.anchors.put(
+                caretline_layers::AnchorKey::host(
+                    "ui",
+                    if app.view == View::Journal {
+                        "calendar"
+                    } else {
+                        "detail"
+                    },
+                ),
+                crate::layers_ui::rect(detail),
+            );
             draw_side(render, f, app, detail);
         }
         None if app.doc.is_some() => draw_document(render, f, app, content),
@@ -631,7 +661,7 @@ fn draw_banner(f: &mut Frame, app: &App, area: Rect) {
         Span::styled(format!(" {} {}", g.conflict, head.join(&format!(" {} ", g.sep))), th.s(Token::Conflict)),
         Span::styled(sentence, base),
         // In Write `c` types: the way in is Esc, then c.
-        Span::styled(if app.doc.is_some() && app.doc_write { "⌃O" } else { "c" }, th.s(Token::Conflict)),
+        Span::styled(if app.doc.is_some() && app.main.write { "⌃O" } else { "c" }, th.s(Token::Conflict)),
         Span::styled(if n == 0 { " review" } else { " compare" }, base),
     ]);
     // ANSI: the whole row (padding too) is Magenta + BOLD + REVERSED; truecolor: tint background.
@@ -665,7 +695,8 @@ fn hint_spans(render: &mut RenderOutput, th: &Theme, items: &[crate::keymap::Hin
         let h = &mut render.hint_actions;
         h.clear();
         if actions {
-            for it in items {
+            // (A hint with no action, such as `type to write`, is words, not a button.)
+            for it in items.iter().filter(|it| !it.actions.is_empty()) {
                 h.push((it.keys.clone(), it.actions[0].1));
                 for (k, a) in &it.actions {
                     h.push((k.clone(), a));
@@ -956,22 +987,22 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
     let panel = (app.ui.focus == crate::app::Focus::Sidebar).then(|| app.ui.sidebar.active_key()).flatten().and_then(|k| {
         let d = app.panel_doc(&k)?;
         let i = app.ui.sidebar.position(&k)? + 1;
-        Some((d, app.panel_name(&k).to_lowercase(), format!("aside {i} of {}", app.ui.sidebar.open.len())))
+        Some((d, app.panel_name(&k).to_lowercase(), format!("aside {i} of {}", app.ui.sidebar.open.len()), app.panel_editor(&k).unwrap_or(&app.main)))
     });
     let main_doc = app.doc.as_ref().map(|d| {
         let what = match &d.target {
             crate::editor::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
             crate::editor::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
-        (d, what, String::new())
+        (d, what, String::new(), &app.main)
     });
-    if let (Some((d, what, aside)), true) = (panel.or(main_doc), app.overlay.is_none()) {
+    if let (Some((d, what, aside, editor)), true) = (panel.or(main_doc), app.overlay.is_none()) {
         let failed = d.blocks().iter().any(|l| l.save_error.is_some());
         let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.ui.now_ms.saturating_sub(t) >= 3000));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
         let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());
-        let save: (String, Token, bool) = if app.doc_first_ever && blank && app.doc_write {
+        let save: (String, Token, bool) = if aside.is_empty() && app.doc_first_ever && blank && editor.write {
             ("just type".into(), Token::Muted, false)
         } else if failed {
             ("not saved · :retry".into(), Token::Overdue, false)
@@ -991,9 +1022,24 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // F1 keys`, the day keys only in a journal.
         let _ = journal;
         let mut keys = app.derived.data.bindings.footer.clone();
-        let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done").cloned().collect();
-        for level in [3u8, 2, 1, 0] {
-            if level < 3 && !app.link_open && keys.last().is_some_and(|k| k.label == "keys") {
+        if !aside.is_empty() && !editor.link_open {
+            // Sidebar chrome still has its full table/help; the writing footer keeps the
+            // writing essentials and one way back, rather than overflowing into nothing.
+            keys.retain(|h| h.actions.iter().any(|(_, a)| a.starts_with("doc.") || *a == "sidebar.focus" || *a == "help.context"));
+        }
+        // Just arrived (parked, navigation.md §6.1): the bar leads with how to start and how to
+        // move on, as the view's bar does; the first key that writes puts the writing keys back.
+        // They're the first to go when the bar is narrow.
+        let parked = aside.is_empty() && editor.parked && !editor.link_open && app.prompt.is_none();
+        let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done" || !aside.is_empty() && h.actions.iter().any(|(_, a)| *a == "sidebar.focus")).cloned().collect();
+        let base = keys.clone();
+        for (level, lead_hints) in [(3u8, true), (3, false), (2, false), (1, false), (0, false)] {
+            keys = base.clone();
+            if lead_hints && parked {
+                keys.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![("Tab".into(), "view.next")] });
+                keys.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
+            }
+            if level < 3 && !editor.link_open && keys.last().is_some_and(|k| k.label == "keys") {
                 keys.pop();
             }
             let mut left = lead();
@@ -1009,7 +1055,11 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             if level >= 1 || !ok {
                 left.push(Span::styled(text.clone(), th.s(tok)));
             }
-            let mut right = hint_spans(render, &th, if level == 0 && !app.link_open { &done_only } else { &keys }, true);
+            if level >= 1 && app.ui.document_mode {
+                left.push(sep());
+                left.push(Span::styled("document mode", th.s(Token::Accent)));
+            }
+            let mut right = hint_spans(render, &th, if level == 0 && !editor.link_open { &done_only } else { &keys }, true);
             if app.focus_mode && app.focus_cfg.has(thc_core::tui_config::El::Clock) {
                 right.push(Span::raw("   "));
                 right.push(Span::styled(app.derived.clock.clone(), th.s(Token::Muted)));
@@ -1139,7 +1189,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         }
     }
     // A parked document (navigation.md §6.1) leads with how to start and how to move on.
-    if app.doc.is_some() && app.doc_parked && app.overlay.is_none() && app.prompt.is_none() {
+    if app.doc.is_some() && app.main.parked && app.overlay.is_none() && app.prompt.is_none() {
         hint_list.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![] });
         hint_list.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
     }
@@ -2431,7 +2481,11 @@ fn row_line(render: &mut RenderOutput, app: &App, row: &Row, selected: bool, foc
             let spans = vec![gutter, Span::raw("  "), Span::styled("+ new page \"", th.s(Token::Muted)), Span::styled(title.clone(), th.s(Token::Text)), Span::styled("\"", th.s(Token::Muted))];
             node_row::finish(&th, spans, selected && focused, wd)
         }
-        Row::Note { parts, right } => {
+        Row::Note { parts, right, narrow } => {
+            let parts = match narrow {
+                Some(n) if app.screen_width < 120 => n,
+                _ => parts,
+            };
             let rs = right.as_ref().map(|r| key_line(&th, r)).unwrap_or_default();
             // Entries (the saved filters' `  1 Work …`) are cut whole: the ones that fit, then
             // `+2 more`, never half an entry.
@@ -3180,7 +3234,8 @@ fn draw_calendar(f: &mut Frame, app: &App, area: Rect) {
     let tasks = calendar.tasks;
     let done = calendar.done;
     lines.push(Line::styled(d.format("%a %b %-d").to_string(), th.strong()));
-    lines.push(Line::styled(format!("{} entries {} {tasks} tasks {} {done} done", calendar.entries, g.sep, g.sep), th.s(Token::Muted)));
+    let n = |k: usize, one: &str, many: &str| format!("{k} {}", if k == 1 { one } else { many });
+    lines.push(Line::styled(format!("{} {} {} {} {done} done", n(calendar.entries, "entry", "entries"), g.sep, n(tasks, "task", "tasks"), g.sep), th.s(Token::Muted)));
     lines.push(Line::raw(""));
     lines.push(Line::from(hints(&th, &[("gd", "go to date…"), ("{ }", "week")])));
     f.render_widget(Paragraph::new(lines), area);
@@ -4318,6 +4373,31 @@ fn update_frame(app: &mut App, area: Rect) {
     if let Some(viewport) = viewport { crate::runtime_effects::dispatch(app, crate::update::Msg::ViewportPrepared(viewport)); }
 }
 
+/// The open document's view geometry were a sidebar column open beside it at this screen
+/// size (the main area narrower, the rail and detail pane as they'd be): what idle time lays
+/// the page out for ahead (`App::prewarm`). None: no document, or no column at this size.
+pub(crate) fn doc_geometry_beside(app: &mut App, area: Rect) -> Option<crate::editor::ViewGeometry> {
+    if app.doc.is_none() || app.focus_mode || area.width < 60 || area.height < 24 {
+        return None;
+    }
+    let crate::sidebar::Layout::Column { width: s } = crate::sidebar::layout_at(&app.ui.sidebar, area.width) else { return None };
+    let saved = (app.sidebar_col, app.screen_width, app.term_width);
+    app.sidebar_col = Some(s);
+    app.term_width = area.width;
+    app.screen_width = area.width.saturating_sub(s + 2);
+    let content = normal_areas(app, area)[3];
+    let content = Rect { width: app.screen_width, ..content };
+    let content = match split_width(app, app.screen_width) {
+        Some(width) => Rect { width, ..content },
+        None => content,
+    };
+    let rail = crate::doc_ui::RAIL_W as u16;
+    let content = if app.rail_shows() && content.width >= rail + 60 { Rect { x: content.x + rail, width: content.width - rail, ..content } } else { content };
+    let g = crate::doc_ui::view_geometry(app, content.width as usize, content.height);
+    (app.sidebar_col, app.screen_width, app.term_width) = saved;
+    Some(g)
+}
+
 fn prepare_frame(app: &mut App, area: Rect) {
     let placement = if area.width < 60 || area.height < 24 { None } else { crate::sidebar_ui::placement(app, area.width) };
     app.sidebar_col = match placement {
@@ -4326,6 +4406,7 @@ fn prepare_frame(app: &mut App, area: Rect) {
     };
     app.sidebar_over = None;
     // Every breakpoint reads the main area's width (sidebar.md §6.2).
+    app.term_width = area.width;
     app.screen_width = app.sidebar_col.map_or(area.width, |s| area.width.saturating_sub(s + 2));
     crate::derived::prepare(app);
     app.derived.doc = None;
@@ -4553,7 +4634,7 @@ mod render_tests {
             let doc = app.doc.as_mut().unwrap();
             doc.set_blocks(vec![crate::editor::Line::new(0, thc_core::outline::Kind::Para, "![item](files/item.txt)")]);
             doc.set_caret(crate::editor::BlockPos::default());
-            app.doc_write = false;
+            app.main.write = false;
             update_frame(app, Rect::new(0, 0, 120, 40));
         }
         assert_eq!(a.derived.attachment(&a.vault.paths.vault, "files/item.txt").unwrap().label, " · 2 B");
@@ -4683,7 +4764,7 @@ mod render_tests {
         app.set_view(View::Journal);
         let line_id = app.doc.as_ref().unwrap().blocks()[0].id.clone();
         app.doc.as_mut().unwrap().replace_content(&line_id, "call due:+2h");
-        app.doc_write = true;
+        app.main.write = true;
         let device = app.vault.device.clone();
         let version = |text: &str| thc_core::model::ConflictVersion {
             text: text.into(), actor: "agent:codex-engineer-3".into(), dev: device.clone(), ms: 1_759_756_800_000, eid: None,

@@ -14,7 +14,7 @@ use thc_core::proto::{Client, Incoming};
 use thc_core::vault::{self, Paths, Vault};
 
 fn tmp(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("thc-d-{name}-{}", thc_core::id::new_id()));
+    let d = thc_core::scratch::dir(&format!("thc-d-{name}-{}", thc_core::id::new_id()));
     fs::create_dir_all(&d).unwrap();
     d
 }

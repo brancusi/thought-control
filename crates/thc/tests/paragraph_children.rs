@@ -13,7 +13,7 @@ struct V {
 
 impl V {
     fn new(name: &str) -> V {
-        let root = std::env::temp_dir().join(format!("thc-pchild-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-pchild-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let v = V { root };
@@ -83,7 +83,8 @@ fn tab_under_a_paragraph_saves_a_child() {
 #[test]
 fn the_markdown_export_indents_a_paragraphs_children() {
     let v = V::new("export");
-    v.snap("Para line<cr>first subtask<tab><cr><cr>[ ] a task under it<esc>");
+    // (A typed line is a bullet note now; Enter keeps the depth, a second one would outdent.)
+    v.snap("Para line<cr>first subtask<tab><cr>[ ] a task under it<esc>");
     v.cli(&["export"]);
     let dir = v.root.join("vault/export");
     let md = walk(&dir).into_iter().map(|p| std::fs::read_to_string(p).unwrap()).find(|s| s.contains("Para line")).expect("the day exported");

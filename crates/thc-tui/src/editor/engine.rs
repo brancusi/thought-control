@@ -67,6 +67,13 @@ pub(crate) struct Engine {
     graveyard: HashMap<u64, Line>,
     /// The host changed the lines since the engine last saw them.
     dirty: bool,
+    /// Each line's content version (parallel to `lines`), and the epoch they're good in: an
+    /// edit through the engine gives the lines it touched new versions, anything else (the
+    /// host's changes, blocks coming or going) starts a new epoch. What's derived per line
+    /// (rows laid out, words) is redone only for lines whose version moved (vw384).
+    vers: Vec<u64>,
+    ver_next: u64,
+    epoch: u64,
     /// The host's pending changes are one undo step (`Doc::undo_step`).
     undoable: bool,
     host_rev: u64,
@@ -80,6 +87,9 @@ pub(crate) struct Engine {
     /// edit through one maps every other one (`caretline::update_doc`).
     others: Vec<(u32, cn::View)>,
     current: u32,
+    /// Composed changes for document-wide text anchors, only while tracking is enabled.
+    changes: Option<cn::ChangeSet>,
+    pub(super) track: bool,
 }
 
 /// thc's outline (`tasks::config`): two spaces per depth, its statuses as bullet tags,
@@ -158,6 +168,9 @@ impl Engine {
             deleted: Vec::new(),
             graveyard: HashMap::new(),
             dirty: false,
+            vers: Vec::new(),
+            ver_next: 0,
+            epoch: 0,
             undoable: false,
             host_rev: 0,
             changed_at: None,
@@ -165,6 +178,8 @@ impl Engine {
             pool: IdPool::default(),
             others: Vec::new(),
             current: 0,
+            changes: None,
+            track: false,
         };
         n.sync(&HashMap::new());
         // What the text can't hold exactly (a paragraph that reads as a list item, an
@@ -199,6 +214,8 @@ impl Engine {
         &mut self.st
     }
 
+    pub(super) fn cn_doc(&self) -> &cn::Document { &self.st.doc }
+
     pub(super) fn rev(&self) -> u64 {
         self.st.doc.rev.wrapping_add(self.host_rev)
     }
@@ -209,6 +226,20 @@ impl Engine {
         self.dirty = true;
         self.host_rev = self.host_rev.wrapping_add(1);
         &mut self.lines
+    }
+
+    /// Each line's content version and their epoch (see `vers`). A version is the same as
+    /// before only if the epoch is too.
+    pub(super) fn line_versions(&self) -> (u64, &[u64]) {
+        (self.epoch, &self.vers)
+    }
+
+    /// Every line a new version, in a new epoch.
+    fn new_epoch(&mut self) {
+        self.epoch = self.epoch.wrapping_add(1);
+        let n = self.lines.len();
+        self.vers = (0..n as u64).map(|i| self.ver_next + i).collect();
+        self.ver_next += n as u64;
     }
 
     pub(super) fn pool(&mut self) -> &mut IdPool {
@@ -367,12 +398,23 @@ impl Engine {
                 Some((a, b)) => (o.index_at(rope.slice(..), a), o.index_at(rope.slice(..), b)),
                 None => (1, 0),
             };
+            // A line's version moves only when what it holds did: a touched range can be wider
+            // than the change (a caret move off the fresh last line touches the whole page).
+            let same_len = self.vers.len() == self.lines.len();
             for (i, (l, b)) in self.lines.iter_mut().zip(&o.blocks).enumerate() {
                 if (from..=to).contains(&i) {
+                    let before = same_len.then(|| content_key(l));
                     read_block(l, b, &rope);
+                    if before.is_some_and(|k| k != content_key(l)) {
+                        self.vers[i] = self.ver_next;
+                        self.ver_next += 1;
+                    }
                 } else {
                     l.gap = b.attrs.gap;
                 }
+            }
+            if !same_len {
+                self.new_epoch();
             }
             return;
         }
@@ -409,6 +451,7 @@ impl Engine {
             self.graveyard.insert(m, l);
         }
         self.lines = lines;
+        self.new_epoch();
     }
 
     /// The host's changes to the lines into the engine (see the module docs). True: there
@@ -457,6 +500,9 @@ impl Engine {
             run = true;
         }
         let undoable = std::mem::take(&mut self.undoable);
+        // Blocks came or went: every version starts over (below). Else only the lines whose
+        // text or blank row the host changed get new ones.
+        let structural = !changes.is_empty() || !steps.is_empty();
         self.external(changes);
         let inserted = !steps.is_empty();
         for (after, blocks) in steps {
@@ -468,14 +514,17 @@ impl Engine {
         let rope = &self.st.doc.text;
         let mut replace: Vec<(usize, usize, String)> = Vec::new();
         let mut gaps = Vec::new();
+        let mut changed_marks: HashSet<u64> = HashSet::new();
         for l in &self.lines {
             let Some(b) = l.mark.and_then(|m| at.get(&m)).map(|&i| &o.blocks[i]) else { continue };
             let want = block_text(l);
             if rope.slice(b.start..b.end) != want.as_str() {
                 replace.push((b.start, b.end, want));
+                changed_marks.insert(b.id.0);
             }
             if l.gap != b.attrs.gap {
                 gaps.push(ExtChange::SetGap { id: b.id, gap: l.gap });
+                changed_marks.insert(b.id.0);
             }
         }
         if undoable && !replace.is_empty() {
@@ -489,7 +538,20 @@ impl Engine {
             let changes = replace.into_iter().map(|(from, to, text)| ExtChange::Replace { from, to, text }).chain(gaps).collect();
             self.external(changes);
         }
+        let epoch = self.epoch;
         self.sync(&HashMap::new());
+        if structural || self.vers.len() != self.lines.len() {
+            if self.epoch == epoch {
+                self.new_epoch();
+            }
+        } else {
+            for (i, l) in self.lines.iter().enumerate() {
+                if l.mark.is_some_and(|m| changed_marks.contains(&m)) {
+                    self.vers[i] = self.ver_next;
+                    self.ver_next += 1;
+                }
+            }
+        }
         true
     }
 
@@ -502,23 +564,34 @@ impl Engine {
     /// One message through the current view, every other view of the document mapped
     /// through what it changed (in a stable order by id, so a typing run stays one view's).
     fn step(&mut self, msg: Msg) -> Vec<Effect> {
-        if self.others.is_empty() {
-            return cn::update(&mut self.st, msg);
+        let (fx, cs) = self.step_changes(msg);
+        if let (true, Some(cs)) = (self.track, cs) {
+            self.changes = Some(match self.changes.take() {
+                Some(prev) => prev.compose(cs),
+                None => cs,
+            });
         }
+        fx
+    }
+
+    pub(super) fn take_changes(&mut self) -> Option<cn::ChangeSet> {
+        self.flush();
+        self.changes.take()
+    }
+
+    fn step_changes(&mut self, msg: Msg) -> (Vec<Effect>, Option<cn::ChangeSet>) {
+        if self.others.is_empty() { return cn::update_with_changes(&mut self.st, msg); }
         let mut all: Vec<(u32, cn::View)> = std::mem::take(&mut self.others);
         all.push((self.current, std::mem::take(&mut self.st.view)));
         all.sort_by_key(|(id, _)| *id);
         let acting = all.iter().position(|(id, _)| *id == self.current).unwrap_or(0);
         let (ids, mut views): (Vec<u32>, Vec<cn::View>) = all.into_iter().unzip();
-        let fx = cn::update_doc(&mut self.st.doc, &mut views, acting, msg);
+        let r = cn::update_doc_with_changes(&mut self.st.doc, &mut views, acting, msg);
         for (id, v) in ids.into_iter().zip(views) {
-            if id == self.current {
-                self.st.view = v;
-            } else {
-                self.others.push((id, v));
-            }
+            if id == self.current { self.st.view = v; }
+            else { self.others.push((id, v)); }
         }
-        fx
+        r
     }
 
     /// The view messages act through, and the one `state()` shows.
@@ -543,7 +616,11 @@ impl Engine {
         let mut v = cn::View::new(self.st.view.viewport);
         v.config = self.st.view.config.clone();
         v.layout = self.st.view.layout.clone();
-        v.focused = false;
+        // Every view reports its caret: which one has the keyboard is thc's to draw (the
+        // terminal's cursor, or a cell of `selection` in a view without it, sidebar.md §5.1).
+        // An unfocused engine view has no caret at all, so a main view added to a panel's
+        // document showed none (kh7ya).
+        v.focused = true;
         let start = self.char_of(BlockPos { line: 0, byte: 0 });
         v.selection = Selection::point(start);
         self.others.push((id, v));
@@ -672,6 +749,13 @@ impl Doc {
     /// one of thc's host commands (`thc.task_cycle`). Up, down and pages follow the view's
     /// layout (`Doc::set_view`).
     pub fn run_command(&mut self, id: &str) -> Outcome {
+        if id == "edit.newline" && self.selection().is_none() {
+            match self.enter_on_empty() {
+                Some(EmptyEnter::Nothing) => return Outcome::Done,
+                Some(EmptyEnter::Outdent) => return self.run_command("structure.outdent"),
+                None => {}
+            }
+        }
         let msg = if id.starts_with("thc.") {
             Msg::Command { name: id.into(), args: serde_json::Value::Null }
         } else {
@@ -701,6 +785,24 @@ impl Doc {
         }
     }
 
+    /// Enter on an empty note (writing.md §1; 02pjq): what the screen shows while you type is
+    /// what the saved page shows when it opens again, and an empty line isn't saved. A nested
+    /// one comes out a level (as in Logseq); at the top level Enter does nothing, since there's
+    /// no note to end and the empty rows it would make vanish on save (the page jumped when it
+    /// opened again). An empty task at the top level is left to the engine (`thc.enter` makes
+    /// it a plain bullet). None: not an empty note.
+    fn enter_on_empty(&self) -> Option<EmptyEnter> {
+        let l = self.caret_block();
+        if !l.text.is_empty() {
+            return None;
+        }
+        match l.kind() {
+            _ if l.depth > 0 => Some(EmptyEnter::Outdent),
+            thc_core::outline::Kind::Task => None,
+            _ => Some(EmptyEnter::Nothing),
+        }
+    }
+
     /// A paste of more than one line: Markdown (unless `plain`) read into notes by the engine.
     /// How many notes, and how many images were left out.
     pub(super) fn paste_blocks(&mut self, text: &str, plain: bool) -> (usize, usize) {
@@ -715,6 +817,23 @@ impl Doc {
         self.engine.flush();
         self.engine.char_of(p)
     }
+}
+
+
+/// What Enter does on an empty note (`Doc::enter_on_empty`).
+enum EmptyEnter {
+    Nothing,
+    Outdent,
+}
+
+/// What a line holds as the engine lays it out (its text with its marker, its blank row), as a
+/// hash: a line's version moves when this does (`Engine::vers`).
+fn content_key(l: &Line) -> u64 {
+    use std::hash::{BuildHasher, Hash, Hasher};
+    let mut h = foldhash::fast::FixedState::with_seed(0).build_hasher();
+    block_text(l).hash(&mut h);
+    l.gap.hash(&mut h);
+    h.finish()
 }
 
 #[cfg(test)]

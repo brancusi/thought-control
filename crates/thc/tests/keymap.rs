@@ -12,7 +12,7 @@ struct V {
 
 impl V {
     fn new(name: &str) -> V {
-        let root = std::env::temp_dir().join(format!("thc-keymap-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-keymap-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let v = V { root };
@@ -375,7 +375,7 @@ fn editor_polish() {
     assert_eq!(snap("100x26", "5call<m-:>").matches('▮').count(), 1);
     // Help under 100 columns: one column, the words whole.
     let f = snap("80x24", "5<f1>");
-    assert!(f.contains("new line · twice: new note") && !f.lines().any(|l| l.contains('│') && l.contains('…')), "{f}");
+    assert!(f.contains("new note") && !f.lines().any(|l| l.contains('│') && l.contains('…')), "{f}");
     // Search: the is:deleted tip only with no results.
     let f = snap("100x24", "6rent<cr>");
     assert!(f.contains("Pay rent") && !f.contains("deleted nodes are searchable"), "{f}");
@@ -387,7 +387,7 @@ fn editor_polish() {
 /// ⌘ isn't known to reach thc it says how; `thc keys --markdown` lists ⌘ first.
 #[test]
 fn mac_keys_come_first() {
-    let root = std::env::temp_dir().join(format!("thc-mackeys-help-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-mackeys-help-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     let run = |env: &[(&str, &str)], args: &[&str]| {

@@ -23,7 +23,7 @@ fn labels(v: &Value) -> Vec<(String, usize)> {
 
 #[test]
 fn groups_lay_out_the_same_matches() {
-    let root = std::env::temp_dir().join(format!("thc-group-{}", std::process::id()));
+    let root = thc_core::scratch::dir(&format!("thc-group-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&root);
     std::fs::create_dir_all(&root).unwrap();
     assert!(common::thc().current_dir(&root).args(["init", "vault"]).output().unwrap().status.success());

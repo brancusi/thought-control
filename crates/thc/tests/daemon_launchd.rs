@@ -20,7 +20,7 @@ struct Rig {
 
 impl Rig {
     fn new(name: &str) -> Rig {
-        let root = std::env::temp_dir().join(format!("thc-launchd-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-launchd-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let (home, shims, state) = (root.join("home"), root.join("shims"), root.join("state"));
         for d in [&home, &shims, &state] {

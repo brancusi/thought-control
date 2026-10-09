@@ -514,11 +514,14 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     // E74: a reported case: the gap stays.
     check_g("E74", "[ ] Buy milk ‖ Call ▮the bank", &["⌃T"], "[ ] Buy milk ‖ [ ] Call ▮the bank");
     // E75: B to text: no gap appears.
-    check_g("E75", "[ ] A ¦ [ ] B▮", &["⌃T", "⌃T"], "[ ] A ¦ B▮");
-    // E76: to text after a paragraph with a gap: two notes, never joined.
-    check_g("E76", "Para one ‖ [ ] Ta▮sk", &["⌃T", "⌃T"], "Para one ‖ Ta▮sk");
-    // E77: Tab keeps the gap.
-    check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ‖   [ ] B▮");
+    check_g("E75", "[ ] A ¦ [ ] B▮", &["⌃T", "⌃T"], "[ ] A ¦ - B▮");
+    // E76: to text after a paragraph with a gap: two notes, never joined; back to text is a
+    // bullet note (the Logseq model).
+    check_g("E76", "Para one ‖ [ ] Ta▮sk", &["⌃T", "⌃T"], "Para one ‖ - Ta▮sk");
+    // E77: Tab nests the note right under the one above: the blank row between them goes
+    // (tta6t, decided 2026-10-08; caretline nest_joins). ⇧Tab adds none back.
+    check_g("E77", "[ ] A ‖ [ ] B▮", &["Tab"], "[ ] A ¦   [ ] B▮");
+    check_g("E77b", "[ ] A ¦   [ ] B▮", &["⇧Tab"], "[ ] A ¦ [ ] B▮");
     // E78: undo puts the paragraph back, with its id and the caret.
     let mut d78 = run_g(src70, &[]);
     let id = d78.blocks()[0].id.clone();
@@ -526,8 +529,9 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
     d78.run_command("history.undo");
     assert_eq!(render_g(&d78), src70, "E78");
     assert_eq!(d78.blocks()[0].id, id, "E78: the id");
-    // E79: deleting the marker: a paragraph, no gap added.
-    check_g("E79", "[ ] ▮A ¦ [ ] B", &["⌫", "⌫", "⌫", "⌫"], "▮A ¦ [ ] B");
+    // E79: deleting the marker: a bullet note (never a paragraph: the Logseq model), no gap
+    // added; the first note stays.
+    check_g("E79", "[ ] ▮A ¦ [ ] B", &["⌫", "⌫", "⌫", "⌫"], "- ▮A ¦ [ ] B");
     // E81: back to text joins the neighbours it touches: the reverse of E70.
     let mut d81 = run_g(src70, &[]);
     let id = d81.blocks()[0].id.clone();
@@ -543,12 +547,13 @@ fn e70_to_e81_kind_changes_per_line_and_nothing_moves() {
 /// than the note above, whatever its kind. Shift-Tab takes it back.
 fn paragraph_children() {
     // `Para line`, Enter, `first subtask`, Tab: the line under the paragraph is its child.
-    check_g("PC1", "Para line▮", &["Enter", "type first subtask", "Tab"], "Para line ‖   first subtask▮");
+    // (The Logseq model: the typed line is a bullet, and Tab joins it to the paragraph.)
+    check_g("PC1", "Para line▮", &["Enter", "type first subtask", "Tab"], "Para line ¦   - first subtask▮");
     check_g("PC2", "Para line ‖   first subtask▮", &["⇧Tab"], "Para line ‖ first subtask▮");
     // Under a paragraph, a bullet, a task; an item under a paragraph.
-    check_g("PC3", "One ‖ ▮Two", &["Tab"], "One ‖   ▮Two");
-    check_g("PC4", "- one ‖ ▮Two", &["Tab"], "- one ‖   ▮Two");
-    check_g("PC5", "[ ] one ‖ ▮Two", &["Tab"], "[ ] one ‖   ▮Two");
+    check_g("PC3", "One ‖ ▮Two", &["Tab"], "One ¦   ▮Two");
+    check_g("PC4", "- one ‖ ▮Two", &["Tab"], "- one ¦   ▮Two");
+    check_g("PC5", "[ ] one ‖ ▮Two", &["Tab"], "[ ] one ¦   ▮Two");
     check_g("PC6", "One ¦ - ▮two", &["Tab"], "One ¦   - ▮two");
     // One level at a time, and never under nothing.
     check_g("PC7", "One ‖   ▮Two", &["Tab"], "One ‖   ▮Two");
@@ -556,11 +561,11 @@ fn paragraph_children() {
     // A paragraph moves with its children (⌥↑ / ⌥↓).
     check_g("PC9", "A ‖ B▮ ‖   b1 ‖   - b2", &["⌥↑"], "B▮ ‖   b1 ‖   - b2 ‖ A");
     check_g("PC10", "B▮ ‖   b1 ‖   - b2 ‖ A", &["⌥↓"], "A ‖ B▮ ‖   b1 ‖   - b2");
-    // Enter, Enter under a child paragraph: the next one is its sibling.
-    check_g("PC11", "Para ‖   child▮", &["Enter", "Enter", "type next"], "Para ‖   child ‖   next▮");
-    check_g("PC13", "Para▮", &["Enter", "type child", "Tab", "Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type t"], "Para ‖   child ‖   [ ] t▮");
-    // A task box typed on it: a task at that depth.
-    check_g("PC12", "Para ‖   child▮", &["Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type next"], "Para ‖   child ‖   [ ] next▮");
+    // Enter, Enter under a child paragraph: a new note, then (empty) out a level, as Logseq.
+    check_g("PC11", "Para ‖   child▮", &["Enter", "Enter", "type next"], "Para ‖   child ‖ - next▮");
+    check_g("PC13", "Para▮", &["Enter", "type child", "Tab", "Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type t"], "Para ¦   - child ¦ [ ] t▮");
+    // A task box typed on it: a task.
+    check_g("PC12", "Para ‖   child▮", &["Enter", "Enter", "type [", "type  ", "type ]", "type  ", "type next"], "Para ‖   child ‖ [ ] next▮");
     done();
 }
 

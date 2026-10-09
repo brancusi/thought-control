@@ -13,7 +13,7 @@ struct V {
 
 impl V {
     fn new(name: &str) -> V {
-        let root = std::env::temp_dir().join(format!("thc-imgnodes-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-imgnodes-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let v = V { root };

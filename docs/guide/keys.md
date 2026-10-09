@@ -6,7 +6,7 @@ In thc, `F1` (or `?` in lists) shows the keys for where you are.
 
 ## While writing (journal and pages)
 
-`⌃T` task · `Enter` new line (twice: new note) · `Tab` / `⇧Tab` indent · `⇧`+arrows select ·
+`⌃T` task · `Enter` new note (`⇧Enter` line break; `Space t D` swaps them) · `Tab` / `⇧Tab` indent · `⇧`+arrows select ·
 `⌃C` / `⌃X` copy and cut · `⌃Z` / `⌃Y` undo and redo · `[[` link · `⌃O` open or go to ·
 `⌃P` / `⌃N` day · `Esc` save and go back (to the list or view you came from, else Today) · `⌃Q` quit · `F1` keys · `⌥Z` focus
 
@@ -127,6 +127,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `space n i` | to inbox | `capture.inbox` |  |
 | `space t f` | focus | `focus.toggle` |  |
 | `space t F` | focus elements | `focus.overlay` |  |
+| `space t D` | document mode | `doc.toggle_document_mode` |  |
 | `space t c` | context | `context.toggle` |  |
 | `space t d` | detail pane | `pane.detail_toggle` |  |
 | `space t i` | ids | `ids.toggle` |  |
@@ -331,7 +332,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌥V` | plain paste | `paste.plain_next` |  |
 | `⌘A` `⌥A` | select all | `select.all` |  |
 | `⌃J` `⇧Enter` | line break | `line.soft_break` |  |
-| `Enter` | new line · twice: new note | `line.newline` |  |
+| `Enter` | new note | `line.newline` |  |
 | `Tab` | indent | `line.indent` |  |
 | `⇧Tab` | outdent | `line.outdent` |  |
 | `⌥↑` | move line | `line.move_up` |  |
@@ -488,4 +489,14 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | Keys | Does | Action | When |
 |---|---|---|---|
 | `Esc` | close | `notes.close` |  |
+
+### `layers`
+
+| Keys | Does | Action | When |
+|---|---|---|---|
+| `F2` `⌥N` | next | `tour.next` | tour |
+| `⇧F2` `⌥P` | back | `tour.back` | tour |
+| `F3` `⌥G` | stop | `tour.stop` | tour |
+| `Esc` | dismiss | `layers.dismiss` | agent_layers |
+| `⌘[` `⌃⌥←` | take back | `layers.back` | agent_layers |
 <!-- keys:end -->

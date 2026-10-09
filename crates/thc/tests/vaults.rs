@@ -11,7 +11,7 @@ struct H {
 
 impl H {
     fn new(name: &str) -> H {
-        let home = std::env::temp_dir().join(format!("thc-vaults-{name}-{}", std::process::id()));
+        let home = thc_core::scratch::dir(&format!("thc-vaults-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         std::fs::create_dir_all(&home).unwrap();
         H { home }

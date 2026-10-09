@@ -57,8 +57,8 @@ is there. The main groups are:
 
 | Group | Fields |
 |---|---|
-| The screen | `view` (`today` `inbox` `tasks` `pages` `journal` `search` `log`), `cursor`, `scroll`, `selected` (a row's stable key: a node id, `tag:x`, `view:x`, `tx:x`), `show_detail`, `focus` (`list`/`detail`), `focus_mode`, `focus_cfg`, `collapsed`, `page_ids` |
-| Filters and per-view choices | `tasks_filter` (a query, as `thc q` reads it), `search_terms`, `pages_filter`, `log_actor`, `log_node`, `review_lane`, `agenda_mode`, `show_all_done`, `context_on`, `scope_override`, `today_by_vault` |
+| The screen | `view` (`today` `inbox` `tasks` `pages` `journal` `search` `log`), `cursor`, `scroll`, `selected` (a row's stable key: a node id, `tag:x`, `view:x`, `tx:x`), `show_detail`, `focus` (`list`/`detail`), `focus_mode`, `document_mode` (Enter and ⇧Enter swapped; the person's: an agent's state or patch can't change it), `focus_cfg`, `collapsed`, `page_ids` |
+| Filters and per-view choices | `tasks_filter` (a query, as `thc q` reads it), `tasks_order` (the Tasks rows' order while you stay on the list: a done row stays put), `search_terms`, `pages_filter`, `log_actor`, `log_node`, `review_lane`, `agenda_mode`, `show_all_done`, `context_on`, `scope_override`, `today_by_vault` |
 | Documents | `page_open`, `journal_date`, `document` (caret and scroll: see below), `doc_write`, `doc_parked`, `doc_back`, `doc_origin`, `rail_frozen`, `last_page`, `recent_docs`, the `[[` popup (`link_open`, `link_sel`) |
 | Input | `edit` (a row being edited in place), `prompt`, `awaiting` (a confirmation), `overlay` (palette, finder, move, capture, help, recipe, history, vaults, scope, about, compare, focus), `pending_keys` (a key sequence in progress, in keymap notation), `input_untouched`, `recent_cmds`, `recent_moves` |
 | The pointer | `hover`, `scroll_drag`, `drag_from`, `click_link`, `last_click` |
@@ -66,6 +66,19 @@ is there. The main groups are:
 | Time | `now_ms`, `utc_offset_min`, `today` (see [Time](#time)) |
 | History | `history` (the ⌘[ / ⌘] stack: `entries`, `pos`, `tab_run`) |
 | Identity | `ui_state_version` (1), `vault_name` (read-only) |
+
+The main view's editor pane (the same component a sidebar panel runs) owns `doc_write`,
+`doc_parked`, `doc_line_id`, `doc_vsel`, `doc_footer_cur`, `doc_announce`, `link_open`,
+`link_sel`, `last_drop`, `near_miss`, `drag_from`, `drag_at`, `drag_ms`, `click_link` and
+`save_after_frame` (omitted when false). They are written next to each other; JSON key order
+carries no meaning.
+
+Document panels keep this same editor state at `sidebar.open[i].view.editor`, plus `caret`,
+`scroll`, `scroll_free`, `fresh_end`, `caret_new` and `caret_tail`. These are additive v1 fields;
+older states without `editor` still open at the top, parked. A new empty caret line and a
+saved note's trailing blank space restore just as in main. An agent cannot change the focused
+panel's editor state; caret/scroll patches still use the panel's view adapter. Every pane's
+pending line-leave save is serviced after the frame, not just main's.
 
 What's **not** in the state:
 
@@ -78,9 +91,8 @@ What's **not** in the state:
 - **Runtime handles:** the vault connection, channels, terminal capabilities, the last frame's
   hit regions and the image protocol. They live beside the state, not in it.
 
-Within `ui_state_version` 1 the state only gains fields. Panels that don't exist yet (the
-sidebar's stack of pages) arrive as new fields, and a client that doesn't know them can ignore
-them.
+Within `ui_state_version` 1 the state only gains fields. The sidebar's stack and panel editor
+fields are additive; a client that doesn't know them can ignore them.
 
 ### Writing a state
 
@@ -128,7 +140,7 @@ order they happened.
 |---|---|---|
 | `tick` | `now_ms`, `utc_offset_min` | The clock moved (see [Time](#time)) |
 | `key` | `key` | One key as a [key-script token](#key-scripts): `j`, `<cr>`, `<c-o>` |
-| `mouse` | `kind` (`down` `up` `drag` `moved` `scroll_up` `scroll_down` `middle_down` `middle_up`), `x`, `y`, `mods` (`c` `m` `s`), `clicks` | A pointer event. Without `clicks`, a press within 400 ms on the same cell counts up (double, triple) |
+| `mouse` | `kind` (`down` `up` `drag` `moved` `scroll_up` `scroll_down` `middle_down` `middle_up`), `x`, `y`, `mods` (`c` `m` `s` `d`: ⌃ ⌥ ⇧ ⌘), `clicks` | A pointer event. Without `clicks`, a press within 400 ms on the same cell counts up (double, triple) |
 | `paste` | `text` | A bracketed paste (into the open document) |
 | `resize` | `w`, `h` | The terminal's size |
 | `focus` | `gained` | The terminal gained or lost focus (losing it saves) |
@@ -139,6 +151,8 @@ order they happened.
 | `idle` | | The open document passed its idle point: the typing so far became one undo step and was saved |
 | `aside` | `target`, `pin`, `fold`, `close`, `actor` | `aside`: put something beside the person in the sidebar, or close a panel the actor opened |
 | `poll` | | The runtime looked for changes from elsewhere (another process, another device, the daemon's push) and found some: what's shown reloaded |
+| `layer` | `req`, `actor` | A layer op ([Layers](#layers-hints-highlights-spotlights-walkthroughs)) |
+| `doc_view` | `req`, `actor` | An agent's own view on the open document: open it, run messages or set a note's text through it |
 
 `frame`, `idle` and `poll` are the runtime's own steps that read or write the vault. The TUI
 records one only when it did something, so a replay does the same thing at the same point.
@@ -179,7 +193,7 @@ doesn't close the person's TUI by accident.
 | any character | itself (`j`, `G`, `?`) |
 | `<cr>` `<esc>` `<tab>` `<bs>` `<del>` `<space>` `<up>` `<down>` `<left>` `<right>` `<home>` `<end>` `<pgup>` `<pgdn>` `<f1>`…`<f12>` `<lt>` | named keys (`<lt>` is `<`) |
 | `<c-x>` `<m-x>` `<s-x>` `<d-x>` | ⌃ ⌥ ⇧ ⌘ with a key, combined in that order: `<c-m-left>`, `<s-tab>` |
-| `<click:x,y>` `<dclick:x,y>` `<tclick:x,y>` `<sclick:x,y>` `<cclick:x,y>` `<aclick:x,y>` `<mclick:x,y>` | clicks (double, triple, with ⇧ ⌃ ⌥, middle) |
+| `<click:x,y>` `<dclick:x,y>` `<tclick:x,y>` `<sclick:x,y>` `<cclick:x,y>` `<aclick:x,y>` `<cmdclick:x,y>` `<mclick:x,y>` | clicks (double, triple, with ⇧ ⌃ ⌥ ⌘, middle) |
 | `<drag:x1,y1,x2,y2>` `<wheel:up\|down[:n][@x,y]>` `<hover:x,y>` | the rest of the mouse |
 | `<paste:TEXT>` | a paste; `\n` is a line break |
 
@@ -386,6 +400,71 @@ change shows in the TUI's toast. UI control never writes to the vault's log by i
 keys that edit (typing into a document, `x` on a task) write, exactly as they would from the
 keyboard.
 
+## Layers: hints, highlights, spotlights, walkthroughs
+
+> **Local build only** (feat/layers): built on caretline-layers, which isn't published yet.
+
+An agent can point at things on the person's screen without moving their view: a **hint** (a
+callout box with an arrow and a ring), a **highlight** (a ring, no box), a **focus** (a
+spotlight that dims everything else, and selects the row), and a **walkthrough** (steps with
+dots and `‹ back` / `next ›`). Placement is caretline-layers'; every cell is thc's, in the
+theme's colours (agents' layers in the agent hue, attributed `◆ name` on the box's top edge).
+
+```sh
+THC_ACTOR=claude thc ui hint row:ny82xc331ywd "The dentist closes Friday." --title "Call today"
+THC_ACTOR=claude thc ui highlight ui:tab:tasks --ttl 8s
+THC_ACTOR=claude thc ui focus row:pa3e6arwdv7c "Review this one first"
+THC_ACTOR=claude thc ui tour steps.json        # [{"anchor", "title"?, "text"}…] or {"steps", "spotlight"}
+THC_ACTOR=claude thc ui tour next              # back, stop
+thc ui layers                                  # --clear, --pop ID, --json
+```
+
+**Anchors** are stable keys, never positions: `row:<id>` (a list row in any view, a sidebar
+list panel's row, a line of the open document), `ui:tab:<view>`, `ui:footer:<action>`,
+`ui:scope`, `ui:detail`, `ui:calendar`, `ui:day:<date>`, `ui:panel:<n>:header`,
+`action:<keymap action>` (anything drawn as that action's button), `panel:<n>`, `caret`,
+`text:<from>..<to>` (the open document's engine chars; they follow edits), `block:<n>`, or any
+caretline-layers anchor as JSON. A list is fallbacks. A row scrolled out of sight shows an edge
+chip pointing to it.
+
+**Walkthroughs** run on caretline-tour: a step's `host` is a UI state patch applied on
+entering it (a history step, like any agent's), `advance` moves on when a predicate holds
+(`{"command": "go.pages"}`: a keymap action ran; `{"msg": "key"}`; `{"state": {…}}`), and
+which tours this device finished or stopped is kept in its cache (`tours-seen.json`). The
+steps are `guide` layers; an agent's walkthrough carries its name.
+
+**The person stays in control.** Esc takes every agent's layer away, ⌘[ takes back the
+newest, a click on a hint dismisses it, and F2 / ⇧F2 / F3 move or stop a walkthrough (or its
+buttons). An agent can't change `layers` through `state.set` or `patch`.
+
+**Policy:** `[layers] agent_limits` in the config: `off` (the default: no limits) or `defaults`
+(caretline-layers' `Limits::agent_defaults()`: 3 agent layers, 8 s lifetimes, 2 pushes a second,
+size limits, no spotlight). A refusal is `{"error": {"kind": "refused", "reason", "message"}}`
+(exit 6). A trace records the policy in its `env`.
+
+**Writing through its own view.** `doc.view.open` gives the agent a caretline view of its own on
+the open document (`at`: `start`, `end`, `{"id", "byte"}`, `{"id", "end": true}`); `doc.msgs`
+runs caretline messages through it and `doc.text.set` replaces a note's text. The person's
+caret stays where it was, and the lines save as the person's do. CLI: `thc ui doc open --at
+<id>:end`, `thc ui doc write TEXT`, `thc ui doc set ID TEXT`, `thc ui doc msgs JSON`.
+
+| Op | Fields | Result |
+|---|---|---|
+| `hint.show` | `anchor`, `text`, `title?`, `ttl_ms?`, `place?`, `arrow?`, `ring?` | `rev`, `layer`, `resolved` (`{"rects"}`, `{"off"}` or null with `reason: "not_found"`) |
+| `hint.clear`, `hint.hide` | `layer?` or `all` (default: all of yours) | `rev`, `popped` |
+| `highlight`, `focus` | `anchor`, `ttl_ms?`; focus: `text?`, `title?` | as `hint.show` |
+| `layer.push`, `layer.update`, `layer.pop` | a caretline-layers `layer`; `layer`, `owner` or `all` | as `hint.show` / `popped` |
+| `layer.ls` | | `rev`, `layers` (`layers`, `hidden`, `tour`) |
+| `tour.start` | `steps` (`[{anchor, title?, text, host?, advance?}]`), `spotlight?`, `title?`; or `tour`, a caretline-tour walkthrough | as `hint.show` (the step's layer, `s1/0`) |
+| `tour.next`, `tour.back`, `tour.stop`, `tour.restart`, `tour.step` (`to`) | | `rev` |
+| `tour.list` | | `rev`, `layers` (the walkthrough and the tours seen) |
+| `doc.view.open`, `doc.view.close` | `at?` | `rev`, `doc` (`view`, `caret`, `line` with its `text` chars) |
+| `doc.msgs` | `msgs` (caretline messages), `at?` | as `doc.view.open` |
+| `doc.text.set` | `id`, `text` | as `doc.view.open` |
+
+Each is one message (`layer` or `doc_view`) in the trace, so a session with layers replays
+byte for byte. `thc schema --proto` lists the layer ops under `ui`.
+
 ## `thc ui`
 
 | Command | Does |
@@ -436,8 +515,13 @@ The TUI (`crates/thc-tui`) splits into the parts the Elm architecture names:
   the editor, mouse mode) and feeds results back as messages.
 - **Derived data:** `derived.rs` and the `*_snapshot.rs` files, filled from the vault before
   each frame.
-- **View:** `ui.rs`, `doc_ui.rs` and `node_row.rs`. They draw from the state and derived data
+- **View:** `ui.rs`, `editor_pane/view.rs` (also exported through `doc_ui.rs`) and `node_row.rs`.
+  Main and document panels use one body layout/draw/popup component, with per-view caret,
+  selection, geometry, hit targets and scroll. They draw from the state and derived data
   only. A test fails if they reach the store, a clock, the environment, a file or a process.
+  Overlay consumers use that same prepared engine frame (`PreparedDoc.frame/frame_at`);
+  document panels expose compatible frame and line-anchor aliases from the shared layout,
+  not a second renderer. The document adapter can track composed text changes across views.
 - **Protocol:** `ui_proto.rs` (requests) and `ui_server.rs` (socket, discovery, subscribers).
 
 ### What isn't pure yet
@@ -450,10 +534,12 @@ still run the older way, inside `Session::apply`, with the vault in reach:
   from `keymap.rs` and `input.rs`). They read and write the store directly and set state
   around it. They're still single messages in the trace and replay deterministically on the
   same vault, but they aren't `update` functions yet.
-- **The document's key path:** `doc_keys.rs` and `doc_app.rs` drive the editor model and save
-  through the writer thread on `App`. Its clock is `UiState::now_ms`, so typing runs and idle
-  saves replay, but new lines' ids are minted by the runtime as they're needed and aren't in
-  the trace.
+- **The shared document's key path:** `editor_pane/update.rs` (exported through `doc_keys.rs`)
+  and `doc_app.rs` drive the editor model and save through the writer thread on `App`.
+  `with_panel` is a scoped runtime document/view borrow, not a separate editor implementation;
+  navigation effects run in the host after the borrow, never against main's document identity.
+  Its clock is `UiState::now_ms`, so typing runs and idle saves replay, but new lines' ids are
+  minted by the runtime as they're needed and aren't in the trace.
 - **Background work in the terminal loop:** the daemon's pushes (`drain_live`), the update
   check, the registry check and the in-place update's progress (`drain_update`) still run as
   runtime code on `App`. What they change in the state is caught between frames and recorded

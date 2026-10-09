@@ -1,6 +1,9 @@
 //! thc-tui: the terminal UI. `thc` with no arguments (in a terminal) or `thc tui`.
 
 mod about;
+#[cfg(test)]
+mod interaction_tests;
+pub mod cmd_click;
 mod app;
 mod editor;
 mod doc_app;
@@ -20,6 +23,10 @@ mod sidebar_app;
 mod sidebar_ui;
 mod sidebar_list;
 pub mod ui_state;
+pub mod layers;
+mod layers_ui;
+pub mod teaching;
+mod doc_view;
 mod session;
 mod ui_proto;
 mod ui_server;
@@ -32,6 +39,7 @@ mod snapshot_fmt;
 mod input;
 mod keymap;
 mod editing_keys;
+pub mod editor_pane;
 pub mod keys_edit;
 mod images;
 mod recover;
@@ -40,9 +48,15 @@ pub mod history;
 #[cfg(test)]
 mod fuzz;
 #[cfg(test)]
+mod flows;
+#[cfg(test)]
 mod sidebar_tests;
 #[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod teaching_tests;
+#[cfg(test)]
+mod layers_tests;
 #[cfg(test)]
 mod goldens;
 #[cfg(test)]
@@ -100,14 +114,27 @@ fn trace_file() -> Option<std::path::PathBuf> {
 }
 
 pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()> {
+    run_mode(vault, focus, start, false)
+}
+
+/// The same actual terminal editor, with a synthetic sandbox and optional manual guide.
+pub fn run_teaching(vault: Vault) -> Result<()> {
+    run_mode(vault, None, None, true)
+}
+
+fn run_mode(vault: Vault, focus: Option<&str>, start: Option<&str>, teaching: bool) -> Result<()> {
     let mut app = if start.is_some() { App::new_deferred(vault)? } else { App::new(vault)? };
-    app.live_rx = Some(live::spawn(app.vault.paths.clone()));
+    if !teaching {
+        app.live_rx = Some(live::spawn(app.vault.paths.clone()));
+    }
     if let Some(id) = focus {
         app.focus_node(id);
     }
     apply_start(&mut app, start);
-    about::on_start(&mut app);
-    resume(&mut app);
+    if !teaching {
+        about::on_start(&mut app);
+        resume(&mut app);
+    }
     // ratatui::init sets up the terminal (raw mode, alternate screen, panic hook); frames go
     // through the quiet backend.
     let _ = ratatui::init();
@@ -172,6 +199,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
     tmux_escape_note(&mut app);
     let size = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
     let mut session = session::Session::new(app, size);
+    if teaching { teaching::start(&mut session)?; }
     // `thc tui --trace FILE`: every message, from this state on, to replay later.
     if let Some(path) = trace_file() {
         if let Err(e) = session.trace_to(&path) {
@@ -179,7 +207,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
         }
     }
     // The UI protocol (docs/ui-protocol.md): `thc ui` finds this TUI by its discovery file.
-    let mut server = if std::env::var_os("THC_TUI_NO_LISTEN").is_some() {
+    let mut server = if teaching || std::env::var_os("THC_TUI_NO_LISTEN").is_some() {
         None
     } else {
         let real = session.app.vault.origin.as_ref().map_or(session.app.vault.paths.vault.clone(), |o| o.vault.clone());
@@ -439,7 +467,7 @@ fn draw_images(terminal: &mut ratatui::Terminal<quiet::Quiet>, app: &mut App) ->
 
 /// Text entry shows a bar cursor: writing in a document, a prompt, the palette, move, capture.
 fn wants_bar(app: &App) -> bool {
-    (app.doc.is_some() && app.doc_write && app.overlay.is_none())
+    (app.doc.is_some() && app.main.write && app.overlay.is_none())
         || app.prompt.is_some()
         || matches!(app.overlay, Some(app::Overlay::Palette { .. } | app::Overlay::Finder { .. } | app::Overlay::Move { .. } | app::Overlay::Capture { .. }))
 }
@@ -447,6 +475,8 @@ fn wants_bar(app: &App) -> bool {
 fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut session::Session, server: &mut Option<ui_server::Server>) -> Result<()> {
     use session::Msg;
     let mut last_poll = Instant::now();
+    // The last key or paste: the timed poll waits while you type (below).
+    let mut last_input = Instant::now() - Duration::from_secs(1);
     let mut last_keys_poll = Instant::now();
     let mut keys_watch = keys_edit::Watch::default();
     keys_watch.changed(&session.app.vault.paths.vault);
@@ -454,7 +484,20 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
     // tui-editor.md §10. Written to the cache dir as tui-trace.log; p50/p99 on exit.
     let trace = std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "1");
     let mut key_at: Option<Instant> = None;
+    let mut cmd_release = cmd_click::CmdRelease::default();
+    let mut shift_capture = cmd_click::ShiftCapture::detect();
     let mut samples: Vec<f64> = Vec::new();
+    // THC_TUI_TRACE=1: where a slow key's time went, phase by phase (tui-trace-slow.log).
+    let mut phases: Vec<(&'static str, f64)> = Vec::new();
+    let mut first_key = String::new();
+    let mut phase_at = Instant::now();
+    let mut phase = |name: &'static str, phases: &mut Vec<(&'static str, f64)>, on: bool| {
+        if on {
+            let now = Instant::now();
+            phases.push((name, (now - phase_at).as_secs_f64() * 1000.0));
+            phase_at = now;
+        }
+    };
     let result = (|| -> Result<()> { loop {
         // The terminal went away: save and leave before drawing into it (a draw would fail
         // first and lose the line being typed).
@@ -475,8 +518,11 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 s.readvertise(&session.app.ui.vault_name, &real);
             }
         }
+        let tracing = trace && key_at.is_some();
+        phase("loop", &mut phases, tracing);
         // What changed outside messages (the daemon, a poll, an idle save) is recorded first.
         session.sync_external();
+        phase("sync_external", &mut phases, tracing);
         // Protocol requests that arrived while the last frame was drawn.
         if let Some(s) = server.as_mut() {
             s.pump(session);
@@ -492,15 +538,26 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if session.app.ui.wants_clock(runtime_effects::wall_clock().0) || session.app.doc_wants_clock() {
             session.tick_wall();
         }
+        phase("pump+tick", &mut phases, tracing);
         let app = &mut session.app;
         app.drain_update();
         // What a crash now would lose, for the panic hook (recover.rs).
         recover::note(app);
+        phase("drain_update+recover", &mut phases, tracing);
         terminal.draw(|f| ui::draw_app(f, app))?;
         draw_images(terminal, app)?;
         terminal.backend_mut().cursor_bar(wants_bar(app))?;
-        if let Some(t) = key_at.take() {
-            samples.push(t.elapsed().as_secs_f64() * 1000.0);
+        phase("draw", &mut phases, tracing);
+        // (Not the key that quits: its frame is the last, and its time the saves on the way out.)
+        if let Some(t) = key_at.take().filter(|_| !session.app.quit) {
+            let ms = t.elapsed().as_secs_f64() * 1000.0;
+            samples.push(ms);
+            if ms > 4.0 {
+                let line = format!("{ms:.2} ms ({first_key}): {}\n", phases.iter().filter(|(n, t)| *n != "wait" && *t >= 0.05).map(|(n, t)| format!("{n} {t:.2}")).collect::<Vec<_>>().join(" · "));
+                let path = session.app.vault.paths.cache.join("tui-trace-slow.log");
+                let _ = std::fs::OpenOptions::new().create(true).append(true).open(&path).and_then(|mut f| std::io::Write::write_all(&mut f, line.as_bytes()));
+            }
+            phases.clear();
         }
         session.runtime(Msg::Frame);
         let app = &mut session.app;
@@ -576,6 +633,8 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         // frame, not one per key (jank: lag on held keys).
         // A which-key popup due soon wakes the loop for it (keymap.md §5.1).
         let wait = crate::keymap::popup_wait(app).map_or(Duration::from_millis(250), |w| w.min(Duration::from_millis(250)));
+        // A drag held on the view's edge repeats on the clock: wake for it.
+        let wait = session.held_drag_in().map_or(wait, |ms| wait.min(Duration::from_millis(ms.max(1))));
         // (Interrupted because the terminal went away: the check above, next frame.)
         // With the protocol on, the wait is cut into short polls so a request is answered
         // within ~10 ms, without drawing more frames.
@@ -600,14 +659,29 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
         if ready {
             session.sync_external();
             session.tick_wall();
+            phase("tick", &mut phases, trace && key_at.is_some());
             let mut first = true;
             while first || event::poll(Duration::ZERO)? {
                 first = false;
                 let ev = event::read()?;
+                if matches!(ev, Event::Key(_) | Event::Paste(_)) {
+                    last_input = Instant::now();
+                }
                 if trace && key_at.is_none() && matches!(ev, Event::Key(_) | Event::Paste(_)) {
                     key_at = Some(Instant::now());
+                    phases.clear();
+                    phase("wait", &mut phases, true);
+                    first_key = match &ev {
+                        Event::Key(k) => script::key_token(k),
+                        _ => "paste".into(),
+                    };
                 }
                 let msg = match ev {
+                    Event::Key(k) if k.kind == KeyEventKind::Press && cmd_release.is_marker(&k) => cmd_release.release(),
+                    Event::Mouse(m) => {
+                        cmd_release.saw(&m);
+                        session::mouse_msg(&m).map(|mouse| Msg::Mouse { mouse })
+                    }
                     Event::Key(k) if k.kind == KeyEventKind::Press => {
                         // Tests of the hard deadline: a loop that never comes back (THC_TEST only).
                         if k.code == ratatui::crossterm::event::KeyCode::Char('!') && std::env::var_os("THC_TEST").is_some() && std::env::var_os("THC_TEST_WEDGE").is_some() {
@@ -618,7 +692,6 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                         Some(Msg::Key { key: script::key_token(&k) })
                     }
                     Event::Paste(text) => Some(Msg::Paste { text }),
-                    Event::Mouse(m) => session::mouse_msg(&m).map(|mouse| Msg::Mouse { mouse }),
                     Event::FocusLost => Some(Msg::Focus { gained: false }),
                     Event::FocusGained => Some(Msg::Focus { gained: true }),
                     Event::Resize(w, h) => Some(Msg::Resize { w, h }),
@@ -641,23 +714,71 @@ fn event_loop(terminal: &mut ratatui::Terminal<quiet::Quiet>, session: &mut sess
                 }
             }
         }
+        if !ready && session.held_drag_in().is_some() {
+            session.tick_wall();
+        }
+        phase("keys", &mut phases, trace && key_at.is_some());
         if let Some(s) = server.as_mut() {
             s.announce(session, "terminal");
         }
+        // ⇧ with clicks while the pointer is on a link (Ghostty, xterm), the terminal's own ⇧
+        // elsewhere.
+        if let Some(seq) = shift_capture.update(session.app.pointer_on_link && session.app.tui_prefs.mouse) {
+            use std::io::Write;
+            let mut out = std::io::stdout();
+            let _ = out.write_all(seq);
+            let _ = out.flush();
+        }
         // The runtime's steps that touch the vault are recorded when they do something, so a
         // trace replays them where they happened (session.rs).
+        let tracing = trace && key_at.is_some();
+        phase("announce", &mut phases, tracing);
         session.runtime(Msg::Idle);
+        phase("idle", &mut phases, tracing);
+        let area = ratatui::layout::Rect::new(0, 0, session.size.0, session.size.1);
         let app = &mut session.app;
         app.drain_live();
+        phase("drain_live", &mut phases, tracing);
         app.check_installed(false);
         app.check_registry();
+        phase("checks", &mut phases, tracing);
         // With the daemon live, changes arrive as events (it asks for a poll); polling on a
         // timer is the offline fallback.
-        if std::mem::take(&mut app.poll_wanted) || last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 }) {
+        // The timer's poll reads the log's files from disk (a stat each, up to 11 ms on a busy
+        // disk): it waits until typing pauses (300 ms), so it never lands between a key and
+        // its frame (at least every 30 s all the same). A poll asked for (the daemon's push) runs
+        // at once.
+        let typing = last_input.elapsed() < Duration::from_millis(300) && last_poll.elapsed() < Duration::from_secs(30);
+        // Idle, and nothing else to do this turn: lay the page out ahead for a sidebar, in 2 ms
+        // slices while no input waits (a key waits at most one slice), up to 40 ms a turn.
+        // No frame is drawn for it: nothing on screen changes.
+        if last_input.elapsed() >= Duration::from_millis(300) && !app.quit {
+            let t = Instant::now();
+            while t.elapsed() < Duration::from_millis(40) && !event::poll(Duration::ZERO).unwrap_or(true) && app.prewarm_step(area, Duration::from_millis(2)) {}
+        }
+        if std::mem::take(&mut app.poll_wanted) || (!typing && last_poll.elapsed() >= Duration::from_millis(if app.daemon_live { 5000 } else { 500 })) {
             last_poll = Instant::now();
             session.runtime(Msg::Poll);
+            phase("poll", &mut phases, tracing);
+            if tracing {
+                // Inside the poll: the steps, and what's left (the scheduler, on a busy machine).
+                let split = session.app.poll_split.clone();
+                let inside: f64 = split.iter().map(|(_, t)| t).sum();
+                for (n, t) in split {
+                    phases.push((n, t));
+                }
+                if let Some(p) = phases.iter().rev().find(|(n, _)| *n == "poll").map(|(_, t)| *t) {
+                    phases.push(("poll-unaccounted", (p - inside).max(0.0)));
+                }
+            }
         }
     } })();
+    if let Some(seq) = shift_capture.release() {
+        use std::io::Write;
+        let mut out = std::io::stdout();
+        let _ = out.write_all(seq);
+        let _ = out.flush();
+    }
     if trace && !samples.is_empty() {
         samples.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let p = |q: f64| samples[((samples.len() as f64 - 1.0) * q) as usize];
@@ -938,6 +1059,14 @@ pub fn ui_default_state(vault: Vault) -> Result<serde_json::Value> {
 }
 
 pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option<&str>, start: Option<&str>) -> Result<String> {
+    snapshot_mode(vault, width, height, keys, focus, start, false)
+}
+
+pub fn teaching_snapshot(vault: Vault, width: u16, height: u16, keys: &str) -> Result<String> {
+    snapshot_mode(vault, width, height, keys, None, None, true)
+}
+
+fn snapshot_mode(vault: Vault, width: u16, height: u16, keys: &str, focus: Option<&str>, start: Option<&str>, teaching: bool) -> Result<String> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use session::{Msg, Session};
@@ -957,6 +1086,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
         app.reexec = true;
     }
     let mut session = Session::new(app, (width, height));
+    if teaching { teaching::start(&mut session)?; }
     // `thc ui render --state FILE`: start from a state.
     if let Some(path) = std::env::var_os("THC_TUI_STATE") {
         let text = if path == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&path)? };

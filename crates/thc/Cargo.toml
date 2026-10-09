@@ -10,6 +10,9 @@ name = "thc"
 path = "src/main.rs"
 
 [dependencies]
+# `thc schema --proto` includes the layers and tour protocols.
+caretline-layers = { version = "=0.1.0", default-features = false }
+caretline-tour = { version = "=0.1.0", default-features = false }
 tempfile = "3"
 anyhow.workspace = true
 chrono.workspace = true

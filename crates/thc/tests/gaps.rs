@@ -13,7 +13,7 @@ struct V {
 
 impl V {
     fn new(name: &str) -> V {
-        let root = std::env::temp_dir().join(format!("thc-gaps-{name}-{}", std::process::id()));
+        let root = thc_core::scratch::dir(&format!("thc-gaps-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         std::fs::create_dir_all(&root).unwrap();
         let v = V { root };
@@ -97,8 +97,9 @@ fn e74_the_users_case_saves_the_gap_and_it_shows_after_reopening() {
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
         String::from_utf8_lossy(&o.stdout).to_string()
     };
-    // A task, a blank line, a paragraph; ⌃T on the paragraph.
-    snap("[ ] Buy milk<cr><cr>Call the bank<esc>");
+    // A task, a blank line, a paragraph (pasted Markdown: typed lines are bullets now, and a
+    // blank row comes only with a paragraph); ⌃T on the paragraph.
+    snap("<paste:- [ ] Buy milk\n\nCall the bank\n><esc>");
     let f = snap("");
     let rows = |f: &str| -> (usize, usize) {
         let ls: Vec<&str> = f.lines().collect();

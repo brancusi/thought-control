@@ -220,19 +220,38 @@ pub struct Doc {
     pub(super) last_saved: HashMap<String, Line>,
     /// The word count at a revision (the footer shows it every frame).
     words: std::cell::Cell<Option<(u64, usize)>>,
+    /// Each line's words by its content version (`Engine::line_versions`): a keystroke counts
+    /// only the line it changed (vw384).
+    line_words: std::cell::RefCell<(Option<u64>, Vec<u64>, Vec<u32>)>,
     /// Each note's rows in the view, remembered (`view::RowIndex`): where the view is in the
     /// whole document, without laying the whole document out every frame.
-    pub(super) rows: std::cell::RefCell<super::view::RowIndex>,
+    /// One per view: a page beside itself is laid out at two widths (a shared index re-summed
+    /// the whole page at each).
+    pub(super) rows: std::cell::RefCell<HashMap<u32, super::view::RowIndex>>,
+    /// Each note's rows by what decides them alone (`view::note_key`), shared by every view
+    /// and filled ahead in idle time (`Doc::prewarm_rows`).
+    pub(super) row_cache: std::cell::RefCell<super::view::RowCache>,
     /// The clock as the runtime last gave it ([`Doc::tick`], ms on the UI's logical clock, `UiState::now_ms`).
     pub(super) now_ms: u64,
     /// A change from elsewhere to the caret's line waits until the caret leaves it (the view
     /// you type in). False for a view nobody types in now (a panel without the keyboard).
     pub hold_caret_line: bool,
+    /// A save took empty lines out above the caret: the next frame keeps the caret on the
+    /// screen row it was on (the view scrolls by what went), as a reflow does.
+    pub repin: bool,
+    /// The fresh line the document arrived with (`caret_to_end`), by its id while it's there:
+    /// it goes when it's left empty (`Doc::drop_fresh_end`).
+    pub(super) fresh_end: Option<String>,
 }
 
 impl Doc {
     pub fn new(target: Target, root: Option<String>, blocks: &[Block], today: chrono::NaiveDate) -> Doc {
         let mut lines: Vec<Line> = blocks.iter().map(|b| Line::from_block(b, today)).collect();
+        // A blank page or day opens on an empty bullet note, as a typed line is one (the Logseq
+        // model, writing.md §1); the engine would read the empty text as a paragraph.
+        if lines.is_empty() {
+            lines.push(Line::new(0, Kind::Bullet, ""));
+        }
         // The notes that can still be a predecessor, depths increasing (see `plan_save`).
         let mut before: Vec<(usize, String)> = Vec::new();
         for l in lines.iter_mut() {
@@ -243,7 +262,7 @@ impl Doc {
             before.push((l.depth, l.id.clone()));
         }
         let engine = Box::new(super::engine::Engine::load(lines));
-        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), rows: Default::default(), now_ms: 0, hold_caret_line: true }
+        Doc { target, root, engine, host_revision: 0, last_saved: HashMap::new(), words: Default::default(), line_words: Default::default(), rows: Default::default(), row_cache: Default::default(), now_ms: 0, hold_caret_line: true, repin: false, fresh_end: None }
     }
 
     /// Content generation, independent of caret motion and undo coalescing.
@@ -274,6 +293,20 @@ impl Doc {
         self.engine.now_ms = now_ms;
     }
 
+    /// Keep composed document changes for text anchors (shared across this Doc's views).
+    pub fn track_changes(&mut self, on: bool) {
+        if !on && self.engine.track { let _ = self.engine.take_changes(); }
+        self.engine.track = on;
+    }
+
+    pub fn tracking(&self) -> bool { self.engine.track }
+
+    pub fn take_changes(&mut self) -> Option<caretline::ChangeSet> {
+        self.engine.take_changes()
+    }
+
+    pub fn cn_doc(&self) -> &caretline::Document { self.engine.cn_doc() }
+
     /// The engine's text (tests: the lines against it).
     #[cfg(test)]
     pub fn engine_text(&self) -> String {
@@ -286,7 +319,24 @@ impl Doc {
         if let Some((_, n)) = self.words.get().filter(|(r, _)| *r == rev) {
             return n;
         }
-        let n = self.lines().iter().map(|l| l.text.split_whitespace().count()).sum();
+        let (epoch, vers) = self.engine.line_versions();
+        let lines = self.lines();
+        let mut c = self.line_words.borrow_mut();
+        let (seen, kept, counts) = &mut *c;
+        let count = |l: &Line| l.text.split_whitespace().count() as u32;
+        if *seen == Some(epoch) && kept.len() == vers.len() && vers.len() == lines.len() {
+            for (i, l) in lines.iter().enumerate() {
+                if kept[i] != vers[i] {
+                    kept[i] = vers[i];
+                    counts[i] = count(l);
+                }
+            }
+        } else {
+            *counts = lines.iter().map(count).collect();
+            *kept = vers.to_vec();
+            *seen = (vers.len() == lines.len()).then_some(epoch);
+        }
+        let n = counts.iter().map(|&c| c as usize).sum();
         self.words.set(Some((rev, n)));
         n
     }
@@ -333,8 +383,9 @@ impl Doc {
         self.run(caretline::Msg::InsertText { text: s.to_string() });
     }
 
+    /// Enter at the caret, as the key does (`Doc::run_command("edit.newline")`).
     pub fn newline(&mut self) {
-        self.run(caretline::Msg::InsertNewline);
+        self.run_command("edit.newline");
     }
 
     pub fn delete_selection(&mut self) -> bool {
@@ -415,8 +466,12 @@ impl Doc {
     pub fn caret_to_end(&mut self, fresh_line: bool) {
         let lines = self.engine.lines();
         if lines.is_empty() || (fresh_line && !lines.last().unwrap().text.is_empty()) {
-            self.engine.lines_mut().push(Line::new(0, Kind::Para, ""));
+            self.engine.lines_mut().push(Line::new(0, Kind::Bullet, ""));
             self.touch_content();
+            if fresh_line {
+                self.engine.flush();
+                self.fresh_end = self.lines().last().map(|l| l.id.clone());
+            }
         }
         let i = self.lines().len() - 1;
         let byte = self.lines()[i].text.len();
@@ -465,6 +520,96 @@ fn place_by<'a>(depth: usize, n: usize, at: impl Fn(usize) -> (usize, &'a str)) 
 
 // ---- saving ---------------------------------------------------------------------------------------
 
+/// Siblings in the vault's order, as a linked list per parent: what a save's creates and moves
+/// do to it (`after`: right after that sibling; none: first), followed op by op.
+struct VaultOrder {
+    root: String,
+    parent: HashMap<String, String>,
+    prev: HashMap<String, Option<String>>,
+    next: HashMap<String, Option<String>>,
+    first: HashMap<String, Option<String>>,
+}
+
+impl VaultOrder {
+    fn key(&self, p: Option<&str>) -> String {
+        p.filter(|p| *p != self.root).unwrap_or("").to_string()
+    }
+
+    /// From each saved note's (id, parent, after). None when they don't make one chain per
+    /// parent (two after the same note, an `after` that isn't a sibling here).
+    fn of<'a>(notes: impl Iterator<Item = (&'a str, Option<&'a str>, Option<&'a str>)>, root: Option<&str>) -> Option<VaultOrder> {
+        let mut o = VaultOrder { root: root.unwrap_or("").to_string(), parent: HashMap::new(), prev: HashMap::new(), next: HashMap::new(), first: HashMap::new() };
+        let notes: Vec<_> = notes.collect();
+        for (id, p, _) in &notes {
+            let k = o.key(*p);
+            o.parent.insert(id.to_string(), k);
+        }
+        for (id, p, after) in &notes {
+            let k = o.key(*p);
+            o.prev.insert(id.to_string(), after.map(str::to_string));
+            match after {
+                Some(a) => {
+                    if o.parent.get(*a) != Some(&k) || o.next.get(*a).is_some_and(|n| n.is_some()) {
+                        return None;
+                    }
+                    o.next.insert(a.to_string(), Some(id.to_string()));
+                }
+                None => {
+                    if o.first.get(&k).is_some_and(|f| f.is_some()) {
+                        return None;
+                    }
+                    o.first.insert(k, Some(id.to_string()));
+                }
+            }
+        }
+        Some(o)
+    }
+
+    /// `id` is where the vault would have it: under `parent`, right after `after`.
+    fn is_at(&self, id: &str, parent: Option<&str>, after: Option<&str>) -> bool {
+        self.parent.get(id) == Some(&self.key(parent)) && self.prev.get(id).map(|p| p.as_deref()) == Some(after)
+    }
+
+    fn unlink(&mut self, id: &str) {
+        let Some(k) = self.parent.remove(id) else { return };
+        let p = self.prev.remove(id).flatten();
+        let n = self.next.remove(id).flatten();
+        match &p {
+            Some(p) => {
+                self.next.insert(p.clone(), n.clone());
+            }
+            None => {
+                self.first.insert(k, n.clone());
+            }
+        }
+        if let Some(n) = n {
+            self.prev.insert(n, p);
+        }
+    }
+
+    fn insert(&mut self, id: &str, parent: Option<&str>, after: Option<&str>) {
+        let k = self.key(parent);
+        let n = match after {
+            Some(a) => self.next.get(a).cloned().flatten(),
+            None => self.first.get(&k).cloned().flatten(),
+        };
+        match after {
+            Some(a) => {
+                self.next.insert(a.to_string(), Some(id.to_string()));
+            }
+            None => {
+                self.first.insert(k.clone(), Some(id.to_string()));
+            }
+        }
+        if let Some(n) = &n {
+            self.prev.insert(n.clone(), Some(id.to_string()));
+        }
+        self.parent.insert(id.to_string(), k);
+        self.prev.insert(id.to_string(), after.map(str::to_string));
+        self.next.insert(id.to_string(), n);
+    }
+}
+
 /// What a save sends: the ops, and which line each `after` / parse belongs to.
 pub struct SavePlan {
     pub ops: Vec<BlockOp>,
@@ -485,6 +630,9 @@ pub struct Sent {
     /// The lines this save creates: one gone from the buffer by the time it's made (joined,
     /// cut, undone) is deleted by the next save.
     pub created: std::collections::HashSet<String>,
+    /// Lines this save leaves where they are whose note before them in the vault changes (a
+    /// note created or moved in just above): what they follow once it lands.
+    pub shifted: Vec<(String, Option<String>)>,
 }
 
 impl Doc {
@@ -545,6 +693,23 @@ impl Doc {
             }
         }
         self.engine.deleted_mut().extend(emptied);
+        // An empty line away from the caret isn't a note and is never saved: it goes now,
+        // with the save, so the page you see is the page you reopen (h8vsn). The caret's own
+        // empty line stays (it's where you're about to type); so does a line in conflict.
+        // The fresh line a document arrives with at its end stays too: it's in the state
+        // (`fresh_end`), so it reopens as it shows, and ↓ from the last note goes to it.
+        let fresh = self.fresh_end.clone();
+        let last = self.engine.lines().len().saturating_sub(1);
+        let gone = |i: usize, l: &Line| l.is_new && l.text.trim().is_empty() && i != caret && !l.conflict && !(i == last && fresh.as_deref() == Some(l.id.as_str()));
+        let mut caret = caret;
+        if self.engine.lines().len() > 1 && self.engine.lines().iter().enumerate().any(|(i, l)| gone(i, l)) {
+            let keep: Vec<bool> = self.engine.lines().iter().enumerate().map(|(i, l)| !gone(i, l)).collect();
+            let above = keep[..caret].iter().filter(|k| !**k).count();
+            caret -= above;
+            self.repin |= above > 0;
+            let mut k = keep.iter();
+            self.engine.lines_mut().retain(|_| *k.next().expect("one flag a line"));
+        }
         let mut ops = Vec::new();
         let mut parsed = Vec::new();
         let mut afters = HashMap::new();
@@ -554,6 +719,11 @@ impl Doc {
         let mut present: Vec<(usize, usize)> = Vec::new();
         // Notes this save moves or creates.
         let mut placed: HashSet<&str> = HashSet::new();
+        // The vault's sibling order as this save's ops change it, to move only notes whose
+        // place in it differs (ymh1g: a paste above 5,000 notes moved every one of them).
+        // None: the saved places don't chain up (a delete pending, a line from elsewhere):
+        // the cautious rule below then moves every note after a moved one.
+        let mut order = if self.engine.deleted().is_empty() { VaultOrder::of(lines.iter().filter(|l| !l.is_new).map(|l| (l.id.as_str(), l.saved_parent.as_deref(), l.saved_after.as_deref())), self.root.as_deref()) } else { None };
         let push = |present: &mut Vec<(usize, usize)>, d: usize, i: usize| {
             while present.last().is_some_and(|&(pd, _)| pd >= d) {
                 present.pop();
@@ -571,6 +741,9 @@ impl Doc {
                     continue;
                 }
                 placed.insert(l.id.as_str());
+                if let Some(o) = order.as_mut() {
+                    o.insert(&l.id, parent.as_deref(), after.as_deref());
+                }
                 ops.push(BlockOp::Create { id: l.id.clone(), parent, after: after.clone(), kind: l.kind(), text: l.text.clone() });
                 afters.insert(l.id.clone(), after);
                 parsed.push(l.id.clone());
@@ -594,7 +767,15 @@ impl Doc {
             // A note after one this save moves goes with it: the vault places it by its own
             // order, not by what comes before it (fuzz: ⌥↓ moved two notes, the second stayed).
             let follows_moved = after.is_some_and(|a| placed.contains(a));
-            if reparented || after != l.saved_after.as_deref() || follows_moved {
+            let moves = match order.as_mut() {
+                Some(o) => !o.is_at(&l.id, parent, after),
+                None => reparented || after != l.saved_after.as_deref() || follows_moved,
+            };
+            if moves {
+                if let Some(o) = order.as_mut() {
+                    o.unlink(&l.id);
+                    o.insert(&l.id, parent, after);
+                }
                 placed.insert(l.id.as_str());
                 let after = after.map(str::to_string);
                 ops.push(BlockOp::Move { id: l.id.clone(), parent: parent.map(str::to_string), after: after.clone(), rev: None });
@@ -620,6 +801,10 @@ impl Doc {
                 ops.push(BlockOp::Status { id: l.id.clone(), status: l.status.clone().unwrap(), rev: None });
             }
         }
+        let shifted: Vec<(String, Option<String>)> = match &order {
+            Some(o) => lines.iter().filter(|l| !l.is_new && !afters.contains_key(&l.id)).filter_map(|l| o.prev.get(&l.id).filter(|p| p.as_deref() != l.saved_after.as_deref()).map(|p| (l.id.clone(), p.clone()))).collect(),
+            None => Vec::new(),
+        };
         for id in std::mem::take(self.engine.deleted_mut()).into_iter() {
             ops.push(BlockOp::Delete { id, rev: None });
         }
@@ -627,6 +812,7 @@ impl Doc {
         let sent = Sent {
             lines: self.engine.lines().iter().filter(|_| !ops.is_empty()).map(|l| (l.id.clone(), (l.text.clone(), l.status.clone()))).collect(),
             created: ops.iter().filter_map(|o| if let BlockOp::Create { id, .. } = o { Some(id.clone()) } else { None }).collect(),
+            shifted,
         };
         self.engine.settle();
         SavePlan { ops, parsed, afters, sent }
@@ -665,9 +851,12 @@ impl Doc {
         // note as that op left it, so only its last result speaks for it. (An earlier one put
         // back the text from before the edit, and the next save sent it: typing lost, fuzz.)
         let last: HashMap<&str, usize> = results.iter().map(|r| (r.id.as_str(), r.index)).collect();
+        // Where each line is (the results change fields, never the lines' order): a lookup, not
+        // a search per result (a 1,000-note save searched 5,000 lines a result).
+        let at: HashMap<String, usize> = self.engine.lines().iter().enumerate().map(|(i, l)| (l.id.clone(), i)).collect();
         for r in results {
             let latest = last.get(r.id.as_str()) == Some(&r.index);
-            let Some(i) = self.engine.lines().iter().position(|l| l.id == r.id) else {
+            let Some(&i) = at.get(&r.id) else {
                 // Made by this save, gone from the buffer since: the vault has it now, so it goes.
                 if r.state == "ok" && sent.created.contains(&r.id) && !self.engine.deleted().contains(&r.id) {
                     self.engine.deleted_mut().push(r.id.clone());
@@ -743,6 +932,14 @@ impl Doc {
                 }
             }
         }
+        // Every op landed: the lines it left in place follow what the vault has above them now.
+        if results.iter().all(|r| r.state == "ok") {
+            for (id, after) in &sent.shifted {
+                if let Some(l) = self.engine.lines_mut().iter_mut().find(|l| l.id == *id && !l.is_new) {
+                    l.saved_after = after.clone();
+                }
+            }
+        }
         self.engine.settle();
         messages
     }
@@ -758,9 +955,21 @@ impl Doc {
         if self.selection().is_none() {
             return String::new();
         }
+        // The fresh end line a document arrives with isn't content (it goes when left empty):
+        // a selection reaching it (⌘A) copies none of it, not even its `- `.
+        let ends_on_fresh = self.selection().is_some_and(|(s, e)| {
+            let lines = self.lines();
+            e.line > s.line && e.line + 1 == lines.len() && lines[e.line].text.is_empty() && self.fresh_end.as_deref() == Some(lines[e.line].id.as_str())
+        });
         let fx = self.run(caretline::Msg::Copy);
         let text = fx.into_iter().find_map(|f| if let caretline::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default();
-        self.engine.with_fields(text)
+        let mut text = self.engine.with_fields(text);
+        if ends_on_fresh {
+            if let Some(i) = text.rfind('\n') {
+                text.truncate(i);
+            }
+        }
+        text
     }
 }
 
@@ -785,34 +994,44 @@ mod tests {
 
     #[test]
     fn typing_splitting_and_merging() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        // The Logseq model (writing.md §1): a typed line is a bullet note; Enter splits it,
+        // ⇧Enter breaks the line, ⌫ at a note's start joins the note above.
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("Hello world");
         at(&mut d, 0, 6);
-        d.newline(); // a line break in the paragraph
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
-        d.newline(); // a blank line: two notes
-        assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
-        d.run_command("edit.backspace"); // at the start of a paragraph: join, the break kept
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
-        assert_eq!(d.caret(), BlockPos { line: 0, byte: 7 });
+        d.run_command("edit.soft_break");
+        assert_eq!(texts(&d), ["Bullet Hello \nworld"]);
+        d.run_command("edit.backspace");
+        d.newline();
+        assert_eq!(texts(&d), ["Bullet Hello ", "Bullet world"]);
+        d.run_command("edit.backspace");
+        assert_eq!(texts(&d), ["Bullet Hello world"]);
+        assert_eq!(d.caret(), BlockPos { line: 0, byte: 6 });
         d.run_command("history.undo");
-        assert_eq!(texts(&d), ["Para Hello ", "Para world"]);
+        assert_eq!(texts(&d), ["Bullet Hello ", "Bullet world"]);
         d.run_command("history.redo");
-        assert_eq!(texts(&d), ["Para Hello \nworld"]);
+        assert_eq!(texts(&d), ["Bullet Hello world"]);
+        // A paragraph (imported Markdown) splits too.
+        let mut d = doc(&[(0, Kind::Para, "Hello world")]);
+        at(&mut d, 0, 5);
+        d.newline();
+        assert_eq!(texts(&d), ["Para Hello", "Para world"]);
     }
 
     #[test]
     fn list_forms_and_nesting() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("- ");
-        assert_eq!(d.lines()[0].kind(), Kind::Bullet);
+        assert_eq!(texts(&d), ["Bullet "], "`- ` on a bullet is the bullet it is");
         d.insert("Plan");
         d.newline();
         d.insert("Book venue");
         d.run_command("structure.indent");
         d.newline();
-        d.newline(); // an empty item ends the list: an empty paragraph line
-        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Para "]);
+        d.newline(); // an empty nested note comes out a level
+        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Bullet "]);
+        d.newline(); // at the top, Enter on an empty note does nothing
+        assert_eq!(texts(&d), ["Bullet Plan", " Bullet Book venue", "Bullet "]);
         at(&mut d, 0, 4);
         d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].kind(), Kind::Task);
@@ -892,6 +1111,27 @@ mod tests {
         }
     }
 
+    /// An empty line left behind goes with the save (h8vsn), and only it: the other notes keep
+    /// their ids, and the save sends nothing for them (no moves, no edits).
+    #[test]
+    fn an_empty_line_left_goes_and_nothing_else_moves() {
+        let mut d = doc(&[(0, Kind::Para, "alpha"), (0, Kind::Para, ""), (0, Kind::Para, "beta"), (0, Kind::Para, "gamma")]);
+        let mut prev: Option<String> = None;
+        for l in d.lines_mut().iter_mut().filter(|l| !l.text.is_empty()) {
+            l.is_new = false;
+            l.saved = Some(l.text.clone());
+            l.saved_kind = Some(Kind::Para);
+            l.saved_after = prev.replace(l.id.clone());
+        }
+        let ids: Vec<String> = d.lines().iter().filter(|l| !l.text.is_empty()).map(|l| l.id.clone()).collect();
+        d.set_caret(BlockPos { line: 3, byte: 2 });
+        let plan = d.plan_save(false);
+        assert_eq!(d.lines().iter().map(|l| l.id.clone()).collect::<Vec<_>>(), ids, "the empty line went, every note kept its id");
+        assert!(plan.ops.is_empty(), "nothing to send: {:?}", plan.ops);
+        assert_eq!(d.caret(), BlockPos { line: 2, byte: 2 }, "the caret stays on its text");
+        assert!(d.repin, "the next frame keeps the caret's row");
+    }
+
     #[test]
     fn save_plan_keeps_completion_alongside_an_unsaved_task_kind() {
         let mut d = doc(&[(0, Kind::Para, "alpha line")]);
@@ -910,78 +1150,85 @@ mod tests {
         assert!(kind < status, "the completed status follows the kind that initializes todo");
     }
 
-    /// ⌃T cycles text → [ ] → [x] → text (writing.md A9); ⌫ takes the marker off a step at a
-    /// time (A10); a selection cycles together (A11).
     #[test]
     fn task_cycle_and_marker_steps() {
-        let mut d = doc(&[(0, Kind::Para, "call")]);
+        let mut d = doc(&[(0, Kind::Bullet, "call")]);
         d.run_command("thc.task_cycle");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Task, Some("todo")));
         d.run_command("thc.task_cycle");
         assert_eq!(d.lines()[0].status.as_deref(), Some("done"));
         d.run_command("thc.task_cycle");
-        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Para, None));
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None), "back to text: a bullet note");
         d.run_command("thc.task_cycle");
         at(&mut d, 0, 0);
         d.run_command("edit.backspace");
         assert_eq!((d.lines()[0].kind(), d.lines()[0].status.as_deref()), (Kind::Bullet, None));
         d.run_command("edit.backspace");
-        assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Para, "call"));
-        let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Para, "b"), (0, Kind::Para, "c")]);
+        assert_eq!((d.lines()[0].kind(), d.lines()[0].text.as_str()), (Kind::Bullet, "call"), "the first note stays a note");
+        let mut d = doc(&[(0, Kind::Para, "a"), (0, Kind::Bullet, "b"), (0, Kind::Bullet, "c")]);
         d.select_range(Some(BlockPos { line: 0, byte: 0 }), BlockPos { line: 2, byte: 1 });
         d.run_command("thc.task_cycle");
         assert!(d.lines().iter().all(|l| l.kind() == Kind::Task), "{:?}", texts(&d));
     }
 
-    /// Enter is a line break in a paragraph; a blank line splits it (writing.md A2–A4); ⌫ at a
-    /// paragraph's start joins (A5); a marker typed on a later line starts a note.
     #[test]
-    fn paragraphs_are_plain_text() {
-        let mut d = doc(&[(0, Kind::Para, "")]);
+    fn composed_text_changes_cover_edits_through_both_views() {
+        let mut d = doc(&[(0, Kind::Bullet, "hello")]);
+        d.track_changes(true);
+        let mut before = d.cn_doc().text.clone();
+        d.insert("🙂");
+        d.add_view(1);
+        assert!(d.use_view(1));
+        d.insert("λ");
+        let changes = d.take_changes().expect("both view edits are observed");
+        assert!(changes.apply(&mut before));
+        assert_eq!(before.to_string(), d.cn_doc().text.to_string());
+        assert!(d.take_changes().is_none());
+        d.track_changes(false);
+        d.insert("off");
+        assert!(!d.tracking());
+        assert!(d.take_changes().is_none());
+    }
+
+    #[test]
+    fn notes_are_bullets_and_paragraphs_keep_working() {
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("one");
         d.newline();
         d.insert("two");
-        assert_eq!(texts(&d), ["Para one\ntwo"], "A2: one note, two lines");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        assert_eq!(texts(&d), ["Bullet one", "Bullet two"], "Enter: two notes");
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         d.insert("one");
-        d.newline();
-        d.newline();
+        d.run_command("edit.soft_break");
         d.insert("two");
-        assert_eq!(texts(&d), ["Para one", "Para two"], "A3: two notes");
+        assert_eq!(texts(&d), ["Bullet one\ntwo"], "⇧Enter: one note, two lines");
         let mut d = doc(&[(0, Kind::Para, "abcdef")]);
         let id = d.lines()[0].id.clone();
         at(&mut d, 0, 3);
         d.newline();
-        d.newline();
-        assert_eq!(texts(&d), ["Para abc", "Para def"], "A4: a split");
+        assert_eq!(texts(&d), ["Para abc", "Para def"], "a paragraph splits");
         assert_eq!(d.lines()[0].id, id, "the first part keeps the id");
         at(&mut d, 1, 0);
         d.run_command("edit.backspace");
-        assert_eq!(texts(&d), ["Para abc\ndef"], "A5: a join keeps the break");
+        assert_eq!(texts(&d), ["Para abc\ndef"], "paragraphs join keeping the break");
         assert_eq!(d.lines()[0].id, id);
-        let mut d = doc(&[(0, Kind::Para, "")]);
-        d.insert("intro");
+        let mut d = doc(&[(0, Kind::Para, "intro")]);
+        at(&mut d, 0, 5);
         d.newline();
-        for c in ["-", " ", "milk"] {
-            d.insert(c);
-        }
-        assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "a marker on a later line starts an item");
-        d.newline();
-        assert_eq!(d.lines()[2].kind(), Kind::Bullet, "A6: the next item");
-        d.newline();
-        assert_eq!((d.lines()[2].kind(), d.lines()[2].text.as_str()), (Kind::Para, ""), "A6: an empty item ends the list");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        d.insert("milk");
+        assert_eq!(texts(&d), ["Para intro", "Bullet milk"], "after a paragraph, a typed line is a bullet");
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         for c in ["[", " ", "]", " ", "call"] {
             d.insert(c);
         }
         d.newline();
         assert_eq!((d.lines()[1].kind(), d.lines()[1].status.as_deref()), (Kind::Task, Some("todo")), "A8");
-        let mut d = doc(&[(0, Kind::Para, "")]);
+        let mut d = doc(&[(0, Kind::Bullet, "")]);
         for c in ["#", " ", "Title"] {
             d.insert(c);
         }
         d.newline();
         d.insert("text");
-        assert_eq!(texts(&d), ["Para # Title", "Para text"], "a heading is one line");
+        assert_eq!(texts(&d), ["Para # Title", "Bullet text"], "a heading, then a bullet");
     }
 }

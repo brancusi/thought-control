@@ -5,18 +5,32 @@ the structure for you.
 
 ## How the text becomes notes
 
+Pages and journal days are outlines, as in Logseq: every line you type is a note with a bullet.
+
 | You write | It's |
 |---|---|
-| A paragraph (lines with no blank line between) | One note. Enter inside it is just a line break |
-| A blank line | The end of a note. The next text starts a new one |
-| `- milk` | A list item (one note). Enter continues the list |
-| `1. first` | A numbered item. Enter makes `2. ` |
+| A line | One note |
+| `Enter` | A new note: the line splits at the cursor (at the end of a note, a new empty one below) |
+| `⇧Enter` or `⌃J` | A line break inside the note: one note, several lines |
+| `Tab` / `⇧Tab` | The note nests under the one above / comes back out |
+| `Enter` on an empty note | Comes out a level (at the top level it does nothing) |
+| `⌫` at a note's start | Joins it to the note above |
 | `[ ] call` / `[x] call` | A task, open or done |
 | `# Title`, `## Section` | A heading |
-| Indented items | Children of the item above |
+
+A note with several lines shows as one bullet with its lines hanging under the first.
+Paragraphs come only from imported Markdown (`thc import`, a pasted document): they keep their
+blank lines, Enter splits them into notes, and `⇧Enter` still breaks their lines.
 
 Each note has its own identity, dates and history, and you never see that machinery. Delete the
-`[ ]` and it's plain text, because what you see is the truth.
+`[ ]` and it's a plain note again, because what you see is the truth.
+
+### Document mode
+
+For long-form writing, `Space t D` (or, while writing, `⌥:` and "document mode" in the palette)
+swaps the two: **Enter adds a line break** and **⇧Enter starts a new note**, and the bullets
+step back. The footer says `document mode` while it's on. It's remembered on this device, for
+every vault, until you turn it off; an agent can't turn it on or off for you.
 
 ## Dates, tags and priority, inline
 
@@ -36,14 +50,21 @@ While you type, tokens are underlined, and the right column previews what they'l
 leave the line, the dates move into that quiet column. Type a new token to change one, or click
 it.
 
+## Where you start typing
+
+Open a page or a day (`⌃O`, a link, a row) and just type: the cursor waits on a fresh bullet
+after its notes, so what you write is a note of its own. Come back later and the cursor is where you
+left it. `⌃Home` goes to the top.
+
 ## The keys you need
 
 | Key | Does |
 |---|---|
 | Just type | Write |
-| `Enter` | A new line. Twice: a new note. In a list: the next item |
-| `Tab` / `⇧Tab` | Indent / outdent a note: any note nests under the one above, paragraphs too. Tab on a paragraph's later line makes that line its child |
-| `⌃T` | Text → task → done → text |
+| `Enter` | A new note (in document mode: a line break) |
+| `⇧Enter` / `⌃J` | A line break in the note (in document mode: a new note) |
+| `Tab` / `⇧Tab` | Indent / outdent a note: any note nests under the one above, paragraphs too |
+| `⌃T` | Note → task → done → note |
 | `⇧` + arrows | Select |
 | `⌃C` / `⌃X` | Copy / cut (paste with your terminal, usually ⌘V) |
 | `⌃Z` / `⌃Y` | Undo / redo |

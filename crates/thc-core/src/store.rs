@@ -52,6 +52,9 @@ CREATE TABLE IF NOT EXISTS rehomed(node TEXT PRIMARY KEY, under TEXT, deleted_pa
 CREATE INDEX IF NOT EXISTS rehomed_under ON rehomed(under);
 CREATE VIRTUAL TABLE IF NOT EXISTS nodes_fts USING fts5(id UNINDEXED, title, text,
   tokenize='unicode61 remove_diacritics 2');
+-- Each node's row in nodes_fts: reindexing deletes by rowid, not by a scan of the unindexed id
+-- (a 1,000-note paste into a 5,000-note page spent a second there). Rebuilt on a schema change.
+CREATE TABLE IF NOT EXISTS fts_rows(id TEXT PRIMARY KEY, rid INTEGER NOT NULL) STRICT;
 CREATE INDEX IF NOT EXISTS by_parent ON nodes(parent, ord);
 CREATE INDEX IF NOT EXISTS open_by_sched ON nodes(scheduled)
   WHERE status IN ('todo','doing','waiting') AND deleted = 0;
@@ -75,7 +78,7 @@ CREATE INDEX IF NOT EXISTS events_actor ON events(actor, tx);
 CREATE INDEX IF NOT EXISTS open_by_status ON nodes(status, deleted, due, scheduled, updated_ms) WHERE status IN ('todo','doing','waiting');
 "#;
 
-const MATERIALIZED: [&str; 10] = ["nodes", "props", "prop_defs", "clocks", "edges", "alerts", "conflicts", "reviews", "nodes_fts", "rehomed"];
+const MATERIALIZED: [&str; 11] = ["nodes", "props", "prop_defs", "clocks", "edges", "alerts", "conflicts", "reviews", "nodes_fts", "fts_rows", "rehomed"];
 
 pub struct Store {
     pub conn: Connection,
@@ -96,7 +99,12 @@ impl Store {
     pub fn open(path: &Path) -> Result<Store> {
         let conn = Connection::open(path).with_context(|| format!("opening store {}", path.display()))?;
         // Per-connection settings only; WAL is persistent and set with the schema below.
-        conn.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000;")?;
+        // Temp tables and sorts stay in memory: a 5,000-block page's ORDER BY spilled to temp
+        // files in TMPDIR, a third of opening it (vw384).
+        conn.execute_batch("PRAGMA synchronous=NORMAL; PRAGMA foreign_keys=ON; PRAGMA busy_timeout=5000; PRAGMA temp_store=MEMORY;")?;
+        // The apply path runs a dozen statements an event: compiled once each (a 1,000-note
+        // save compiled thousands).
+        conn.set_prepared_statement_cache_capacity(256);
         let s = Store { conn };
         // Every read opens the store, so skip the schema batch (dozens of CREATE … IF NOT
         // EXISTS) when `user_version` already carries this schema's fingerprint (SPEC §8).
@@ -106,6 +114,8 @@ impl Store {
             s.conn.execute_batch("PRAGMA journal_mode=WAL;")?;
             s.conn.execute_batch(SCHEMA)?;
             s.conn.execute_batch(crate::alerts::LOCAL_SCHEMA)?;
+            // The map from scratch: a store another version wrote has rows it doesn't know.
+            s.conn.execute_batch("DELETE FROM fts_rows; INSERT OR REPLACE INTO fts_rows(id, rid) SELECT id, rowid FROM nodes_fts;")?;
             s.conn.execute_batch(&format!("PRAGMA user_version={want};"))?;
         }
         Ok(s)
@@ -197,7 +207,7 @@ impl Store {
             return Ok(());
         }
         let pos = |id: &str| -> Result<Option<(Option<String>, bool)>> {
-            Ok(self.conn.query_row("SELECT parent, deleted FROM nodes WHERE id = ?1", [id], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)? != 0))).optional()?)
+            Ok(self.conn.prepare_cached("SELECT parent, deleted FROM nodes WHERE id = ?1")?.query_row([id], |r| Ok((r.get::<_, Option<String>>(0)?, r.get::<_, i64>(1)? != 0))).optional()?)
         };
         for id in ids {
             let orphan = match pos(&id)? {
@@ -225,9 +235,7 @@ impl Store {
             };
             match orphan {
                 Some((p, under)) => {
-                    self.conn.execute(
-                        "INSERT INTO rehomed(node, under, deleted_parent) VALUES(?1, ?2, ?3) ON CONFLICT(node) DO UPDATE SET under = excluded.under, deleted_parent = excluded.deleted_parent",
-                        params![id, under, p],
+                    self.conn.prepare_cached("INSERT INTO rehomed(node, under, deleted_parent) VALUES(?1, ?2, ?3) ON CONFLICT(node) DO UPDATE SET under = excluded.under, deleted_parent = excluded.deleted_parent")?.execute(params![id, under, p],
                     )?;
                     let del: String = self
                         .conn
@@ -240,17 +248,17 @@ impl Store {
                         .optional()?;
                     match have {
                         Some((cid, v, e)) if v.as_deref() != Some(p.as_str()) || e != del => {
-                            self.conn.execute("UPDATE conflicts SET loser_value = ?2, loser_eid = ?3, resolved = 0 WHERE id = ?1", params![cid, p, del])?;
+                            self.conn.prepare_cached("UPDATE conflicts SET loser_value = ?2, loser_eid = ?3, resolved = 0 WHERE id = ?1")?.execute(params![cid, p, del])?;
                         }
                         Some(_) => {}
                         None => {
-                            self.conn.execute("INSERT INTO conflicts(node, field, winner_eid, loser_eid, loser_value) VALUES(?1, 'rehomed', NULL, ?2, ?3)", params![id, del, p])?;
+                            self.conn.prepare_cached("INSERT INTO conflicts(node, field, winner_eid, loser_eid, loser_value) VALUES(?1, 'rehomed', NULL, ?2, ?3)")?.execute(params![id, del, p])?;
                         }
                     }
                 }
                 None => {
-                    self.conn.execute("DELETE FROM rehomed WHERE node = ?1", [&id])?;
-                    self.conn.execute("DELETE FROM conflicts WHERE node = ?1 AND field = 'rehomed'", [&id])?;
+                    self.conn.prepare_cached("DELETE FROM rehomed WHERE node = ?1")?.execute([&id])?;
+                    self.conn.prepare_cached("DELETE FROM conflicts WHERE node = ?1 AND field = 'rehomed'")?.execute([&id])?;
                 }
             }
         }
@@ -259,10 +267,10 @@ impl Store {
 
     /// Where a node shows: its parent, or for a re-homed one, its nearest live ancestor.
     pub fn view_parent(&self, id: &str) -> Result<Option<String>> {
-        if let Some(u) = self.conn.query_row("SELECT under FROM rehomed WHERE node = ?1", [id], |r| r.get::<_, Option<String>>(0)).optional()? {
+        if let Some(u) = self.conn.prepare_cached("SELECT under FROM rehomed WHERE node = ?1")?.query_row([id], |r| r.get::<_, Option<String>>(0)).optional()? {
             return Ok(u);
         }
-        Ok(self.conn.query_row("SELECT parent FROM nodes WHERE id = ?1", [id], |r| r.get(0)).optional()?.flatten())
+        Ok(self.conn.prepare_cached("SELECT parent FROM nodes WHERE id = ?1")?.query_row([id], |r| r.get(0)).optional()?.flatten())
     }
 
     pub fn reset(&self) -> Result<()> {
@@ -274,7 +282,7 @@ impl Store {
     }
 
     pub fn meta(&self, k: &str) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT v FROM meta WHERE k=?1", [k], |r| r.get(0)).optional()?)
+        Ok(self.conn.prepare_cached("SELECT v FROM meta WHERE k=?1")?.query_row([k], |r| r.get(0)).optional()?)
     }
 
     /// Rewrite the store compactly (VACUUM) at most every `every_ms`, for the daemon when idle.
@@ -292,7 +300,7 @@ impl Store {
     }
 
     pub fn set_meta(&self, k: &str, v: &str) -> Result<()> {
-        self.conn.execute("INSERT INTO meta(k,v) VALUES(?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v", [k, v])?;
+        self.conn.prepare_cached("INSERT INTO meta(k,v) VALUES(?1,?2) ON CONFLICT(k) DO UPDATE SET v=excluded.v")?.execute([k, v])?;
         Ok(())
     }
 
@@ -323,15 +331,13 @@ impl Store {
     }
 
     pub fn set_cursor(&self, file: &str, offset: u64) -> Result<()> {
-        self.conn.execute(
-            "INSERT INTO cursors(file,offset) VALUES(?1,?2) ON CONFLICT(file) DO UPDATE SET offset=excluded.offset",
-            params![file, offset as i64],
+        self.conn.prepare_cached("INSERT INTO cursors(file,offset) VALUES(?1,?2) ON CONFLICT(file) DO UPDATE SET offset=excluded.offset")?.execute(params![file, offset as i64],
         )?;
         Ok(())
     }
 
     pub fn has_event(&self, eid: &str) -> Result<bool> {
-        Ok(self.conn.query_row("SELECT 1 FROM events WHERE eid=?1", [eid], |_| Ok(())).optional()?.is_some())
+        Ok(self.conn.prepare_cached("SELECT 1 FROM events WHERE eid=?1")?.query_row([eid], |_| Ok(())).optional()?.is_some())
     }
 
     // ---- field clocks -------------------------------------------------------------------
@@ -352,9 +358,7 @@ impl Store {
                 return Ok(false);
             }
         }
-        self.conn.execute(
-            "INSERT INTO clocks(entity,field,okey) VALUES(?1,?2,?3) ON CONFLICT(entity,field) DO UPDATE SET okey=excluded.okey",
-            [entity, field, okey],
+        self.conn.prepare_cached("INSERT INTO clocks(entity,field,okey) VALUES(?1,?2,?3) ON CONFLICT(entity,field) DO UPDATE SET okey=excluded.okey")?.execute([entity, field, okey],
         )?;
         Ok(true)
     }
@@ -363,11 +367,11 @@ impl Store {
 
     /// The current verdict on a transaction (`accepted` | `reverted`), if any.
     pub fn verdict(&self, tx: &str) -> Result<Option<String>> {
-        Ok(self.conn.query_row("SELECT verdict FROM reviews WHERE tx=?1", [tx], |r| r.get(0)).optional()?)
+        Ok(self.conn.prepare_cached("SELECT verdict FROM reviews WHERE tx=?1")?.query_row([tx], |r| r.get(0)).optional()?)
     }
 
     pub fn node_exists(&self, id: &str) -> Result<bool> {
-        Ok(self.conn.query_row("SELECT 1 FROM nodes WHERE id=?1", [id], |_| Ok(())).optional()?.is_some())
+        Ok(self.conn.prepare_cached("SELECT 1 FROM nodes WHERE id=?1")?.query_row([id], |_| Ok(())).optional()?.is_some())
     }
 
     pub fn get_field(&self, id: &str, key: &str) -> Result<Value> {
@@ -381,16 +385,16 @@ impl Store {
             });
         }
         if key == "tag" {
-            let t: Option<i64> = self.conn.query_row("SELECT is_tag FROM nodes WHERE id=?1", [id], |r| r.get(0)).optional()?;
+            let t: Option<i64> = self.conn.prepare_cached("SELECT is_tag FROM nodes WHERE id=?1")?.query_row([id], |r| r.get(0)).optional()?;
             return Ok(if t == Some(1) { Value::Bool(true) } else { Value::Null });
         }
         let v: Option<String> =
-            self.conn.query_row("SELECT value FROM props WHERE node=?1 AND key=?2", [id, key], |r| r.get(0)).optional()?;
+            self.conn.prepare_cached("SELECT value FROM props WHERE node=?1 AND key=?2")?.query_row([id, key], |r| r.get(0)).optional()?;
         Ok(v.and_then(|s| serde_json::from_str(&s).ok()).unwrap_or(Value::Null))
     }
 
     fn position(&self, id: &str) -> Result<Option<(Option<String>, String)>> {
-        Ok(self.conn.query_row("SELECT parent, ord FROM nodes WHERE id=?1", [id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
+        Ok(self.conn.prepare_cached("SELECT parent, ord FROM nodes WHERE id=?1")?.query_row([id], |r| Ok((r.get(0)?, r.get(1)?))).optional()?)
     }
 
     fn is_ancestor_or_self(&self, maybe_ancestor: &str, id: &str) -> Result<bool> {
@@ -400,7 +404,7 @@ impl Store {
             if c == maybe_ancestor {
                 return Ok(true);
             }
-            cur = self.conn.query_row("SELECT parent FROM nodes WHERE id=?1", [&c], |r| r.get(0)).optional()?.flatten();
+            cur = self.conn.prepare_cached("SELECT parent FROM nodes WHERE id=?1")?.query_row([&c], |r| r.get(0)).optional()?.flatten();
             guard += 1;
             if guard > 10_000 {
                 break;
@@ -419,20 +423,18 @@ impl Store {
             self.conn.execute(&format!("UPDATE nodes SET {key}=?2 WHERE id=?1"), params![id, stored])?;
         } else if key == "tag" {
             let flag = matches!(value, Value::Bool(true));
-            self.conn.execute("UPDATE nodes SET is_tag=?2 WHERE id=?1", params![id, flag as i64])?;
+            self.conn.prepare_cached("UPDATE nodes SET is_tag=?2 WHERE id=?1")?.execute(params![id, flag as i64])?;
         } else if value.is_null() {
-            self.conn.execute("DELETE FROM props WHERE node=?1 AND key=?2", [id, key])?;
+            self.conn.prepare_cached("DELETE FROM props WHERE node=?1 AND key=?2")?.execute([id, key])?;
         } else {
-            self.conn.execute(
-                "INSERT INTO props(node,key,value) VALUES(?1,?2,?3) ON CONFLICT(node,key) DO UPDATE SET value=excluded.value",
-                params![id, key, value.to_string()],
+            self.conn.prepare_cached("INSERT INTO props(node,key,value) VALUES(?1,?2,?3) ON CONFLICT(node,key) DO UPDATE SET value=excluded.value")?.execute(params![id, key, value.to_string()],
             )?;
         }
         Ok(())
     }
 
     fn touch(&self, id: &str, ms: u64) -> Result<()> {
-        self.conn.execute("UPDATE nodes SET updated_ms=max(updated_ms, ?2) WHERE id=?1", params![id, ms as i64])?;
+        self.conn.prepare_cached("UPDATE nodes SET updated_ms=max(updated_ms, ?2) WHERE id=?1")?.execute(params![id, ms as i64])?;
         Ok(())
     }
 
@@ -444,7 +446,24 @@ impl Store {
     }
 
     fn reindex_fts(&self, id: &str) -> Result<()> {
-        self.conn.execute("DELETE FROM nodes_fts WHERE id=?1", [id])?;
+        self.reindex_fts_as(id, false)
+    }
+
+    fn reindex_fts_as(&self, id: &str, fresh: bool) -> Result<()> {
+        // By its row; when the map is stale (another version wrote this store meanwhile), by
+        // the scan, which takes every row of the node.
+        let rid: Option<i64> = self.conn.prepare_cached("SELECT rid FROM fts_rows WHERE id=?1")?.query_row([id], |r| r.get(0)).optional()?;
+        let gone = match rid {
+            Some(rid) => self.conn.prepare_cached("DELETE FROM nodes_fts WHERE rowid=?1 AND id=?2")?.execute(params![rid, id])?,
+            None => 0,
+        };
+        // (A node just created has no row: nothing to look for.)
+        if gone == 0 && !fresh {
+            self.conn.prepare_cached("DELETE FROM nodes_fts WHERE id=?1")?.execute([id])?;
+        }
+        if rid.is_some() {
+            self.conn.prepare_cached("DELETE FROM fts_rows WHERE id=?1")?.execute([id])?;
+        }
         let row: Option<(Option<String>, String)> = self
             .conn
             .query_row("SELECT title, text FROM nodes WHERE id=?1 AND deleted=0", [id], |r| Ok((r.get(0)?, r.get(1)?)))
@@ -457,10 +476,9 @@ impl Store {
                 rendered.push('\n');
                 rendered.push_str(&text?);
             }
-            self.conn.execute(
-                "INSERT INTO nodes_fts(id,title,text) VALUES(?1,?2,?3)",
-                params![id, title.unwrap_or_default(), rendered],
+            self.conn.prepare_cached("INSERT INTO nodes_fts(id,title,text) VALUES(?1,?2,?3)")?.execute(params![id, title.unwrap_or_default(), rendered],
             )?;
+            self.conn.prepare_cached("INSERT OR REPLACE INTO fts_rows(id, rid) VALUES(?1, ?2)")?.execute(params![id, self.conn.last_insert_rowid()])?;
         }
         Ok(())
     }
@@ -474,9 +492,7 @@ impl Store {
         for (id, at, offset, anchor, old_fire) in rows {
             let fire = compute_fire_at(self, node, at.as_deref(), offset.as_deref(), anchor.as_deref())?;
             if fire != old_fire {
-                self.conn.execute(
-                    "UPDATE alerts SET fire_at=?2, state=CASE WHEN at IS NULL THEN 'pending' ELSE state END, snooze_until=NULL WHERE id=?1",
-                    params![id, fire],
+                self.conn.prepare_cached("UPDATE alerts SET fire_at=?2, state=CASE WHEN at IS NULL THEN 'pending' ELSE state END, snooze_until=NULL WHERE id=?1")?.execute(params![id, fire],
                 )?;
             }
         }
@@ -494,9 +510,7 @@ impl Store {
         let ms = e.hlc.ms();
         let inverse = self.apply_op(e, &okey, ms).with_context(|| format!("applying {} {}", e.op.name(), e.eid))?;
         let body = serde_json::to_string(e)?;
-        self.conn.execute(
-            "INSERT INTO events(eid,okey,ms,dev,actor,via,tx,op,entity,body,inverse) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)",
-            params![
+        self.conn.prepare_cached("INSERT INTO events(eid,okey,ms,dev,actor,via,tx,op,entity,body,inverse) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11)")?.execute(params![
                 e.eid,
                 okey,
                 ms as i64,
@@ -526,9 +540,7 @@ impl Store {
                 if self.node_exists(id)? {
                     return Ok(inverse);
                 }
-                self.conn.execute(
-                    "INSERT INTO nodes(id,parent,ord,title,text,text_eid,created_ms,created_by,updated_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?7)",
-                    params![id, parent, order, title, text, e.eid, ms as i64, e.actor.label()],
+                self.conn.prepare_cached("INSERT INTO nodes(id,parent,ord,title,text,text_eid,created_ms,created_by,updated_ms) VALUES(?1,?2,?3,?4,?5,?6,?7,?8,?7)")?.execute(params![id, parent, order, title, text, e.eid, ms as i64, e.actor.label()],
                 )?;
                 for f in ["pos", "text", "title", "del"] {
                     self.claim(id, f, okey)?;
@@ -538,7 +550,7 @@ impl Store {
                         self.write_field(id, k, v)?;
                     }
                 }
-                self.reindex_fts(id)?;
+                self.reindex_fts_as(id, true)?;
                 self.reindex_embedders(id)?;
                 self.recompute_alerts(id)?;
                 inverse.push(Op::NodeDelete { id: id.clone() });
@@ -556,22 +568,18 @@ impl Store {
                 let concurrent = base.is_some() && cur_eid.is_some() && base != &cur_eid;
                 if self.claim(id, "text", okey)? {
                     if concurrent {
-                        self.conn.execute(
-                            "INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'text',?2,?3,?4)",
-                            params![id, e.eid, cur_eid, cur_text],
+                        self.conn.prepare_cached("INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'text',?2,?3,?4)")?.execute(params![id, e.eid, cur_eid, cur_text],
                         )?;
                     } else if base.is_some() {
                         // An edit made with full knowledge of the current text resolves open conflicts.
-                        self.conn.execute("UPDATE conflicts SET resolved=1 WHERE node=?1 AND field='text'", [id])?;
+                        self.conn.prepare_cached("UPDATE conflicts SET resolved=1 WHERE node=?1 AND field='text'")?.execute([id])?;
                     }
-                    self.conn.execute("UPDATE nodes SET text=?2, text_eid=?3 WHERE id=?1", params![id, text, e.eid])?;
+                    self.conn.prepare_cached("UPDATE nodes SET text=?2, text_eid=?3 WHERE id=?1")?.execute(params![id, text, e.eid])?;
                     self.touch(id, ms)?;
                     self.reindex_fts(id)?;
                     inverse.push(Op::NodeText { id: id.clone(), text: cur_text, base: None });
                 } else if concurrent {
-                    self.conn.execute(
-                        "INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'text',?2,?3,?4)",
-                        params![id, cur_eid, e.eid, text],
+                    self.conn.prepare_cached("INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'text',?2,?3,?4)")?.execute(params![id, cur_eid, e.eid, text],
                     )?;
                 }
             }
@@ -604,17 +612,15 @@ impl Store {
                 let Some((old_parent, old_ord)) = self.position(id)? else { return Ok(inverse) };
                 if let Some(p) = parent {
                     if self.is_ancestor_or_self(id, p)? {
-                        self.conn.execute(
-                            "INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'parent',NULL,?2,?3)",
-                            params![id, e.eid, p],
+                        self.conn.prepare_cached("INSERT INTO conflicts(node,field,winner_eid,loser_eid,loser_value) VALUES(?1,'parent',NULL,?2,?3)")?.execute(params![id, e.eid, p],
                         )?;
                         return Ok(inverse);
                     }
                 }
                 if self.claim(id, "pos", okey)? {
                     // A move made after a rejected one (even to the same place) dismisses it.
-                    self.conn.execute("UPDATE conflicts SET resolved=1 WHERE node=?1 AND field='parent'", [id])?;
-                    self.conn.execute("UPDATE nodes SET parent=?2, ord=?3 WHERE id=?1", params![id, parent, order])?;
+                    self.conn.prepare_cached("UPDATE conflicts SET resolved=1 WHERE node=?1 AND field='parent'")?.execute([id])?;
+                    self.conn.prepare_cached("UPDATE nodes SET parent=?2, ord=?3 WHERE id=?1")?.execute(params![id, parent, order])?;
                     self.touch(id, ms)?;
                     inverse.push(Op::NodeMove { id: id.clone(), parent: old_parent, order: old_ord });
                 }
@@ -653,10 +659,10 @@ impl Store {
             }
             Op::NodeDelete { id } | Op::NodeRestore { id } => {
                 let del = matches!(e.op, Op::NodeDelete { .. });
-                let cur: Option<i64> = self.conn.query_row("SELECT deleted FROM nodes WHERE id=?1", [id], |r| r.get(0)).optional()?;
+                let cur: Option<i64> = self.conn.prepare_cached("SELECT deleted FROM nodes WHERE id=?1")?.query_row([id], |r| r.get(0)).optional()?;
                 let Some(cur) = cur else { return Ok(inverse) };
                 if self.claim(id, "del", okey)? && (cur == 1) != del {
-                    self.conn.execute("UPDATE nodes SET deleted=?2 WHERE id=?1", params![id, del as i64])?;
+                    self.conn.prepare_cached("UPDATE nodes SET deleted=?2 WHERE id=?1")?.execute(params![id, del as i64])?;
                     self.touch(id, ms)?;
                     self.reindex_fts(id)?;
                     self.reindex_embedders(id)?;
@@ -673,24 +679,22 @@ impl Store {
                     .is_some();
                 if self.claim(src, &field, okey)? && exists != add {
                     if add {
-                        self.conn.execute("INSERT INTO edges(src,rel,dst) VALUES(?1,?2,?3)", [src, rel, dst])?;
+                        self.conn.prepare_cached("INSERT INTO edges(src,rel,dst) VALUES(?1,?2,?3)")?.execute([src, rel, dst])?;
                         inverse.push(Op::EdgeRemove { src: src.clone(), rel: rel.clone(), dst: dst.clone() });
                     } else {
-                        self.conn.execute("DELETE FROM edges WHERE src=?1 AND rel=?2 AND dst=?3", [src, rel, dst])?;
+                        self.conn.prepare_cached("DELETE FROM edges WHERE src=?1 AND rel=?2 AND dst=?3")?.execute([src, rel, dst])?;
                         inverse.push(Op::EdgeAdd { src: src.clone(), rel: rel.clone(), dst: dst.clone() });
                     }
                     if rel == "embed" { self.reindex_fts(src)?; }
                 }
             }
             Op::AlertAdd { id, node, trigger } => {
-                let exists = self.conn.query_row("SELECT 1 FROM alerts WHERE id=?1", [id], |_| Ok(())).optional()?.is_some();
+                let exists = self.conn.prepare_cached("SELECT 1 FROM alerts WHERE id=?1")?.query_row([id], |_| Ok(())).optional()?.is_some();
                 if exists {
                     return Ok(inverse);
                 }
                 let fire = compute_fire_at(self, node, trigger.at.as_deref(), trigger.offset.as_deref(), trigger.anchor.as_deref())?;
-                self.conn.execute(
-                    "INSERT INTO alerts(id,node,at,offset,anchor,fire_at) VALUES(?1,?2,?3,?4,?5,?6)",
-                    params![id, node, trigger.at, trigger.offset, trigger.anchor, fire],
+                self.conn.prepare_cached("INSERT INTO alerts(id,node,at,offset,anchor,fire_at) VALUES(?1,?2,?3,?4,?5,?6)")?.execute(params![id, node, trigger.at, trigger.offset, trigger.anchor, fire],
                 )?;
                 self.claim(id, "state", okey)?;
                 inverse.push(Op::AlertRemove { id: id.clone() });
@@ -708,16 +712,14 @@ impl Store {
                 }
                 match &e.op {
                     Op::AlertAck { .. } => {
-                        self.conn.execute("UPDATE alerts SET state='acked' WHERE id=?1", [id])?;
+                        self.conn.prepare_cached("UPDATE alerts SET state='acked' WHERE id=?1")?.execute([id])?;
                     }
                     Op::AlertSnooze { until, .. } => {
-                        self.conn.execute(
-                            "UPDATE alerts SET state='snoozed', snooze_until=?2, fire_at=?2 WHERE id=?1",
-                            params![id, until],
+                        self.conn.prepare_cached("UPDATE alerts SET state='snoozed', snooze_until=?2, fire_at=?2 WHERE id=?1")?.execute(params![id, until],
                         )?;
                     }
                     _ => {
-                        self.conn.execute("UPDATE alerts SET deleted=1 WHERE id=?1", [id])?;
+                        self.conn.prepare_cached("UPDATE alerts SET deleted=1 WHERE id=?1")?.execute([id])?;
                         // Re-adding needs a fresh id; undo re-creates the alert with the same trigger.
                         inverse.push(Op::AlertAdd {
                             id: format!("{id}r"),
@@ -728,7 +730,7 @@ impl Store {
                 }
             }
             Op::PropDefine { key, ty } => {
-                self.conn.execute("INSERT OR IGNORE INTO prop_defs(key,type) VALUES(?1,?2)", [key, ty])?;
+                self.conn.prepare_cached("INSERT OR IGNORE INTO prop_defs(key,type) VALUES(?1,?2)")?.execute([key, ty])?;
             }
             // Verdicts are last-writer-wins per reviewed tx. Only a person can accept; an agent's
             // `accepted` is ignored on replay as well as refused by the writer.
@@ -745,10 +747,8 @@ impl Store {
                 for t in txs {
                     let prev = self.verdict(t)?;
                     if self.claim(&format!("tx:{t}"), "review", okey)? {
-                        self.conn.execute(
-                            "INSERT INTO reviews(tx,verdict,actor,ms,review_tx) VALUES(?1,?2,?3,?4,?5)
-                             ON CONFLICT(tx) DO UPDATE SET verdict=excluded.verdict, actor=excluded.actor, ms=excluded.ms, review_tx=excluded.review_tx",
-                            params![t, verdict, e.actor.label(), ms as i64, e.tx],
+                        self.conn.prepare_cached("INSERT INTO reviews(tx,verdict,actor,ms,review_tx) VALUES(?1,?2,?3,?4,?5)
+                             ON CONFLICT(tx) DO UPDATE SET verdict=excluded.verdict, actor=excluded.actor, ms=excluded.ms, review_tx=excluded.review_tx")?.execute(params![t, verdict, e.actor.label(), ms as i64, e.tx],
                         )?;
                         match prev {
                             None => unreview.push(t.clone()),
@@ -766,7 +766,7 @@ impl Store {
                     let prev = self.verdict(t)?;
                     if self.claim(&format!("tx:{t}"), "review", okey)? {
                         if let Some(p) = prev {
-                            self.conn.execute("DELETE FROM reviews WHERE tx=?1", [t])?;
+                            self.conn.prepare_cached("DELETE FROM reviews WHERE tx=?1")?.execute([t])?;
                             inverse.push(Op::TxReview { txs: vec![t.clone()], verdict: p });
                         }
                     }

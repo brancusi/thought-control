@@ -35,6 +35,7 @@ mod setup;
 mod bootstrap;
 mod update;
 mod ui_cmd;
+mod demo;
 
 use anyhow::{Context, Result, anyhow};
 

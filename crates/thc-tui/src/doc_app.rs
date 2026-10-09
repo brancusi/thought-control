@@ -207,6 +207,13 @@ pub struct FooterRow {
     pub meta: String,
 }
 
+/// A note's text in one row: its lines joined by ` ⏎ ` (`brk`), never glued together (a row
+/// can't show a line break, and `with Tab` + `Another` read as `with TabAnother`).
+pub fn one_row(text: &str, brk: &str) -> String {
+    let lines: Vec<&str> = text.split('\n').map(|l| l.trim_end_matches('\r').trim()).filter(|l| !l.is_empty()).collect();
+    lines.join(&format!(" {brk} "))
+}
+
 impl App {
     /// `also today` / `linked from` for the open document (tui-editor.md §3.3, §3.4).
     pub fn load_footer(&mut self) {
@@ -242,7 +249,8 @@ impl App {
             };
             let why = crate::editor::meta_text(&block, self.today);
             let o = origin(&n.id);
-            FooterRow { id: n.id.clone(), status: n.status.clone(), text: s.render_text(&n.text), meta: if why.is_empty() { o } else { format!("{o} · {why}") } }
+            let text = one_row(&s.render_text(&n.text), self.theme.glyphs().line_break);
+            FooterRow { id: n.id.clone(), status: n.status.clone(), text, meta: if why.is_empty() { o } else { format!("{o} · {why}") } }
         };
         self.doc_footer = match &d.target {
             Target::Journal { date } if *date == self.today => {
@@ -315,7 +323,7 @@ impl App {
             self.open_doc(t);
             // Every arrival parks the document (navigation.md §6.1): Tab and ⇧Tab still change
             // views until you write.
-            self.doc_parked = true;
+            self.main.parked = true;
         }
         self.build_rail();
     }
@@ -326,6 +334,13 @@ impl App {
         self.doc.is_some()
             && self.screen_width >= 120
             && if self.focus_mode { self.focus_cfg.has(thc_core::tui_config::El::Nav) } else { self.tui_prefs.page_rail }
+    }
+
+    /// The detail pane takes room beside the document: it's on, and the sidebar (which it
+    /// gives way to, sidebar.md §6.2) isn't a column. A document's text column is measured
+    /// without the room a yielded pane would have had (ui::split_width).
+    pub fn detail_shows(&self) -> bool {
+        self.show_detail && !(self.sidebar_col.is_some() && crate::sidebar::policy::DETAIL_YIELDS)
     }
 
     /// The crumb above the title instead, when the rail doesn't fit (or is off).
@@ -347,10 +362,15 @@ impl App {
             Some(Target::Page { .. }) => {
                 let pages = s.nodes_where(&format!("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0 AND {} ORDER BY n.title COLLATE NOCASE", thc_core::views::HIDDEN_SQL), &[]).unwrap_or_default();
                 let mut open: std::collections::HashMap<String, usize> = std::collections::HashMap::new();
-                if let Ok(mut st) = s.conn.prepare(
-                    "WITH RECURSIVE t(id, root) AS (SELECT id, id FROM nodes WHERE parent IS NULL AND title IS NOT NULL AND is_tag = 0 AND deleted = 0 \
-                     UNION ALL SELECT n.id, t.root FROM nodes n JOIN t ON n.parent = t.id WHERE n.deleted = 0) \
-                     SELECT t.root, count(*) FROM t JOIN nodes x ON x.id = t.id WHERE x.status IN ('todo','doing','waiting') GROUP BY t.root",
+                // Each open task climbs to its page (not every page walked down to its tasks: the
+                // whole vault on every open, a third of opening a 5,000-line page, vw384). A
+                // deleted node on the way stops the climb, as it stopped the walk down (UNION, not
+                // UNION ALL: a parent loop, which the store shouldn't have, still ends).
+                if let Ok(mut st) = s.conn.prepare_cached(
+                    "WITH RECURSIVE up(task, cur) AS (SELECT id, id FROM nodes WHERE status IN ('todo','doing','waiting') AND deleted = 0 \
+                     UNION SELECT up.task, n.parent FROM up JOIN nodes n ON n.id = up.cur WHERE n.parent IS NOT NULL AND n.deleted = 0) \
+                     SELECT r.id, count(*) FROM up JOIN nodes r ON r.id = up.cur \
+                     WHERE r.parent IS NULL AND r.title IS NOT NULL AND r.is_tag = 0 AND r.deleted = 0 GROUP BY r.id",
                 ) {
                     if let Ok(rows) = st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, i64>(1)?))) {
                         for (id, n) in rows.flatten() {
@@ -430,8 +450,14 @@ impl App {
     /// vault's cache, never synced) so reopening it lands there.
     pub(crate) fn remember_caret(&mut self) {
         let Some(d) = self.doc.as_ref() else { return };
-        // A new, empty line isn't a place to come back to: the line above it is.
-        let Some(a) = d.place_anchor() else { return };
+        // A new, empty line isn't a place to come back to: the line above it is. The fresh line
+        // it arrived with: coming back arrives again, so nothing is kept.
+        let Some(a) = d.place_anchor() else {
+            if self.carets.remove(&caret_key(&d.target)).is_some() {
+                save_carets(&self.vault.paths.cache, &self.carets);
+            }
+            return;
+        };
         self.carets.insert(caret_key(&d.target), (a.id, a.byte, d.scroll()));
         save_carets(&self.vault.paths.cache, &self.carets);
     }
@@ -451,11 +477,12 @@ impl App {
         }
         if let Some(nd) = self.doc.as_mut() {
             nd.set_caret_anchor(&caret);
-            self.doc_line_id = Some(nd.caret_block().id.clone());
+            self.main.line_id = Some(nd.caret_block().id.clone());
         }
     }
 
     fn open_doc(&mut self, target: Target) {
+        self.doc_pending_scroll = None;
         let same = |a: &Target, b: &Target| match (a, b) {
             (Target::Page { id: x, .. }, Target::Page { id: y, .. }) => x == y,
             (a, b) => a == b,
@@ -468,12 +495,12 @@ impl App {
             if let Some(mut d) = self.adopt_panel_doc(&target) {
                 if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
                     if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, false) {
-                        d.set_scroll(scroll.min(i), false);
+                        self.doc_pending_scroll = Some((scroll.min(i), false));
                     }
                 }
-                self.doc_line_id = Some(d.caret_block().id.clone());
+                self.main.line_id = Some(d.caret_block().id.clone());
                 self.doc = Some(d);
-                self.doc_write = true;
+                self.main.write = true;
                 self.doc_first_ever = false;
                 self.load_footer();
                 return;
@@ -494,33 +521,21 @@ impl App {
         if std::env::var("THC_TUI_TRACE").is_ok_and(|v| v == "2") {
             eprintln!("open: render {:.1} ms · buffer {:.1} ms · {} lines", (t1 - t0).as_secs_f64() * 1e3, t1.elapsed().as_secs_f64() * 1e3, blocks.len());
         }
-        if journal {
-            // A journal day opens ready to type: on a fresh line after the day's own lines.
-            d.caret_to_end(true);
-        } else {
-            d.caret_to_start();
-        }
-        // Where you left it (writing.md §1, "the caret remembers"): this document's caret on this
-        // device, if its line is still here. A day never opened here starts at the end.
-        if let Some((line, byte, scroll)) = self.carets.get(&caret_key(&d.target)).cloned() {
-            // (The fresh line a day opens with isn't needed when the caret goes back.)
-            let journal = matches!(d.target, Target::Journal { .. });
-            if let Some(i) = d.restore_caret(&crate::editor::Anchor { id: line, byte }, journal) {
-                d.set_scroll(scroll.min(i), false);
-            }
-        }
+        let remembered = self.carets.get(&caret_key(&d.target)).cloned();
+        // The remembered scroll goes on at the first layout (`doc_pending_scroll`).
+        self.doc_pending_scroll = arrive(&mut d, remembered);
         // Lines a crash left unsaved come back, one ⌃Z away (recover.rs), and save at once.
         let mut recovered_n = 0;
         if let Some(rec) = recovered {
             recovered_n = crate::recover::apply(&mut d, &rec);
         }
-        self.doc_line_id = Some(d.caret_block().id.clone());
+        self.main.line_id = Some(d.caret_block().id.clone());
         self.doc = Some(d);
         if recovered_n > 0 {
             self.save_doc(true);
             self.notice(format!("recovered {recovered_n} unsaved line{} from a crash · ⌃Z undoes", if recovered_n == 1 { "" } else { "s" }));
         }
-        self.doc_write = true;
+        self.main.write = true;
         self.doc_first_ever = journal
             && self
                 .vault
@@ -602,12 +617,26 @@ impl App {
                 if let Some(m) = msgs.into_iter().last() {
                     self.info(m);
                 }
+                // The rail's counts and the conflicts follow the save (see drain_saves).
+                self.after_save_results();
             }
             Err(e) => {
                 // The text stays in the buffer; ◌ shows after 3 s and the bar says why.
                 d.mark_save_failed(&plan.parsed, &e);
                 self.error(format!("not saved: {e} · :retry"));
             }
+        }
+    }
+
+    /// What a save's results change outside the document: the conflicts the banner shows and
+    /// the rail's counts.
+    fn after_save_results(&mut self) {
+        let conflicts = self.vault.store.open_conflicts().unwrap_or_default();
+        if conflicts != self.conflicts {
+            self.conflicts = conflicts;
+        }
+        if self.in_panel.is_none() {
+            self.build_rail();
         }
     }
 
@@ -653,6 +682,11 @@ impl App {
             if let Some(m) = msgs.into_iter().last() {
                 self.info(m);
             }
+            // What the save changed shows at once, as a fresh session would read it: the rail's
+            // counts (a page's open tasks, a day's entries; 64j4y) and the conflicts banner (a
+            // save that kept both sides; t741c). The rail is the main view's: a panel's save
+            // leaves it for the main view's next.
+            self.after_save_results();
             // The save that waited for this one: planned now, against what the vault has.
             if let Some(all) = self.doc_saver.as_mut().filter(|s| s.pending == 0).and_then(|s| s.waiting.take()) {
                 self.save_doc(all);
@@ -750,27 +784,40 @@ impl App {
 
     /// After a key in the document: leaving a line saves the lines left behind.
     pub fn doc_after_key(&mut self) {
-        self.near_miss_typed();
+        self.doc_after(true);
+    }
+
+    /// After a click in the document: as after a key, but the view stays where it is (the
+    /// caret went where the pointer is, on screen; mouse.md "the mouse never scrolls").
+    pub fn doc_after_click(&mut self) {
+        self.doc_after(false);
         if let Some(d) = self.doc.as_mut() {
+            d.hold_view();
+        }
+    }
+
+    fn doc_after(&mut self, follow: bool) {
+        self.near_miss_typed();
+        if let Some(d) = self.doc.as_mut().filter(|_| follow) {
             d.follow_caret();
         }
         let Some(d) = self.doc.as_mut() else { return };
         let now = d.caret_block().id.clone();
-        if self.ui.doc_line_id.as_deref() != Some(now.as_str()) {
+        if self.ui.main.line_id.as_deref() != Some(now.as_str()) {
             // The line left: a remote change waiting on it lands now (unless you typed on it:
             // then the save writes yours with its base and the core keeps both).
-            if let Some(prev) = self.ui.doc_line_id.clone() {
+            if let Some(prev) = self.ui.main.line_id.clone() {
                 d.apply_held_text(&prev);
             }
             // Onto a line moved here (its parent was deleted elsewhere): the bar says why
             // (daemon.md §4.0a).
             let moved = d.caret_block().conflict_with.as_deref() == Some(crate::doc_ui::MOVED_HERE);
-            self.doc_line_id = Some(now.clone());
+            self.main.line_id = Some(now.clone());
             if moved {
                 self.say_why_moved(&now);
             }
             // The keystroke reaches the screen first; the save runs right after the frame.
-            self.doc_save_after_frame = true;
+            self.main.save_after_frame = true;
         }
     }
 
@@ -780,7 +827,7 @@ impl App {
         let s = &self.vault.store;
         let parent = d.other.as_ref().map(|o| s.node(&o.text).ok().flatten().map(|n| s.render_text(&n.label())).unwrap_or_else(|| o.text.clone())).unwrap_or_default();
         let dev = d.other.as_ref().map(|o| if o.dev == self.vault.device { "this device".to_string() } else { o.dev.clone() }).unwrap_or_default();
-        let key = if self.doc_write { "⌃O" } else { "c" };
+        let key = if self.main.write { "⌃O" } else { "c" };
         self.info(format!("≠ moved here · its parent \"{parent}\" was deleted on {dev} · {key} review"));
     }
 
@@ -789,7 +836,7 @@ impl App {
     /// (the session records that as a `frame` message, so a replay saves there too).
     pub fn after_frame(&mut self) -> bool {
         let panels = if self.in_panel.is_none() { self.panels_after_frame() } else { false };
-        if !std::mem::take(&mut self.doc_save_after_frame) {
+        if !std::mem::take(&mut self.main.save_after_frame) {
             return panels;
         }
         self.save_doc(false);
@@ -830,7 +877,7 @@ impl App {
             return;
         }
         if patched.announce.is_some() {
-            self.doc_announce = patched.announce;
+            self.main.announce = patched.announce;
         }
         // A conflict that arrived with this refresh says who, too.
         if patched.unnamed_conflicts {
@@ -874,7 +921,7 @@ impl App {
             if (!all && i == caret) || !(l.is_new || l.edited()) || !l.text.contains("[[") {
                 continue;
             }
-            if self.near_miss.as_ref().is_some_and(|n| n.0 == l.id) {
+            if self.main.near_miss.as_ref().is_some_and(|n| n.0 == l.id) {
                 continue;
             }
             for title in links_in(&l.text) {
@@ -884,7 +931,7 @@ impl App {
                 let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
                 let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
                 if let Some((_, existing)) = near {
-                    self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
+                    self.main.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
                     return;
                 }
             }
@@ -908,19 +955,19 @@ impl App {
         let titles = s.nodes_where("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0", &[]).unwrap_or_default();
         let near = titles.into_iter().filter_map(|p| p.title).filter(|t| t.to_lowercase() != title.to_lowercase()).map(|t| (edit_distance(&t.to_lowercase(), &title.to_lowercase()), t)).filter(|(e, _)| *e <= 2).min();
         if let Some((_, existing)) = near {
-            self.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
+            self.main.near_miss = Some((l.id.clone(), title, existing, None, self.ui.now_ms));
         }
     }
 
     /// ⌃O on the near-miss chip: the link becomes the existing page, and the page the save just
     /// made goes (when nothing else links to it and it has nothing in it).
     fn take_near_miss(&mut self) -> bool {
-        let Some((line_id, typed, existing, _, since)) = self.near_miss.clone() else { return false };
+        let Some((line_id, typed, existing, _, since)) = self.main.near_miss.clone() else { return false };
         if self.ui.age(since).as_secs() >= 3 {
-            self.near_miss = None;
+            self.main.near_miss = None;
             return false;
         }
-        self.near_miss = None;
+        self.main.near_miss = None;
         let Some(d) = self.doc.as_mut() else { return false };
         let Some(text) = d.blocks().iter().find(|l| l.id == line_id).map(|l| l.text.replace(&format!("[[{typed}]]"), &format!("[[{existing}]]"))) else { return false };
         d.replace_content(&line_id, &text);
@@ -975,7 +1022,7 @@ impl App {
         let caption = std::path::Path::new(&name).file_stem().and_then(|s| s.to_str()).unwrap_or("file").replace(['-', '_'], " ");
         if let Some(id) = self.attach_bytes(&data, &name, &caption, "⌃Z keep the path") {
             let depth = self.doc.as_ref().map_or(0, |d| d.undo_depth());
-            self.last_drop = Some((id, raw.to_string(), depth));
+            self.main.last_drop = Some((id, raw.to_string(), depth));
         }
     }
 
@@ -1029,14 +1076,6 @@ impl App {
         }
         let Some(d) = self.doc.as_ref() else { return };
         let l = d.caret_block();
-        // In a panel, a link is followed in the main view (sidebar.md §12).
-        if self.in_panel.is_some() && crate::sidebar::policy::PANEL_CLICK_FOLLOWS_IN_MAIN && crate::doc_ui::image_line(&l.text).is_none() && !l.conflict {
-            match link_at(&l.text, d.caret().byte) {
-                Some(title) => self.panel_defer.push(crate::sidebar_app::Deferred::Follow(title)),
-                None => self.panel_defer.push(crate::sidebar_app::Deferred::Action("finder.open".into())),
-            }
-            return;
-        }
         // An attachment's line opens its file (attachments.md §3).
         if let Some((_, path)) = crate::doc_ui::image_line(&l.text) {
             return self.open_attachment(&path);
@@ -1049,6 +1088,15 @@ impl App {
         // ⌃O on an issue's line (not on a link in it): the issue opens as its own document, and
         // Esc comes back here (issues.md §1).
         let issue = (link.is_none() && !l.is_new).then(|| l.id.clone()).and_then(|id| self.vault.store.node(&id).ok().flatten()).filter(|n| self.is_issue(n));
+        // The same navigation target, routed by role only after the editor borrow ends.
+        if self.in_panel.is_some() && crate::sidebar::policy::PANEL_CLICK_FOLLOWS_IN_MAIN {
+            self.panel_defer.push(match (link, issue) {
+                (Some(title), _) => crate::editor_pane::PaneEffect::Follow(title),
+                (_, Some(n)) => crate::editor_pane::PaneEffect::OpenIssue { target: d.target.clone(), line: n.id },
+                _ => crate::editor_pane::PaneEffect::Action("finder.open".into()),
+            });
+            return;
+        }
         let here = (d.target.clone(), l.id.clone());
         self.save_doc(true);
         // The saved line's id (a new line has its id only once it's saved).
@@ -1119,13 +1167,37 @@ impl App {
         let pages = s
             .nodes_where(&format!("n.parent IS NULL AND n.title IS NOT NULL AND n.is_tag=0 AND n.deleted=0 AND {} ORDER BY n.updated_ms DESC", thc_core::views::HIDDEN_SQL), &[])
             .unwrap_or_default();
-        let mut out: Vec<(String, String)> = pages
-            .into_iter()
-            .filter_map(|p| p.title.clone())
-            .filter(|t| ql.is_empty() || t.to_lowercase().contains(&ql))
-            .take(6)
-            .map(|t| (format!("¶ {t}"), t))
+        // Ranked: the title starting with what's typed, then a word in it starting so, then
+        // anywhere in it; with nothing typed, the pages you've been on (most recent first).
+        // Ties keep the store's order (recently changed first). The page you're on isn't offered.
+        let here = match self.doc.as_ref().map(|d| &d.target) {
+            Some(Target::Page { id, .. }) => Some(id.clone()),
+            _ => None,
+        };
+        let recent: Vec<&str> = self.recent_docs.iter().filter_map(|t| if let Target::Page { id, .. } = t { Some(id.as_str()) } else { None }).collect();
+        let mut ranked: Vec<(usize, usize, String)> = pages
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| here.as_deref() != Some(p.id.as_str()))
+            .filter_map(|(i, p)| {
+                let t = p.title.clone()?;
+                let tl = t.to_lowercase();
+                let rank = if ql.is_empty() {
+                    recent.iter().position(|r| *r == p.id).unwrap_or(usize::MAX)
+                } else if tl.starts_with(&ql) {
+                    0
+                } else if tl.split(|c: char| !c.is_alphanumeric()).any(|w| w.starts_with(&ql)) {
+                    1
+                } else if tl.contains(&ql) {
+                    2
+                } else {
+                    return None;
+                };
+                Some((rank, i, t))
+            })
             .collect();
+        ranked.sort();
+        let mut out: Vec<(String, String)> = ranked.into_iter().take(6).map(|(_, _, t)| (format!("¶ {t}"), t)).collect();
         // Days: today, yesterday, tomorrow, a weekday name (the coming one), a typed date.
         let today = self.today;
         let mut days: Vec<(&str, chrono::NaiveDate)> = vec![("today", today), ("yesterday", today - chrono::Duration::days(1)), ("tomorrow", today + chrono::Duration::days(1))];
@@ -1295,8 +1367,8 @@ impl App {
         let Some((start, _)) = self.link_query() else { return };
         let Some(d) = self.doc.as_mut() else { return };
         d.replace_before_caret(start, &format!("[[{title}]]"));
-        self.link_open = false;
-        self.link_sel = None;
+        self.main.link_open = false;
+        self.main.link_sel = None;
     }
 }
 
@@ -1427,4 +1499,25 @@ fn clipboard_image() -> Option<Vec<u8>> {
         }
     }
     None
+}
+
+/// Where the caret is when a document opens (the arrival rule, in one place; rdfar, decided
+/// 2026-10-08, option A of three):
+/// - **Where you left it** (writing.md §1, "the caret remembers"): this document's caret on this
+///   device, if its line is still here, with its scroll.
+/// - **Otherwise ready to type:** a day or a page opens on a fresh line after its own notes, so
+///   what you type right after jumping there is a note of its own. On a long page the view ends
+///   with that line, the page above it filling the screen. `⌃End` goes there too.
+///
+/// The alternatives weighed: (B) arrive at the top and let the first key start a note above the
+/// first one (the page shifts two rows at that key), (C) arrive at the top and type into the
+/// first note (it glued: `helloGoals for the quarter`).
+/// The scroll it returns is the remembered one, for the view's first layout: rows count as the
+/// view's width wraps them, and a document just read has no width yet (vw384).
+pub(crate) fn arrive(d: &mut Doc, remembered: Option<(String, usize, usize)>) -> Option<(usize, bool)> {
+    d.caret_to_end(true);
+    let (line, byte, scroll) = remembered?;
+    // (The fresh line isn't needed when the caret goes back.)
+    let i = d.restore_caret(&crate::editor::Anchor { id: line, byte }, true)?;
+    Some((scroll.min(i), false))
 }

@@ -1,6 +1,6 @@
 //! Key handling and a small single-line editor used by prompts, capture and the palette.
 
-use crate::app::{App, Overlay, PromptKind, Row, View, fuzzy};
+use crate::app::{App, Focus, Overlay, PromptKind, Row, View, fuzzy};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -116,11 +116,30 @@ pub fn palette_matches(app: &App, q: &str) -> Vec<crate::app::PaletteEntry> {
         let by_cmd = p.cmd.strip_prefix(':').and_then(|c| fuzzy(&q, c));
         fuzzy(&q, &p.label.to_lowercase()).max(by_cmd)
     };
-    let mut m: Vec<(i64, usize)> = entries.iter().enumerate().filter_map(|(i, p)| score(p).map(|s| (s, i))).collect();
+    let mut m: Vec<(i64, crate::app::PaletteEntry)> = entries.iter().filter_map(|p| score(p).map(|s| (s, p.clone()))).collect();
     if !q.is_empty() {
+        // `:` goes to a page or a day as ⌃O does (gj4x1): the finder's rows join the commands,
+        // ranked with them; a page named exactly what was typed comes first. Never `+ new page`:
+        // a stray name in the palette doesn't create one.
+        let name = q.trim_start_matches(['¶', '§']).trim();
+        for (label, go) in app.finder_matches(name) {
+            let (keys, title) = match &go {
+                crate::app::Go::Page(id) => (format!("go:page:{id}"), label.trim_start_matches("¶ ").to_lowercase()),
+                crate::app::Go::Day(d) => (format!("go:day:{d}"), label.trim_start_matches("§ ").to_lowercase()),
+                crate::app::Go::New(_) => continue,
+            };
+            let s = match fuzzy(name, &title) {
+                _ if title == name => 1000,
+                Some(s) if title.starts_with(name) => s + 50,
+                Some(s) => s,
+                // A day read from a date (`+3d`, `fri`) or a page the finder matched otherwise.
+                None => 0,
+            };
+            m.push((s, crate::app::PaletteEntry { label, keys, cmd: String::new(), shown: String::new() }));
+        }
         m.sort_by_key(|(s, _)| -*s);
     }
-    m.into_iter().map(|(_, i)| entries[i].clone()).collect()
+    m.into_iter().map(|(_, e)| e).collect()
 }
 
 /// A stored date as a person would type it, for an editor's prefill (tui-editor §5): `fri`
@@ -194,8 +213,13 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     let key = |app: &mut App, code: KeyCode, modifiers: KeyModifiers| handle_key(app, KeyEvent { code, modifiers, kind: KeyEventKind::Press, state: KeyEventState::NONE });
     let at = app.render.click_targets.iter().rev().find(|t| t.y == y && x >= t.x0 && x < t.x1).map(|t| t.what.clone());
     let left_down = m.kind == K::Down(MouseButton::Left);
+    // A click on a layer is the layer's (its buttons, an edge chip, a hint's box).
+    if left_down && crate::layers_ui::click(app, x, y) {
+        return;
+    }
     if m.kind == K::Moved {
         app.hover = Some((x, y));
+        app.pointer_on_link = crate::cmd_click::link_under(app, x, y, at.as_ref());
         // Hover selects a menu row (mouse.md "Overlays are menus").
         match at {
             Some(crate::ui::Click::Menu(i)) => {
@@ -203,7 +227,11 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                     *sel = i;
                 }
             }
-            Some(crate::ui::Click::LinkRow(i)) if app.link_open => app.link_sel = Some(i),
+            Some(crate::ui::Click::LinkRow(i)) => {
+                let panel = app.render.panel_targets.iter().rev().find(|(_, ts)| ts.iter().any(|t| t.y == y && x >= t.x0 && x < t.x1 && matches!(t.what, crate::ui::Click::LinkRow(_)))).map(|(k, _)| k.clone());
+                if let Some(k) = panel { app.with_panel(&k, |a| a.main.link_sel = Some(i)); }
+                else if app.main.link_open { app.main.link_sel = Some(i); }
+            }
             _ => {}
         }
         return;
@@ -212,8 +240,11 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     if app.scroll_drag {
         match m.kind {
             K::Drag(MouseButton::Left) => {
-                if let (Some((top, h, total, _, _)), Some(d)) = (app.render.doc_scrollbar, app.doc.as_mut()) {
-                    d.set_scroll((y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1)), true);
+                if let Some(k) = app.panel_pointer.clone() {
+                    app.with_panel(&k, |a| crate::editor_pane::clicks::scroll_drag(a, m));
+                    app.sync_panel_views();
+                } else if app.render.doc_scrollbar.is_some() && app.doc.is_some() {
+                    crate::editor_pane::clicks::scroll_drag(app, m);
                 } else if let Some((top, h, total, _, _)) = app.render.list_scrollbar {
                     // A list has no caret to protect: the cursor goes to the row under the thumb.
                     let row = (y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1));
@@ -223,6 +254,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
             }
             K::Up(_) => {
                 app.scroll_drag = false;
+                app.panel_pointer = None;
                 return;
             }
             _ => {}
@@ -314,31 +346,10 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     if crate::sidebar_app::mouse(app, m, clicks) {
         return;
     }
+    if crate::editor_pane::clicks::target(app, at.as_ref(), m) { return; }
     if left_down {
         use crate::ui::Click;
         match at {
-            Some(Click::Meta { line, field }) => {
-                let Some(d) = app.doc.as_mut() else { return };
-                let Some(l) = d.blocks().get(line) else { return };
-                let id = l.id.clone();
-                match field {
-                    "open" => app.doc_open(),
-                    "conflict" => {
-                        app.selected = Some(id);
-                        app.open_compare();
-                    }
-                    _ => {
-                        // A date chip opens its editor, prefilled (mouse.md §3).
-                        app.save_doc(true);
-                        if let Some(n) = app.vault.store.node(&id).ok().flatten() {
-                            let (kind, cur) = if field == "due" { (PromptKind::Due(id.clone()), n.due.clone()) } else { (PromptKind::Sched(id.clone()), n.scheduled.clone()) };
-                            let human = cur.as_deref().map(|c| human_date(c, app.today)).unwrap_or_default();
-                            app.prompt = Some((kind, LineInput::with(&human)));
-                        }
-                    }
-                }
-                return;
-            }
             Some(Click::View(v)) => {
                 app.save_doc(true);
                 app.doc_origin = None;
@@ -388,19 +399,6 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 }
                 return;
             }
-            Some(Click::Scroll(i)) => {
-                // On the thumb: drag it. On the track: a page toward the click.
-                if let (Some((_, h, _, ty, th)), Some(d)) = (app.render.doc_scrollbar, app.doc.as_mut()) {
-                    if i >= ty && i < ty + th {
-                        app.scroll_drag = true;
-                    } else if i < ty {
-                        d.set_scroll(d.scroll().saturating_sub(h as usize), true);
-                    } else {
-                        d.set_scroll(d.scroll() + h as usize, true);
-                    }
-                }
-                return;
-            }
             Some(Click::ListScroll(i)) => {
                 if let Some((_, h, _, ty, th)) = app.render.list_scrollbar {
                     if i >= ty && i < ty + th {
@@ -429,7 +427,9 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
             }
             Some(Click::Action(a)) => {
                 // A footer hint: its action, in the document when one is open (keymap.rs).
-                if app.doc.is_some() && !crate::doc_keys::run_write(app, a) {
+                if app.ui.focus == Focus::Sidebar {
+                    crate::sidebar_app::write_action(app, a);
+                } else if app.doc.is_some() && !crate::doc_keys::run_write(app, a) {
                     crate::keymap::run(app, a);
                 } else if app.doc.is_none() {
                     crate::keymap::run(app, a);
@@ -454,14 +454,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 }
                 return;
             }
-            Some(Click::LinkRow(i)) => {
-                if app.link_open {
-                    app.link_sel = Some(i);
-                    key(app, KeyCode::Enter, KeyModifiers::NONE);
-                }
-                return;
-            }
-            Some(Click::Text) => return,
+            Some(Click::Meta { .. } | Click::Scroll(_) | Click::LinkRow(_) | Click::Text) => return,
             Some(Click::Panel(..) | Click::PanelRow(..)) => return,
             Some(Click::Menu(_) | Click::Caret { .. } | Click::Box | Click::Link) | None => {}
         }
@@ -538,6 +531,10 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
     // Tests only: F12 panics, to prove a crash restores the terminal and keeps what's typed.
     if k.code == KeyCode::F(12) && std::env::var("THC_TUI_TEST_PANIC").is_ok_and(|v| v == "1") {
         panic!("test panic (THC_TUI_TEST_PANIC)");
+    }
+    // Layers first: a walkthrough's keys, Esc dismissing agents' layers (layers_ui.rs).
+    if crate::layers_ui::key(app, &k) {
+        return;
     }
     if app.edit.is_some() && app.overlay.is_none() {
         return edit_key(app, k);
@@ -1041,13 +1038,16 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
 
     // Pages and Search are finders (navigation.md §6): arriving never takes the cursor, and a
     // letter starts the find with that letter (`/` an empty one). With the kept query empty,
-    // digits, ?, :, space and q stay commands; once it has text every printable key types.
+    // digits, ?, :, space and q stay commands (with a kept query too: 5mx4q).
     let finder = app.doc.is_none() && app.overlay.is_none() && ((app.view == View::Pages && app.page_open.is_none()) || app.view == View::Search);
     // (A ⌘ chord is never a letter typed: ⌘[ is history, not a find for "[".)
     if finder && !ctrl && !alt && !k.modifiers.contains(KeyModifiers::SUPER) {
         if let KeyCode::Char(c) = k.code {
             let (kind, kept) = if app.view == View::Pages { (PromptKind::PagesFilter, app.pages_filter.clone()) } else { (PromptKind::Search, app.search_terms.clone()) };
-            let command = kept.is_empty() && matches!(c, '1'..='9' | '?' | ':' | ' ' | 'q');
+            // No caret in the prompt (5mx4q, decided 2026-10-08): digits, ?, :, space and q are
+            // commands, a kept query or not (`/bud` Enter `4` goes to Pages, not `bud4`); a
+            // letter starts or extends the find.
+            let command = matches!(c, '1'..='9' | '?' | ':' | ' ' | 'q');
             if !command {
                 let buf = if c == '/' && kept.is_empty() { String::new() } else { format!("{kept}{c}") };
                 if kind == PromptKind::PagesFilter {
@@ -1067,6 +1067,15 @@ fn handle_key_inner(app: &mut App, k: KeyEvent) {
 }
 
 fn run_palette(app: &mut App, id: &str) {
+    // A page or a day (gj4x1): go there as the finder would; it isn't a recent command.
+    if let Some(go) = id.strip_prefix("go:") {
+        if let Some(pid) = go.strip_prefix("page:") {
+            app.finder_go(crate::app::Go::Page(pid.to_string()));
+        } else if let Some(d) = go.strip_prefix("day:").and_then(|d| d.parse::<chrono::NaiveDate>().ok()) {
+            app.finder_go(crate::app::Go::Day(d));
+        }
+        return;
+    }
     app.recent_cmds.retain(|k| k != id);
     app.recent_cmds.insert(0, id.to_string());
     app.recent_cmds.truncate(3);

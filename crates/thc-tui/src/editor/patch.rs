@@ -45,6 +45,8 @@ impl Doc {
     fn take_in(&mut self, blocks: Vec<Block>, gone: Vec<String>, all: Option<&[Block]>, root: &str, today: chrono::NaiveDate) -> Patched {
         let mut out = Patched::default();
         let caret_id = if self.hold_caret_line { self.line().id.clone() } else { String::new() };
+        // The caret's line, whether or not it's held (new notes go after what you're writing).
+        let writing = self.line().id.clone();
         for b in blocks {
             let Some(l) = self.lines_mut().iter_mut().find(|l| l.id == b.id) else { continue };
             l.take_fields(&b, today);
@@ -116,8 +118,17 @@ impl Doc {
                     continue;
                 }
                 let prev = all[..i].iter().rev().find(|p| have.contains(&p.id)).map(|p| p.id.clone());
-                let at = prev.and_then(|p| self.lines().iter().position(|l| l.id == p)).map_or(0, |x| x + 1);
-                self.lines_mut().insert(at, Line::from_block(b, today));
+                let mut at = prev.and_then(|p| self.lines().iter().position(|l| l.id == p)).map_or(0, |x| x + 1);
+                // What you're writing and haven't saved yet came after that note too, and stays
+                // where it is (sqjch): the new note goes after it, never between it and the note
+                // above, which pushed the line under the caret down a row. (An empty line you
+                // aren't on isn't writing: the new note goes before it.) Lines no deeper than the
+                // new note's would become its parent: it goes before them.
+                let line = Line::from_block(b, today);
+                while self.lines().get(at).is_some_and(|l| l.is_new && l.depth >= line.depth && (!l.text.is_empty() || l.id == writing)) {
+                    at += 1;
+                }
+                self.lines_mut().insert(at, line);
                 have.insert(b.id.clone());
             }
             // Each saved line's neighbour as the vault has it now (or the next save moves lines

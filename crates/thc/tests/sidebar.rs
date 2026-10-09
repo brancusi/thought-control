@@ -113,10 +113,11 @@ fn headers(frame: &str) -> Vec<String> {
 }
 
 // Journal at 140 × 40, in the sample vault: `[[Health]]` on row 8 at column 54 before the
-// sidebar opens (the rail is beside it), at column 31 on row 9 after (the crumb instead).
+// sidebar opens (the rail is beside it), at column 31 on the same row after (the crumb leads the
+// title's row instead, so no row moves; interaction.md §2).
 const SHIFT_HEALTH: &str = "<sclick:54,8>";
-const SHIFT_READING: &str = "<sclick:50,12>";
-const CLICK_HEALTH_AFTER: &str = "<click:31,9>";
+const SHIFT_READING: &str = "<sclick:50,11>";
+const CLICK_HEALTH_AFTER: &str = "<click:31,8>";
 
 #[test]
 fn s1_shift_click_opens_beside_and_main_stays() {
@@ -132,9 +133,14 @@ fn s1_shift_click_opens_beside_and_main_stays() {
     }
     assert!(after.lines().last().unwrap().contains("⌃T task"), "{after}");
     assert!(!after.contains("▌▾"), "the panel isn't focused: {after}");
-    // The main area is a 92-column screen: the crumb instead of the rail, and the detail pane
-    // (the calendar) gives way (§6.2).
-    assert!(after.contains("§ Journal › Wed 07 Oct"), "{after}");
+    // The main area is a 92-column screen: the crumb instead of the rail, leading the title's
+    // row, and the detail pane (the calendar) gives way (§6.2).
+    assert!(after.contains("§ Journal › WED 07 OCT 2026"), "{after}");
+    // Nothing moved down: the page's lines are on the rows they were on.
+    for line in ["Morning: slept well", "Dentist appointment [[Health]]"] {
+        let row = |f: &str| f.lines().position(|l| l.contains(line));
+        assert_eq!(row(&before), row(&after), "{line}: {after}");
+    }
     assert!(!after.contains("October 2026"), "{after}");
     assert!(after.lines().nth(1).unwrap().chars().nth(93) == Some('┬'), "the divider meets the tab rule");
 }
@@ -144,19 +150,19 @@ fn s2_newest_on_top_and_no_duplicates() {
     let s = Snap::new(sample());
     let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}"));
     assert_eq!(headers(&f), ["¶ Reading List", "¶ Health"], "{f}");
-    // ⇧-click Health again (it's now on row 9 at column 31).
-    let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,9>"));
+    // ⇧-click Health again (it's now at column 31, on the same row 8).
+    let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,8>"));
     assert_eq!(headers(&f), ["¶ Health", "¶ Reading List"], "{f}");
 }
 
 #[test]
 fn s3_alt_s_focuses_the_panel_and_esc_returns() {
     let s = Snap::new(sample());
-    let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,9><m-s>"));
+    let f = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,8><m-s>"));
     assert!(f.contains("│▌▾ ¶ Health"), "{f}");
     let bar = f.lines().last().unwrap();
-    assert!(bar.contains("¶ health · aside 1 of 2") && bar.contains("⌥S main") && bar.contains("⌥J ⌥K panel") && bar.contains("⌥M to main"), "{bar}");
-    let back = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,9><m-s><esc>"));
+    assert!(bar.contains("¶ health · aside 1 of 2") && bar.contains("⌥S main") && bar.contains("⌃T task") && bar.contains("⌃O open") && bar.contains("F1 keys"), "{bar}");
+    let back = s.run(&format!("5{SHIFT_HEALTH}{SHIFT_READING}<sclick:31,8><m-s><esc>"));
     assert!(!back.contains("▌▾"), "{back}");
     assert!(back.lines().last().unwrap().contains("⌃T task"), "focus is back in main");
     assert_eq!(headers(&back), ["¶ Health", "¶ Reading List"], "Esc doesn't close: {back}");
@@ -280,7 +286,7 @@ fn goldens() {
     let s = Snap::new(sample());
     let b = format!("5{SHIFT_HEALTH}{SHIFT_READING}");
     golden("frame-b-140x40.txt", &s.run(&b));
-    golden("frame-d-140x40.txt", &s.run(&format!("{b}<sclick:31,9><m-s>")));
+    golden("frame-d-140x40.txt", &s.run(&format!("{b}<sclick:31,8><m-s>")));
     golden("frame-b-140x40-ember-dark.ansi", &Snap::new(sample()).env("THC_TUI_SNAPSHOT_FORMAT", "ansi").run(&b));
     golden("frame-b-140x40-ember-light.ansi", &Snap::new(sample()).env("THC_TUI_SNAPSHOT_FORMAT", "ansi").env("THC_THEME", "ember-light").run(&b));
     golden("frame-h-140x40-ascii.txt", &Snap::new(sample()).env("THC_GLYPHS", "ascii").run(&b));
@@ -389,25 +395,25 @@ fn s14_day_panels_move_by_day() {
 #[test]
 fn s16_the_drawer_at_100() {
     let s = Snap::new(sample()).size("100x30");
-    let f = s.run("5<sclick:31,9>");
+    let f = s.run("5<sclick:31,8>");
     let row = f.lines().nth(2).unwrap();
     assert!(row.chars().skip(40).collect::<String>().starts_with("│▌▾ ¶ Health"), "60 wide, focused: {f}");
     assert!(f.lines().nth(1).unwrap().chars().nth(40) == Some('┬'));
-    let a = Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").run("5<sclick:31,9>");
+    let a = Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").run("5<sclick:31,8>");
     assert!(a.contains("48;2;"), "the raised background");
-    let f = s.run("5<sclick:31,9><esc>");
+    let f = s.run("5<sclick:31,8><esc>");
     assert!(!f.contains("¶ Health"), "Esc closes the drawer: {f}");
-    let f = s.run("5<sclick:31,9><esc><m-s>");
+    let f = s.run("5<sclick:31,8><esc><m-s>");
     assert!(f.contains("▌▾ ¶ Health"), "the stack stayed: {f}");
 }
 
 #[test]
 fn s17_replace_at_80() {
     let s = Snap::new(sample()).size("80x24");
-    let f = s.run("5<sclick:31,9>");
+    let f = s.run("5<sclick:31,8>");
     assert!(f.lines().nth(2).unwrap().contains("‹ § Wed 07 Oct   beside it: 1 panel"), "{f}");
     assert!(f.lines().nth(3).unwrap().starts_with("▌▾ ¶ Health"), "{f}");
-    let f = s.run("5<sclick:31,9><esc>");
+    let f = s.run("5<sclick:31,8><esc>");
     assert!(f.contains("WED 07 OCT 2026"), "{f}");
 }
 
@@ -446,10 +452,10 @@ fn s19_the_detail_pane_yields_and_comes_back() {
 
 #[test]
 fn goldens_narrow() {
-    golden("frame-f-100x30.txt", &Snap::new(sample()).size("100x30").run("5<sclick:31,9>"));
-    golden("frame-g-80x24.txt", &Snap::new(sample()).size("80x24").run("5<sclick:31,9>"));
-    golden("frame-f-100x30-ember-light.ansi", &Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").env("THC_THEME", "ember-light").run("5<sclick:31,9>"));
-    golden("frame-g-80x24-ascii.txt", &Snap::new(sample()).size("80x24").env("THC_GLYPHS", "ascii").run("5<sclick:31,9>"));
+    golden("frame-f-100x30.txt", &Snap::new(sample()).size("100x30").run("5<sclick:31,8>"));
+    golden("frame-g-80x24.txt", &Snap::new(sample()).size("80x24").run("5<sclick:31,8>"));
+    golden("frame-f-100x30-ember-light.ansi", &Snap::new(sample()).size("100x30").env("THC_TUI_SNAPSHOT_FORMAT", "ansi").env("THC_THEME", "ember-light").run("5<sclick:31,8>"));
+    golden("frame-g-80x24-ascii.txt", &Snap::new(sample()).size("80x24").env("THC_GLYPHS", "ascii").run("5<sclick:31,8>"));
 }
 
 // ---- phase 3: list panels ----------------------------------------------------------------------

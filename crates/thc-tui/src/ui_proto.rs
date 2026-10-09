@@ -136,6 +136,22 @@ pub fn handle(session: &mut Session, line: &str, host: &Host) -> Handled {
         Err(e) => return reply(error_line(None, "parse", &format!("not JSON: {e}"))),
     };
     let id = raw.get("id").cloned();
+    // Layer and document-view ops carry their own fields (layers.rs, doc_view.rs).
+    let op = raw
+        .get("op")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .to_string();
+    if crate::layers::OPS.contains(&op.as_str()) || crate::doc_view::OPS.contains(&op.as_str()) {
+        return match run_layer(session, &op, raw, host) {
+            Ok(h) => h,
+            Err(e) => Handled {
+                response: e,
+                change: None,
+                control: None,
+            },
+        };
+    }
     let req: Request = match serde_json::from_value(raw) {
         Ok(r) => r,
         Err(e) => return reply(error_line(id.as_ref(), "bad_request", &e.to_string())),
@@ -154,7 +170,18 @@ fn run(session: &mut Session, req: Request, host: &Host) -> Result<Handled, Prot
         _ => Ok(()),
     };
     match req.op.as_str() {
-        "hello" => reply(ok_line(id, json!({"proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "rev": session.rev, "ops": OPS, "vault": session.app.ui.vault_name, "size": [session.size.0, session.size.1]}))),
+        "hello" => {
+            let ops: Vec<&str> = OPS
+                .iter()
+                .chain(crate::layers::OPS)
+                .chain(crate::doc_view::OPS)
+                .copied()
+                .collect();
+            reply(ok_line(
+                id,
+                json!({"proto": PROTO, "version": env!("CARGO_PKG_VERSION"), "rev": session.rev, "ops": ops, "vault": session.app.ui.vault_name, "size": [session.size.0, session.size.1]}),
+            ))
+        }
         "state.get" => {
             let rev = session.rev;
             let s = session.state();
@@ -273,6 +300,131 @@ fn run(session: &mut Session, req: Request, host: &Host) -> Result<Handled, Prot
     }
 }
 
+/// A layer op (`hint.show`, `focus`, `tour.start`…) or an agent's document view op
+/// (`doc.msgs`…): one `layer` or `doc_view` message, recorded in the trace. A refusal says why
+/// (`{"kind": "refused", "reason": "rate_limited"}`); `layer.ls` only reads.
+fn run_layer(session: &mut Session, op: &str, raw: Value, host: &Host) -> Result<Handled, String> {
+    let id = raw.get("id").cloned();
+    let id = id.as_ref();
+    if let Some(want) = raw.get("if_rev").and_then(Value::as_u64) {
+        if want != session.rev {
+            return Err(error_line(
+                id,
+                "stale",
+                &format!("rev is {}, the request expected {want}", session.rev),
+            ));
+        }
+    }
+    let actor = raw.get("actor").and_then(Value::as_str).map(str::to_string);
+    let mut req = raw.clone();
+    if let Some(m) = req.as_object_mut() {
+        m.remove("id");
+        m.remove("if_rev");
+        m.remove("actor");
+    }
+    if op == "layer.ls" {
+        return Ok(Handled {
+            response: ok_line(
+                id,
+                json!({"rev": session.rev, "layers": crate::layers::list(&session.app.ui.layers)}),
+            ),
+            change: None,
+            control: None,
+        });
+    }
+    let doc = crate::doc_view::OPS.contains(&op);
+    let msg = if doc {
+        Msg::DocView {
+            req: req.clone(),
+            actor: actor.clone(),
+        }
+    } else {
+        Msg::Layer {
+            req: req.clone(),
+            actor: actor.clone(),
+        }
+    };
+    // Validated whole first: a refusal changes nothing, not even the rev.
+    if !doc {
+        let mut ui = session.app.ui.clone();
+        if let Err(r) = crate::layers::request(
+            &mut ui,
+            &req,
+            actor.as_deref(),
+            &session.app.layer_limits.limits(),
+        ) {
+            let e = json!({"kind": if r.reason == caretline_layers::Reason::NotFound { "not_found" } else { "refused" }, "reason": r.reason, "message": r.detail});
+            let line = match id {
+                Some(i) => json!({"id": i, "error": e}),
+                None => json!({"error": e}),
+            };
+            return Err(line.to_string());
+        }
+    }
+    session.check(&msg).map_err(|e| {
+        error_line(
+            id,
+            if doc && e.contains("no document") {
+                "not_found"
+            } else {
+                "invalid"
+            },
+            &e,
+        )
+    })?;
+    let before = session.app.ui.layers.stack.clone();
+    let applied =
+        apply(session, vec![msg], host, true).map_err(|e| error_line(id, e.kind, &e.message))?;
+    let mut result = json!({"rev": session.rev});
+    if doc {
+        if let Some(r) = session.app.doc_view_reply.take() {
+            result["doc"] = r;
+        }
+    } else {
+        // Where it landed: this frame's plan at the session's size.
+        let (w, h) = session.size;
+        let _ = session.render(w, h, "text");
+        let new: Vec<String> = session
+            .app
+            .ui
+            .layers
+            .stack
+            .layers
+            .iter()
+            .filter(|l| before.get(&l.id) != Some(l))
+            .map(|l| l.id.clone())
+            .collect();
+        let popped: Vec<String> = before
+            .layers
+            .iter()
+            .filter(|l| session.app.ui.layers.stack.get(&l.id).is_none())
+            .map(|l| l.id.clone())
+            .collect();
+        if let Some(l) = new.first() {
+            result["layer"] = json!(l);
+            if let Some(p) = session.app.render.layer_plan.as_ref() {
+                let r = caretline_layers::ops::resolved(p, l);
+                if r.is_null() {
+                    result["reason"] = json!("not_found");
+                }
+                result["resolved"] = r;
+            }
+        }
+        if !popped.is_empty() {
+            result["popped"] = json!(popped);
+        }
+    }
+    Ok(Handled {
+        response: ok_line(id, result),
+        change: Some(Change {
+            rev: session.rev,
+            msgs: applied,
+            state_set: false,
+        }),
+        control: None,
+    })
+}
+
 fn aside_err(e: crate::sidebar_app::AsideError) -> ProtoError {
     use crate::sidebar_app::AsideError;
     let kind = match &e {
@@ -357,7 +509,10 @@ mod tests {
         let (_x, mut s) = session("proto-ops");
         let hello = ask(&mut s, json!({"id": 1, "op": "hello"}));
         assert_eq!(hello["id"], 1);
-        assert_eq!(hello["result"]["ops"].as_array().unwrap().len(), OPS.len());
+        assert_eq!(
+            hello["result"]["ops"].as_array().unwrap().len(),
+            OPS.len() + crate::layers::OPS.len() + crate::doc_view::OPS.len()
+        );
         let got = ask(&mut s, json!({"op": "state.get", "history": false}));
         assert!(got["result"]["state"].get("history").is_none());
         assert_eq!(got["result"]["state"]["view"], "today");

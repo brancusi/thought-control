@@ -15,7 +15,9 @@ serde_json.workspace = true
 toml.workspace = true
 libc.workspace = true
 thc-core = { path = "../thc-core" }
-caretline = "0.3"
+caretline = "=0.4.0"
+caretline-layers = "=0.1.0"
+caretline-tour = "=0.1.0"
 unicode-width = "0.2"
 unicode-segmentation = "1"
 foldhash = "0.2"

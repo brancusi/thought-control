@@ -146,10 +146,8 @@ pub struct HistoryEntry {
 
 impl Store {
     pub fn node(&self, id: &str) -> Result<Option<Node>> {
-        Ok(self
-            .conn
-            .query_row(&format!("SELECT {NODE_COLS} FROM nodes n WHERE n.id=?1"), [id], Node::from_row)
-            .optional()?)
+        // Cached: a page's links each look their target up (vw384).
+        Ok(self.conn.prepare_cached(&format!("SELECT {NODE_COLS} FROM nodes n WHERE n.id=?1"))?.query_row([id], Node::from_row).optional()?)
     }
 
     pub fn must_node(&self, id: &str) -> Result<Node> {

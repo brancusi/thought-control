@@ -100,6 +100,9 @@ replay. It lives in its own repository, **[brancusi/caretline](https://github.co
 (docs at [caretline.app](https://caretline.app/docs/)), and thc depends on it as the
 `caretline` crate. Engine changes are made there first, then pulled into thc.
 
+`thc demo` is an [interactive teaching workshop](docs/guide/demo.md)
+with anchored overlays and synthetic scratch notes, isolated from your own vault/config.
+
 ## Status
 
 | Milestone | State |

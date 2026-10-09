@@ -1,23 +1,21 @@
 [0m [0;2m[[0;1m*[0;2m][0m [0;1;7m sidebar-sample [0m   [0;2mToday[0m   [0;2mInbox[0m 2   [0;2mTasks[0m   [0;2mPages[0m   [0;1mJournal[0m   [0;2mSearch[0m   [0;2mLog[0;94m 1[0m                                        [0;2mWed Oct 7 - 09:12[0m [0m
 [0;2m---------------------------------------------------------[0;1m=========[0;2m---------------------------+----------------------------------------------[0m
-[0m       [0;2mJ [0;2;4mJournal[0;2m › Wed 07 Oct[0m                                                                [0;2m|[0;1m>[0;2m-[0m [0;2mP[0m [0;1;4mReading List[0m                        [0;2m^[0m  [0;2mx[0m [0m
-[0m       [0;1mWED 07 OCT 2026[0;1;33m · TODAY[0m                                                               [0;2m|[0m   [0;2m  · [[[0;4mAtomic Habits[0;2m]][0m: finished, notes on  [0m
-[0m       [0;2mSUN 04   MON 05 •   TUE 06 •   [0m[WED 07[0;1m •[0m]   [0;2mTHU 08   FRI 09   SAT 10   [0m               [0;2m|[0m       habit stacking                         [0m
-[0m       [0;2m─────────────────────────────────────────────────────────────────────────────────────[0m [0;2m|[0m   [ ] Read The Pragmatic Programmer, ch.     [0m
-[0m                                                                                             [0;2m|[0m       1-3                                    [0m
+[0m       [0;2mJ [0;2;4mJournal[0;2m › [0;1mWED 07 OCT 2026[0;1;33m · TODAY[0m                                                   [0;2m|[0;1m>[0;2m-[0m [0;2mP[0m [0;1;4mReading List[0m                        [0;2m^[0m  [0;2mx[0m [0m
+[0m       [0;2mSUN 04   MON 05 •   TUE 06 •   [0m[WED 07[0;1m •[0m]   [0;2mTHU 08   FRI 09   SAT 10   [0m               [0;2m|[0m   [0;2m  · [0m[[Atomic Habits]]: finished, notes on  [0m
+[0m       [0;2m─────────────────────────────────────────────────────────────────────────────────────[0m [0;2m|[0m       habit stacking                         [0m
+[0m                                                                                             [0;2m|[0m   [ ] Read The Pragmatic Programmer, ch. 1-3 [0m
 [0m   [0;2m  · [0mMorning: slept well, 30 min run #health                                               [0;2m|[0m   [0;2m+ linked from 1[0m                            [0m
-[0m   [ ] Call dentist to reschedule #health                                    [0;2mdue fri · !high[0m [0;2m|[0m                                              [0m
-[0m   [0;2m  · [0mDentist appointment [[Health]]                                              [0;2mtue 14:00[0m [0;2m|[0m [0;2m-[0m [0;2mP[0m Health                                 [0;2mx[0m [0m
-[0m   [ ] Pay rent                                                        [0;2msat 09:00 · ↻ monthly[0m [0;2m|[0m   [0;2m  · [0;4mD[0mr. Patel, 555-0100, office on 4th St  [0m
-[0m   [0;2m  · [0mMom's birthday, call her                                                 [0;2moct 19 10:00[0m [0;2m|[0m   [ ] Schedule annual physical    [0;2mdue oct 17[0m [0m
-[0m   [ ] Summarize unread newsletters into [[Reading List]]                       [0;2mdue tomorrow[0m [0;2m|[0m   [ ] Refill prescription                    [0m
+[0m   [ ] Call dentist to reschedule #health                                   [0;2mdue fri · !high[0m  [0;2m|[0m                                              [0m
+[0m   [0;2m  · [0mDentist appointment [[Health]]                                             [0;2mtue 14:00[0m  [0;2m|[0m [0;2m-[0m [0;2mP[0m Health                                 [0;2mx[0m [0m
+[0m   [ ] Pay rent                                                       [0;2msat 09:00 · ↻ monthly[0m  [0;2m|[0m   [0;2m  · [0;4mD[0mr. Patel, 555-0100, office on 4th St  [0m
+[0m   [0;2m  · [0mMom's birthday, call her                                                [0;2moct 19 10:00[0m  [0;2m|[0m   [ ] Schedule annual physical               [0m
+[0m   [ ] Summarize unread newsletters into [[Reading List]]                      [0;2mdue tomorrow[0m  [0;2m|[0m                                   [0;2mdue oct 17[0m [0m
+[0m   [0;2m  · [0;4m [0m                                                                                     [0;2m|[0m   [ ] Refill prescription                    [0m
 [0m                                                                                             [0;2m|[0m                    [0;2moct 15 · !med · ↻ monthly[0m [0m
-[0m   [0;2m    [0;4m [0m                                                                                     [0;2m|[0m   [0;2m+ linked from 1[0m                            [0m
-[0m                                                                                             [0;2m|[0m                                              [0m
-[0m       [0;2m──────────────────────────────────── also today ─────────────────────────────────────[0m [0;2m|[0m                                              [0m
-[0m   [ ] Water plants                                                    [0;2m¶ Home · today · ↻ 3d[0m [0;2m|[0m                                              [0m
-[0m   [ ] Replace furnace filter                                        [0;2m¶ Home · today · ↻ 3mo![0m [0;2m|[0m                                              [0m
-[0m   [0;32m[x] [0;2mRenew passport #admin[0m                                       [0;2m§ tue oct 06 · done 09:12[0m [0;2m|[0m                                              [0m
+[0m       [0;2m──────────────────────────────────── also today ─────────────────────────────────────[0m [0;2m|[0m   [0;2m+ linked from 1[0m                            [0m
+[0m   [ ] Water plants                                                   [0;2m¶ Home · today · ↻ 3d[0m  [0;2m|[0m                                              [0m
+[0m   [ ] Replace furnace filter                                       [0;2m¶ Home · today · ↻ 3mo![0m  [0;2m|[0m                                              [0m
+[0m   [0;32m[x] [0;2mRenew passport #admin[0m                                      [0;2m§ tue oct 06 · done 09:12[0m  [0;2m|[0m                                              [0m
 [0m                                                                                             [0;2m|[0m                                              [0m
 [0m                                                                                             [0;2m|[0m                                              [0m
 [0m                                                                                             [0;2m|[0m                                              [0m
@@ -37,4 +35,6 @@
 [0m                                                                                             [0;2m|[0m                                              [0m
 [0m                                                                                             [0;2m|[0m                                              [0m
 [0m                                                                                             [0;2m|[0m                                              [0m
-[0m p reading list[0;2m - aside 1 of 2 - autosaved[0m                        ⌥S[0;2m main[0m  ⌥J ⌥K[0;2m panel[0m  ⌥C[0;2m fold[0m  ⌥W[0;2m close[0m  ⌥M[0;2m to main[0m  F1[0;2m keys   thc X.Y.Z[0m [0m
+[0m                                                                                             [0;2m|[0m                                              [0m
+[0m                                                                                             [0;2m|[0m                                              [0m
+[0m p reading list[0;2m - aside 1 of 2 - autosaved[0m                                                  ⌥S[0;2m main[0m  ⌃T[0;2m task[0m  ⌃O[0;2m open[0m  F1[0;2m keys   thc X.Y.Z[0m [0m

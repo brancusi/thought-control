@@ -1,0 +1,40 @@
+ [*] acme   Today   Inbox 3   Tasks   Pages   Journal   Search   Log                                                      Wed Oct 7 - 10:00
+-----------------------------=======--------------------------------------------------------------------------------------------------------
+ q> status:open sort:due                                                                                                            6 tasks
+
+  id         task                                         due               sched       pri    where          by
+> 7x3rj  [ ] Buy groceries                                tomorrow          —           —      —              you
+  rrft8  [ ] Finish the sign-up flow                      fri               —           high   P Launch plan  you  +- @ claude ------------+
+  mxzq1  [ ] Write the getting-started guide              mon               —           —      P Launch plan  you  | Next week             |
+  frjjs  [ ] Book the dentist                             tue               —           —      —              you  | These go out once     |
+  atmev  [ ] Send the invites                             Oct 16            —           —      P Launch plan  you<-+ sign-up works.        |
+  1chbt  [ ] Renew the passport                           —                 —           —      —              you  +-----------------------+
+
+ saved  1 open status:open  2 this week status:open due<=+7d  3 waiting status:waiting sort:updated-  +2 more                    f then 1-5
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+ tasks - status:open sort:due                                                         o local - daemon offline   :daemon start   thc 0.10.1

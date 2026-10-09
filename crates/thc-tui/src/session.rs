@@ -64,6 +64,21 @@ pub enum Msg {
     Poll,
     /// Test fixtures: another actor writes to the vault (`THC_TUI_KEYS` only).
     Fixture { fixture: Fixture },
+    /// A layer op (layers.rs): `hint.show`, `highlight`, `focus`, `layer.push`, `tour.start`…
+    /// `req` is the request as the socket took it (`op` and its fields); `actor` the agent it
+    /// came from (None: the person or thc).
+    Layer {
+        req: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+    },
+    /// The agent's own view on the open document (doc_view.rs): open it, run caretline
+    /// messages through it, or set a note's text through it. The person's caret stays put.
+    DocView {
+        req: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+    },
     /// Put something beside the person (`thc ui aside`, sidebar.md §10.3), or close a panel the
     /// actor opened.
     Aside {
@@ -85,7 +100,7 @@ pub struct Mouse {
     pub kind: MouseKind,
     pub x: u16,
     pub y: u16,
-    /// Held modifiers: any of `c` (⌃), `m` (⌥), `s` (⇧).
+    /// Held modifiers: any of `c` (⌃), `m` (⌥), `s` (⇧), `d` (⌘, where the terminal passes it).
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub mods: String,
     /// A press's click count (2: a double click). Left out, it's counted from the clock: a
@@ -147,7 +162,7 @@ pub fn mouse_msg(m: &MouseEvent) -> Option<Mouse> {
         _ => return None,
     };
     let mut mods = String::new();
-    for (k, c) in [(KeyModifiers::CONTROL, 'c'), (KeyModifiers::ALT, 'm'), (KeyModifiers::SHIFT, 's')] {
+    for (k, c) in [(KeyModifiers::CONTROL, 'c'), (KeyModifiers::ALT, 'm'), (KeyModifiers::SHIFT, 's'), (KeyModifiers::SUPER, 'd')] {
         if m.modifiers.contains(k) {
             mods.push(c);
         }
@@ -242,7 +257,11 @@ impl Session {
         // TERM and COLORTERM chose, the glyphs, the pinned-clock warning, inline images): replay
         // draws them as this session did, not as the replaying process would.
         let d = &self.app.derived;
-        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images});
+        line["env"] = json!({"theme": self.app.theme, "pinned_warning": d.pinned_warning, "inline_images": d.inline_images, "drag_hint": self.app.drag_hint, "cmd_seen": self.app.cmd_seen});
+        // The layer policy decides what agents' layer ops do: replay holds them to the same.
+        if self.app.layer_limits != crate::layers::AgentLimits::default() {
+            line["env"]["layers"] = json!({"agent_limits": self.app.layer_limits});
+        }
         line
     }
 
@@ -250,6 +269,22 @@ impl Session {
     pub fn set_env(&mut self, env: &Value) {
         if let Some(t) = env.get("theme").and_then(|t| serde_json::from_value::<crate::theme::Theme>(t.clone()).ok()) {
             self.app.theme = t;
+        }
+        // The first drag's hint still to show (null: shown) and whether ⌘ keys arrive (emtsr).
+        if let Some(h) = env.get("drag_hint") {
+            self.app.drag_hint = h.as_str().map(str::to_string);
+        }
+        if let Some(b) = env.get("cmd_seen").and_then(Value::as_bool) {
+            self.app.cmd_seen = b;
+        }
+        if let Some(l) = env
+            .get("layers")
+            .and_then(|l| l.get("agent_limits"))
+            .and_then(|v| serde_json::from_value(v.clone()).ok())
+        {
+            self.app.layer_limits = l;
+        } else {
+            self.app.layer_limits = crate::layers::AgentLimits::Off;
         }
         let d = &mut self.app.derived;
         d.pinned_warning = env.get("pinned_warning").and_then(Value::as_str).map(str::to_string);
@@ -362,24 +397,68 @@ impl Session {
     /// vault). Starts a new trace segment.
     pub fn restore(&mut self, state: &Value) -> Result<(), String> {
         let new = UiState::from_json_over(&self.app.ui, state, state.get("history").is_none())?;
-        let new = self.same_vault(new)?;
+        let new = if crate::SNAPSHOT.with(|s| s.get()) {
+            self.same_vault_name(new)?
+        } else {
+            self.same_vault(new)?
+        };
         let doc = new.document.clone();
+        let frozen = new.rail_frozen.clone();
+        let parked = new.main.parked;
         self.app.ui = new;
         rehydrate(&mut self.app);
         let _ = self.app.reload();
-        if let (Some(ds), Some(d)) = (doc, self.app.doc.as_mut()) {
-            if !ds.caret_id.is_empty() {
-                // The caret goes back as it does on reopening (a remembered caret): a day's
-                // fresh last line is only there when the caret is on it.
-                let journal = matches!(d.target, crate::editor::Target::Journal { .. });
-                d.restore_caret(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte }, journal);
-            }
-            d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
+        // Whether the document was just arrived at is the state's (reload arrives afresh).
+        self.app.ui.main.parked = parked;
+        self.app.restore_panel_views();
+        // The rail's order is the state's: reload, arriving at a document from no document,
+        // ordered it afresh (q93zh).
+        if frozen.is_some() && self.app.ui.rail_frozen != frozen {
+            self.app.ui.rail_frozen = frozen;
+            self.app.build_rail();
         }
+        if let Some(ds) = doc {
+            if let Some(d) = self.app.doc.as_mut() {
+                if !ds.caret_id.is_empty() {
+                    // The caret goes back as it does on reopening (a remembered caret), with the
+                    // fresh line the document arrived with if the session had it still.
+                    d.restore_caret(&crate::editor::Anchor { id: ds.caret_id.clone(), byte: ds.caret_byte }, !ds.fresh_end);
+                    if let Some(tail) = &ds.caret_tail {
+                        d.restore_caret_tail(&ds.caret_id, tail, ds.caret_byte);
+                    }
+                } else if let Some(n) = &ds.caret_new {
+                    // An empty line the caret was on, never saved: back where it was (h8vsn).
+                    d.caret_to_new_line(n.after.as_deref(), n.depth, n.kind, ds.fresh_end);
+                }
+            }
+            // The scroll is a row of the document as laid out at the session's size: lay it out
+            // first (a document just opened has no geometry yet, and a wrapped note above the
+            // top made the row land lines away), then scroll.
+            self.follow();
+            if let Some(d) = self.app.doc.as_mut() {
+                d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
+            }
+        }
+        self.reopen_agent_views();
         self.follow();
         self.rev += 1;
         self.checkpoint();
         Ok(())
+    }
+
+    /// Agents' views as the state says: each one open on the document, its caret where it was
+    /// (a state line of a segment that starts mid-session).
+    fn reopen_agent_views(&mut self) {
+        let views = self.app.ui.agent_views.clone();
+        let Some(d) = self.app.doc.as_mut() else { return };
+        for v in views.values() {
+            if !d.has_view(v.view) {
+                d.add_view(v.view);
+            }
+            if !v.caret_id.is_empty() {
+                d.with_view(v.view, |d| d.set_caret_anchor(&crate::editor::Anchor { id: v.caret_id.clone(), byte: v.caret_byte }));
+            }
+        }
     }
 
     /// Record what changed outside messages since the last one, as an `external` message (no-op
@@ -433,9 +512,30 @@ impl Session {
     pub fn check(&self, msg: &Msg) -> Result<(), String> {
         match msg {
             Msg::Key { key } if crate::script::key_event(key).is_none() => Err(format!("unknown key {key}")),
-            Msg::SetState { state, actor } => self.parse_state(state).and_then(|s| self.agent_may(&s, actor.as_deref())),
-            Msg::Patch { patch, actor } => self.app.ui.patched(patch).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
+            Msg::SetState { state, actor } => self.mode_kept(state, actor.as_deref()).and_then(|_| self.parse_state(state)).and_then(|s| self.agent_may(&s, actor.as_deref())),
+            Msg::Patch { patch, actor } => self.mode_kept(patch, actor.as_deref()).and_then(|_| self.app.ui.patched(patch)).and_then(|s| self.same_vault(s)).and_then(|s| self.agent_may(&s, actor.as_deref())),
             Msg::Resize { w, h } if *w == 0 || *h == 0 => Err("a size is at least 1x1".into()),
+            Msg::Layer { req, actor } => {
+                let mut ui = self.app.ui.clone();
+                crate::layers::request(
+                    &mut ui,
+                    req,
+                    actor.as_deref(),
+                    &self.app.layer_limits.limits(),
+                )
+                .map(|_| ())
+                .map_err(|e| e.to_string())
+            }
+            Msg::DocView { req, actor } => crate::doc_view::check(&self.app, req, actor.as_deref()),
+            _ => Ok(()),
+        }
+    }
+
+    /// Document mode is the person's (writing.md §1): an agent's state or patch that names a
+    /// different `document_mode` is refused; one that leaves it out keeps the person's.
+    fn mode_kept(&self, v: &Value, actor: Option<&str>) -> Result<(), String> {
+        match (actor, v.get("document_mode")) {
+            (Some(_), Some(m)) if m.as_bool() != Some(self.app.ui.document_mode) => Err("document_mode is the person's choice (space t D) · an agent can't change it".into()),
             _ => Ok(()),
         }
     }
@@ -450,7 +550,21 @@ impl Session {
         if actor.is_none() {
             return Ok(());
         }
-        for (i, p) in self.app.ui.sidebar.open.iter().enumerate().filter(|(_, p)| p.pinned) {
+        if s.focus_cfg != self.app.ui.focus_cfg {
+            return Err("focus_cfg: an agent cannot change the person's preferences".into());
+        }
+        if s.layers != self.app.ui.layers {
+            return Err("layers: an agent changes layers with layer ops (hint.show, layer.push, …), not a state".into());
+        }
+        for (i, p) in self
+            .app
+            .ui
+            .sidebar
+            .open
+            .iter()
+            .enumerate()
+            .filter(|(_, p)| p.pinned)
+        {
             let k = p.key();
             match s.sidebar.get(&k) {
                 None => return Err(format!("sidebar.open: {} is pinned (open[{i}]) · a pinned panel is the person's; an agent can't close it", self.app.panel_name(&k))),
@@ -458,10 +572,26 @@ impl Session {
                 _ => {}
             }
         }
+        if self.app.ui.focus == crate::app::Focus::Sidebar {
+            if let Some(k) = self.app.ui.sidebar.active_key() {
+                let old = self.app.panel_editor(&k);
+                let new = s.sidebar.get(&k).and_then(|p| p.doc_view()).and_then(|v| v.editor.as_ref());
+                if new.is_some() && new != old {
+                    return Err("sidebar.view.editor: the focused editor belongs to the person".into());
+                }
+            }
+        }
         Ok(())
     }
 
     fn same_vault(&self, s: UiState) -> Result<UiState, String> {
+        if self.app.ui.teaching_demo != s.teaching_demo {
+            return Err("teaching_demo is the session's read-only sandbox mode".into());
+        }
+        self.same_vault_name(s)
+    }
+
+    fn same_vault_name(&self, s: UiState) -> Result<UiState, String> {
         if s.vault_name != self.app.ui.vault_name {
             return Err(format!("vault_name is {} here; a state can't switch vaults (open thc on that vault)", self.app.ui.vault_name));
         }
@@ -486,10 +616,109 @@ impl Session {
         Ok(self.pending_effects())
     }
 
-    /// What a message does to the state (and, for writes, the vault).
+    /// What a message does to the state (and, for writes, the vault). Text anchors of layers
+    /// follow what it edited in the open document.
     fn run(&mut self, msg: &Msg) -> Result<(), String> {
+        let before = self.layer_text();
+        self.app.ran_actions.clear();
+        let r = self.run_msg(msg);
+        if self.app.ui.teaching_demo {
+            if self.app.switch_to.take().is_some() {
+                self.app.info("Teaching demo stays in its scratch vault");
+            }
+            self.app.reexec = false;
+            if self.app.editor_request.as_deref() == Some("@config") || self.app.editor_request.as_deref() == Some("@keys") {
+                self.app.editor_request = None;
+                self.app.info("Demo preferences stay isolated; use the regular TUI to configure THC");
+            }
+        }
+        self.observe_text(before);
+        self.tour_after(msg);
+        r
+    }
+
+    /// A walkthrough after a message: its predicates see what the message did (an action ran,
+    /// its kind, the state) and the time, and may move it on; the host patches of the steps
+    /// entered land as a step the walkthrough took (one history step, the toast says whose);
+    /// and an ended one's seen-state goes to this device's cache.
+    fn tour_after(&mut self, msg: &Msg) {
+        if self.app.ui.layers.touring() {
+            let kind = serde_json::to_value(msg).ok().and_then(|v| v.get("msg").and_then(Value::as_str).map(str::to_string)).unwrap_or_default();
+            let now = self.app.ui.now_ms;
+            let mut tour = std::mem::take(&mut self.app.ui.layers.tour);
+            let host = TourAnswers { kind, ran: &self.app.ran_actions, ui: &self.app.ui };
+            let fx = caretline_tour::observe(&mut tour, &host, now);
+            self.app.ui.layers.tour = tour;
+            self.app.ui.layers.effects(fx, now);
+        }
+        let patches = std::mem::take(&mut self.app.ui.layers.host_patches);
+        for (p, actor) in patches {
+            match self.app.ui.patched(&p).and_then(|s| self.same_vault(s)).and_then(|s| {
+                self.agent_may(&s, actor.as_deref()).map(|_| s)
+            }) {
+                Ok(new) => self.set_state(new, actor.as_deref()),
+                Err(e) => self.app.error(format!("walkthrough: a step's host patch: {e}")),
+            }
+        }
+        if std::mem::take(&mut self.app.ui.layers.ended) {
+            crate::layers::save_seen(&self.app.vault.paths.cache, &self.app.ui.layers.tour.seen);
+        }
+    }
+
+    /// Starts tracking the open document's text changes when a layer has a text anchor to
+    /// move (anything left over from before is dropped). True: tracking.
+    fn layer_text(&mut self) -> bool {
+        let want = self.app.ui.layers.has_text_anchors();
+        let Some(d) = self.app.doc.as_mut() else {
+            return false;
+        };
+        if !want && !d.tracking() {
+            // No layer follows the text: nothing to do (and the engine isn't touched).
+            return false;
+        }
+        d.track_changes(false);
+        d.track_changes(want);
+        want
+    }
+
+    /// Text anchors follow the edits a message made: `observe` with the engine's ChangeSet.
+    fn observe_text(&mut self, tracking: bool) {
+        if !tracking {
+            return;
+        }
+        let Some(d) = self.app.doc.as_mut() else {
+            return;
+        };
+        let changes = d.take_changes();
+        d.track_changes(false);
+        if let Some(cs) = changes {
+            let now = self.app.ui.now_ms;
+            // The views showing the open document: the main one, and each sidebar panel that is
+            // a second view of it (no document of its own). Unscoped anchors move only when
+            // the focused view shows it.
+            let mut views = vec!["main".to_string()];
+            let mut focused_here = self.app.ui.focus != crate::app::Focus::Sidebar;
+            if let Some(sb) = self.app.derived.sidebar.as_ref() {
+                for (i, pp) in sb.panels.iter().enumerate() {
+                    if self.app.panels.get(&pp.key).is_some_and(|rt| rt.slot.doc.is_none()) {
+                        views.push(format!("panel:{i}"));
+                        if self.app.ui.focus == crate::app::Focus::Sidebar && self.app.ui.sidebar.focused.as_ref() == Some(&pp.key) {
+                            focused_here = true;
+                        }
+                    }
+                }
+            }
+            let ids: Vec<&str> = views.iter().map(String::as_str).collect();
+            self.app.ui.layers.observe(&cs, caretline_layers::Edited::Views { views: &ids, unscoped: focused_here }, now);
+        }
+    }
+
+    fn run_msg(&mut self, msg: &Msg) -> Result<(), String> {
         match msg.clone() {
-            Msg::Tick { now_ms, utc_offset_min } => self.app.ui.tick(now_ms, utc_offset_min),
+            Msg::Tick { now_ms, utc_offset_min } => {
+                self.app.ui.tick(now_ms, utc_offset_min);
+                self.held_drag();
+            }
             Msg::Key { key } => {
                 let k = crate::script::key_event(&key).expect("checked");
                 crate::input::handle_key(&mut self.app, k);
@@ -526,6 +755,15 @@ impl Session {
                 self.app.agent_aside(&target, pin, fold, close, actor.as_deref()).map_err(|e| e.message())?;
             }
             Msg::External { patch } => self.external(&patch)?,
+            Msg::Layer { req, actor } => {
+                let limits = self.app.layer_limits.limits();
+                crate::layers::request(&mut self.app.ui, &req, actor.as_deref(), &limits)
+                    .map_err(|e| e.to_string())?;
+            }
+            Msg::DocView { req, actor } => {
+                self.app.doc_view_reply =
+                    Some(crate::doc_view::run(&mut self.app, &req, actor.as_deref())?);
+            }
             Msg::Frame => {
                 self.app.after_frame();
             }
@@ -547,11 +785,12 @@ impl Session {
     /// message, as before: the step's line carries its data, the patch its look.
     pub fn runtime(&mut self, msg: Msg) {
         // Nothing waits for this frame (most keys): nothing to run or record, and no state read.
-        if matches!(msg, Msg::Frame) && !self.app.doc_save_after_frame {
+        if matches!(msg, Msg::Frame) && !self.app.main.save_after_frame && !self.app.panel_keys().iter().any(|k| self.app.panel_editor(k).is_some_and(|e| e.save_after_frame)) {
             return;
         }
         // Anything still unrecorded is recorded first, apart from the step.
         self.sync_external();
+        let before = self.layer_text();
         let did = match &msg {
             Msg::Frame => self.app.after_frame(),
             Msg::Idle => self.app.doc_tick(),
@@ -564,6 +803,7 @@ impl Session {
             },
             _ => unreachable!("not a runtime step: {msg:?}"),
         };
+        self.observe_text(before);
         if did {
             // A poll took in what it found during the step: the line carries that too.
             let foreign = self.drain_log();
@@ -629,7 +869,7 @@ impl Session {
             return;
         }
         let mut mods = KeyModifiers::NONE;
-        for (c, k) in [('c', KeyModifiers::CONTROL), ('m', KeyModifiers::ALT), ('s', KeyModifiers::SHIFT)] {
+        for (c, k) in [('c', KeyModifiers::CONTROL), ('m', KeyModifiers::ALT), ('s', KeyModifiers::SHIFT), ('d', KeyModifiers::SUPER)] {
             if m.mods.contains(c) {
                 mods |= k;
             }
@@ -656,6 +896,25 @@ impl Session {
             None => self.count_clicks(&ev),
         };
         crate::input::handle_mouse(&mut self.app, ev, clicks);
+    }
+
+    /// A drag held still on the view's edge repeats on the clock (each Tick), so the view keeps
+    /// scrolling and the selection extending: once per `drag_repeat_ms`, part of the Tick
+    /// that brings it (a replay of the ticks repeats it the same way).
+    fn held_drag(&mut self) {
+        let Some(edge) = crate::doc_keys::drag_edge(&self.app) else { return };
+        let ui = &self.app.ui;
+        if ui.now_ms.saturating_sub(self.app.pointer_editor().drag_ms) < crate::doc_keys::drag_repeat_ms(edge) {
+            return;
+        }
+        let Some((x, y)) = self.app.pointer_editor().drag_at else { return };
+        self.mouse(Mouse { kind: MouseKind::Drag, x, y, mods: String::new(), clicks: None });
+    }
+
+    /// When the held drag next repeats (the runtime wakes for it), if one is held on an edge.
+    pub fn held_drag_in(&self) -> Option<u64> {
+        let edge = crate::doc_keys::drag_edge(&self.app)?;
+        Some((self.app.pointer_editor().drag_ms + crate::doc_keys::drag_repeat_ms(edge)).saturating_sub(self.app.ui.now_ms))
     }
 
     /// Double and triple clicks: another left press within 400 ms (logical clock) on the same
@@ -708,32 +967,55 @@ impl Session {
             // makes that panel the active one, and focus stays where the person had it.
             if !crate::sidebar::policy::AGENTS_MOVE_FOCUS {
                 new.focus = self.app.ui.focus;
-                if new.focus == crate::app::Focus::Sidebar && !new.sidebar.has_panels() {
-                    new.focus = crate::app::Focus::List;
+                if new.focus == crate::app::Focus::Sidebar {
+                    if let Some(k) = self.app.ui.sidebar.focused.clone().filter(|k| new.sidebar.get(k).is_some()) {
+                        new.sidebar.focused = Some(k);
+                    } else if !new.sidebar.has_panels() {
+                        new.focus = crate::app::Focus::List;
+                    }
                 }
             }
+            new.document_mode = self.app.ui.document_mode;
             // `opened_by` is the TUI's: a panel the agent added is its; the rest keep theirs.
             for p in new.sidebar.open.iter_mut() {
                 p.opened_by = match stack_before.get(&p.key()) {
                     Some(old) => old.opened_by.clone(),
                     None => Some(a.to_string()),
                 };
+                if let (Some(old), Some(mut view)) = (stack_before.get(&p.key()).and_then(|p| p.doc_view()), p.doc_view().cloned()) {
+                    if view.editor.is_none() { view.editor = old.editor.clone(); p.set_doc_view(view); }
+                }
             }
         }
         let app = &mut self.app;
         app.history_tick(false);
+        let desired_panels = new.sidebar.open.clone();
         let doc = new.document.clone();
         let doc_changed = changed.iter().any(|f| f == "document");
         app.ui = new;
         rehydrate(app);
         let _ = app.reload();
-        if let (true, Some(ds), Some(d)) = (doc_changed, doc, app.doc.as_mut()) {
-            if !ds.caret_id.is_empty() {
-                d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+        for desired in desired_panels {
+            if let (Some(mut view), Some(p)) = (desired.doc_view().cloned(), app.ui.sidebar.get_mut(&desired.key())) {
+                if view.editor.is_none() { view.editor = p.doc_view().and_then(|v| v.editor.clone()); }
+                p.set_doc_view(view);
             }
-            d.set_scroll(ds.scroll, true);
-            app.ui.doc_scroll_free = true;
         }
+        app.restore_panel_views();
+        if let (true, Some(ds)) = (doc_changed, doc) {
+            if let Some(d) = self.app.doc.as_mut() {
+                if !ds.caret_id.is_empty() {
+                    d.set_caret_anchor(&crate::editor::Anchor { id: ds.caret_id, byte: ds.caret_byte });
+                }
+            }
+            // A row of the document at the session's size: laid out first (see `restore`).
+            self.follow();
+            if let Some(d) = self.app.doc.as_mut() {
+                d.set_scroll(ds.scroll, true);
+            }
+            self.app.ui.doc_scroll_free = true;
+        }
+        let app = &mut self.app;
         app.history_tick(false);
         if let Some(a) = actor {
             let change = crate::sidebar::AgentChange::between(a, &stack_before, &app.ui.sidebar);
@@ -758,14 +1040,34 @@ impl Session {
             DocumentState {
                 target: Some(d.target.clone()),
                 caret_id: if d.caret_block().is_new { String::new() } else { a.id },
+                caret_new: d.new_caret_line(),
+                caret_tail: d.caret_tail(),
                 caret_byte: a.byte,
                 scroll: d.scroll(),
                 dirty: d.blocks().iter().any(|l| l.edited()),
                 revision: d.revision(),
+                fresh_end: d.has_fresh_end(),
             }
         });
         if self.app.ui.document != doc {
             self.app.ui.document = doc;
+        }
+        self.app.sync_panel_views();
+        // Agents' views: each one's caret (a view the document no longer has is gone).
+        if !self.app.ui.agent_views.is_empty() {
+            let mut views = self.app.ui.agent_views.clone();
+            match self.app.doc.as_mut() {
+                Some(d) => views.retain(|_, v| {
+                    let Some(a) = d.with_view(v.view, |d| d.caret_anchor()) else { return false };
+                    v.caret_id = a.id;
+                    v.caret_byte = a.byte;
+                    true
+                }),
+                None => views.clear(),
+            }
+            if views != self.app.ui.agent_views {
+                self.app.ui.agent_views = views;
+            }
         }
         // The engine's view keeps whether it was scrolled freely; the state records it.
         let free = self.app.doc.as_ref().is_some_and(|d| d.scroll_free());
@@ -780,7 +1082,19 @@ impl Session {
         if w == 0 || h == 0 {
             return Err("a size is at least 1x1".into());
         }
-        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| (d.scroll(), d.scroll_free())), self.app.render.clone());
+        let saved = (self.app.ui.clone(), self.app.doc.as_ref().map(|d| d.view_snapshot()), self.app.render.clone());
+        let main_pin = self.app.caret_pin.clone();
+        let pending = self.app.doc_pending_scroll;
+        let geometry = (self.app.screen_width, self.app.term_width, self.app.sidebar_col, self.app.sidebar_over);
+        let mut panels = Vec::new();
+        for k in self.app.panel_keys() {
+            if let Some((d, _)) = self.app.panel_doc_mut(&k) {
+                let view = d.view_snapshot();
+                panels.push((k, view));
+            }
+            self.app.main_view_current();
+        }
+        let pins: Vec<_> = self.app.panels.iter().map(|(k, rt)| (k.clone(), rt.slot.caret_pin.clone(), rt.slot.pending_scroll)).collect();
         let mut term = ratatui::Terminal::new(crate::quiet::Snap { inner: ratatui::backend::TestBackend::new(w, h), visible: false }).map_err(|e| e.to_string())?;
         term.draw(|f| crate::ui::draw_app(f, &mut self.app)).map_err(|e| e.to_string())?;
         let buf = term.backend().inner.buffer().clone();
@@ -792,9 +1106,19 @@ impl Session {
         };
         if (w, h) != self.size {
             self.app.ui = saved.0;
-            if let (Some(d), Some((s, free))) = (self.app.doc.as_mut(), saved.1) {
-                d.set_scroll(s, free);
+            if let (Some(d), Some(view)) = (self.app.doc.as_mut(), saved.1) {
+                d.restore_view_snapshot(view);
             }
+            for (k, view) in panels {
+                if let Some((d, _)) = self.app.panel_doc_mut(&k) { d.restore_view_snapshot(view); }
+                self.app.main_view_current();
+            }
+            for (k, pin, pending) in pins {
+                if let Some(rt) = self.app.panels.get_mut(&k) { rt.slot.caret_pin = pin; rt.slot.pending_scroll = pending; }
+            }
+            self.app.caret_pin = main_pin;
+            self.app.doc_pending_scroll = pending;
+            (self.app.screen_width, self.app.term_width, self.app.sidebar_col, self.app.sidebar_over) = geometry;
             self.app.render = saved.2;
         }
         let out = match format {
@@ -805,6 +1129,27 @@ impl Session {
             other => return Err(format!("format {other}: text, ansi, html or cells")),
         };
         Ok(out)
+    }
+}
+
+/// What a walkthrough's predicates ask of thc after a message (caretline-tour's `TourHost`):
+/// the keymap actions it ran, its kind, and the UI state by top-level field. Editor predicates
+/// (`caret_in`, `changed`, …) answer no for now.
+struct TourAnswers<'a> {
+    kind: String,
+    ran: &'a [String],
+    ui: &'a UiState,
+}
+
+impl caretline_tour::TourHost for TourAnswers<'_> {
+    fn ran(&self, command: &str) -> bool {
+        self.ran.iter().any(|a| a == command)
+    }
+    fn msg(&self, kind: &str) -> bool {
+        self.kind == kind
+    }
+    fn state(&self, key: &str) -> Option<Value> {
+        self.ui.to_json().get(key).cloned()
     }
 }
 
@@ -908,12 +1253,21 @@ pub type Open<'a> = dyn FnMut(Option<&Frontier>) -> Result<Session, String> + 'a
 /// line's `_log` (what other writers added that the line ran on) goes into the vault before the
 /// line runs, and the runtime's own steps (`idle`, `poll`) run where they ran live.
 pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &str, every: bool) -> Result<Vec<String>, String> {
+    let frames = replay_where(open, trace, size, format, &|_| every)?;
+    Ok(frames.into_iter().map(|(_, f)| f).collect())
+}
+
+/// [`replay`], drawing the frame after the lines `want` names (by their index among the
+/// trace's non-blank lines), or else only the last: each frame with its line's index.
+pub fn replay_where(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &str, want: &dyn Fn(usize) -> bool) -> Result<Vec<(usize, String)>, String> {
     let mut frames = Vec::new();
     let mut session: Option<Session> = None;
-    let draw = |s: &mut Session, frames: &mut Vec<String>| -> Result<(), String> {
+    let mut n = 0;
+    let mut any = false;
+    let draw = |s: &mut Session, frames: &mut Vec<(usize, String)>, at: usize| -> Result<(), String> {
         let (w, h) = size.unwrap_or(s.size);
         let r = s.render(w, h, format)?;
-        frames.push(r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default()));
+        frames.push((at, r.frame.unwrap_or_else(|| r.rows.map(|r| r.to_string()).unwrap_or_default())));
         Ok(())
     };
     for (i, line) in trace.lines().enumerate() {
@@ -935,6 +1289,10 @@ pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &s
             if let Some(env) = v.get("env") {
                 s.set_env(env);
             }
+            // Live, a state line's moment had a frame on screen: what the next click hits (the
+            // click targets, the document's rows) is that frame's, so draw it (emtsr).
+            let (w, h) = s.size;
+            s.render(w, h, "text").map_err(at)?;
         } else {
             if session.is_none() {
                 session = Some(open(None).map_err(at)?);
@@ -951,15 +1309,17 @@ pub fn replay(open: &mut Open, trace: &str, size: Option<(u16, u16)>, format: &s
             s.apply(msg).map_err(at)?;
             s.drop_effects();
         }
-        if every {
-            draw(session.as_mut().expect("opened"), &mut frames)?;
+        if want(n) {
+            any = true;
+            draw(session.as_mut().expect("opened"), &mut frames, n)?;
         }
+        n += 1;
     }
-    if !every {
+    if !any {
         if session.is_none() {
             session = Some(open(None)?);
         }
-        draw(session.as_mut().expect("opened"), &mut frames)?;
+        draw(session.as_mut().expect("opened"), &mut frames, n.saturating_sub(1))?;
     }
     Ok(frames)
 }

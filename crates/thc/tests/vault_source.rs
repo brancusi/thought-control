@@ -7,7 +7,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 fn tmp(name: &str) -> PathBuf {
-    let d = std::env::temp_dir().join(format!("thc-vs-{name}-{}", std::process::id()));
+    let d = thc_core::scratch::dir(&format!("thc-vs-{name}-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&d);
     std::fs::create_dir_all(&d).unwrap();
     // /var is a link to /private/var, and thc sees the resolved cwd.
