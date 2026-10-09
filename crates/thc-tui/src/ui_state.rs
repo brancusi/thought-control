@@ -14,7 +14,9 @@
 //! bytes. See docs/ui-protocol.md.
 
 use crate::app::{Edit, Focus, MoveTarget, Overlay, PromptKind, Toast, UpdateState, View};
-use crate::editor::{BlockPos, Target};
+use crate::editor::Target;
+#[cfg(test)]
+use crate::editor::BlockPos;
 use crate::input::LineInput;
 use crate::keymap::Key;
 use chrono::NaiveDate;
@@ -190,6 +192,15 @@ pub struct UiState {
     // ---- the sidebar -----------------------------------------------------------------------------
     /// Pages beside the page (sidebar.md): the stack of panels, which is active, its width.
     pub sidebar: crate::sidebar::SidebarState,
+
+    // ---- layers ----------------------------------------------------------------------------------
+    /// Hints, highlights, spotlights and a walkthrough over the screen (layers.rs). Never
+    /// written to the vault; left out of the JSON while empty.
+    #[serde(skip_serializing_if = "crate::layers::LayerState::is_empty")]
+    pub layers: crate::layers::LayerState,
+    /// Isolated built-in teaching session; cannot switch vaults or update the binary.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub teaching_demo: bool,
 }
 
 impl Default for UiState {
@@ -258,6 +269,8 @@ impl Default for UiState {
             offline_toast_shown: false,
             history: Default::default(),
             sidebar: Default::default(),
+            layers: Default::default(),
+            teaching_demo: false,
         }
     }
 }
@@ -290,6 +303,7 @@ impl UiState {
         self.now_ms = now_ms;
         self.utc_offset_min = utc_offset_min;
         self.today = self.local_time().date();
+        self.layers.expire(now_ms);
     }
 
     /// Whether the clock moving to `now_ms` changes what's on screen: a toast or a flash to
@@ -300,6 +314,7 @@ impl UiState {
             || !self.flashes.is_empty()
             || !self.pending_keys.is_empty()
             || self.main.near_miss.is_some()
+            || self.layers.timed()
     }
 
     // ---- pure presentation helpers (update.rs uses these; App's wrappers delegate) ----------

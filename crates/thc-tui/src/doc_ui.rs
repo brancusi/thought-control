@@ -236,7 +236,18 @@ pub(crate) fn view_geometry(app: &App, w: usize, h: u16) -> ViewGeometry {
     ViewGeometry { width: w.saturating_sub(left).min(u16::MAX as usize) as u16, height: h, column: text_width(ctx, app.screen_width, app.detail_shows(), 0).min(u16::MAX as usize) as u16, extra_rows: Vec::new(), typewriter }
 }
 
-fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std::collections::HashSet<usize>, (usize, usize)) {
+fn layout(
+    app: &mut App,
+    w: usize,
+    h: u16,
+) -> (
+    Vec<Row>,
+    Option<(u16, u16)>,
+    std::collections::HashSet<usize>,
+    (usize, usize),
+    caretline::Frame,
+    usize,
+) {
     let ctx = DocContext::from_app(app);
     let left = left_edge(ctx, w);
     let app_vault = app.vault.paths.vault.clone();
@@ -310,8 +321,12 @@ fn layout(app: &mut App, w: usize, h: u16) -> (Vec<Row>, Option<(u16, u16)>, std
             })
         })
         .collect();
-    let own = after.iter().filter(|(_, a)| a.meta_row).map(|(&i, _)| i).collect();
-    (rows, f.cursor, own, d.scroll_rows())
+    let own = after
+        .iter()
+        .filter(|(_, a)| a.meta_row)
+        .map(|(&i, _)| i)
+        .collect();
+    (rows, f.cursor, own, d.scroll_rows(), f.cn, left)
 }
 
 impl Row {
@@ -603,6 +618,16 @@ pub struct PreparedDoc {
     days: Vec<(u16, u16, u16, chrono::NaiveDate)>,
     body: Rect,
     crumb: Option<CrumbAt>,
+    /// The engine's frame and where its top-left cell is on screen (layers_ui.rs).
+    pub frame: caretline::Frame,
+    pub frame_at: (u16, u16),
+}
+
+impl PreparedDoc {
+    /// Whether this prepared document is the one drawn now (its area and revision).
+    pub fn current(&self, app: &App) -> bool {
+        self.revision == source_revision(app)
+    }
 }
 
 pub(crate) fn prepare(app: &mut App, area: Rect) {
@@ -638,7 +663,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
     };
     let head_h = (header.len() as u16).min(area.height);
     let body = Rect { y: area.y + head_h, height: area.height.saturating_sub(head_h), ..area };
-    let (mut rows, mut cursor, mut own_meta, mut scroll) = layout(app, w, body.height);
+    let (mut rows, mut cursor, mut own_meta, mut scroll, mut frame, mut left) = layout(app, w, body.height);
     // The caret line stays on its screen row when the geometry changes under it (the sidebar
     // opens or closes, the rail comes or goes, the terminal resizes): the view scrolls by what
     // the reflow moved it (interaction.md §2.2).
@@ -653,11 +678,11 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         if same_place && follows && now_y != pin.y && pin.y >= body.y && pin.y < body.bottom() {
             let top = d.scroll() as isize + now_y as isize - pin.y as isize;
             app.doc.as_mut().unwrap().set_scroll(top.max(0) as usize, false);
-            (rows, cursor, own_meta, scroll) = layout(app, w, body.height);
+            (rows, cursor, own_meta, scroll, frame, left) = layout(app, w, body.height);
         }
     }
     app.caret_pin = cursor.map(|(_, row)| CaretPin { y: body.y + row, ..here });
-    app.derived.doc = Some(PreparedDoc { area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body, crumb });
+    app.derived.doc = Some(PreparedDoc { area, revision: source_revision(app), rows, cursor, own_meta, scroll, header, days, body, crumb, frame, frame_at: (body.x + left as u16, body.y) });
 }
 
 /// Where the main view's caret was drawn, for the next layout (`prepare`): its document and

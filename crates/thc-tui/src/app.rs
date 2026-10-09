@@ -493,6 +493,10 @@ pub struct App {
     /// A drag in the sidebar: the divider (resizing) or a header (reordering, and where it
     /// would drop).
     pub sidebar_drag: Option<crate::sidebar_app::Drag>,
+    /// The agent policy for layers (`[layers] agent_limits`; a trace records it in `env`).
+    pub layer_limits: crate::layers::AgentLimits,
+    /// The keymap actions run in this message (a walkthrough's `command` predicates).
+    pub ran_actions: Vec<String>,
 }
 
 impl std::ops::Deref for App {
@@ -860,8 +864,16 @@ impl App {
             pointer_on_link: false,
             term_width: 0,
             sidebar_drag: None,
+            layer_limits: crate::layers::AgentLimits::parse(
+                thc_core::settings::current()
+                    .str("layers.agent_limits")
+                    .unwrap_or("off"),
+            ),
+            ran_actions: Vec::new(),
         };
         app.load_page_ids();
+        // The tours this device has seen (layers.rs).
+        app.ui.layers.tour.seen = crate::layers::load_seen(&app.vault.paths.cache);
         if !deferred {
             app.reload()?;
         }
@@ -4333,6 +4345,9 @@ impl App {
 
     /// `:update`: run the verified `thc update` in the background; the bar shows progress.
     pub fn start_update(&mut self) {
+        if self.ui.teaching_demo {
+            return self.info("Updates are disabled in the teaching sandbox");
+        }
         // Already installed under us: reload in place, nothing to download.
         if let Some(v) = self.installed.clone() {
             if self.edit.is_some() {

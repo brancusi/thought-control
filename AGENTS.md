@@ -380,8 +380,10 @@ These rules come first; every review checks them.
   derive tx/event ids from it, and the seed keys its creates, so `scripts/guide-renders.sh` output is
   identical across runs: a render diff means the UI changed.
 - **Build/test:**
-  - `cargo build`, `cargo test` (the Rust toolchain is pinned via `mise.toml`, so run
-    `mise exec -- cargo …` if `cargo` isn't on PATH).
+  - Local builds use `scripts/with-caretline.sh <engine-repo> <scratch-export>` with the
+    companion-crate Cargo overrides shown in README.md, then `build` or `test --workspace`.
+    The Rust toolchain is selected via `mise.toml`; use `mise exec --` before the script if
+    `cargo` isn't on PATH.
   - `crates/thc-core/tests/convergence.rs` simulates several devices syncing and must
     always pass.
 - **The contract is `docs/FORMAT.md`:**
@@ -402,14 +404,15 @@ These rules come first; every review checks them.
 - **caretline (the editor engine):** caretline lives at brancusi/caretline; engine bugs found in
   thc are fixed there first, released or pinned, then pulled into thc. Never patch the engine
   inside thought-control.
-  - thc depends on `caretline = "0.3"` (crates.io) in `crates/thc-tui/Cargo.toml`.
-  - A fix not yet released is pinned in the root `Cargo.toml`:
-    `[patch.crates-io] caretline = { git = "https://github.com/brancusi/caretline", rev = "<sha>" }`.
-    Bump the rev when thc needs a newer engine commit (merged on brancusi/caretline main), and
-    remove the patch once a caretline release contains it.
-  - Working on both at once: point the patch at your caretline checkout
-    (`caretline = { path = "../caretline/crates/caretline" }`), never commit that, then land
-    the engine PR in brancusi/caretline and pin its merged rev here.
+  - thc depends on `caretline = "=0.4.0"`, `caretline-layers = "=0.1.0"` and
+    `caretline-tour = "=0.1.0"` in `crates/thc-tui/Cargo.toml`.
+  - Local-only development pins the exact library commit in `caretline.rev`.
+    `scripts/with-caretline.sh <engine-repo> <scratch-export> <cargo-args…>` archives and
+    verifies that immutable commit, supplies Cargo's engine path override and keeps build
+    output outside the checkout. Companion overrides use the same verified export. It never
+    fetches, follows a branch or edits the engine source.
+  - Publication waits until the pin is a public release or accessible Git revision; never
+    replace it with a mutable sibling checkout.
 - **Keys:** one table (`crates/thc-tui/src/keymap.rs`, keymap.md) drives dispatch, the footer, help,
   the palette and `thc keys`. The write context's editing keys and their words come from caretline's
   command catalog and default keymap (`crates/thc-tui/src/editing_keys.rs`); thc's own differences are

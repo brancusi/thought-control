@@ -51,6 +51,11 @@ pub struct PreparedPanel {
     pub more_y: Option<u16>,
     /// A list panel's rows on screen: (y, row index).
     pub rows: Vec<(u16, usize)>,
+    /// A doc panel's engine frame and where its top-left cell is (layers resolve text anchors
+    /// in it), and its lines on screen: (y, x, width, note id).
+    pub frame: Option<caretline::Frame>,
+    pub frame_at: Option<(u16, u16)>,
+    pub line_rows: Vec<(u16, u16, u16, String)>,
 }
 
 /// The sidebar, laid out for one frame.
@@ -138,6 +143,15 @@ pub struct PanelCache {
     rows_key: u64,
     lines: Vec<Line<'static>>,
     cursor: Option<(u16, u16)>,
+    extra: DocExtra,
+}
+
+/// What layers need of a doc panel: its engine frame and its lines on screen, (row, column,
+/// width, note id) from the panel's top-left.
+#[derive(Clone, Default)]
+pub struct DocExtra {
+    frame: Option<caretline::Frame>,
+    lines: Vec<(u16, u16, u16, String)>,
 }
 
 fn measure(app: &mut App, key: &PanelKey, w: u16, cap: usize) -> Measure {
@@ -340,6 +354,7 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
         let mut caret = None;
         let mut more_y = None;
         let mut list_rows_at = Vec::new();
+        let (mut frame, mut frame_at, mut line_rows) = (None, None, Vec::new());
         if !folded && body_h > 0 {
             let m = &measures[i];
             if let Some(why) = app.panels.get(key).and_then(|rt| rt.problem.clone()) {
@@ -348,8 +363,21 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
                 let capped = body_h < m.natural && !focused && Some(key) != active.as_ref();
                 let linked_row = m.linked > 0 && body_h >= 2 && !capped;
                 let doc_h = body_h - linked_row as u16 - capped as u16;
-                let (lines, cur) = doc_rows(app, key, view_w, doc_h.max(1));
-                let r = Rect { x: area.x + 1, y: body_y, width: view_w, height: doc_h.max(1) };
+                let (lines, cur, ex) = doc_rows(app, key, view_w, doc_h.max(1));
+                let r = Rect {
+                    x: area.x + 1,
+                    y: body_y,
+                    width: view_w,
+                    height: doc_h.max(1),
+                };
+                frame = ex.frame;
+                frame_at = Some((r.x, r.y));
+                line_rows = ex
+                    .lines
+                    .into_iter()
+                    .filter(|(dy, ..)| *dy < doc_h)
+                    .map(|(dy, dx, w, id)| (body_y + dy, area.x + dx, w, id))
+                    .collect();
                 view = Some(r);
                 caret = cur.map(|(cx, cy)| (r.x + cx, r.y + cy));
                 body.extend(lines.into_iter().take(doc_h as usize));
@@ -371,7 +399,21 @@ pub(crate) fn prepare(app: &mut App, area: Rect) {
             }
         }
         y = body_y + body.len() as u16;
-        out.push(PreparedPanel { key: key.clone(), header_y, header, header_targets: targets, body_y, body, view, caret, more_y, rows: list_rows_at });
+        out.push(PreparedPanel {
+            key: key.clone(),
+            header_y,
+            header,
+            header_targets: targets,
+            body_y,
+            body,
+            view,
+            caret,
+            more_y,
+            rows: list_rows_at,
+            frame,
+            frame_at,
+            line_rows,
+        });
         // A blank row between panels.
         y += 1;
     }
@@ -449,7 +491,12 @@ fn list_rows(app: &mut App, key: &PanelKey, s_w: u16, h: u16, focused: bool, y0:
 }
 
 /// A doc panel's rows at `w` × `h`, styled, and its caret's cell in the view.
-fn doc_rows(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+fn doc_rows(
+    app: &mut App,
+    key: &PanelKey,
+    w: u16,
+    h: u16,
+) -> (Vec<Line<'static>>, Option<(u16, u16)>, DocExtra) {
     // The same inputs as last frame: the same rows (a panel costs nothing while you type
     // elsewhere).
     let now = app.ui.now_ms;
@@ -459,19 +506,39 @@ fn doc_rows(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>
     });
     let view_inputs = app.panel_doc_mut(key).map(|(d, _)| (d.caret(), d.anchor(), d.scroll_anchor(), d.scroll_free()));
     app.main_view_current();
-    let rk = layout_key(app, key, (inputs, view_inputs.map(|(c, a, s, f)| (c.line, c.byte, a.map(|a| (a.line, a.byte)), s, f)))).unwrap_or(1);
-    if let Some(c) = app.derived.sidebar_cache.get(key).filter(|c| c.rows_key == rk && rk != 0) {
-        return (c.lines.clone(), c.cursor);
+    let rk = layout_key(
+        app,
+        key,
+        (
+            inputs,
+            view_inputs.map(|(c, a, s, f)| (c.line, c.byte, a.map(|a| (a.line, a.byte)), s, f)),
+        ),
+    )
+    .unwrap_or(1);
+    if let Some(c) = app
+        .derived
+        .sidebar_cache
+        .get(key)
+        .filter(|c| c.rows_key == rk && rk != 0)
+    {
+        return (c.lines.clone(), c.cursor, c.extra.clone());
     }
     let r = doc_rows_fresh(app, key, w, h);
     let c = app.derived.sidebar_cache.entry(key.clone()).or_default();
     c.rows_key = rk;
     c.lines = r.0.clone();
     c.cursor = r.1;
+    c.extra = r.2.clone();
     r
 }
 
-fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'static>>, Option<(u16, u16)>) {
+fn doc_rows_fresh(
+    app: &mut App,
+    key: &PanelKey,
+    w: u16,
+    h: u16,
+) -> (Vec<Line<'static>>, Option<(u16, u16)>, DocExtra) {
+    let mut layer_extra = DocExtra::default();
     lay_out(app, key, w, h, h as usize + 1);
     let th = app.theme;
     let journal = key.kind == PanelKind::Day;
@@ -481,15 +548,31 @@ fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'s
     // Rows changed elsewhere in the last 3 s get the live tint (§4.3).
     let live: std::collections::HashSet<String> = if th.is_ansi() { Default::default() } else { app.ui.flashes.iter().filter(|(_, (t, _))| now.saturating_sub(*t) < 3000).map(|(id, _)| id.clone()).collect() };
     let shown: Vec<usize> = match app.panel_doc_mut(key) {
-        Some((d, _)) => d.frame().rows.iter().filter_map(|r| if let DocRow::Text { line, .. } = r { Some(*line) } else { None }).collect(),
-        None => return (out, None),
+        Some((d, _)) => d
+            .frame()
+            .rows
+            .iter()
+            .filter_map(|r| {
+                if let DocRow::Text { line, .. } = r {
+                    Some(*line)
+                } else {
+                    None
+                }
+            })
+            .collect(),
+        None => return (out, None, layer_extra),
     };
     app.main_view_current();
     let forms: std::collections::HashMap<usize, crate::doc_ui::Form> = match app.panel_doc(key) {
-        Some(d) => shown.iter().map(|&i| (i, crate::doc_ui::form(app, &d.blocks()[i]))).collect(),
-        None => return (out, None),
+        Some(d) => shown
+            .iter()
+            .map(|&i| (i, crate::doc_ui::form(app, &d.blocks()[i])))
+            .collect(),
+        None => return (out, None, layer_extra),
     };
-    let Some((d, _)) = app.panel_doc_mut(key) else { return (out, None) };
+    let Some((d, _)) = app.panel_doc_mut(key) else {
+        return (out, None, layer_extra);
+    };
     let frame = d.frame();
     let sel = d.selection();
     let blocks = d.blocks();
@@ -521,6 +604,16 @@ fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'s
                 }
                 let start = if first { start.max(crate::doc_ui::marker_len(l)).min(end) } else { start };
                 let text = &l.text[start..end];
+                {
+                    let tx = 1 + crate::editor::MARKS + l.depth as u16 * 4 + crate::editor::HANG;
+                    let x0 = if first { tx - crate::editor::HANG } else { tx };
+                    layer_extra.lines.push((
+                        out.len() as u16,
+                        x0,
+                        tx - x0 + (width(text) as u16).max(1),
+                        l.id.clone(),
+                    ));
+                }
                 let (sa, sb) = match sel {
                     Some((s, e)) if line >= s.line && line <= e.line => {
                         let a = if line == s.line { s.byte.clamp(start, end) } else { start };
@@ -562,8 +655,9 @@ fn doc_rows_fresh(app: &mut App, key: &PanelKey, w: u16, h: u16) -> (Vec<Line<'s
     if let Some((cx, cy)) = frame.cursor {
         cursor = Some((cx, cy));
     }
+    layer_extra.frame = Some(frame.cn.clone());
     app.main_view_current();
-    (out, cursor)
+    (out, cursor, layer_extra)
 }
 
 /// Draw the prepared sidebar in `area`, with the divider left of it.
@@ -599,6 +693,29 @@ pub fn draw(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, div
         }
         if let Some(my) = pp.more_y.filter(|y| *y < area.bottom()) {
             crate::ui::target(render, area.x, area.right(), my, Click::Panel(i, Part::More));
+        }
+        // Layers' anchors: the panel, and a doc panel's lines (layers_ui.rs).
+        {
+            let bottom = p
+                .panels
+                .get(i + 1)
+                .map_or(area.bottom(), |n| n.header_y.saturating_sub(1))
+                .min(area.bottom());
+            render.anchors.put(
+                caretline_layers::AnchorKey::host("panel", &i.to_string()),
+                caretline_layers::Rect::new(
+                    area.x,
+                    pp.header_y,
+                    area.width,
+                    bottom.saturating_sub(pp.header_y).max(1),
+                ),
+            );
+            for (y, x, w, id) in &pp.line_rows {
+                render.anchors.put(
+                    caretline_layers::AnchorKey::host("row", id),
+                    caretline_layers::Rect::new(*x, *y, *w, 1),
+                );
+            }
         }
         if let Some(v) = pp.view {
             render.panel_views.push((pp.key.clone(), v));

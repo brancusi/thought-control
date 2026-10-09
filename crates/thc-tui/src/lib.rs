@@ -23,6 +23,9 @@ mod sidebar_app;
 mod sidebar_ui;
 mod sidebar_list;
 pub mod ui_state;
+pub mod layers;
+mod layers_ui;
+pub mod teaching;
 mod session;
 mod ui_proto;
 mod ui_server;
@@ -49,6 +52,8 @@ mod flows;
 mod sidebar_tests;
 #[cfg(test)]
 mod session_tests;
+#[cfg(test)]
+mod teaching_tests;
 #[cfg(test)]
 mod goldens;
 #[cfg(test)]
@@ -106,14 +111,27 @@ fn trace_file() -> Option<std::path::PathBuf> {
 }
 
 pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()> {
+    run_mode(vault, focus, start, false)
+}
+
+/// The same actual terminal editor, with a synthetic sandbox and optional manual guide.
+pub fn run_teaching(vault: Vault) -> Result<()> {
+    run_mode(vault, None, None, true)
+}
+
+fn run_mode(vault: Vault, focus: Option<&str>, start: Option<&str>, teaching: bool) -> Result<()> {
     let mut app = if start.is_some() { App::new_deferred(vault)? } else { App::new(vault)? };
-    app.live_rx = Some(live::spawn(app.vault.paths.clone()));
+    if !teaching {
+        app.live_rx = Some(live::spawn(app.vault.paths.clone()));
+    }
     if let Some(id) = focus {
         app.focus_node(id);
     }
     apply_start(&mut app, start);
-    about::on_start(&mut app);
-    resume(&mut app);
+    if !teaching {
+        about::on_start(&mut app);
+        resume(&mut app);
+    }
     // ratatui::init sets up the terminal (raw mode, alternate screen, panic hook); frames go
     // through the quiet backend.
     let _ = ratatui::init();
@@ -178,6 +196,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
     tmux_escape_note(&mut app);
     let size = ratatui::crossterm::terminal::size().unwrap_or((80, 24));
     let mut session = session::Session::new(app, size);
+    if teaching { teaching::start(&mut session)?; }
     // `thc tui --trace FILE`: every message, from this state on, to replay later.
     if let Some(path) = trace_file() {
         if let Err(e) = session.trace_to(&path) {
@@ -185,7 +204,7 @@ pub fn run(vault: Vault, focus: Option<&str>, start: Option<&str>) -> Result<()>
         }
     }
     // The UI protocol (docs/ui-protocol.md): `thc ui` finds this TUI by its discovery file.
-    let mut server = if std::env::var_os("THC_TUI_NO_LISTEN").is_some() {
+    let mut server = if teaching || std::env::var_os("THC_TUI_NO_LISTEN").is_some() {
         None
     } else {
         let real = session.app.vault.origin.as_ref().map_or(session.app.vault.paths.vault.clone(), |o| o.vault.clone());
@@ -1037,6 +1056,14 @@ pub fn ui_default_state(vault: Vault) -> Result<serde_json::Value> {
 }
 
 pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option<&str>, start: Option<&str>) -> Result<String> {
+    snapshot_mode(vault, width, height, keys, focus, start, false)
+}
+
+pub fn teaching_snapshot(vault: Vault, width: u16, height: u16, keys: &str) -> Result<String> {
+    snapshot_mode(vault, width, height, keys, None, None, true)
+}
+
+fn snapshot_mode(vault: Vault, width: u16, height: u16, keys: &str, focus: Option<&str>, start: Option<&str>, teaching: bool) -> Result<String> {
     use ratatui::Terminal;
     use ratatui::backend::TestBackend;
     use session::{Msg, Session};
@@ -1056,6 +1083,7 @@ pub fn snapshot(vault: Vault, width: u16, height: u16, keys: &str, focus: Option
         app.reexec = true;
     }
     let mut session = Session::new(app, (width, height));
+    if teaching { teaching::start(&mut session)?; }
     // `thc ui render --state FILE`: start from a state.
     if let Some(path) = std::env::var_os("THC_TUI_STATE") {
         let text = if path == "-" { std::io::read_to_string(std::io::stdin())? } else { std::fs::read_to_string(&path)? };

@@ -8,6 +8,7 @@ them.
 |---|---|
 | [Why it's like this](philosophy.md) | You want the ideas first |
 | [Your first ten minutes](first-ten-minutes.md) | You've just installed it |
+| [Learn by doing](demo.md) | Explore an interactive scratch workshop in a local demo build |
 | [Every view, one by one](views.md) | You want to know what each screen is for |
 | [Writing](writing.md) | You want to know how the editor thinks |
 | [The mouse](mouse.md) | You'd rather click |
