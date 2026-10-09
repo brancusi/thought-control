@@ -944,7 +944,7 @@ pub(crate) fn draw_pane(render: &mut RenderOutput, f: &mut Frame, host: &App, pr
             Span::styled("≠ ", th.s(Token::Conflict))
         } else if l.remote_text.is_some() {
             Span::styled("◆ ", th.s(Token::Agent))
-        } else if l.save_error.is_some() || l.saving_since.is_some_and(|t| app.ui.now_ms.saturating_sub(t) >= 3000) {
+        } else if l.save_error.is_some() {
             Span::styled("◌ ", th.s(Token::Muted))
         } else if r.first && d.is_folded(&l.id) {
             Span::styled("▸ ", th.s(Token::Muted))

@@ -198,7 +198,7 @@ some parts still run the older way, inside `Session::apply` with the vault in re
 - **Write actions** (done, status, dates, tags, move, delete, undo, review, capture) are `App`
   methods that touch the store directly. They're single messages in the trace and replay
   deterministically on the same vault, but they aren't update functions yet.
-- **The document's key path** drives the editor and saves through a writer thread. Its clock is
+- **The document's key path** drives the editor and saves it inline. Its clock is
   `now_ms`, so typing and idle saves replay, but new lines' ids are minted by the runtime and
   aren't in the trace.
 - **Background work** (the daemon's push, the update check) runs as runtime code; what it

@@ -24,7 +24,7 @@
 //!   [`Doc::set_shape`], [`Doc::insert_block`], [`Doc::insert_blocks`], [`Doc::patch`],
 //!   [`Doc::apply_held_text`].
 //! - **Saving:** [`Doc::plan_save`], [`Doc::apply_results`], [`Doc::idle_elapsed`],
-//!   [`Doc::plan_idle`], [`Doc::idle_saved`], [`Doc::mark_saving`], [`Doc::mark_save_failed`],
+//!   [`Doc::plan_idle`], [`Doc::idle_saved`], [`Doc::mark_save_failed`],
 //!   [`Doc::name_conflict`].
 
 mod doc;
@@ -33,7 +33,7 @@ mod patch;
 mod tasks;
 mod view;
 
-pub use doc::{Doc, Line, Sent, Target, meta_text, short_repeat};
+pub use doc::{Doc, Line, Target, meta_text, short_repeat};
 pub use tasks::TASK_CYCLE;
 pub use view::{DocHit, DocRow, ViewGeometry, HANG, MARKS};
 
@@ -589,13 +589,6 @@ impl Doc {
             l.base = rev;
             l.saved = Some(text);
             l.remote_text = None;
-        }
-    }
-
-    /// The notes in `ids` are being saved since `since` (ms, [`ms`]; None: not any more).
-    pub fn mark_saving(&mut self, ids: &[String], since: Option<u64>) {
-        for l in self.lines_state_mut().iter_mut().filter(|l| ids.contains(&l.id)) {
-            l.saving_since = since;
         }
     }
 

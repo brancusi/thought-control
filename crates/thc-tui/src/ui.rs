@@ -998,7 +998,6 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
     });
     if let (Some((d, what, aside, editor)), true) = (panel.or(main_doc), app.overlay.is_none()) {
         let failed = d.blocks().iter().any(|l| l.save_error.is_some());
-        let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.ui.now_ms.saturating_sub(t) >= 3000));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
         let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());
@@ -1006,8 +1005,6 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             ("just type".into(), Token::Muted, false)
         } else if failed {
             ("not saved · :retry".into(), Token::Overdue, false)
-        } else if late {
-            ("◌ saving…".into(), Token::Muted, false)
         } else {
             ("autosaved".into(), Token::Muted, true)
         };

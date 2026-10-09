@@ -122,9 +122,10 @@ What the writer guarantees:
 - **Stale structure is skipped, not forced.** A `Move` or `Delete` with an outdated `rev` is left
   out and reported with the node's current state; the rest of the save still lands.
 
-When the daemon is live, the TUI hands the save to a writer thread that sends it as
-`blocks.apply`, so typing never waits on a disk. Without it, the TUI writes inline under the
-device write lock. One save is out at a time; the next is planned when its result is in.
+There is one save path. `save_doc` plans the changed lines and writes them inline, under the
+device write lock, whether or not a daemon runs; the daemon, if it does, sees the append like
+any other writer's. A save's results are in before the next key, so nothing is ever "out": no
+queue, no save waiting on another, no refresh held back for one.
 
 ## Changes from elsewhere
 
@@ -171,7 +172,7 @@ case study.
   ['crates/thc-tui/src/editor/doc.rs', '<code>Line</code> and the save diff (<code>plan_save</code>)'],
   ['crates/thc-tui/src/editor/tasks.rs', 'tasks on caretline\'s extension points'],
   ['crates/thc-tui/src/editor/patch.rs', 'changes from elsewhere, folded in'],
-  ['crates/thc-tui/src/doc_app.rs', 'saving: the writer thread, idle saves, results'],
+  ['crates/thc-tui/src/doc_app.rs', 'saving: the one save path, idle saves, results'],
   ['crates/thc-tui/src/sidebar_app.rs', 'one Doc, many views: panels and <code>with_panel</code>'],
   ['crates/thc-tui/src/doc_view.rs', 'an agent\'s own view on the open document'],
   ['crates/thc-tui/src/editing_keys.rs', 'caretline\'s commands in thc\'s key table'],

@@ -110,8 +110,8 @@ about 120 ms, fires alerts and keeps the export fresh.
 </Decision>
 
 <Decision id="D-11" title="Who writes: the process itself, or the daemon" state="revised"
-  why={"The spec first had clients send writes through the daemon. As built, the CLI writes directly under the device write lock (a <code>flock</code> plus <code>BEGIN IMMEDIATE</code>), so it never depends on the daemon. Later the TUI's document saves moved to the daemon's <code>blocks.apply</code> when it's live, on a writer thread, so typing never waits on fsync."}
-  cost={"Two write routes to keep equivalent. Both take the same lock and produce the same events; without a daemon the TUI saves inline."}>
+  why={"The spec first had clients send writes through the daemon. As built, the CLI and the TUI write directly under the device write lock (a <code>flock</code> plus <code>BEGIN IMMEDIATE</code>), so neither depends on the daemon. For a while the TUI's document saves went through the daemon's <code>blocks.apply</code> when it was live, on a writer thread; that second route, with its queue of saves in flight, was removed: one save path, inline, daemon or not."}
+  cost={"A very large save (1,000 lines pasted into a 5,000-line page, about a second) holds the keyboard while it writes. Everyday saves take milliseconds."}>
 The socket's write methods also serve clients without file access, such as the menu bar app.
 </Decision>
 
