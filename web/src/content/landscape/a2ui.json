@@ -28,7 +28,7 @@
  },
  "license": {
   "spdx": "Apache-2.0",
-  "notes": "Contributions require the Google CLA (CONTRIBUTING.md). Repo moved from google/A2UI to the a2ui-project org but contribution rules, style guides and 'go/a2ui-internal' references are still Google's."
+  "notes": "Contributions require the Google CLA (CONTRIBUTING.md). Repo moved from google/A2UI to the a2ui-project org but contribution rules, style guides and references to Google's internal go/ links are still Google's."
  },
  "language": "Spec (JSON Schema); renderers in TypeScript (Lit, React, Angular), Dart (Flutter GenUI), Kotlin (Jetpack Compose alpha); agent SDKs in Python",
  "backing": "Google (created it; Opal, Gemini Enterprise, Flutter, ADK teams), with CopilotKit/AG-UI as day-zero partner and community renderers",
@@ -114,7 +114,7 @@
   "Readback is limited to the data model attached to user actions; agents can't inspect what was rendered",
   "No history, undo or replay in the protocol",
   "Generation is costly when the model writes whole surfaces (one reported dashboard ~46k tokens/~40 s; competitors such as OpenUI Lang claim 55-67% fewer tokens than JSON formats)",
-  "Google CLA and Google-internal process; not under a neutral foundation"
+  "Google CLA and internal Google process; not under a neutral foundation"
  ],
  "relation_to_scene": {
   "overlap": "Same core idea: UI as a serializable JSON value with stable component ids, a separate data model bound by paths, small id-addressed updates, and a trusted component catalog.",

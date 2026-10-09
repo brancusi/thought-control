@@ -71,7 +71,7 @@
   "how": "An agent running in a Wave terminal shells out to `wsh` (open a web/preview/editor block, run a command in a new block, set block metadata, read scrollback, list blocks as JSON, badge/notify). Wave's own AI uses internal tools. No MCP server for Wave itself was found.",
   "integration_effort": "Zero for CLI agents running inside Wave (wsh is on PATH); nothing for agents outside Wave.",
   "readback": "Text scrollback via `wsh termscrollback`, block lists/metadata as JSON; widget screenshots only available to Wave AI internally.",
-  "granular_edits": "Block-level: setmeta by block id, deleteblock, open/replace views. No widget-internal UI patching.",
+  "granular_edits": "Block-level: setmeta by block id, deleteblock, open/replace views. No patching of UI inside a widget.",
   "history": "None for UI/layout; durable SSH sessions preserve shell state.",
   "summary": "Agent-drivable at the workspace layout level through a CLI: an agent can open panes and point them at things, but cannot build or patch a custom UI inside them (until Tsunami ships)."
  },
