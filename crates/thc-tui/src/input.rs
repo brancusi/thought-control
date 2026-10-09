@@ -1,6 +1,6 @@
 //! Key handling and a small single-line editor used by prompts, capture and the palette.
 
-use crate::app::{App, Overlay, PromptKind, Row, View, fuzzy};
+use crate::app::{App, Focus, Overlay, PromptKind, Row, View, fuzzy};
 use ratatui::crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
 #[derive(Clone, Debug, Default, PartialEq, serde::Serialize, serde::Deserialize)]
@@ -227,7 +227,11 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                     *sel = i;
                 }
             }
-            Some(crate::ui::Click::LinkRow(i)) if app.main.link_open => app.main.link_sel = Some(i),
+            Some(crate::ui::Click::LinkRow(i)) => {
+                let panel = app.render.panel_targets.iter().rev().find(|(_, ts)| ts.iter().any(|t| t.y == y && x >= t.x0 && x < t.x1 && matches!(t.what, crate::ui::Click::LinkRow(_)))).map(|(k, _)| k.clone());
+                if let Some(k) = panel { app.with_panel(&k, |a| a.main.link_sel = Some(i)); }
+                else if app.main.link_open { app.main.link_sel = Some(i); }
+            }
             _ => {}
         }
         return;
@@ -236,8 +240,11 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     if app.scroll_drag {
         match m.kind {
             K::Drag(MouseButton::Left) => {
-                if let (Some((top, h, total, _, _)), Some(d)) = (app.render.doc_scrollbar, app.doc.as_mut()) {
-                    d.set_scroll((y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1)), true);
+                if let Some(k) = app.panel_pointer.clone() {
+                    app.with_panel(&k, |a| crate::editor_pane::clicks::scroll_drag(a, m));
+                    app.sync_panel_views();
+                } else if app.render.doc_scrollbar.is_some() && app.doc.is_some() {
+                    crate::editor_pane::clicks::scroll_drag(app, m);
                 } else if let Some((top, h, total, _, _)) = app.render.list_scrollbar {
                     // A list has no caret to protect: the cursor goes to the row under the thumb.
                     let row = (y.saturating_sub(top) as usize * total / h.max(1) as usize).min(total.saturating_sub(1));
@@ -247,6 +254,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
             }
             K::Up(_) => {
                 app.scroll_drag = false;
+                app.panel_pointer = None;
                 return;
             }
             _ => {}
@@ -338,31 +346,10 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
     if crate::sidebar_app::mouse(app, m, clicks) {
         return;
     }
+    if crate::editor_pane::clicks::target(app, at.as_ref(), m) { return; }
     if left_down {
         use crate::ui::Click;
         match at {
-            Some(Click::Meta { line, field }) => {
-                let Some(d) = app.doc.as_mut() else { return };
-                let Some(l) = d.blocks().get(line) else { return };
-                let id = l.id.clone();
-                match field {
-                    "open" => app.doc_open(),
-                    "conflict" => {
-                        app.selected = Some(id);
-                        app.open_compare();
-                    }
-                    _ => {
-                        // A date chip opens its editor, prefilled (mouse.md §3).
-                        app.save_doc(true);
-                        if let Some(n) = app.vault.store.node(&id).ok().flatten() {
-                            let (kind, cur) = if field == "due" { (PromptKind::Due(id.clone()), n.due.clone()) } else { (PromptKind::Sched(id.clone()), n.scheduled.clone()) };
-                            let human = cur.as_deref().map(|c| human_date(c, app.today)).unwrap_or_default();
-                            app.prompt = Some((kind, LineInput::with(&human)));
-                        }
-                    }
-                }
-                return;
-            }
             Some(Click::View(v)) => {
                 app.save_doc(true);
                 app.doc_origin = None;
@@ -412,19 +399,6 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 }
                 return;
             }
-            Some(Click::Scroll(i)) => {
-                // On the thumb: drag it. On the track: a page toward the click.
-                if let (Some((_, h, _, ty, th)), Some(d)) = (app.render.doc_scrollbar, app.doc.as_mut()) {
-                    if i >= ty && i < ty + th {
-                        app.scroll_drag = true;
-                    } else if i < ty {
-                        d.set_scroll(d.scroll().saturating_sub(h as usize), true);
-                    } else {
-                        d.set_scroll(d.scroll() + h as usize, true);
-                    }
-                }
-                return;
-            }
             Some(Click::ListScroll(i)) => {
                 if let Some((_, h, _, ty, th)) = app.render.list_scrollbar {
                     if i >= ty && i < ty + th {
@@ -453,7 +427,9 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
             }
             Some(Click::Action(a)) => {
                 // A footer hint: its action, in the document when one is open (keymap.rs).
-                if app.doc.is_some() && !crate::doc_keys::run_write(app, a) {
+                if app.ui.focus == Focus::Sidebar {
+                    crate::sidebar_app::write_action(app, a);
+                } else if app.doc.is_some() && !crate::doc_keys::run_write(app, a) {
                     crate::keymap::run(app, a);
                 } else if app.doc.is_none() {
                     crate::keymap::run(app, a);
@@ -478,14 +454,7 @@ fn handle_mouse_inner(app: &mut App, m: ratatui::crossterm::event::MouseEvent, c
                 }
                 return;
             }
-            Some(Click::LinkRow(i)) => {
-                if app.main.link_open {
-                    app.main.link_sel = Some(i);
-                    key(app, KeyCode::Enter, KeyModifiers::NONE);
-                }
-                return;
-            }
-            Some(Click::Text) => return,
+            Some(Click::Meta { .. } | Click::Scroll(_) | Click::LinkRow(_) | Click::Text) => return,
             Some(Click::Panel(..) | Click::PanelRow(..)) => return,
             Some(Click::Menu(_) | Click::Caret { .. } | Click::Box | Click::Link) | None => {}
         }

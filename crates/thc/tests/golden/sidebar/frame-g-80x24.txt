@@ -21,4 +21,4 @@
 
 
 
- aside 1 of 1 · autosaved   ⌥S main  ⌥J ⌥K panel  ⌥C fold  ⌥W close  ⌥M to main
+ ¶ health · aside 1 of 1 · autosaved         ⌥S main  ⌃T task  ⌃O open  F1 keys

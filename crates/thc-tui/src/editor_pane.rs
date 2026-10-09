@@ -8,12 +8,16 @@
 //! serializable: the main view's is part of `UiState` (its v1 fields, flattened at the top
 //! level under their v1 names), so it replays, patches and restores like the rest of the state.
 
+pub(crate) mod clicks;
+pub(crate) mod update;
+pub(crate) mod view;
+
 use crate::editor::BlockPos;
 use serde::{Deserialize, Serialize};
 
 /// One editor pane's own state (see the module docs). The serde names are the v1 wire names
 /// of the main view's fields.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default, deny_unknown_fields)]
 pub struct EditorState {
     /// Write (typing) or Navigate inside the document.
@@ -53,6 +57,21 @@ pub struct EditorState {
     /// A press on a link: it follows on release where it was pressed.
     #[serde(with = "crate::ui_state::pos_opt")]
     pub click_link: Option<BlockPos>,
+    /// A line-leave save waiting for the first frame, in this pane only.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub save_after_frame: bool,
+}
+
+/// Host operations requested by a borrowed editor view. They run only after that borrow
+/// ends, so navigation cannot confuse a panel's document with main's history/origin.
+#[derive(Clone, Debug, PartialEq)]
+pub enum PaneEffect {
+    Action(String),
+    Follow(String),
+    Aside(crate::sidebar::PanelKey),
+    Compare(String),
+    OpenIssue { target: crate::editor::Target, line: String },
+    Leave,
 }
 
 fn is_zero(n: &u64) -> bool {

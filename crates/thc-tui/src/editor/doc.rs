@@ -288,27 +288,19 @@ impl Doc {
         self.engine.now_ms = now_ms;
     }
 
-    /// Keep the engine's text changes for [`Doc::take_changes`] (layers with text anchors).
+    /// Keep composed document changes for text anchors (shared across this Doc's views).
     pub fn track_changes(&mut self, on: bool) {
-        if !on && self.engine.track {
-            let _ = self.engine.take_changes();
-        }
+        if !on && self.engine.track { let _ = self.engine.take_changes(); }
         self.engine.track = on;
     }
 
-    pub fn tracking(&self) -> bool {
-        self.engine.track
-    }
+    pub fn tracking(&self) -> bool { self.engine.track }
 
-    /// The text changes since the last call, composed (None: none, or not tracking).
     pub fn take_changes(&mut self) -> Option<caretline::ChangeSet> {
         self.engine.take_changes()
     }
 
-    /// The engine's document (layers: where blocks start, for anchors off screen).
-    pub fn cn_doc(&self) -> &caretline::Document {
-        self.engine.cn_doc()
-    }
+    pub fn cn_doc(&self) -> &caretline::Document { self.engine.cn_doc() }
 
     /// The engine's text (tests: the lines against it).
     #[cfg(test)]
@@ -1155,6 +1147,25 @@ mod tests {
 
     /// Enter is a line break in a paragraph; a blank line splits it (writing.md A2–A4); ⌫ at a
     /// paragraph's start joins (A5); a marker typed on a later line starts a note.
+    #[test]
+    fn composed_text_changes_cover_edits_through_both_views() {
+        let mut d = doc(&[(0, Kind::Bullet, "hello")]);
+        d.track_changes(true);
+        let mut before = d.cn_doc().text.clone();
+        d.insert("🙂");
+        d.add_view(1);
+        assert!(d.use_view(1));
+        d.insert("λ");
+        let changes = d.take_changes().expect("both view edits are observed");
+        assert!(changes.apply(&mut before));
+        assert_eq!(before.to_string(), d.cn_doc().text.to_string());
+        assert!(d.take_changes().is_none());
+        d.track_changes(false);
+        d.insert("off");
+        assert!(!d.tracking());
+        assert!(d.take_changes().is_none());
+    }
+
     #[test]
     fn paragraphs_are_plain_text() {
         let mut d = doc(&[(0, Kind::Para, "")]);

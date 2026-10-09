@@ -62,7 +62,7 @@ pub enum DocRow {
 pub struct DocFrame {
     pub rows: Vec<DocRow>,
     pub cursor: Option<(u16, u16)>,
-    /// The engine's own frame (layers resolve text, block and caret anchors in it).
+    /// The same engine frame consumed by overlay text/block/caret anchors.
     pub cn: cn::Frame,
 }
 
@@ -78,6 +78,15 @@ pub enum DocHit {
 }
 
 impl Doc {
+    /// Snapshot just this view for non-mutating measurement and temporary headless renders.
+    pub(crate) fn view_snapshot(&self) -> cn::state::View {
+        self.engine.state().view.clone()
+    }
+
+    pub(crate) fn restore_view_snapshot(&mut self, view: cn::state::View) {
+        self.engine.state_mut().view = view;
+    }
+
     /// Lay the document out in a view of this geometry. The view follows the caret (unless it
     /// was scrolled freely).
     pub fn set_view(&mut self, g: &ViewGeometry) {
@@ -99,6 +108,16 @@ impl Doc {
         } else {
             cn::layout::ensure_caret_visible(st);
         }
+    }
+
+    /// An inactive pane gets its final geometry but never follows its caret as a side
+    /// effect of another pane taking height. Keep its semantic top row and free-scroll mode.
+    pub(crate) fn set_view_unfocused(&mut self, g: &ViewGeometry) {
+        let old = self.engine.state().view.clone();
+        self.set_view(g);
+        let view = &mut self.engine.state_mut().view;
+        view.scroll = old.scroll;
+        view.free = old.free;
     }
 
     /// Lay the notes out ahead at geometry `g` (another width: the sidebar's, before it opens),
@@ -189,11 +208,7 @@ impl Doc {
                 _ => DocRow::Past,
             })
             .collect();
-        DocFrame {
-            rows,
-            cursor: frame.cursor,
-            cn: frame,
-        }
+        DocFrame { rows, cursor: frame.cursor, cn: frame }
     }
 
     /// What a click at cell (`col`, `row`) of the view hits. A blank row, or one a note draws

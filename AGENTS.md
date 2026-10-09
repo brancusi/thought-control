@@ -370,7 +370,8 @@ These rules come first; every review checks them.
 - **The sidebar** (docs/design/sidebar.md in the internal repo): `sidebar.rs` is the stack as
   UiState with its pure rules (and `policy`, the owner's open choices in one place),
   `update::sidebar` the pure update, `sidebar_app.rs` the runtime (a doc panel is a caretline
-  view on a shared `Doc`; `App::with_panel` runs a key through it), `sidebar_ui.rs` the drawing.
+  view on a shared `Doc`; `App::with_panel` borrows it for the shared `editor_pane` update),
+  `sidebar_ui.rs` the container drawing; document bodies use `editor_pane::view`.
   Its keys are the `sidebar` context of the keymap. Acceptance checks and goldens:
   `crates/thc/tests/sidebar.rs` (`THC_UPDATE_GOLDENS=1` regenerates).
 - **Fixtures:** `scripts/seed-sample.sh [--conflict] <vault>` seeds sample data. `--conflict` also

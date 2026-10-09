@@ -30,6 +30,7 @@ mod agents;
 mod editing;
 mod lists;
 mod monkey;
+mod structural_probe;
 mod mouse;
 mod nav;
 mod panes;
@@ -594,7 +595,7 @@ impl Flow {
         self.check(desc, motion, &before);
         // The runtime's after-frame work (the save of a line just left) and its frame: for
         // any pane's document.
-        if self.s.app.doc_save_after_frame || self.s.app.panels.values().any(|rt| rt.slot.save_after_frame) {
+        if self.s.app.main.save_after_frame || self.s.app.panel_keys().iter().any(|k| self.s.app.panel_editor(k).is_some_and(|e| e.save_after_frame)) {
             self.s.runtime(Msg::Frame);
             let mid = self.shot.clone();
             self.shot = draw(&mut self.term, &mut self.s);
@@ -763,6 +764,13 @@ impl Flow {
     // ---- checks ------------------------------------------------------------------------
 
     fn fail(&self, desc: &str, before: &Shot, msg: &str) -> ! {
+        if let Ok(path) = std::env::var("THC_DIAGNOSTIC_TRACE") {
+            let (_, trace) = self.s.trace(None, true).unwrap();
+            std::fs::write(&path, trace.iter().map(|v| format!("{v}\n")).collect::<String>()).unwrap();
+            let mut marks = self.marks.clone();
+            marks.push((trace.len(), desc.to_string(), self.shot.frame()));
+            std::fs::write(format!("{path}.steps.json"), serde_json::to_string(&marks).unwrap()).unwrap();
+        }
         let cursor = |s: &Shot| s.cursor.map_or("hidden".to_string(), |(x, y)| format!("({x},{y})"));
         panic!(
             "\nflow `{}` step {} `{desc}`: {msg}\n--- before (cursor {}) ---\n{}\n--- after (cursor {}) ---\n{}\n",
@@ -909,7 +917,9 @@ impl Flow {
             let top = [pb.caret_top, pa.caret_top].iter().flatten().copied().min();
             if let Some(cy) = top {
                 // The scrollbar's column is left out: its thumb follows the length.
-                let x1 = if pa.id == PaneId::Main { shot.bar_x.or(before.bar_x).unwrap_or(b.x + b.width).min(b.x + b.width) } else { b.x + b.width };
+                let x1 = if pa.id == PaneId::Main { shot.bar_x.or(before.bar_x).unwrap_or(b.x + b.width).min(b.x + b.width) }
+                    else if self.s.app.render.panel_scrollbars.iter().any(|(k, _)| pa.id == PaneId::Panel(k.clone())) { b.x + b.width.saturating_sub(1) }
+                    else { b.x + b.width };
                 for y in b.y..cy {
                     let (p, q) = (before.row(y, b.x, x1), shot.row(y, b.x, x1));
                     if p != q {
@@ -1227,7 +1237,7 @@ fn draw(term: &mut Terminal<Emu>, s: &mut Session) -> Shot {
     let doc_view = app.render.doc_view.map(|(x, y, w, h)| Rect::new(x, y, w, h));
     let side_x = app.sidebar_col.map(|c| buf.area.width.saturating_sub(c + 1)).or(app.sidebar_over.map(|(_, r)| r.x));
     let panels = app.render.panel_views.iter().map(|(_, r)| *r).collect();
-    let overlay = app.ui.overlay.is_some() || app.prompt.is_some() || app.ui.main.link_open;
+    let overlay = app.ui.overlay.is_some() || app.prompt.is_some() || app.ui.main.link_open || app.panel_keys().iter().any(|k| app.panel_editor(k).is_some_and(|e| e.link_open));
     let caret = app.doc.as_ref().map(|d| (d.caret().line, d.caret().byte));
     // The main document has the keyboard (whether or not a cursor shows: that's checked).
     let writing = app.doc.is_some() && doc_view.is_some() && app.ui.focus == Focus::List && !overlay && !app.ui.main.parked;
@@ -1300,7 +1310,7 @@ fn probe_panes(s: &mut Session, shot: &Shot) -> (Vec<PaneShot>, Option<PaneId>) 
     for (id, rect) in ids {
         let (parked, popup) = match &id {
             PaneId::Main => (app.ui.main.parked, app.ui.main.link_open),
-            PaneId::Panel(k) => app.panels.get(k).map_or((true, false), |rt| (rt.slot.ed.parked, rt.slot.ed.link_open)),
+            PaneId::Panel(k) => app.panel_editor(k).map_or((true, false), |e| (e.parked, e.link_open)),
         };
         let has_keys = focused.as_ref() == Some(&id);
         let cursor = shot.cursor;

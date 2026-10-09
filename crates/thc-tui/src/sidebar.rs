@@ -151,6 +151,15 @@ pub struct DocView {
     /// the main view.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub scroll_free: bool,
+    /// Shared editor state. Absent in older v1 states: arrive at the top, parked.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub editor: Option<crate::editor_pane::EditorState>,
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub fresh_end: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caret_new: Option<crate::ui_state::NewCaretLine>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub caret_tail: Option<String>,
 }
 
 /// A list panel's state (§8.2).

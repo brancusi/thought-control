@@ -192,6 +192,9 @@ pub struct RenderOutput {
     pub image_places: Vec<crate::images::Place>,
     /// Each doc panel's view on screen, for the engine's hit-testing (sidebar_ui.rs).
     pub panel_views: Vec<(crate::sidebar::PanelKey, Rect)>,
+    pub panel_hits: Vec<(crate::sidebar::PanelKey, Vec<crate::doc_ui::HitRow>)>,
+    pub panel_targets: Vec<(crate::sidebar::PanelKey, Vec<Target>)>,
+    pub panel_scrollbars: Vec<(crate::sidebar::PanelKey, (u16, u16, usize, u16, u16))>,
     pub list_height: usize,
     pub doc_scrollbar: Option<(u16, u16, usize, u16, u16)>,
     pub list_scrollbar: Option<(u16, u16, usize, u16, u16)>,
@@ -984,22 +987,22 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
     let panel = (app.ui.focus == crate::app::Focus::Sidebar).then(|| app.ui.sidebar.active_key()).flatten().and_then(|k| {
         let d = app.panel_doc(&k)?;
         let i = app.ui.sidebar.position(&k)? + 1;
-        Some((d, app.panel_name(&k).to_lowercase(), format!("aside {i} of {}", app.ui.sidebar.open.len())))
+        Some((d, app.panel_name(&k).to_lowercase(), format!("aside {i} of {}", app.ui.sidebar.open.len()), app.panel_editor(&k).unwrap_or(&app.main)))
     });
     let main_doc = app.doc.as_ref().map(|d| {
         let what = match &d.target {
             crate::editor::Target::Journal { date } => format!("§ {}", date.format("%a %d %b").to_string().to_lowercase()),
             crate::editor::Target::Page { title, .. } => format!("{} {title}", g.page),
         };
-        (d, what, String::new())
+        (d, what, String::new(), &app.main)
     });
-    if let (Some((d, what, aside)), true) = (panel.or(main_doc), app.overlay.is_none()) {
+    if let (Some((d, what, aside, editor)), true) = (panel.or(main_doc), app.overlay.is_none()) {
         let failed = d.blocks().iter().any(|l| l.save_error.is_some());
         let late = d.blocks().iter().any(|l| l.saving_since.is_some_and(|t| app.ui.now_ms.saturating_sub(t) >= 3000));
         // (text, token, all is well): `autosaved` is steady; only a problem changes it.
         // The very first journal, still blank: `just type`.
         let blank = d.blocks().iter().all(|l| l.text.trim().is_empty());
-        let save: (String, Token, bool) = if app.doc_first_ever && blank && app.main.write {
+        let save: (String, Token, bool) = if aside.is_empty() && app.doc_first_ever && blank && editor.write {
             ("just type".into(), Token::Muted, false)
         } else if failed {
             ("not saved · :retry".into(), Token::Overdue, false)
@@ -1019,11 +1022,16 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
         // F1 keys`, the day keys only in a journal.
         let _ = journal;
         let mut keys = app.derived.data.bindings.footer.clone();
+        if !aside.is_empty() && !editor.link_open {
+            // Sidebar chrome still has its full table/help; the writing footer keeps the
+            // writing essentials and one way back, rather than overflowing into nothing.
+            keys.retain(|h| h.actions.iter().any(|(_, a)| a.starts_with("doc.") || *a == "sidebar.focus" || *a == "help.context"));
+        }
         // Just arrived (parked, navigation.md §6.1): the bar leads with how to start and how to
         // move on, as the view's bar does; the first key that writes puts the writing keys back.
         // They're the first to go when the bar is narrow.
-        let parked = aside.is_empty() && app.main.parked && !app.main.link_open && app.prompt.is_none();
-        let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done").cloned().collect();
+        let parked = aside.is_empty() && editor.parked && !editor.link_open && app.prompt.is_none();
+        let done_only: Vec<crate::keymap::Hint> = keys.iter().filter(|h| h.label == "done" || !aside.is_empty() && h.actions.iter().any(|(_, a)| *a == "sidebar.focus")).cloned().collect();
         let base = keys.clone();
         for (level, lead_hints) in [(3u8, true), (3, false), (2, false), (1, false), (0, false)] {
             keys = base.clone();
@@ -1031,7 +1039,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
                 keys.insert(0, crate::keymap::Hint { keys: "Tab".into(), label: "next view".into(), actions: vec![("Tab".into(), "view.next")] });
                 keys.insert(0, crate::keymap::Hint { keys: "type".into(), label: "to write".into(), actions: vec![] });
             }
-            if level < 3 && !app.main.link_open && keys.last().is_some_and(|k| k.label == "keys") {
+            if level < 3 && !editor.link_open && keys.last().is_some_and(|k| k.label == "keys") {
                 keys.pop();
             }
             let mut left = lead();
@@ -1047,7 +1055,7 @@ fn draw_bar(render: &mut RenderOutput, f: &mut Frame, app: &App, area: Rect, pla
             if level >= 1 || !ok {
                 left.push(Span::styled(text.clone(), th.s(tok)));
             }
-            let mut right = hint_spans(render, &th, if level == 0 && !app.main.link_open { &done_only } else { &keys }, true);
+            let mut right = hint_spans(render, &th, if level == 0 && !editor.link_open { &done_only } else { &keys }, true);
             if app.focus_mode && app.focus_cfg.has(thc_core::tui_config::El::Clock) {
                 right.push(Span::raw("   "));
                 right.push(Span::styled(app.derived.clock.clone(), th.s(Token::Muted)));

@@ -87,8 +87,7 @@ pub(crate) struct Engine {
     /// edit through one maps every other one (`caretline::update_doc`).
     others: Vec<(u32, cn::View)>,
     current: u32,
-    /// The text changes since the host last took them, composed (layers' text anchors follow
-    /// them). Kept only while `track` is on.
+    /// Composed changes for document-wide text anchors, only while tracking is enabled.
     changes: Option<cn::ChangeSet>,
     pub(super) track: bool,
 }
@@ -215,10 +214,7 @@ impl Engine {
         &mut self.st
     }
 
-    /// The engine's document, the host's changes in (layers resolve block anchors in it).
-    pub(super) fn cn_doc(&self) -> &cn::Document {
-        &self.st.doc
-    }
+    pub(super) fn cn_doc(&self) -> &cn::Document { &self.st.doc }
 
     pub(super) fn rev(&self) -> u64 {
         self.st.doc.rev.wrapping_add(self.host_rev)
@@ -578,16 +574,13 @@ impl Engine {
         fx
     }
 
-    /// The text changes since the last call (None: none, or not tracking).
     pub(super) fn take_changes(&mut self) -> Option<cn::ChangeSet> {
         self.flush();
         self.changes.take()
     }
 
     fn step_changes(&mut self, msg: Msg) -> (Vec<Effect>, Option<cn::ChangeSet>) {
-        if self.others.is_empty() {
-            return cn::update_with_changes(&mut self.st, msg);
-        }
+        if self.others.is_empty() { return cn::update_with_changes(&mut self.st, msg); }
         let mut all: Vec<(u32, cn::View)> = std::mem::take(&mut self.others);
         all.push((self.current, std::mem::take(&mut self.st.view)));
         all.sort_by_key(|(id, _)| *id);
@@ -595,11 +588,8 @@ impl Engine {
         let (ids, mut views): (Vec<u32>, Vec<cn::View>) = all.into_iter().unzip();
         let r = cn::update_doc_with_changes(&mut self.st.doc, &mut views, acting, msg);
         for (id, v) in ids.into_iter().zip(views) {
-            if id == self.current {
-                self.st.view = v;
-            } else {
-                self.others.push((id, v));
-            }
+            if id == self.current { self.st.view = v; }
+            else { self.others.push((id, v)); }
         }
         r
     }

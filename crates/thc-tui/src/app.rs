@@ -415,7 +415,6 @@ pub struct App {
     /// `[tui]` settings from ~/.config/thought/config.toml.
     pub tui_prefs: TuiPrefs,
     /// A save waiting for the frame to be drawn first (leaving a line offline).
-    pub doc_save_after_frame: bool,
     /// A newer thc the last release check found (the bar's `update 0.7.1 · :update`).
     pub update_available: Option<String>,
     /// A newer thc installed on disk under this running one (`thc update` in another window):
@@ -820,7 +819,6 @@ impl App {
             images_drawn: (Vec::new(), false),
             hist_pending: None,
             kitty: false,
-            doc_save_after_frame: false,
             update_available: thc_core::release::available(env!("CARGO_PKG_VERSION")),
             installed: None,
             exe_seen: std::env::current_exe().ok().and_then(|p| std::fs::metadata(p).ok()).and_then(|m| m.modified().ok()),
@@ -2510,6 +2508,12 @@ impl App {
     }
 
     pub fn open_compare(&mut self) {
+        if self.in_panel.is_some() {
+            if let Some(id) = self.selected.clone() {
+                self.panel_defer.push(crate::sidebar_app::Deferred::Compare(id));
+            }
+            return;
+        }
         let details = self.vault.store.conflict_details(None).unwrap_or_default();
         let target = self.selected_id().and_then(|id| details.iter().find(|d| d.node == id).cloned());
         match target.or_else(|| details.first().cloned()) {
