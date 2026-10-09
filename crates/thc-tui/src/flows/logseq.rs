@@ -203,7 +203,7 @@ fn document_mode_from_the_leader_and_the_palette() {
     let mut f = q4();
     f.named("document mode from space t D (navigating) and the palette")
         .keys("<esc>")
-        .expect("navigating, not writing", |s| !s.app.ui.doc_write || s.app.doc.is_none())
+        .expect("navigating, not writing", |s| !s.app.main.write || s.app.doc.is_none())
         .keys(" tD")
         .expect("on from the leader", |s| s.app.ui.document_mode)
         .keys("  document mode<cr>")
@@ -356,7 +356,7 @@ fn the_demo_esc_from_a_panel_returns_to_the_main_document() {
         .type_text("Edited from the sidebar panel")
         .keys("<esc>")
         .expect_page("Q4 Plan")
-        .expect("writing in the main document", |s| s.app.ui.doc_write && s.app.ui.focus != Focus::Sidebar)
+        .expect("writing in the main document", |s| s.app.main.write && s.app.ui.focus != Focus::Sidebar)
         .type_text("typed after Esc")
         .expect("typed into Q4 Plan, not Garden", |s| s.app.doc.as_ref().unwrap().caret_block().text.contains("typed after Esc"))
         .done();

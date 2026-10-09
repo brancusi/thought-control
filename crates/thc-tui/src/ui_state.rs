@@ -101,7 +101,9 @@ pub struct UiState {
     pub focus_mode: bool,
     /// Document mode (writing.md §1, Logseq's `t d`): Enter breaks the line inside a note and
     /// ⇧Enter starts a new note, for long-form writing. This device's choice (`App::
-    /// load_document_mode`); the person's only: an agent's patch can't change it.
+    /// load_document_mode`); the person's only: an agent's patch can't change it. Left out
+    /// while off, so the v1 wire is unchanged.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub document_mode: bool,
     /// What Focus shows this session (`[tui.focus]`, then live `:focus` changes).
     pub focus_cfg: thc_core::tui_config::Focus,

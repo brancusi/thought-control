@@ -55,6 +55,7 @@ mod sidebar_tests;
 mod session_tests;
 #[cfg(test)]
 mod teaching_tests;
+#[cfg(test)]
 mod layers_tests;
 #[cfg(test)]
 mod goldens;

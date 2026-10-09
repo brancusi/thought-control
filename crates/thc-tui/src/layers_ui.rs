@@ -904,10 +904,12 @@ pub fn compact(buf: &mut Buffer, plan: &mut cl::Plan, app: &App) -> bool {
     }
     let guide = app.ui.layers.stack.layers.iter().find(|l| l.owner == cl::Owner::Guide);
     let Some(layer) = guide else { return false };
-    if buf.area.width >= 70 && buf.area.height >= 20 && plan.layers.iter().any(|l| l.id == layer.id && l.mode == Some(cl::Mode::Box) && l.rect.is_some_and(|r| r.h >= 6)) {
+    let Some(content) = &layer.content else { return false };
+    // The box fits when it was placed at its full height: a short step is a short box.
+    let fits = |r: cl::Rect| r.h >= BoxRenderer::size(&content.kind, &content.data, cl::Size::new(r.w, u16::MAX), &layer.owner).h;
+    if buf.area.width >= 70 && buf.area.height >= 20 && plan.layers.iter().any(|l| l.id == layer.id && l.mode == Some(cl::Mode::Box) && l.rect.is_some_and(fits)) {
         return false;
     }
-    let Some(content) = &layer.content else { return false };
     plan.layers.clear();
     plan.spots.clear();
     plan.regions.clear();

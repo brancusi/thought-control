@@ -2160,6 +2160,8 @@ name = "thc"
 version = "0.10.1"
 dependencies = [
  "anyhow",
+ "caretline-layers",
+ "caretline-tour",
  "chrono",
  "clap",
  "ed25519-dalek",

@@ -338,7 +338,8 @@ fn the_caret_follows_a_soft_break_at_the_end_of_a_line() {
 fn the_caret_sits_after_emoji_and_backspace_takes_whole_characters() {
     let (root, _) = setup("graphemes");
     let snap = |keys: &str| thc(&root, &[("THC_TUI_SNAPSHOT", "80x24"), ("THC_TUI_KEYS", keys), ("THC_TUI_SNAPSHOT_CURSOR", "1")], &["j", "--no-focus"]);
-    let row = |f: &str, needle: &str| f.lines().find(|l| l.contains(needle)).unwrap_or_default().trim().to_string();
+    // The row's text, after the bullet a new note hangs.
+    let row = |f: &str, needle: &str| f.lines().find(|l| l.contains(needle)).unwrap_or_default().trim().trim_start_matches("· ").to_string();
     // The caret right after the last character, whatever came before (it drifted 4 columns
     // after a family emoji and sat on the next letter after ❤️).
     assert_eq!(row(&snap("a👨‍👩‍👧b"), "a👨"), "a👨‍👩‍👧b▮");

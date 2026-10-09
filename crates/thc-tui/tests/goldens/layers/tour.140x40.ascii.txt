@@ -7,7 +7,7 @@
                       |        [ ] Finish the sign-up flow         ^                                                  due fri · !high
                       |        [ ] Write the getting-started guide |                                                          due mon
                       |        [ ] Send the invites                |                                                       due oct 16
-                      |           +- @ claude ---------------------+-----+
+                      |          ·+- @ claude ---------------------+-----+
                       |           | Why                                  |
                       |           | The goal for the month, in one line. |
                       |           |                                      |

@@ -15,6 +15,7 @@ fn record(f: &mut Flow, group: usize, desc: &str, phase: &str) -> Value {
 }
 
 #[test]
+#[ignore = "diagnostic: run with THC_PROBE_INPUT/THC_PROBE_OUTPUT set"]
 fn diagnostic_reduced_sequence() {
     let mut f=Flow::new("reduced structural diagnostic",Size::Small,(120,24),Checks { invariants:false,cold:false,replay:false,restore:false });
     f.keys("<c-o>Q4 Plan<cr><tab>").type_text("alpha beta\none\ntwo\nthree").keys("<cr><cr>").type_text("second").idle();
@@ -35,6 +36,7 @@ fn diagnostic_reduced_sequence() {
 }
 
 #[test]
+#[ignore = "diagnostic: run with THC_PROBE_INPUT/THC_PROBE_OUTPUT set"]
 fn diagnostic_structural_sequence() {
     let input=std::env::var("THC_PROBE_INPUT").unwrap();
     let output=std::env::var("THC_PROBE_OUTPUT").unwrap();

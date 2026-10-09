@@ -10,13 +10,13 @@
    [ ] Pay rent                                                       sat 09:00 · ↻ monthly  |     · Dr. Patel, 555-0100, office on 4th St
      · Mom's birthday, call her                                                oct 19 10:00  |   [ ] Schedule annual physical
    [ ] Summarize unread newsletters into [[Reading List]]                      due tomorrow  |                                   due oct 17
-                                                                                             |   [ ] Refill prescription
+     ·                                                                                       |   [ ] Refill prescription
                                                                                              |                    oct 15 · !med · ↻ monthly
-                                                                                             |   + linked from 1
-       ──────────────────────────────────── also today ───────────────────────────────────── |
+       ──────────────────────────────────── also today ───────────────────────────────────── |   + linked from 1
    [ ] Water plants                                                   ¶ Home · today · ↻ 3d  |
    [ ] Replace furnace filter                                       ¶ Home · today · ↻ 3mo!  |
    [x] Renew passport #admin                                      § tue oct 06 · done 09:12  |
+                                                                                             |
                                                                                              |
                                                                                              |
                                                                                              |

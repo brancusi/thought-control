@@ -115,11 +115,12 @@ fn m5_a_plain_click_on_a_link_writes_and_ctrl_click_opens_it_beside() {
 
 #[test]
 fn m6_drag_double_and_triple_click_select() {
-    // A drag across two paragraphs, then ⌃X: both pieces go.
+    // A drag across two notes, then ⌃X: both pieces go.
     let v = V::new("m6");
     v.run("first para<cr><cr>second para<esc>");
-    // first para at row 5, blank 6, second para at row 7 (text from column 7).
-    v.run("<drag:13,6,13,8><c-x><esc>");
+    // Notes are bullets (Enter on the empty one does nothing): first para at row 6, second
+    // para at row 7, text from column 7.
+    v.run("<drag:13,6,13,7><c-x><esc>");
     let t: Vec<String> = v.texts().into_iter().map(|t| t.0).collect();
     assert_eq!(t, ["first  para"], "the selection from `first |` to `second|` went: {t:?}");
     // A double-click selects the word; typing replaces it.
@@ -172,7 +173,9 @@ fn m7_m8_chrome_clicks() {
     // M8: a click outside the palette closes it and does nothing underneath.
     let (tx, ty) = pos(&v.tui(""), "Pages");
     let f = v.tui(&format!(":<click:{tx},{ty}>"));
-    assert!(!f.contains("Enter run") && f.contains("Next 7 days") || f.contains("Nothing due"), "closed, still Today: {f}");
+    // (The real clock: on a Friday the milk is due today, so check the view, not its sections.)
+    let still_today = f.lines().nth(2).is_some_and(|l| l.trim_start().starts_with("Today"));
+    assert!(!f.contains("Enter run") && still_today, "closed, still Today: {f}");
     // A list row's box toggles it.
     let (x, y) = pos(&v.tui("3"), "[ ] Buy milk");
     v.tui(&format!("3<click:{},{y}>", x + 1));

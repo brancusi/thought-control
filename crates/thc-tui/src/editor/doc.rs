@@ -955,9 +955,21 @@ impl Doc {
         if self.selection().is_none() {
             return String::new();
         }
+        // The fresh end line a document arrives with isn't content (it goes when left empty):
+        // a selection reaching it (⌘A) copies none of it, not even its `- `.
+        let ends_on_fresh = self.selection().is_some_and(|(s, e)| {
+            let lines = self.lines();
+            e.line > s.line && e.line + 1 == lines.len() && lines[e.line].text.is_empty() && self.fresh_end.as_deref() == Some(lines[e.line].id.as_str())
+        });
         let fx = self.run(caretline::Msg::Copy);
         let text = fx.into_iter().find_map(|f| if let caretline::Effect::ClipboardSet { text } = f { Some(text) } else { None }).unwrap_or_default();
-        self.engine.with_fields(text)
+        let mut text = self.engine.with_fields(text);
+        if ends_on_fresh {
+            if let Some(i) = text.rfind('\n') {
+                text.truncate(i);
+            }
+        }
+        text
     }
 }
 

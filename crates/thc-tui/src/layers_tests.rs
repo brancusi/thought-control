@@ -101,6 +101,8 @@ fn tasks(s: &mut Session) {
 fn open_page(s: &mut Session) {
     let p = page_id(s);
     s.apply(Msg::Patch { patch: json!({"view": "pages", "page_open": p}), actor: None }).unwrap();
+    // Pages open on a fresh line at their end (rdfar); these scenes start at the top.
+    s.apply(Msg::Key { key: "<c-home>".into() }).unwrap();
 }
 
 /// Each renderer's scene.
@@ -206,7 +208,11 @@ fn layers_draw_what_the_design_says() {
 fn resolved(s: &mut Session, layer: &str) -> caretline_layers::Resolved {
     let (w, h) = s.size;
     s.render(w, h, "text").unwrap();
-    s.app.render.layer_plan.as_ref().and_then(|p| p.layers.iter().find(|l| l.id == layer)).and_then(|l| l.anchor.clone()).expect("resolved")
+    let plan = s.app.render.layer_plan.as_ref();
+    plan.and_then(|p| p.layers.iter().find(|l| l.id == layer)).and_then(|l| l.anchor.clone()).unwrap_or_else(|| {
+        let ids: Vec<&str> = plan.map(|p| p.layers.iter().map(|l| l.id.as_str()).collect()).unwrap_or_default();
+        panic!("{layer} resolved, in {ids:?}")
+    })
 }
 
 /// The text of the cells a rect covers.
