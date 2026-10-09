@@ -325,8 +325,8 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf, restore: Option<
         Ok("0") => false,
         _ => crate::gfx::probe_text_sizing(),
     };
+    // (The probe clears what it printed; ratatui's first frame draws every cell.)
     d.apply(&mut st, caps(sizing));
-    term.clear()?;
     let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let started = Instant::now();
     let res = (|| -> Result<()> {

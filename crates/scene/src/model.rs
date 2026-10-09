@@ -246,6 +246,17 @@ pub enum Kind {
     },
     /// An image file (PNG), scaled into the node.
     Image { src: String },
+    /// Vector art: inline SVG markup (`{field}` placeholders filled from the bound value, so it
+    /// can draw live data) or an `.svg` file, rendered at the terminal's real pixel size. `alt`
+    /// shows where the terminal has no graphics.
+    Svg {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        svg: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        src: Option<String>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        alt: Option<String>,
+    },
     /// A lit, glowing dot (the brand mark's `•`): `color`, and `glow` (0 for none).
     Dot {
         color: String,
@@ -604,6 +615,26 @@ pub fn shows(template: &str, v: &Value) -> bool {
         }
     }
     !any
+}
+
+/// Only the `{path}` placeholders filled, nothing else read: for markup of other kinds (SVG),
+/// where `<g>` is an element, not a style.
+pub fn fill_raw(template: &str, v: &Value) -> String {
+    let mut out = String::new();
+    let mut rest = template;
+    while let Some(i) = rest.find('{') {
+        out.push_str(&rest[..i]);
+        if rest[i..].starts_with("{{") {
+            out.push('{');
+            rest = &rest[i + 2..];
+            continue;
+        }
+        let Some(j) = rest[i..].find('}') else { break };
+        out.push_str(&scalar(lookup(v, &rest[i + 1..i + j])));
+        rest = &rest[i + j + 1..];
+    }
+    out.push_str(rest);
+    out
 }
 
 /// A template filled as plain text (styles dropped, a tab as `\t`).

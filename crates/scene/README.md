@@ -127,3 +127,30 @@ python3 crates/scene/examples/pixels/mark.py crates/scene/examples/pixels/mark.p
 target/release/thc-scene run crates/scene/examples/pixels/pixels.json
 target/release/thc-scene upgrade     # after a rebuild: same screen, same state, new binary
 ```
+
+### Graphics: what to reach for (guidance for agents)
+
+1. **Components first.** `backdrop` (cards), `plot`, `dot`, `big`/`scale`, tables, lists: the
+   engine draws them at the terminal's real pixel size, caches them, keeps them in the theme and
+   falls back to cells on terminals without graphics.
+2. **SVG for anything custom** (icons, diagrams, a progress ring): an `svg` node with inline
+   markup, `{field}` placeholders filled from its `bind`, so data drives the drawing. The engine
+   renders it (resvg, system fonts) fitted to the node; `alt` is the text fallback. Compute
+   geometry in the data source (an arc's length, say): templates fill values, they don't do maths.
+3. **PNG only for real bitmaps** (photos, screenshots), as `image` with a path; the terminal reads
+   the file itself.
+4. **Animate data, not pictures.** Change a source or `patch` one node; the engine re-renders only
+   what changed. A patch replaces the whole node, so send it with its `backdrop`.
+
+How pixels travel: the kitty graphics protocol (Ghostty, kitty, WezTerm) takes RGB, RGBA or PNG,
+never SVG, so vector art is rasterised here. Generated pictures go through a temporary file the
+terminal reads and deletes (`THC_SCENE_PIXELS=direct` sends them in-band, for SSH); cards sit
+under every cell background so selections paint over them; a spotlight is a translucent sheet
+over everything.
+
+Measured (210x60, release): about 0.9 ms a frame without pictures; with a 15 Hz plot, about 7 ms,
+nearly all of it rasterising and compressing on the main thread. Next: rasterise on a worker
+thread and present pictures when they're ready.
+
+`examples/pixels/tour.py` drives all of it over the socket on a seeded sample vault with its own
+config (thc's Today spans every registered vault; the demo shouldn't see yours).

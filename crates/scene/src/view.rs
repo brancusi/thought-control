@@ -250,7 +250,8 @@ pub fn draw(st: &State, f: &mut Frame) -> Out {
     let bar = st.ui.status_bar.unwrap_or(true);
     let [body, status] = Layout::vertical([Constraint::Fill(1), Constraint::Length(bar as u16)]).areas(f.area());
     node(&mut cx, &st.ui.root, f, body);
-    layers(&cx, f.buffer_mut(), body);
+    let shade = layers(&cx, f.buffer_mut(), body);
+    cx.pics.extend(shade);
     if !bar {
         return Out { hits: cx.hits, pics: cx.pics, scaled: cx.scaled };
     }
@@ -294,12 +295,19 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
             radius: b.radius,
             shadow: b.shadow,
             glow: b.glow.as_deref().and_then(|c| cx.rgb(c)),
+            page: cx.th.bg.and_then(|c| match c {
+                Color::Rgb(r, g, b) => Some((r, g, b)),
+                _ => None,
+            }),
         })
     });
     let inner = if let Some(pic) = card {
         // A pixel card stands in for the border: the title sits on its top edge, the content one
         // cell in from each side.
-        cx.pics.push(Placed { x: area.x, y: area.y, w: area.width, h: area.height, z: -1, pic });
+        // Under every cell background (kitty draws z below -2^30 beneath them), with the cells
+        // over it left clear, so the card shows through and a selected row's colour stays on top.
+        cx.pics.push(Placed { x: area.x, y: area.y, w: area.width, h: area.height, z: crate::gfx::UNDER, pic });
+        f.buffer_mut().set_style(area, Style::default().bg(Color::Reset));
         if let Some(t) = &n.title {
             let ts = if focused { Style::default().fg(cx.th.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(cx.th.dim).add_modifier(Modifier::BOLD) };
             f.buffer_mut().set_string(area.x + 2, area.y + 1, t, ts);
@@ -372,6 +380,15 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
                 let t: String = segs.into_iter().map(|g| g.text).collect();
                 cx.scaled.push(Scaled { x: inner.x, y, text: t, scale: k, style: st_ });
             }
+        }
+        Kind::Text { text } if n.scale.is_some_and(|k| k >= 3) => {
+            // No larger text here: three times the size falls back to the block-digit font.
+            let v = bound(st, n).unwrap_or(&Value::Null);
+            let segs = segments(text.split('\n').next().unwrap_or(""), v);
+            let st_ = segs.iter().find_map(|g| g.style.as_deref()).map_or(style, |sp| cx.spec(sp, style));
+            let t: String = segs.into_iter().map(|g| g.text).collect();
+            let lines: Vec<Line> = big(&t).into_iter().map(|l| Line::styled(l, st_)).collect();
+            f.render_widget(Paragraph::new(lines).alignment(align), inner);
         }
         Kind::Text { text } => {
             let v = bound(st, n).unwrap_or(&Value::Null);
@@ -616,6 +633,20 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
                 cx.pics.push(Placed { x: inner.x, y: inner.y, w: inner.width, h: inner.height, z: 0, pic: Pic::File(src.clone()) });
             } else {
                 f.render_widget(Paragraph::new(format!("[image {src}]")).style(Style::default().fg(cx.th.dim)), inner);
+            }
+        }
+        Kind::Svg { svg, src, alt } => {
+            let markup = match (svg, src) {
+                (Some(t), _) => Some(crate::model::fill_raw(t, bound(st, n).unwrap_or(&Value::Null))),
+                (None, Some(p)) => Some(format!("file:{p}")),
+                _ => None,
+            };
+            match markup {
+                Some(m) if pixels => cx.pics.push(Placed { x: inner.x, y: inner.y, w: inner.width, h: inner.height, z: 0, pic: Pic::Svg(m) }),
+                _ => {
+                    let a = alt.as_deref().map(|a| fill(a, bound(st, n).unwrap_or(&Value::Null))).unwrap_or_else(|| "[svg]".into());
+                    f.render_widget(Paragraph::new(a).style(Style::default().fg(cx.th.dim)).alignment(align), inner);
+                }
             }
         }
         Kind::Dot { color, glow } => {
@@ -951,11 +982,11 @@ fn specs(st: &State) -> Vec<LayerSpec> {
     out
 }
 
-fn layers(cx: &Cx, buf: &mut Buffer, body: Rect) {
+fn layers(cx: &Cx, buf: &mut Buffer, body: Rect) -> Vec<Placed> {
     let st = cx.st;
     let specs = specs(st);
     if specs.is_empty() {
-        return;
+        return vec![];
     }
     let mut ls = cl::Layers::default();
     for (i, s) in specs.iter().enumerate() {
@@ -995,8 +1026,13 @@ fn layers(cx: &Cx, buf: &mut Buffer, body: Rect) {
     let renderers = cl::Renderers::new().register("callout", Callout);
     let plan = cl::plan(&ls, &cx.anchors, &grid, &renderers);
 
-    // Spotlights first: everything outside the holes fades.
-    if !plan.spots.is_empty() {
+    // Spotlights: with pictures, one translucent sheet over everything with soft holes; in cells,
+    // the text outside the holes fades.
+    let mut pics = Vec::new();
+    if !plan.spots.is_empty() && st.caps.graphics {
+        let holes = plan.spots.iter().flat_map(|s| s.holes.iter().map(|h| (h.x - body.x, h.y - body.y, h.w, h.h))).collect();
+        pics.push(Placed { x: body.x, y: body.y, w: body.width, h: body.height, z: 10, pic: Pic::Shade { holes, alpha: 0.62 } });
+    } else if !plan.spots.is_empty() {
         for y in body.y..body.bottom() {
             for x in body.x..body.right() {
                 if plan.dimmed(x, y) {
@@ -1108,6 +1144,7 @@ fn layers(cx: &Cx, buf: &mut Buffer, body: Rect) {
             buf.set_line(r.x + 2, r.y + 1 + k as u16, &Line::from(Span::styled(l.clone(), s)), r.w - 4);
         }
     }
+    pics
 }
 
 fn put(buf: &mut Buffer, x: u16, y: u16, s: &str, style: Style) {

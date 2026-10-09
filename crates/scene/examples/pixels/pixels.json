@@ -19,7 +19,8 @@
   "hover": "#2c2824",
   "dim": "#a0968a",
   "bg": "#1b1916",
-  "rim": "#4a433b"
+  "rim": "#4a433b",
+  "shadow": "#000000"
  },
  "status_bar": false,
  "root": {
@@ -31,7 +32,8 @@
      {
       "type": "image",
       "src": "crates/scene/examples/pixels/mark.png",
-      "size": 14
+      "size": 14,
+      "id": "mark"
      },
      {
       "type": "col",
@@ -52,9 +54,28 @@
       "size": "1*"
      },
      {
-      "type": "text",
-      "text": "\t<muted>pixels: kitty graphics \u00b7 text: </><text>{text}</> ",
-      "bind": "caps"
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "\t<muted>pixels </><text>{graphics|true=kitty graphics;*=none, cells only}</><muted> \u00b7 cell </><text>{cell_w}</><muted>\u00d7</><text>{cell_h}</><muted>px \u00b7 larger text </><text>{text_sizing|true=OSC 66;*=no (block digits)}</> ",
+        "bind": "$caps",
+        "size": 1
+       },
+       {
+        "type": "text",
+        "text": "\t<muted>live plot tick </><text>{tick}</> ",
+        "bind": "live",
+        "size": 1
+       },
+       {
+        "type": "text",
+        "text": "\t<muted>{fps|?$} fps \u00b7 draw {draw_ms|?$} ms</> ",
+        "bind": "$stats",
+        "size": 1
+       }
+      ],
+      "size": "1*"
      }
     ],
     "size": 4
@@ -88,12 +109,17 @@
       "style": {
        "fg": "text"
       },
+      "tip": {
+       "title": "{short} \u00b7 {status}",
+       "text": "{text}\n{crumbs}"
+      },
       "backdrop": {
        "fill": "raised",
        "fill2": "surface",
        "border": "rim",
        "radius": 0.55,
-       "shadow": 1.1
+       "shadow": 1.1,
+       "glow": "shadow"
       },
       "title": "Today",
       "size": "58%"
@@ -119,10 +145,11 @@
          "border": "rim",
          "radius": 0.55,
          "shadow": 1.1,
-         "glow": "#3a281e"
+         "glow": "shadow"
         },
         "title": "Detail",
-        "size": "55%"
+        "size": "55%",
+        "id": "c-detail"
        },
        {
         "type": "row",
@@ -132,25 +159,27 @@
           "series": [
            {
             "name": "done",
-            "bind": "week.done",
+            "bind": "live.done",
             "color": "accent"
            },
            {
             "name": "added",
-            "bind": "week.added",
+            "bind": "live.added",
             "color": "agent"
            }
           ],
-          "width": 0.14,
+          "width": 0.12,
           "backdrop": {
            "fill": "raised",
            "fill2": "surface",
            "border": "rim",
            "radius": 0.55,
-           "shadow": 1.1
+           "shadow": 1.1,
+           "glow": "shadow"
           },
-          "title": "Done vs added \u00b7 pixels",
-          "size": "1*"
+          "title": "Done vs added \u00b7 pixels, live",
+          "size": "1*",
+          "id": "c-plot"
          },
          {
           "type": "text",
@@ -162,28 +191,26 @@
           "series": [
            {
             "name": "done",
-            "bind": "week.done",
+            "bind": "live.done",
             "color": "accent"
            },
            {
             "name": "added",
-            "bind": "week.added",
+            "bind": "live.added",
             "color": "agent"
            }
-          ],
-          "labels": [
-           "-14d",
-           "today"
           ],
           "backdrop": {
            "fill": "raised",
            "fill2": "surface",
            "border": "rim",
            "radius": 0.55,
-           "shadow": 1.1
+           "shadow": 1.1,
+           "glow": "shadow"
           },
           "title": "Same data \u00b7 cells",
-          "size": "1*"
+          "size": "1*",
+          "id": "c-cells"
          }
         ]
        }
@@ -222,9 +249,11 @@
        "fill2": "surface",
        "border": "rim",
        "radius": 0.55,
-       "shadow": 1.1
+       "shadow": 1.1,
+       "glow": "shadow"
       },
-      "size": "1*"
+      "size": "1*",
+      "id": "k-open"
      },
      {
       "type": "text",
@@ -252,9 +281,11 @@
        "fill2": "surface",
        "border": "rim",
        "radius": 0.55,
-       "shadow": 1.1
+       "shadow": 1.1,
+       "glow": "shadow"
       },
-      "size": "1*"
+      "size": "1*",
+      "id": "k-today"
      },
      {
       "type": "text",
@@ -282,9 +313,11 @@
        "fill2": "surface",
        "border": "rim",
        "radius": 0.55,
-       "shadow": 1.1
+       "shadow": 1.1,
+       "glow": "shadow"
       },
-      "size": "1*"
+      "size": "1*",
+      "id": "k-review"
      },
      {
       "type": "text",
@@ -312,9 +345,32 @@
        "fill2": "surface",
        "border": "rim",
        "radius": 0.55,
-       "shadow": 1.1
+       "shadow": 1.1,
+       "glow": "shadow"
       },
-      "size": "1*"
+      "size": "1*",
+      "id": "k-done"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "svg",
+      "id": "ring",
+      "bind": "kpis",
+      "alt": "{pct}% of today done",
+      "svg": "<svg xmlns=\"http://www.w3.org/2000/svg\" viewBox=\"0 0 260 100\">\n  <circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"none\" stroke=\"#3a352f\" stroke-width=\"12\"/>\n  <circle cx=\"50\" cy=\"50\" r=\"40\" fill=\"none\" stroke=\"#8fc487\" stroke-width=\"12\" stroke-linecap=\"round\"\n          stroke-dasharray=\"{dash} 251.3\" transform=\"rotate(-90 50 50)\"/>\n  <text x=\"50\" y=\"58\" font-family=\"Helvetica, Arial\" font-size=\"24\" font-weight=\"700\" fill=\"#ece5d8\" text-anchor=\"middle\">{pct}%</text>\n  <text x=\"108\" y=\"44\" font-family=\"Helvetica, Arial\" font-size=\"20\" font-weight=\"700\" fill=\"#ece5d8\">today</text>\n  <text x=\"108\" y=\"70\" font-family=\"Helvetica, Arial\" font-size=\"16\" fill=\"#a0968a\">{done} of {total} done</text>\n</svg>",
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1,
+       "glow": "shadow"
+      },
+      "size": 26
      }
     ],
     "size": 6
@@ -329,50 +385,17 @@
    ],
    "every": 3
   },
-  "week": {
-   "value": {
-    "done": [
-     2,
-     3,
-     1,
-     4,
-     6,
-     3,
-     5,
-     7,
-     4,
-     6,
-     8,
-     5,
-     9,
-     7
-    ],
-    "added": [
-     4,
-     2,
-     5,
-     3,
-     4,
-     6,
-     3,
-     5,
-     6,
-     4,
-     5,
-     7,
-     5,
-     6
-    ]
-   }
+  "live": {
+   "stream": [
+    "python3",
+    "-u",
+    "crates/scene/examples/pixels/wave.py",
+    "15"
+   ]
   },
   "kpis": {
-   "shell": "python3 -c \"import json,subprocess as s; q=lambda x: json.loads(s.run(['thc','q',x,'--json'],capture_output=True,text=True).stdout)['count']; r=json.loads(s.run(['thc','review','--json'],capture_output=True,text=True).stdout)['pending']; print(json.dumps({'open': q('status:open'), 'today': q('(sched<=today or due<=today) status:open'), 'review': r, 'done': q('done>=today')}))\"",
+   "shell": "python3 -c \"import json,subprocess as s; q=lambda x: json.loads(s.run(['thc','q',x,'--json'],capture_output=True,text=True).stdout)['count']; r=json.loads(s.run(['thc','review','--json'],capture_output=True,text=True).stdout)['pending']; o=q('status:open'); t=q('(sched<=today or due<=today) status:open'); d=q('done>=today'); n=max(1, t + d); print(json.dumps({'open': o, 'today': t, 'review': r, 'done': d, 'total': n, 'pct': round(100 * d / n), 'dash': round(251.3 * d / n, 1)}))\"",
    "every": 5
-  },
-  "caps": {
-   "value": {
-    "text": "2\u00d7 and 3\u00d7 (OSC 66)"
-   }
   }
  }
 }

@@ -13,6 +13,10 @@ use std::io::Write;
 
 pub type Rgb = (u8, u8, u8);
 
+/// A z-index under every cell background (kitty draws images below -2^30 beneath cells whose
+/// background isn't the default): a backdrop that coloured rows paint over.
+pub const UNDER: i32 = -1_073_741_825;
+
 /// A picture over a rectangle of cells.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Placed {
@@ -29,13 +33,20 @@ pub struct Placed {
 pub enum Pic {
     /// A rounded panel: a fill (a vertical gradient when `fill2` is set), an optional 1px border,
     /// a soft shadow. Sizes are fractions of a cell's height.
-    Card { fill: Rgb, fill2: Option<Rgb>, border: Option<Rgb>, radius: f32, shadow: f32, glow: Option<Rgb> },
+    /// `page` fills what's around the panel (its shadow's margin), since the cells under it are
+    /// left clear.
+    Card { fill: Rgb, fill2: Option<Rgb>, border: Option<Rgb>, radius: f32, shadow: f32, glow: Option<Rgb>, page: Option<Rgb> },
     /// Lines over shared bounds, anti-aliased, each with a gradient fill down to the bottom.
     Plot { series: Vec<(Vec<f64>, Rgb)>, fill: bool, width: f32 },
     /// An image file (PNG), scaled into the cells.
     File(String),
     /// A glowing dot (the brand mark's `•`), centred.
     Dot { color: Rgb, glow: f32 },
+    /// SVG markup (or `file:<path>`), fitted into the cells keeping its proportions.
+    Svg(String),
+    /// A translucent sheet with soft-edged holes (cell rectangles, relative to the picture): a
+    /// spotlight that dims pictures as well as text.
+    Shade { holes: Vec<(u16, u16, u16, u16)>, alpha: f32 },
 }
 
 impl Pic {
@@ -102,7 +113,12 @@ fn rounded(px: f32, py: f32, x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> f32 
 
 fn card(w: u32, h: u32, cell_h: f32, pic: &Pic) -> Canvas {
     let mut c = Canvas::new(w, h);
-    let Pic::Card { fill, fill2, border, radius, shadow, glow } = *pic else { return c };
+    let Pic::Card { fill, fill2, border, radius, shadow, glow, page } = *pic else { return c };
+    if let Some(p) = page {
+        for px in c.px.iter_mut() {
+            *px = [p.0 as f32 / 255.0, p.1 as f32 / 255.0, p.2 as f32 / 255.0, 1.0];
+        }
+    }
     let r = radius * cell_h;
     let s = shadow * cell_h;
     // The panel sits inside the shadow's margin; the shadow falls a little down.
@@ -215,6 +231,59 @@ fn plot(w: u32, h: u32, cell_h: f32, series: &[(Vec<f64>, Rgb)], fill: bool, wid
     c
 }
 
+fn shade(w: u32, h: u32, caps: Caps, holes: &[(u16, u16, u16, u16)], alpha: f32) -> Canvas {
+    let mut c = Canvas::new(w, h);
+    let (cw, cell_h) = (caps.cell_w, caps.cell_h);
+    let feather = cell_h * 0.6;
+    let rects: Vec<(f32, f32, f32, f32)> = holes
+        .iter()
+        .map(|&(x, y, hw, hh)| (x as f32 * cw - cw * 0.5, y as f32 * cell_h - cell_h * 0.25, (x + hw) as f32 * cw + cw * 0.5, (y + hh) as f32 * cell_h + cell_h * 0.25))
+        .collect();
+    for y in 0..h {
+        for x in 0..w {
+            let (fx, fy) = (x as f32 + 0.5, y as f32 + 0.5);
+            let d = rects.iter().map(|&(x0, y0, x1, y1)| rounded(fx, fy, x0, y0, x1, y1, cell_h * 0.4)).fold(f32::MAX, f32::min);
+            let a = alpha * (d / feather + 0.5).clamp(0.0, 1.0);
+            c.blend(x, y, (8, 7, 6), a);
+        }
+    }
+    c
+}
+
+/// System fonts, loaded once (SVG text needs them).
+fn fonts() -> std::sync::Arc<resvg::usvg::fontdb::Database> {
+    static DB: std::sync::OnceLock<std::sync::Arc<resvg::usvg::fontdb::Database>> = std::sync::OnceLock::new();
+    DB.get_or_init(|| {
+        let mut db = resvg::usvg::fontdb::Database::new();
+        db.load_system_fonts();
+        std::sync::Arc::new(db)
+    })
+    .clone()
+}
+
+fn svg(w: u32, h: u32, markup: &str) -> Canvas {
+    use resvg::{tiny_skia, usvg};
+    let mut c = Canvas::new(w, h);
+    let text = match markup.strip_prefix("file:") {
+        Some(p) => std::fs::read_to_string(p).unwrap_or_default(),
+        None => markup.to_string(),
+    };
+    let opt = usvg::Options { fontdb: fonts(), ..usvg::Options::default() };
+    let (Ok(tree), Some(mut pm)) = (usvg::Tree::from_str(&text, &opt), tiny_skia::Pixmap::new(w, h)) else { return c };
+    let size = tree.size();
+    let k = (w as f32 / size.width()).min(h as f32 / size.height());
+    let (dx, dy) = ((w as f32 - size.width() * k) / 2.0, (h as f32 - size.height() * k) / 2.0);
+    resvg::render(&tree, tiny_skia::Transform::from_row(k, 0.0, 0.0, k, dx, dy), &mut pm.as_mut());
+    // tiny-skia keeps alpha premultiplied; the canvas (and kitty's RGBA) is straight.
+    for (px, p) in c.px.iter_mut().zip(pm.pixels()) {
+        let a = p.alpha() as f32 / 255.0;
+        if a > 0.0 {
+            *px = [p.red() as f32 / 255.0 / a, p.green() as f32 / 255.0 / a, p.blue() as f32 / 255.0 / a, a];
+        }
+    }
+    c
+}
+
 fn dot(w: u32, h: u32, color: Rgb, glow: f32) -> Canvas {
     let mut c = Canvas::new(w, h);
     let (cx, cy) = (w as f32 / 2.0, h as f32 / 2.0);
@@ -283,6 +352,28 @@ pub fn probe_text_sizing() -> bool {
     col == 4
 }
 
+/// An image file keeps its aspect ratio: the largest box of whole cells inside the node that
+/// matches the image's shape (read from its PNG header), centred.
+fn fit(p: &Placed, caps: Caps) -> Placed {
+    let Pic::File(path) = &p.pic else { return p.clone() };
+    let Some((iw, ih)) = png_size(path) else { return p.clone() };
+    let (bw, bh) = (p.w as f32 * caps.cell_w, p.h as f32 * caps.cell_h);
+    let k = (bw / iw as f32).min(bh / ih as f32);
+    let w = ((iw as f32 * k / caps.cell_w).round() as u16).clamp(1, p.w);
+    let h = ((ih as f32 * k / caps.cell_h).round() as u16).clamp(1, p.h);
+    Placed { x: p.x + (p.w - w) / 2, y: p.y + (p.h - h) / 2, w, h, ..p.clone() }
+}
+
+/// A PNG's width and height, from its header.
+fn png_size(path: &str) -> Option<(u32, u32)> {
+    use std::io::Read;
+    let mut head = [0u8; 24];
+    std::fs::File::open(path).ok()?.read_exact(&mut head).ok()?;
+    (head[..8] == *b"\x89PNG\r\n\x1a\n").then(|| {
+        (u32::from_be_bytes([head[16], head[17], head[18], head[19]]), u32::from_be_bytes([head[20], head[21], head[22], head[23]]))
+    })
+}
+
 /// Sends pictures and keeps track of what's on screen.
 #[derive(Default)]
 pub struct Kitty {
@@ -304,6 +395,7 @@ impl Kitty {
         let mut now = Vec::new();
         let mut live = BTreeSet::new();
         for (k, p) in want.iter().enumerate() {
+            let p = &fit(p, caps);
             let px = ((p.w as f32 * caps.cell_w).round() as u32, (p.h as f32 * caps.cell_h).round() as u32);
             if px.0 == 0 || px.1 == 0 {
                 continue;
@@ -314,7 +406,7 @@ impl Kitty {
                 None => {
                     self.next += 1;
                     let id = self.next;
-                    send(&mut out, id, &p.pic, px, caps.cell_h);
+                    send(&mut out, id, &p.pic, px, caps);
                     self.sent.insert(key, id);
                     id
                 }
@@ -355,7 +447,8 @@ impl Kitty {
     }
 }
 
-fn send(out: &mut Vec<u8>, id: u32, pic: &Pic, px: (u32, u32), cell_h: f32) {
+fn send(out: &mut Vec<u8>, id: u32, pic: &Pic, px: (u32, u32), caps: Caps) {
+    let cell_h = caps.cell_h;
     let b64 = base64::engine::general_purpose::STANDARD;
     if let Pic::File(path) = pic {
         // The terminal reads the file itself, from its own working directory: send it absolute.
@@ -368,9 +461,21 @@ fn send(out: &mut Vec<u8>, id: u32, pic: &Pic, px: (u32, u32), cell_h: f32) {
         Pic::Card { .. } => card(w, h, cell_h, pic),
         Pic::Plot { series, fill, width } => plot(w, h, cell_h, series, *fill, *width),
         Pic::Dot { color, glow } => dot(w, h, *color, *glow),
+        Pic::Shade { holes, alpha } => shade(w, h, caps, holes, *alpha),
+        Pic::Svg(markup) => svg(w, h, markup),
         Pic::File(_) => unreachable!(),
     };
     let data = miniz_oxide::deflate::compress_to_vec_zlib(&canvas.rgba(), 4);
+    // Big pictures go through a temporary file the terminal reads and deletes (its name must say
+    // `tty-graphics-protocol`), not base64 through the terminal's input; THC_SCENE_PIXELS=direct
+    // sends them in-band (over SSH, say).
+    if std::env::var("THC_SCENE_PIXELS").as_deref() != Ok("direct") {
+        let path = std::env::temp_dir().join(format!("tty-graphics-protocol-thc-scene-{}-{id}", std::process::id()));
+        if std::fs::write(&path, &data).is_ok() {
+            let _ = write!(out, "\x1b_Ga=t,t=t,f=32,o=z,s={w},v={h},i={id},q=2;{}\x1b\\", b64.encode(path.display().to_string()));
+            return;
+        }
+    }
     let enc = b64.encode(&data);
     let chunks: Vec<&str> = enc.as_bytes().chunks(4096).map(|c| std::str::from_utf8(c).unwrap_or("")).collect();
     for (k, chunk) in chunks.iter().enumerate() {
@@ -389,15 +494,23 @@ mod tests {
 
     #[test]
     fn a_card_is_opaque_inside_and_clear_at_the_corners() {
-        let c = card(100, 50, 20.0, &Pic::Card { fill: (40, 40, 40), fill2: None, border: None, radius: 0.5, shadow: 0.0, glow: None });
+        let c = card(100, 50, 20.0, &Pic::Card { fill: (40, 40, 40), fill2: None, border: None, radius: 0.5, shadow: 0.0, glow: None, page: None });
         assert_eq!(c.px[(25 * 100 + 50) as usize][3], 1.0, "middle");
         assert_eq!(c.px[0][3], 0.0, "corner, outside the radius");
     }
 
     #[test]
+    fn svg_renders_fitted_and_straight_alpha() {
+        let c = svg(40, 20, r##"<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><circle cx="5" cy="5" r="5" fill="#ff8000"/></svg>"##);
+        let mid = c.px[(10 * 40 + 20) as usize];
+        assert!(mid[3] > 0.99 && (mid[0] - 1.0).abs() < 0.01, "centre is opaque orange: {mid:?}");
+        assert_eq!(c.px[(10 * 40 + 2) as usize][3], 0.0, "letterboxed sides stay clear");
+    }
+
+    #[test]
     fn placing_the_same_picture_twice_sends_it_once() {
         let caps = Caps { graphics: true, cell_w: 8.0, cell_h: 16.0 };
-        let pic = Pic::Card { fill: (1, 2, 3), fill2: None, border: None, radius: 0.3, shadow: 0.0, glow: None };
+        let pic = Pic::Card { fill: (1, 2, 3), fill2: None, border: None, radius: 0.3, shadow: 0.0, glow: None, page: None };
         let want = vec![Placed { x: 0, y: 0, w: 4, h: 2, z: -1, pic: pic.clone() }, Placed { x: 5, y: 0, w: 4, h: 2, z: -1, pic }];
         let mut k = Kitty::default();
         let first = String::from_utf8(k.sync(&want, caps)).unwrap();

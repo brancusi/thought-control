@@ -1,7 +1,9 @@
 # Draws the thc mark, [•], as a PNG (supersampled, anti-aliased) with only the standard library.
 import math, struct, sys, zlib
 W, H, SS = 720, 240, 3
-MUTED, ACCENT = (160, 150, 138), (232, 131, 79)
+# mark.py [out.png] [accent as r,g,b]
+MUTED = (160, 150, 138)
+ACCENT = tuple(int(v) for v in sys.argv[2].split(",")) if len(sys.argv) > 2 else (232, 131, 79)
 def png(path, px):
     raw = b"".join(b"\x00" + bytes(v for p in row for v in p) for row in px)
     chunk = lambda t, d: struct.pack(">I", len(d)) + t + d + struct.pack(">I", zlib.crc32(t + d) & 0xffffffff)

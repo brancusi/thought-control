@@ -154,7 +154,10 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
             vec![]
         }
         Msg::Stats { stats } => {
-            let value = serde_json::to_value(&stats).unwrap_or_default();
+            // Rounded for showing: `$stats` is for templates.
+            let r = |x: f64, d: i32| (x * 10f64.powi(d)).round() / 10f64.powi(d);
+            let value = serde_json::json!({"fps": r(stats.fps, 1), "draw_ms": r(stats.draw_ms, 2), "max_ms": r(stats.max_ms, 1),
+                                           "msgs": r(stats.msgs, 0), "frames": stats.frames});
             st.data.insert("$stats".into(), Slot::Ready { value });
             st.stats = stats;
             vec![]
@@ -205,6 +208,12 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
         Msg::Caps { caps, text_sizing } => {
             st.caps = caps;
             st.text_sizing = text_sizing;
+            // Bindable as `$caps`, so a UI can say what it's drawing with.
+            let mut value = serde_json::to_value(caps).unwrap_or_default();
+            value["text_sizing"] = text_sizing.into();
+            value["cell_w"] = (caps.cell_w.round() as i64).into();
+            value["cell_h"] = (caps.cell_h.round() as i64).into();
+            st.data.insert("$caps".into(), Slot::Ready { value });
             vec![]
         }
         Msg::Key { key } => match resolve(st, &key) {
