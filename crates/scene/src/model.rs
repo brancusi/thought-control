@@ -114,6 +114,13 @@ pub struct Node {
     /// What a click does (after focusing the node and selecting the clicked row).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub click: Option<Action>,
+    /// A pixel panel behind the node (rounded, shadowed), where the terminal draws images; a plain
+    /// border where it doesn't.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub backdrop: Option<Backdrop>,
+    /// Text drawn this many times larger (kitty's text sizing, OSC 66), where the terminal can.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub scale: Option<u8>,
     /// The data source this node reads (a key of `Ui::data`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bind: Option<String>,
@@ -138,6 +145,8 @@ impl Default for Node {
             align: None,
             tip: None,
             click: None,
+            backdrop: None,
+            scale: None,
             kind: Kind::Text { text: String::new() },
         }
     }
@@ -225,6 +234,24 @@ pub enum Kind {
     Big { text: String },
     /// One child at a time, picked by a row of tab titles (click one, or ←/→ when focused).
     Tabs { tabs: Vec<String>, children: Vec<Node> },
+    /// Lines drawn in pixels (anti-aliased, a gradient under each) where the terminal draws
+    /// images; a braille chart where it doesn't.
+    Plot {
+        series: Vec<Series>,
+        #[serde(default = "yes")]
+        fill: bool,
+        /// Line width as a fraction of a cell's height.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        width: Option<f32>,
+    },
+    /// An image file (PNG), scaled into the node.
+    Image { src: String },
+    /// A lit, glowing dot (the brand mark's `•`): `color`, and `glow` (0 for none).
+    Dot {
+        color: String,
+        #[serde(default)]
+        glow: f32,
+    },
     /// A world map with a point per bound item at `lat`/`lon` (paths), labelled by `label`.
     Map {
         lat: String,
@@ -232,6 +259,31 @@ pub enum Kind {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         label: Option<String>,
     },
+}
+
+fn yes() -> bool {
+    true
+}
+
+/// A pixel panel: `fill` (and `fill2` for a vertical gradient), `border`, a corner `radius` and a
+/// `shadow` (fractions of a cell's height), and `glow` (the shadow's colour, for a lit panel).
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct Backdrop {
+    pub fill: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fill2: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub border: Option<String>,
+    #[serde(default = "radius")]
+    pub radius: f32,
+    #[serde(default)]
+    pub shadow: f32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub glow: Option<String>,
+}
+
+fn radius() -> f32 {
+    0.5
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

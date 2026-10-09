@@ -107,3 +107,23 @@ tab to right-align the rest of a line, `{*─}` to fill it, and lines whose plac
 out empty are left out. Lists take `variant`/`variants` (a template per row kind), `skip` (rows
 the cursor passes over), `mark`, `lead` and `selected`; `rule` draws a line; `status_bar: false`
 gives the UI every row.
+
+## Pixels
+
+`crates/scene/examples/pixels/`: thc's Today on pixel cards. Where the terminal speaks the kitty
+graphics protocol (Ghostty, kitty, WezTerm), a node's `backdrop` is a rounded, shadowed, gradient
+panel drawn under the text, `plot` draws anti-aliased lines with gradient fills, `image` places a
+PNG and `dot` a lit, glowing sphere; elsewhere they fall back to borders, braille and text. The
+view stays pure (it asks for pictures in cells, colours and proportions); the runtime rasterises
+them at the real cell size, sends each once (cached by content) and re-places only what moved.
+`scale` asks for larger text (OSC 66) where a startup probe finds the terminal draws it.
+
+Run the binary itself, not `cargo run`: the repo's `.cargo/config.toml` gives everything cargo
+runs a test sandbox (`THC_TEST`), so thc sources would see an empty vault.
+
+```sh
+cargo build --release -p thc-scene
+python3 crates/scene/examples/pixels/mark.py crates/scene/examples/pixels/mark.png   # once
+target/release/thc-scene run crates/scene/examples/pixels/pixels.json
+target/release/thc-scene upgrade     # after a rebuild: same screen, same state, new binary
+```

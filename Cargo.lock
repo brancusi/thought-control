@@ -2234,8 +2234,10 @@ name = "thc-scene"
 version = "0.10.1"
 dependencies = [
  "anyhow",
+ "base64",
  "caretline-layers 0.2.0",
  "clap",
+ "miniz_oxide 0.8.9",
  "ratatui",
  "serde",
  "serde_json",

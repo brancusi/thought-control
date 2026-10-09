@@ -23,6 +23,14 @@ enum Cmd {
         /// Reload the file whenever it changes.
         #[arg(long)]
         watch: bool,
+        /// Start from a saved state (what `upgrade` hands the new binary).
+        #[arg(long)]
+        restore: Option<PathBuf>,
+    },
+    /// Replace the running screen's binary with this one (or --binary), keeping its whole state.
+    Upgrade {
+        #[arg(long)]
+        binary: Option<PathBuf>,
     },
     /// Replace the running screen's whole UI with a file's (`-` reads stdin).
     Push { file: PathBuf },
@@ -62,7 +70,11 @@ fn main() -> Result<()> {
     let cli = Cli::parse();
     let socket = cli.socket.unwrap_or_else(runtime::default_socket);
     let reply = match cli.cmd {
-        Cmd::Run { file, watch } => return runtime::run(file, watch, socket),
+        Cmd::Run { file, watch, restore } => return runtime::run(file, watch, socket, restore),
+        Cmd::Upgrade { binary } => {
+            let bin = binary.or_else(|| std::env::current_exe().ok()).map(|p| p.display().to_string());
+            runtime::send(&socket, json!({"op": "upgrade", "binary": bin}))?
+        }
         Cmd::Render { file, size, keys, ansi } => {
             let (w, h) = size.split_once('x').ok_or_else(|| anyhow::anyhow!("--size is WxH"))?;
             print!("{}", runtime::render(runtime::load(&file)?, w.parse()?, h.parse()?, &keys, ansi)?);

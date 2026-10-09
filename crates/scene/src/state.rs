@@ -33,6 +33,12 @@ pub struct State {
     /// The logical clock (ms), moved only by `Msg::Tick`; animations read it.
     #[serde(default)]
     pub now_ms: u64,
+    /// What the terminal can draw (pictures, the cell size in pixels, larger text).
+    #[serde(default)]
+    pub caps: crate::gfx::Caps,
+    /// Whether larger text (OSC 66) is on: the terminal's to say, or `THC_SCENE_TEXT_SIZE=1`.
+    #[serde(default)]
+    pub text_sizing: bool,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -103,6 +109,8 @@ pub enum Msg {
     Tick { now_ms: u64 },
     /// Replace the layers only.
     Layers { layers: Vec<LayerSpec> },
+    /// What the terminal can draw.
+    Caps { caps: crate::gfx::Caps, text_sizing: bool },
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -192,6 +200,11 @@ pub fn update(st: &mut State, msg: Msg) -> Vec<Effect> {
         }
         Msg::Layers { layers } => {
             st.ui.layers = layers;
+            vec![]
+        }
+        Msg::Caps { caps, text_sizing } => {
+            st.caps = caps;
+            st.text_sizing = text_sizing;
             vec![]
         }
         Msg::Key { key } => match resolve(st, &key) {

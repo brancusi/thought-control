@@ -35,6 +35,11 @@ pub enum Request {
     Mouse { kind: String, x: u16, y: u16 },
     /// The current frame, as text.
     Screen,
+    /// Save the whole state, become `binary` (default: this one) and carry on from that state.
+    Upgrade {
+        #[serde(default)]
+        binary: Option<String>,
+    },
     /// Click a node as the mouse would: a row of it, or a tab.
     Click {
         id: String,
@@ -134,6 +139,8 @@ struct Driver {
     streams: BTreeMap<String, (Source, Child)>,
     quit: bool,
     blocking: bool,
+    /// Set by an upgrade request: the binary to become.
+    upgrade: Option<String>,
 }
 
 impl Drop for Driver {
@@ -147,7 +154,7 @@ impl Drop for Driver {
 
 impl Driver {
     fn new(tx: Sender<Event>, blocking: bool) -> Driver {
-        Driver { tx, in_flight: BTreeSet::new(), last_fetch: BTreeMap::new(), streams: BTreeMap::new(), quit: false, blocking }
+        Driver { tx, in_flight: BTreeSet::new(), last_fetch: BTreeMap::new(), streams: BTreeMap::new(), quit: false, blocking, upgrade: None }
     }
 
     fn apply(&mut self, st: &mut State, msg: Msg) {
@@ -220,6 +227,14 @@ impl Driver {
         }
     }
 
+    /// Stop every stream (before an upgrade: the new process starts its own).
+    fn stop_streams(&mut self) {
+        for (_, (_, mut c)) in std::mem::take(&mut self.streams) {
+            let _ = c.kill();
+            let _ = c.wait();
+        }
+    }
+
     /// Stop streams the UI no longer has (or has changed).
     fn reap(&mut self, st: &State) {
         let gone: Vec<String> =
@@ -275,7 +290,7 @@ impl Driver {
             Request::Layers { layers } => Msg::Layers { layers },
             Request::Click { id, row, tab } => Msg::Click { id, row, tab },
             // The loop answers these itself (they need the last frame).
-            Request::Mouse { .. } | Request::Screen => return json!({"ok": false}),
+            Request::Mouse { .. } | Request::Screen | Request::Upgrade { .. } => return json!({"ok": false}),
         };
         self.apply(st, msg);
         json!({"ok": st.status.is_none(), "version": st.version, "status": st.status})
@@ -283,20 +298,35 @@ impl Driver {
 }
 
 /// Run a UI in the terminal until `quit`.
-pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
-    let ui = match &file {
-        Some(p) => load(p)?,
-        None => serde_json::from_value(json!({"root": {"type": "text",
+pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf, restore: Option<PathBuf>) -> Result<()> {
+    // Restoring (after an upgrade): the saved state, every selection and focus as it was.
+    let mut st: State = match &restore {
+        Some(p) => serde_json::from_str(&std::fs::read_to_string(p)?)?,
+        None => State::default(),
+    };
+    let ui = match (&restore, &file) {
+        (Some(_), _) => st.ui.clone(),
+        (None, Some(p)) => load(p)?,
+        (None, None) => serde_json::from_value(json!({"root": {"type": "text",
             "text": "Waiting for a UI.\n\nPush one:  thc-scene push ui.json"}}))?,
     };
     let (tx, rx) = mpsc::channel();
     serve(&socket, tx.clone())?;
-    let mut st = State::default();
     let mut d = Driver::new(tx, false);
     d.apply(&mut st, Msg::Push { ui });
+    let caps = |sizing: bool| Msg::Caps { caps: crate::gfx::Caps::detect(), text_sizing: sizing };
+    let mut kitty = crate::gfx::Kitty::default();
     let mut seen = file.as_deref().and_then(mtime);
 
     let mut term = ratatui::init();
+    // Larger text: the terminal's to say (a probe), unless THC_SCENE_TEXT_SIZE forces it.
+    let sizing = match std::env::var("THC_SCENE_TEXT_SIZE").as_deref() {
+        Ok("1") => true,
+        Ok("0") => false,
+        _ => crate::gfx::probe_text_sizing(),
+    };
+    d.apply(&mut st, caps(sizing));
+    term.clear()?;
     let _ = ratatui::crossterm::execute!(std::io::stdout(), EnableMouseCapture);
     let started = Instant::now();
     let res = (|| -> Result<()> {
@@ -317,6 +347,7 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
         // What's under each cell in the last frame: the view's, for turning the mouse into messages.
         let mut hits: Vec<Hit> = Vec::new();
         let mut screens: Vec<Sender<Value>> = Vec::new();
+        let mut scaled_last: Vec<view::Scaled> = Vec::new();
         while !d.quit {
             // Animations (a pulsing ring) need time to move: tick every frame while one shows.
             let animating = st.ui.layers.iter().any(|l| l.pulse.is_some());
@@ -328,12 +359,28 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
             if dirty && last_draw.elapsed() >= budget {
                 let t = Instant::now();
                 let mut text = None;
+                let mut pics = Vec::new();
+                let mut scaled = Vec::new();
                 term.draw(|f| {
-                    hits = view::draw(&st, f);
+                    let out = view::draw(&st, f);
+                    (hits, pics, scaled) = (out.hits, out.pics, out.scaled);
                     if !screens.is_empty() {
                         text = Some(buffer_text(f.buffer_mut()));
                     }
                 })?;
+                // Pictures and larger text go out after the cells, in one write.
+                let mut extra = kitty.sync(&pics, st.caps);
+                if scaled != scaled_last {
+                    for t in &scaled {
+                        extra.extend(osc66(t));
+                    }
+                    scaled_last = scaled;
+                }
+                if !extra.is_empty() {
+                    let mut out = std::io::stdout().lock();
+                    out.write_all(&extra)?;
+                    out.flush()?;
+                }
                 if let Some(text) = text {
                     for s in screens.drain(..) {
                         let _ = s.send(json!({"ok": true, "screen": text}));
@@ -350,9 +397,36 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
                 batch.push(ev);
                 batch.extend(rx.try_iter().take(10_000));
             }
+            let resized = batch.iter().any(|e| matches!(e, Event::Term(TermEvent::Resize(..))));
             let n = apply_batch(batch, &mut d, &mut st, &hits, &mut screens);
             window.msgs += n;
             dirty |= n > 0;
+            if resized {
+                // The cell size can change with the window (a font size change, another display).
+                d.apply(&mut st, caps(sizing));
+                scaled_last.clear();
+            }
+            if let Some(bin) = d.upgrade.take() {
+                let path = std::env::temp_dir().join(format!("thc-scene-state-{}.json", std::process::id()));
+                std::fs::write(&path, serde_json::to_vec(&st)?)?;
+                let mut out = std::io::stdout().lock();
+                out.write_all(&kitty.clear())?;
+                out.flush()?;
+                drop(out);
+                d.stop_streams();
+                let _ = std::fs::remove_file(&socket);
+                use std::os::unix::process::CommandExt;
+                let mut cmd = Command::new(&bin);
+                cmd.args(["run", "--socket"]).arg(&socket).arg("--restore").arg(&path);
+                if watch && let Some(p) = &file {
+                    cmd.arg("--watch").arg(p);
+                }
+                // Only returns if the exec failed.
+                let err = cmd.exec();
+                st.status = Some(format!("upgrade to {bin} failed: {err}"));
+                serve(&socket, d.tx.clone())?;
+                dirty = true;
+            }
             d.tick(&mut st);
             if watch && let Some(p) = &file {
                 let now = mtime(p);
@@ -372,6 +446,7 @@ pub fn run(file: Option<PathBuf>, watch: bool, socket: PathBuf) -> Result<()> {
         }
         Ok(())
     })();
+    let _ = std::io::stdout().write_all(&kitty.clear());
     let _ = ratatui::crossterm::execute!(std::io::stdout(), DisableMouseCapture);
     ratatui::restore();
     let _ = std::fs::remove_file(&socket);
@@ -394,6 +469,12 @@ fn apply_batch(batch: Vec<Event>, d: &mut Driver, st: &mut State, hits: &[Hit], 
             Event::Msg(Msg::Data { name, .. }) if newest.get(&name) != Some(&i) => d.in_flight.remove(&name),
             Event::Msg(m) => {
                 d.apply(st, m);
+                true
+            }
+            Event::Request(Request::Upgrade { binary }, reply) => {
+                let bin = binary.or_else(|| std::env::current_exe().ok().map(|p| p.display().to_string())).unwrap_or_default();
+                let _ = reply.send(json!({"ok": true, "upgrading": bin}));
+                d.upgrade = Some(bin);
                 true
             }
             Event::Request(Request::Screen, reply) => {
@@ -582,6 +663,19 @@ fn buffer_ansi(buf: &ratatui::buffer::Buffer) -> String {
         out.push_str("\x1b[0m\n");
     }
     out
+}
+
+/// Larger text at a cell (kitty's text sizing, OSC 66), in its colours.
+fn osc66(t: &view::Scaled) -> Vec<u8> {
+    use ratatui::style::{Color, Modifier};
+    let mut sgr = vec!["0".to_string()];
+    if t.style.add_modifier.contains(Modifier::BOLD) {
+        sgr.push("1".into());
+    }
+    if let Some(Color::Rgb(r, g, b)) = t.style.fg {
+        sgr.push(format!("38;2;{r};{g};{b}"));
+    }
+    format!("\x1b[{};{}H\x1b[{}m\x1b]66;s={};{}\x07\x1b[0m", t.y + 1, t.x + 1, sgr.join(";"), t.scale, t.text).into_bytes()
 }
 
 fn buffer_text(buf: &ratatui::buffer::Buffer) -> String {

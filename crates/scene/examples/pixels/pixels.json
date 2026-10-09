@@ -1,0 +1,378 @@
+{
+ "theme": {
+  "text": "#ece5d8",
+  "muted": "#a0968a",
+  "accent": "#e8834f",
+  "line": "#3a352f",
+  "selection": "#352e28",
+  "today": "#e2b54a",
+  "overdue": "#f2766e",
+  "done": "#8fc487",
+  "doing": "#6cc5ce",
+  "agent": "#88b1ec",
+  "tag": "#cca884",
+  "conflict": "#d49aD0",
+  "surface": "#221f1b",
+  "raised": "#2e2a25",
+  "overdue-tint": "#3a2220",
+  "border": "#3a352f",
+  "hover": "#2c2824",
+  "dim": "#a0968a",
+  "bg": "#1b1916",
+  "rim": "#4a433b"
+ },
+ "status_bar": false,
+ "root": {
+  "type": "col",
+  "children": [
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "image",
+      "src": "crates/scene/examples/pixels/mark.png",
+      "size": 14
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<text+b>Thought Control</>",
+        "scale": 2,
+        "size": 2
+       },
+       {
+        "type": "text",
+        "text": "<muted>Today \u00b7 {date} \u00b7 vault </><accent>{vault}</>",
+        "bind": "feed",
+        "size": 1
+       }
+      ],
+      "size": "1*"
+     },
+     {
+      "type": "text",
+      "text": "\t<muted>pixels: kitty graphics \u00b7 text: </><text>{text}</> ",
+      "bind": "caps"
+     }
+    ],
+    "size": 4
+   },
+   {
+    "type": "text",
+    "text": "",
+    "size": 1
+   },
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "list",
+      "id": "today",
+      "bind": "feed.rows",
+      "variant": "kind",
+      "skip": [
+       "section",
+       "blank"
+      ],
+      "variants": {
+       "section": " <text+b>{title}</>  <muted>{count}</>",
+       "blank": "",
+       "done": "<muted>{short}</>  <done>[x]</> <muted>{text}</>\t{meta_m|markup} "
+      },
+      "item": "<muted>{short}</>  {status|todo=<text>[ ]</>;doing=<doing>[/]</>;waiting=<muted>[w]</>;done=<done>[x]</>;cancelled=<muted>[-]</>;note=<muted> \u00b7 </>;*=<text>[ ]</>} {text_m|markup}\t{meta_m|markup} ",
+      "mark": "<accent+b>\u258c</> ",
+      "lead": "  ",
+      "selected": "on-selection",
+      "style": {
+       "fg": "text"
+      },
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1
+      },
+      "title": "Today",
+      "size": "58%"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "{status|todo=<text>[ ]</>;doing=<doing>[/]</>;waiting=<muted>[w]</>;done=<done>[x]</>;cancelled=<muted>[-]</>;note=<muted> \u00b7 </>;*=<text>[ ]</>} <text+b>{text_m|markup}</>\n<muted>{crumbs}</>\n\n{status|note=;*=<muted>status     </>}{status|done=<done>$</>;note=;*=<text>$</>}\n{sched_l|?<muted>scheduled  </><text>$</>}{sched_rel|?<muted> \u00b7 $</>}\n{due_l|?<muted>due        </><text>$</>}{due_rel|?<muted> \u00b7 $</>}\n{prio_m|?<muted>priority   </>}{prio_m|markup}\n{repeat_l|?<muted>repeat     </><text>$</>}\n{alert_l|?<muted>alert      </><text>$</>}\n{tags_m|?<muted>tags       </>}{tags_m|markup}\n<muted>created    </><text>{created_l} \u00b7 </><agent>\u25c6 {by}</>\n{why|?<muted>why here   </><text>$</>}\n\n{subtasks|?<text+b>Subtasks  $</>}\n{kids.0.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.0.text}\t{kids.0.meta_m|markup} \n{kids.1.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.1.text}\t{kids.1.meta_m|markup} \n{kids.2.status|todo= <text>[ ]</> ;done= <done>[x]</> }{kids.2.text}\t{kids.2.meta_m|markup} \n{subtasks|? }\n{history.0.t|?<text+b>History</>}\n{history.0.t|?<muted>$</>  }{history.0.who|?<agent>\u25c6 $</>}{history.0.what|?<muted>$</>}\n{history.1.t|?<muted>$</>  }{history.1.who|?<agent>\u25c6 $</>}{history.1.what|?<muted>$</>}\n{history.2.t|?<muted>$</>  }{history.2.who|?<agent>\u25c6 $</>}{history.2.what|?<muted>$</>}\n{more|true=<text>L</> <muted>full history</>  <text>R</> <muted>rewind\u2026</>}\n\n<text>e</> <muted>edit</>  <text>x</> <muted>done</>  <text>d</> <muted>date</>  <text>p</> <muted>priority</>  <text>m</> <muted>move</>",
+        "bind": "@today",
+        "style": {
+         "fg": "text"
+        },
+        "backdrop": {
+         "fill": "raised",
+         "fill2": "surface",
+         "border": "rim",
+         "radius": 0.55,
+         "shadow": 1.1,
+         "glow": "#3a281e"
+        },
+        "title": "Detail",
+        "size": "55%"
+       },
+       {
+        "type": "row",
+        "children": [
+         {
+          "type": "plot",
+          "series": [
+           {
+            "name": "done",
+            "bind": "week.done",
+            "color": "accent"
+           },
+           {
+            "name": "added",
+            "bind": "week.added",
+            "color": "agent"
+           }
+          ],
+          "width": 0.14,
+          "backdrop": {
+           "fill": "raised",
+           "fill2": "surface",
+           "border": "rim",
+           "radius": 0.55,
+           "shadow": 1.1
+          },
+          "title": "Done vs added \u00b7 pixels",
+          "size": "1*"
+         },
+         {
+          "type": "text",
+          "text": "",
+          "size": 2
+         },
+         {
+          "type": "chart",
+          "series": [
+           {
+            "name": "done",
+            "bind": "week.done",
+            "color": "accent"
+           },
+           {
+            "name": "added",
+            "bind": "week.added",
+            "color": "agent"
+           }
+          ],
+          "labels": [
+           "-14d",
+           "today"
+          ],
+          "backdrop": {
+           "fill": "raised",
+           "fill2": "surface",
+           "border": "rim",
+           "radius": 0.55,
+           "shadow": 1.1
+          },
+          "title": "Same data \u00b7 cells",
+          "size": "1*"
+         }
+        ]
+       }
+      ],
+      "size": "1*"
+     }
+    ],
+    "size": "1*"
+   },
+   {
+    "type": "text",
+    "text": "",
+    "size": 1
+   },
+   {
+    "type": "row",
+    "children": [
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<text+b>{open}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>open tasks</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1
+      },
+      "size": "1*"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<today+b>{today}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>due or scheduled today</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1
+      },
+      "size": "1*"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<agent+b>{review}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>agent changes to review</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1
+      },
+      "size": "1*"
+     },
+     {
+      "type": "text",
+      "text": "",
+      "size": 2
+     },
+     {
+      "type": "col",
+      "children": [
+       {
+        "type": "text",
+        "text": "<done+b>{done}</>",
+        "bind": "kpis",
+        "scale": 3,
+        "size": 3
+       },
+       {
+        "type": "text",
+        "text": "<muted>done today</>",
+        "size": 1
+       }
+      ],
+      "backdrop": {
+       "fill": "raised",
+       "fill2": "surface",
+       "border": "rim",
+       "radius": 0.55,
+       "shadow": 1.1
+      },
+      "size": "1*"
+     }
+    ],
+    "size": 6
+   }
+  ]
+ },
+ "data": {
+  "feed": {
+   "cmd": [
+    "python3",
+    "crates/scene/examples/thc/thcfeed.py"
+   ],
+   "every": 3
+  },
+  "week": {
+   "value": {
+    "done": [
+     2,
+     3,
+     1,
+     4,
+     6,
+     3,
+     5,
+     7,
+     4,
+     6,
+     8,
+     5,
+     9,
+     7
+    ],
+    "added": [
+     4,
+     2,
+     5,
+     3,
+     4,
+     6,
+     3,
+     5,
+     6,
+     4,
+     5,
+     7,
+     5,
+     6
+    ]
+   }
+  },
+  "kpis": {
+   "shell": "python3 -c \"import json,subprocess as s; q=lambda x: json.loads(s.run(['thc','q',x,'--json'],capture_output=True,text=True).stdout)['count']; r=json.loads(s.run(['thc','review','--json'],capture_output=True,text=True).stdout)['pending']; print(json.dumps({'open': q('status:open'), 'today': q('(sched<=today or due<=today) status:open'), 'review': r, 'done': q('done>=today')}))\"",
+   "every": 5
+  },
+  "caps": {
+   "value": {
+    "text": "2\u00d7 and 3\u00d7 (OSC 66)"
+   }
+  }
+ }
+}

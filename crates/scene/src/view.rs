@@ -4,6 +4,7 @@
 
 use crate::model::{Kind, LayerSpec, Look, Node, Seg, Size, Style as NodeStyle, fill, lookup, number, scalar, segments};
 use crate::state::{Slot, State, bound, items, selected, split_bind, tab_of, value_of};
+use crate::gfx::{Pic, Placed, Rgb};
 use caretline_layers as cl;
 use ratatui::Frame;
 use ratatui::buffer::Buffer;
@@ -43,6 +44,26 @@ struct Cx<'a> {
     th: Theme,
     hits: Vec<Hit>,
     anchors: cl::AnchorMap,
+    pics: Vec<Placed>,
+    scaled: Vec<Scaled>,
+}
+
+/// Text the terminal draws larger (OSC 66): its cell, the text, the scale and the style.
+#[derive(Clone, Debug, PartialEq)]
+pub struct Scaled {
+    pub x: u16,
+    pub y: u16,
+    pub text: String,
+    pub scale: u8,
+    pub style: Style,
+}
+
+/// What a frame needs besides its cells: what's under each cell, pictures, larger text.
+#[derive(Default)]
+pub struct Out {
+    pub hits: Vec<Hit>,
+    pub pics: Vec<Placed>,
+    pub scaled: Vec<Scaled>,
 }
 
 impl Cx<'_> {
@@ -67,6 +88,13 @@ impl Cx<'_> {
             }
         }
         out
+    }
+
+    fn rgb(&self, name: &str) -> Option<Rgb> {
+        match self.color(name)? {
+            Color::Rgb(r, g, b) => Some((r, g, b)),
+            _ => None,
+        }
     }
 
     fn mark(&mut self, id: &str, row: Option<usize>, tab: Option<usize>, rect: Rect) {
@@ -207,9 +235,9 @@ fn theme(st: &State) -> Theme {
     }
 }
 
-/// Draw the whole screen; returns what's under each cell.
-pub fn draw(st: &State, f: &mut Frame) -> Vec<Hit> {
-    let mut cx = Cx { st, th: theme(st), hits: Vec::new(), anchors: cl::AnchorMap::new() };
+/// Draw the whole screen; returns what's under each cell and the pictures to place.
+pub fn draw(st: &State, f: &mut Frame) -> Out {
+    let mut cx = Cx { st, th: theme(st), hits: Vec::new(), anchors: cl::AnchorMap::new(), pics: Vec::new(), scaled: Vec::new() };
     let mut base = Style::default();
     if let Some(bg) = cx.th.bg {
         base = base.bg(bg);
@@ -224,7 +252,7 @@ pub fn draw(st: &State, f: &mut Frame) -> Vec<Hit> {
     node(&mut cx, &st.ui.root, f, body);
     layers(&cx, f.buffer_mut(), body);
     if !bar {
-        return cx.hits;
+        return Out { hits: cx.hits, pics: cx.pics, scaled: cx.scaled };
     }
     let line = match &st.status {
         Some(s) => Line::styled(s.clone(), Style::default().fg(cx.th.neg)),
@@ -238,7 +266,7 @@ pub fn draw(st: &State, f: &mut Frame) -> Vec<Hit> {
     let [left, right] = Layout::horizontal([Constraint::Fill(1), Constraint::Length(meter.chars().count() as u16)]).areas(status);
     f.render_widget(Paragraph::new(line), left);
     f.render_widget(Paragraph::new(Line::styled(meter, Style::default().fg(Color::Yellow))), right);
-    cx.hits
+    Out { hits: cx.hits, pics: cx.pics, scaled: cx.scaled }
 }
 
 fn border_type(edge: Option<&str>) -> BorderType {
@@ -257,7 +285,29 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
         cx.mark(id, None, None, area);
     }
     let style = cx.style(n.style.as_ref());
-    let inner = if n.title.is_some() || n.border || n.edge.is_some() {
+    let pixels = st.caps.graphics;
+    let card = n.backdrop.as_ref().filter(|_| pixels).and_then(|b| {
+        Some(Pic::Card {
+            fill: cx.rgb(&b.fill)?,
+            fill2: b.fill2.as_deref().and_then(|c| cx.rgb(c)),
+            border: b.border.as_deref().and_then(|c| cx.rgb(c)),
+            radius: b.radius,
+            shadow: b.shadow,
+            glow: b.glow.as_deref().and_then(|c| cx.rgb(c)),
+        })
+    });
+    let inner = if let Some(pic) = card {
+        // A pixel card stands in for the border: the title sits on its top edge, the content one
+        // cell in from each side.
+        cx.pics.push(Placed { x: area.x, y: area.y, w: area.width, h: area.height, z: -1, pic });
+        if let Some(t) = &n.title {
+            let ts = if focused { Style::default().fg(cx.th.accent).add_modifier(Modifier::BOLD) } else { Style::default().fg(cx.th.dim).add_modifier(Modifier::BOLD) };
+            f.buffer_mut().set_string(area.x + 2, area.y + 1, t, ts);
+            Rect::new(area.x + 2, area.y + 3, area.width.saturating_sub(4), area.height.saturating_sub(4))
+        } else {
+            Rect::new(area.x + 2, area.y + 1, area.width.saturating_sub(4), area.height.saturating_sub(2))
+        }
+    } else if n.title.is_some() || n.border || n.edge.is_some() || n.backdrop.is_some() {
         let edge = if focused { cx.th.accent } else { cx.th.border };
         let mut b = Block::bordered().border_type(border_type(n.edge.as_deref())).border_style(Style::default().fg(edge));
         if let Some(bg) = n.style.as_ref().and_then(|s| s.bg.as_deref()).and_then(|c| cx.color(c)) {
@@ -306,6 +356,21 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
             };
             for (c, a) in children.iter().zip(areas.iter()) {
                 node(cx, c, f, *a);
+            }
+        }
+        Kind::Text { text } if n.scale.is_some_and(|k| k > 1) && st.text_sizing => {
+            // Larger text: the terminal draws it over `scale` rows; the cells under it stay blank.
+            let v = bound(st, n).unwrap_or(&Value::Null);
+            let k = n.scale.unwrap_or(1);
+            for (i, l) in text.split('\n').enumerate() {
+                let y = inner.y + i as u16 * k as u16;
+                if y + k as u16 > inner.bottom() {
+                    break;
+                }
+                let segs = segments(l, v);
+                let st_ = segs.iter().find_map(|g| g.style.as_deref()).map_or(style, |sp| cx.spec(sp, style));
+                let t: String = segs.into_iter().map(|g| g.text).collect();
+                cx.scaled.push(Scaled { x: inner.x, y, text: t, scale: k, style: st_ });
             }
         }
         Kind::Text { text } => {
@@ -518,6 +583,48 @@ fn node(cx: &mut Cx, n: &Node, f: &mut Frame, area: Rect) {
             if let Some(c) = children.get(shown) {
                 let body = Rect::new(inner.x, inner.y + 2, inner.width, inner.height.saturating_sub(2));
                 node(cx, c, f, body);
+            }
+        }
+        Kind::Plot { series, fill, width } => {
+            let data: Vec<(Vec<f64>, Rgb)> = series
+                .iter()
+                .map(|s| {
+                    let c = s.color.as_deref().and_then(|c| cx.rgb(c)).unwrap_or((0x5f, 0xb3, 0xff));
+                    (numbers(&[], value_of(st, &s.bind), s.field.as_deref()), c)
+                })
+                .collect();
+            if pixels {
+                let pic = Pic::Plot { series: data, fill: *fill, width: width.unwrap_or(0.12) };
+                cx.pics.push(Placed { x: inner.x, y: inner.y, w: inner.width, h: inner.height, z: 0, pic });
+            } else {
+                // Cells only: the same lines in braille.
+                let pts: Vec<Vec<(f64, f64)>> = data.iter().map(|(v, _)| v.iter().enumerate().map(|(i, y)| (i as f64, *y)).collect()).collect();
+                let (lo, hi) = pts.iter().flatten().fold((f64::MAX, f64::MIN), |(a, b), p| (a.min(p.1), b.max(p.1)));
+                let xmax = pts.iter().map(|p| p.len()).max().unwrap_or(1).max(2) as f64 - 1.0;
+                let sets: Vec<Dataset> = pts
+                    .iter()
+                    .zip(data.iter())
+                    .map(|(p, (_, c))| Dataset::default().marker(Marker::Braille).graph_type(GraphType::Line).style(Style::default().fg(Color::Rgb(c.0, c.1, c.2))).data(p))
+                    .collect();
+                if lo <= hi {
+                    f.render_widget(Chart::new(sets).x_axis(Axis::default().bounds([0.0, xmax])).y_axis(Axis::default().bounds([lo, hi])), inner);
+                }
+            }
+        }
+        Kind::Image { src } => {
+            if pixels {
+                cx.pics.push(Placed { x: inner.x, y: inner.y, w: inner.width, h: inner.height, z: 0, pic: Pic::File(src.clone()) });
+            } else {
+                f.render_widget(Paragraph::new(format!("[image {src}]")).style(Style::default().fg(cx.th.dim)), inner);
+            }
+        }
+        Kind::Dot { color, glow } => {
+            let c = cx.rgb(color).unwrap_or((0xe8, 0x83, 0x4f));
+            if pixels {
+                cx.pics.push(Placed { x: inner.x, y: inner.y, w: inner.width, h: inner.height, z: 0, pic: Pic::Dot { color: c, glow: *glow } });
+            } else {
+                let at = Rect::new(inner.x + inner.width / 2, inner.y + inner.height / 2, 1, 1);
+                f.buffer_mut().set_string(at.x, at.y, "•", Style::default().fg(Color::Rgb(c.0, c.1, c.2)).add_modifier(Modifier::BOLD));
             }
         }
         Kind::Map { lat, lon, label } => {
