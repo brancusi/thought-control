@@ -26,6 +26,7 @@ pub mod ui_state;
 pub mod layers;
 mod layers_ui;
 pub mod teaching;
+mod doc_view;
 mod session;
 mod ui_proto;
 mod ui_server;
@@ -54,6 +55,7 @@ mod sidebar_tests;
 mod session_tests;
 #[cfg(test)]
 mod teaching_tests;
+mod layers_tests;
 #[cfg(test)]
 mod goldens;
 #[cfg(test)]

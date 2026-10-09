@@ -287,6 +287,21 @@ impl Doc {
         self.hold_view();
     }
 
+    /// One caretline message through the current view (an agent's own view, doc_view.rs).
+    pub fn run_msg(&mut self, msg: caretline::Msg) -> Vec<caretline::Effect> {
+        self.run(msg)
+    }
+
+    /// Line `i`'s text as engine chars (`from..to`), for text anchors.
+    pub fn char_range(&mut self, i: usize) -> Option<(usize, usize)> {
+        self.engine.flush();
+        let len = self.lines().get(i)?.text.len();
+        Some((
+            self.engine.char_of(BlockPos { line: i, byte: 0 }),
+            self.engine.char_of(BlockPos { line: i, byte: len }),
+        ))
+    }
+
     /// Put the caret back at a held place. False: its note isn't here.
     pub fn set_caret_anchor(&mut self, a: &Anchor) -> bool {
         let Some(i) = self.lines().iter().position(|l| l.id == a.id) else { return false };

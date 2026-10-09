@@ -496,6 +496,8 @@ pub struct App {
     pub layer_limits: crate::layers::AgentLimits,
     /// The keymap actions run in this message (a walkthrough's `command` predicates).
     pub ran_actions: Vec<String>,
+    /// The last `doc_view` message's result, for the socket's reply.
+    pub doc_view_reply: Option<serde_json::Value>,
 }
 
 impl std::ops::Deref for App {
@@ -874,6 +876,7 @@ impl App {
                     .str("layers.agent_limits")
                     .unwrap_or("off"),
             ),
+            doc_view_reply: None,
             ran_actions: Vec::new(),
         };
         app.load_page_ids();

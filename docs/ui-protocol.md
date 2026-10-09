@@ -151,6 +151,8 @@ order they happened.
 | `idle` | | The open document passed its idle point: the typing so far became one undo step and was saved |
 | `aside` | `target`, `pin`, `fold`, `close`, `actor` | `aside`: put something beside the person in the sidebar, or close a panel the actor opened |
 | `poll` | | The runtime looked for changes from elsewhere (another process, another device, the daemon's push) and found some: what's shown reloaded |
+| `layer` | `req`, `actor` | A layer op ([Layers](#layers-hints-highlights-spotlights-walkthroughs)) |
+| `doc_view` | `req`, `actor` | An agent's own view on the open document: open it, run messages or set a note's text through it |
 
 `frame`, `idle` and `poll` are the runtime's own steps that read or write the vault. The TUI
 records one only when it did something, so a replay does the same thing at the same point.
@@ -397,6 +399,71 @@ agents (exit 6; an actor's tier is set in `[actors.<name>]` of the device config
 change shows in the TUI's toast. UI control never writes to the vault's log by itself: only
 keys that edit (typing into a document, `x` on a task) write, exactly as they would from the
 keyboard.
+
+## Layers: hints, highlights, spotlights, walkthroughs
+
+> **Local build only** (feat/layers): built on caretline-layers, which isn't published yet.
+
+An agent can point at things on the person's screen without moving their view: a **hint** (a
+callout box with an arrow and a ring), a **highlight** (a ring, no box), a **focus** (a
+spotlight that dims everything else, and selects the row), and a **walkthrough** (steps with
+dots and `‹ back` / `next ›`). Placement is caretline-layers'; every cell is thc's, in the
+theme's colours (agents' layers in the agent hue, attributed `◆ name` on the box's top edge).
+
+```sh
+THC_ACTOR=claude thc ui hint row:ny82xc331ywd "The dentist closes Friday." --title "Call today"
+THC_ACTOR=claude thc ui highlight ui:tab:tasks --ttl 8s
+THC_ACTOR=claude thc ui focus row:pa3e6arwdv7c "Review this one first"
+THC_ACTOR=claude thc ui tour steps.json        # [{"anchor", "title"?, "text"}…] or {"steps", "spotlight"}
+THC_ACTOR=claude thc ui tour next              # back, stop
+thc ui layers                                  # --clear, --pop ID, --json
+```
+
+**Anchors** are stable keys, never positions: `row:<id>` (a list row in any view, a sidebar
+list panel's row, a line of the open document), `ui:tab:<view>`, `ui:footer:<action>`,
+`ui:scope`, `ui:detail`, `ui:calendar`, `ui:day:<date>`, `ui:panel:<n>:header`,
+`action:<keymap action>` (anything drawn as that action's button), `panel:<n>`, `caret`,
+`text:<from>..<to>` (the open document's engine chars; they follow edits), `block:<n>`, or any
+caretline-layers anchor as JSON. A list is fallbacks. A row scrolled out of sight shows an edge
+chip pointing to it.
+
+**Walkthroughs** run on caretline-tour: a step's `host` is a UI state patch applied on
+entering it (a history step, like any agent's), `advance` moves on when a predicate holds
+(`{"command": "go.pages"}`: a keymap action ran; `{"msg": "key"}`; `{"state": {…}}`), and
+which tours this device finished or stopped is kept in its cache (`tours-seen.json`). The
+steps are `guide` layers; an agent's walkthrough carries its name.
+
+**The person stays in control.** Esc takes every agent's layer away, ⌘[ takes back the
+newest, a click on a hint dismisses it, and F2 / ⇧F2 / F3 move or stop a walkthrough (or its
+buttons). An agent can't change `layers` through `state.set` or `patch`.
+
+**Policy:** `[layers] agent_limits` in the config: `off` (the default: no limits) or `defaults`
+(caretline-layers' `Limits::agent_defaults()`: 3 agent layers, 8 s lifetimes, 2 pushes a second,
+size limits, no spotlight). A refusal is `{"error": {"kind": "refused", "reason", "message"}}`
+(exit 6). A trace records the policy in its `env`.
+
+**Writing through its own view.** `doc.view.open` gives the agent a caretline view of its own on
+the open document (`at`: `start`, `end`, `{"id", "byte"}`, `{"id", "end": true}`); `doc.msgs`
+runs caretline messages through it and `doc.text.set` replaces a note's text. The person's
+caret stays where it was, and the lines save as the person's do. CLI: `thc ui doc open --at
+<id>:end`, `thc ui doc write TEXT`, `thc ui doc set ID TEXT`, `thc ui doc msgs JSON`.
+
+| Op | Fields | Result |
+|---|---|---|
+| `hint.show` | `anchor`, `text`, `title?`, `ttl_ms?`, `place?`, `arrow?`, `ring?` | `rev`, `layer`, `resolved` (`{"rects"}`, `{"off"}` or null with `reason: "not_found"`) |
+| `hint.clear`, `hint.hide` | `layer?` or `all` (default: all of yours) | `rev`, `popped` |
+| `highlight`, `focus` | `anchor`, `ttl_ms?`; focus: `text?`, `title?` | as `hint.show` |
+| `layer.push`, `layer.update`, `layer.pop` | a caretline-layers `layer`; `layer`, `owner` or `all` | as `hint.show` / `popped` |
+| `layer.ls` | | `rev`, `layers` (`layers`, `hidden`, `tour`) |
+| `tour.start` | `steps` (`[{anchor, title?, text, host?, advance?}]`), `spotlight?`, `title?`; or `tour`, a caretline-tour walkthrough | as `hint.show` (the step's layer, `s1/0`) |
+| `tour.next`, `tour.back`, `tour.stop`, `tour.restart`, `tour.step` (`to`) | | `rev` |
+| `tour.list` | | `rev`, `layers` (the walkthrough and the tours seen) |
+| `doc.view.open`, `doc.view.close` | `at?` | `rev`, `doc` (`view`, `caret`, `line` with its `text` chars) |
+| `doc.msgs` | `msgs` (caretline messages), `at?` | as `doc.view.open` |
+| `doc.text.set` | `id`, `text` | as `doc.view.open` |
+
+Each is one message (`layer` or `doc_view`) in the trace, so a session with layers replays
+byte for byte. `thc schema --proto` lists the layer ops under `ui`.
 
 ## `thc ui`
 

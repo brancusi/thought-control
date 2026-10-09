@@ -72,6 +72,13 @@ pub enum Msg {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         actor: Option<String>,
     },
+    /// The agent's own view on the open document (doc_view.rs): open it, run caretline
+    /// messages through it, or set a note's text through it. The person's caret stays put.
+    DocView {
+        req: Value,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        actor: Option<String>,
+    },
     /// Put something beside the person (`thc ui aside`, sidebar.md §10.3), or close a panel the
     /// actor opened.
     Aside {
@@ -432,10 +439,26 @@ impl Session {
                 d.set_scroll(ds.scroll, self.app.ui.doc_scroll_free);
             }
         }
+        self.reopen_agent_views();
         self.follow();
         self.rev += 1;
         self.checkpoint();
         Ok(())
+    }
+
+    /// Agents' views as the state says: each one open on the document, its caret where it was
+    /// (a state line of a segment that starts mid-session).
+    fn reopen_agent_views(&mut self) {
+        let views = self.app.ui.agent_views.clone();
+        let Some(d) = self.app.doc.as_mut() else { return };
+        for v in views.values() {
+            if !d.has_view(v.view) {
+                d.add_view(v.view);
+            }
+            if !v.caret_id.is_empty() {
+                d.with_view(v.view, |d| d.set_caret_anchor(&crate::editor::Anchor { id: v.caret_id.clone(), byte: v.caret_byte }));
+            }
+        }
     }
 
     /// Record what changed outside messages since the last one, as an `external` message (no-op
@@ -503,6 +526,7 @@ impl Session {
                 .map(|_| ())
                 .map_err(|e| e.to_string())
             }
+            Msg::DocView { req, actor } => crate::doc_view::check(&self.app, req, actor.as_deref()),
             _ => Ok(()),
         }
     }
@@ -735,6 +759,10 @@ impl Session {
                 let limits = self.app.layer_limits.limits();
                 crate::layers::request(&mut self.app.ui, &req, actor.as_deref(), &limits)
                     .map_err(|e| e.to_string())?;
+            }
+            Msg::DocView { req, actor } => {
+                self.app.doc_view_reply =
+                    Some(crate::doc_view::run(&mut self.app, &req, actor.as_deref())?);
             }
             Msg::Frame => {
                 self.app.after_frame();
@@ -1025,6 +1053,22 @@ impl Session {
             self.app.ui.document = doc;
         }
         self.app.sync_panel_views();
+        // Agents' views: each one's caret (a view the document no longer has is gone).
+        if !self.app.ui.agent_views.is_empty() {
+            let mut views = self.app.ui.agent_views.clone();
+            match self.app.doc.as_mut() {
+                Some(d) => views.retain(|_, v| {
+                    let Some(a) = d.with_view(v.view, |d| d.caret_anchor()) else { return false };
+                    v.caret_id = a.id;
+                    v.caret_byte = a.byte;
+                    true
+                }),
+                None => views.clear(),
+            }
+            if views != self.app.ui.agent_views {
+                self.app.ui.agent_views = views;
+            }
+        }
         // The engine's view keeps whether it was scrolled freely; the state records it.
         let free = self.app.doc.as_ref().is_some_and(|d| d.scroll_free());
         if self.app.ui.doc_scroll_free != free {

@@ -1,0 +1,24 @@
+ [*] acme  Today  Inbox 3  Tasks  Pages  Journal  Search  Log         Wed Oct 7
+---------------------------------=======----------------------------------------
+       P Pages › Launch plan
+       Launch plan
+       ─────────────────────────────────────────────────────────────────────────
+
+     · Ship the beta to the first 50 teams by the end of the month.
+   [ ] Finish the sign-up flow         ^                         due fri · !high
+   [ ] Write the getting-started guide |                                 due mon
+   [ ] Send the invites                |                              due oct 16
+      +- @ claude ---------------------+-----+
+      | Why                                  |
+      | The goal for the month, in one line. |
+      |                                      |
+      | **o  < back  next >                x |
+      +--------------------------------------+
+
+
+
+
+
+
+
+                                                                     thc 0.10.1

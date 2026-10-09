@@ -205,6 +205,20 @@ pub struct UiState {
     /// Isolated built-in teaching session; cannot switch vaults or update the binary.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub teaching_demo: bool,
+    /// Agents' own views on the open document (doc_view.rs), by actor: each one's view id and
+    /// caret, so a trace segment that starts mid-session reopens them where they were. Read
+    /// back on a state line; left out while empty.
+    #[serde(skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub agent_views: BTreeMap<String, AgentView>,
+}
+
+/// An agent's view on the open document: its id, and its caret by note id and byte.
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct AgentView {
+    pub view: u32,
+    pub caret_id: String,
+    pub caret_byte: usize,
 }
 
 impl Default for UiState {
@@ -276,6 +290,7 @@ impl Default for UiState {
             sidebar: Default::default(),
             layers: Default::default(),
             teaching_demo: false,
+            agent_views: BTreeMap::new(),
         }
     }
 }

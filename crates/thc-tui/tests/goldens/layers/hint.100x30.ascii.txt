@@ -1,0 +1,30 @@
+ [*] acme   Today   Inbox 3   Tasks   Pages   Journal   Search   Log              Wed Oct 7 - 10:00
+-----------------------------=======----------------------------------------------------------------
+ q> status:open sort:due                                                                    6 tasks
+
+> 7x3rj  [ ] Buy groceries                                                             due tomorrow
+  rrft8  [ ] Finish the sign-up flow                                due fri - !high - P Launch plan
+  mxzq1  [ ] Write the getting-started guide       ^                        due mon - P Launch plan
+  frjjs  [ ] Book the dentist                      |                                        due tue
+  atmev  [ ] Send the invites                      |             due Oct 16 (in 9d) - P Launch plan
+  1chbt  [ ] Renew the passport                    |
+                                                   |
+ saved  1 open  2 this week  3 waiting  4 by claude| 5 ready                             f then 1-5
+     +- @ claude ----------------------------------+----+
+     | Start here                                       |
+     | Due Friday, and the invites wait on it. Two      |
+     | screens left: plan and payment.                  |
+     +--------------------------------------------------+
+
+
+
+
+
+
+
+
+
+
+
+
+ tasks - status:open sort:due                 o local - daemon offline   :daemon start   thc 0.10.1
