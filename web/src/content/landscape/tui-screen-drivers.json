@@ -1,0 +1,169 @@
+{
+ "id": "tui-screen-drivers",
+ "name": "PTY/TUI screen drivers for agents (agent-tui and peers)",
+ "group": "agent-canvases",
+ "tagline": "Run any terminal app in a PTY; agent reads screen, sends keys",
+ "links": {
+  "site": "",
+  "repo": "https://github.com/pproenca/agent-tui",
+  "docs": "https://github.com/pproenca/agent-tui/blob/master/docs/cli/agent-tui.md",
+  "other": [
+   {
+    "label": "ConductorOne/agent-tui (refs + outline)",
+    "url": "https://github.com/ConductorOne/agent-tui"
+   },
+   {
+    "label": "michaellee8/mcp-tui-driver (a.k.a. mcp-tui-server, Show HN)",
+    "url": "https://github.com/michaellee8/mcp-tui-driver"
+   },
+   {
+    "label": "nvms/tui-mcp",
+    "url": "https://github.com/nvms/tui-mcp"
+   },
+   {
+    "label": "dragoscirjan/mcp-tuikit",
+    "url": "https://github.com/dragoscirjan/mcp-tuikit"
+   },
+   {
+    "label": "GeorgePearse/mcp-tui-test",
+    "url": "https://github.com/GeorgePearse/mcp-tui-test"
+   },
+   {
+    "label": "Show HN: MCP for controlling bubbletea/ratatui apps",
+    "url": "https://news.ycombinator.com/item?id=46579303"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "pproenca/agent-tui MIT; ConductorOne/agent-tui Apache-2.0 per README badge (GitHub API reports NOASSERTION); mcp-tui-driver MIT; tui-mcp MIT; mcp-tuikit MIT per README badge (GitHub reports NOASSERTION); mcp-tui-test MIT."
+ },
+ "language": "Rust (pproenca/agent-tui CLI crates, ConductorOne, mcp-tui-driver); TypeScript/Node (tui-mcp via node-pty + xterm-headless, mcp-tuikit via tmux); Python + Go (mcp-tui-test)",
+ "backing": "Individuals, except ConductorOne/agent-tui (company ConductorOne)",
+ "first_release": "2026-01",
+ "latest_release": {
+  "tag": "v1.1.0",
+  "date": "2026-07-08"
+ },
+ "adoption": {
+  "github_stars": 118,
+  "stars_fetched": "2026-10-09",
+  "downloads": "agent-tui: 42/week npm (api.npmjs.org, 2026-10-01..07), 420 all-time crates.io; tui-mcp 19/week npm; @dragoscirjan/mcp-tuikit 6/week npm",
+  "notable_users": [],
+  "summary": "A crowded, young niche with no breakout: pproenca/agent-tui leads with 118 stars; mcp-tui-driver 34; mcp-tui-test 19; ConductorOne/agent-tui 13; tui-mcp 13; mcp-tuikit 0. The Show HN for mcp-tui-driver scored 8 points."
+ },
+ "maintainability": {
+  "release_cadence": "pproenca/agent-tui: v1.1.0 2026-07-08 and v1.0.1/v0.3.x on 2026-07-09; multi-channel distribution (brew, npm, crates, install script)",
+  "contributors": "pproenca/agent-tui: 1",
+  "recent_activity": "pproenca/agent-tui: 2 commits on default branch since 2026-07-11; mcp-tui-test pushed 2026-10-06; ConductorOne last push 2026-07-29; mcp-tui-driver last push 2026-01-12",
+  "bus_factor": "low: each tool is a single maintainer or a small company side project",
+  "summary": "Many near-identical tools, each maintained by one person; activity has slowed for most after launch."
+ },
+ "architecture": {
+  "summary": "All of them spawn the target program on a pseudo-terminal, feed its output into a headless terminal emulator (vt100/xterm-headless/pyte/vt10x/tmux), and expose verbs to the agent: launch, send keys/text/mouse, wait for text or idle, snapshot the screen as text (some also PNG), resize, kill. pproenca/agent-tui runs a daemon on a Unix socket managing sessions, with a CLI and a JSON-RPC WebSocket live preview. ConductorOne/agent-tui adds 'refs': a semantic outline of the screen with durable app-specific refs (@vim.mode, @vim.buffer) and generic positional refs (@e1), queried with a CSS-subset selector and waited on with `wait --ref`. mcp-tui-driver offers 23 MCP tools including ref-addressed clicks from a snapshot, asciicast recording, and a tui_run_code JavaScript scripting tool.",
+  "key_points": [
+   "Works on any existing TUI with no cooperation from the app",
+   "Readback is the rendered screen (text, sometimes PNG), not the app's state",
+   "ConductorOne refs bring a DOM-like outline to terminal screens (agent-browser pattern for PTYs)",
+   "mcp-tui-driver tools: tui_launch, tui_close, tui_list_sessions, tui_get_session, tui_resize, tui_send_signal, tui_text, tui_snapshot, tui_screenshot, tui_press_key(s), tui_send_text, tui_click, tui_click_at, tui_double_click, tui_right_click, tui_wait_for_text, tui_wait_for_idle, tui_get_code_interface, tui_run_code, tui_get_input, tui_get_output",
+   "tui-mcp tools: launch, kill, list_sessions, status, resize, screenshot (PNG), snapshot (text), scrollback, output (raw bytes), read_region, cursor, send_keys, send_text, send_mouse, wait_for_text/idle/exit; plus a monitor TUI",
+   "mcp-tuikit: tmux-isolated sessions, txt/png snapshots, YAML flow runner",
+   "mcp-tui-test: stream (pexpect) and buffer (pyte) modes, pytest plugin, tui://{session}/screen resource"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers; interaction is paced by wait-for-idle/wait-for-text polling."
+ },
+ "agent_usability": {
+  "how": "MCP servers (tui-mcp, mcp-tui-driver, mcp-tuikit, mcp-tui-test) or a CLI the agent shells out to (both agent-tuis), with JSON output.",
+  "integration_effort": "Minimal: one `claude mcp add` line or a binary install; the target app needs no changes.",
+  "readback": "Screen text, cursor, scrollback, raw bytes, PNG screenshots; ConductorOne and mcp-tui-driver add a semantic outline with refs. App state is not visible, only what it draws.",
+  "granular_edits": "None to the UI; the agent can only send input. Addressing is by screen position, text match or heuristic refs.",
+  "history": "mcp-tui-driver records asciicast (.cast) with optional input; tui-mcp exposes scrollback; no seek/fork of application state.",
+  "summary": "The universal fallback: an agent can operate any terminal program like a human, but it is scraping a picture of an app it cannot change or introspect."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 4,
+  "readback": 4,
+  "granular_edits": 1,
+  "time_travel": 2,
+  "live_data_rate": 1,
+  "terminal_native": 5,
+  "pixel_graphics": 0,
+  "teaching": 1,
+  "maturity": 2,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "UI is whatever the driven app draws; ref outlines are derived read-only data",
+  "agent_drivable": "full live operation (launch, keys, mouse, wait) but no creation or change of UI",
+  "readback": "text + PNG + semantic outline, but never the app's own state",
+  "granular_edits": "input only; no edits to UI",
+  "time_travel": "asciicast recording and scrollback, no state seek",
+  "pixel_graphics": "PNG capture is readback, not a graphics layer",
+  "maturity": "all under a year old with tiny usage"
+ },
+ "steelman": "Screen drivers are the most universal answer to 'let an agent use a terminal UI': they need nothing from the app, so they work today on vim, htop, psql, k9s, lazygit, gdb, installers and every TUI ever written, including thc's own TUI and thc-scene. They hold long-lived interactive sessions that a bash tool cannot (a REPL in a transaction, an SSH login with 2FA), they return readable screens, and the best of them (ConductorOne's refs, mcp-tui-driver's ref-addressed clicks) are converging on a DOM-like accessibility layer for terminals, with selectors and wait-for-ref semantics that avoid flaky regexes. If the goal is merely 'an agent can see and drive a TUI', this category already solves it for free.",
+ "weaknesses": [
+  "The agent sees pixels-as-text, not state; meaning is inferred from layout",
+  "Cannot change the UI, only press keys on it",
+  "Refs are heuristic or need per-app adapters (ConductorOne has adapters for vim, shell prompt)",
+  "Timing relies on wait-for-idle/text polling; flaky on animated or streaming screens",
+  "Fragmented: six-plus near-duplicates, each single-maintainer, low adoption (tens of npm downloads/week)",
+  "Unix-only for several (pproenca/agent-tui explicitly not Windows)"
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent sends keys/mouse to a live terminal UI and reads the screen back as text.",
+  "scene_reinvents": "scene's `key`, `mouse`, `screen` socket ops duplicate what these drivers already do for any TUI, including scene itself. For black-box testing of scene, one of these is enough.",
+  "borrow": [
+   "wait_for_idle / wait_for_text / wait --ref primitives for agents (scene can implement them exactly from its own state instead of polling pixels)",
+   "ConductorOne's ref grammar and CSS-subset selectors (@app.role[value=x]) for addressing scene nodes",
+   "read_region and scrollback ops on scene's screen",
+   "asciicast export of a scene session for sharing",
+   "A monitor TUI listing live sessions with attach (tui-mcp monitor)"
+  ],
+  "gap_left": "These tools cannot read app state, push or patch UI, bind data streams, add callouts, hot-swap the binary or rewind; scene is the cooperating app side that exposes structure instead of forcing scraping.",
+  "verdict": "complement",
+  "verdict_why": "They drive any TUI from outside; scene is a TUI built to be driven from inside, and one of them is a good black-box test rig for it."
+ },
+ "sources": [
+  {
+   "title": "pproenca/agent-tui README",
+   "url": "https://github.com/pproenca/agent-tui"
+  },
+  {
+   "title": "ConductorOne/agent-tui README",
+   "url": "https://github.com/ConductorOne/agent-tui"
+  },
+  {
+   "title": "michaellee8/mcp-tui-driver README",
+   "url": "https://github.com/michaellee8/mcp-tui-driver"
+  },
+  {
+   "title": "nvms/tui-mcp README",
+   "url": "https://github.com/nvms/tui-mcp"
+  },
+  {
+   "title": "dragoscirjan/mcp-tuikit README",
+   "url": "https://github.com/dragoscirjan/mcp-tuikit"
+  },
+  {
+   "title": "GeorgePearse/mcp-tui-test README",
+   "url": "https://github.com/GeorgePearse/mcp-tui-test"
+  },
+  {
+   "title": "Show HN item 46579303",
+   "url": "https://news.ycombinator.com/item?id=46579303"
+  },
+  {
+   "title": "npm downloads agent-tui",
+   "url": "https://api.npmjs.org/downloads/point/last-week/agent-tui"
+  },
+  {
+   "title": "crates.io agent-tui",
+   "url": "https://crates.io/api/v1/crates/agent-tui"
+  }
+ ]
+}

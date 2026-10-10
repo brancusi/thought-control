@@ -1,0 +1,153 @@
+{
+ "id": "motion-canvas",
+ "name": "Motion Canvas",
+ "group": "teaching-and-live-data",
+ "tagline": "TypeScript generator animations with a timeline editor for voice-over sync",
+ "links": {
+  "site": "https://motioncanvas.io",
+  "repo": "https://github.com/motion-canvas/motion-canvas",
+  "docs": "https://motioncanvas.io/docs/",
+  "other": [
+   {
+    "label": "Time events docs",
+    "url": "https://motioncanvas.io/docs/time-events"
+   },
+   {
+    "label": "Revideo (MIT fork for programmatic rendering)",
+    "url": "https://github.com/redotvideo/revideo"
+   },
+   {
+    "label": "Manim Community",
+    "url": "https://github.com/ManimCommunity/manim"
+   },
+   {
+    "label": "manim-mcp (community text-to-animation MCP)",
+    "url": "https://github.com/paulnegz/manim-mcp"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "MIT. Manim (3b1b and Community editions) is also MIT."
+ },
+ "language": "TypeScript",
+ "backing": "Individual: Jacob (aarthificial, YouTube creator) wrote ~645 of the commits; community contributors; no company or foundation.",
+ "first_release": "2023-02",
+ "latest_release": {
+  "tag": "v3.17.2 (stable); v3.18.0-alpha.0",
+  "date": "2024-12-14"
+ },
+ "adoption": {
+  "github_stars": 19263,
+  "stars_fetched": "2026-10-09",
+  "downloads": "5,566/week npm @motion-canvas/core (api.npmjs.org, 2026-10-01..07). For comparison: manim 45,052/week PyPI (pypistats).",
+  "notable_users": [
+   "aarthificial's YouTube explainers",
+   "Revideo (fork, 4.1k stars)"
+  ],
+  "summary": "Well-known among explainer-video creators (19k stars) but small install base; Manim (94.8k stars 3b1b, 41.4k Community) dominates the code-animation niche."
+ },
+ "maintainability": {
+  "release_cadence": "Stalled: v3.17.0 2024-08-13, v3.17.1 2024-08-17, v3.17.2 2024-12-14, v3.18.0-alpha.0 2025-02-16; none since.",
+  "contributors": "~98 (GitHub contributors incl. anonymous, via Link header)",
+  "recent_activity": "0 commits since 2026-07-11; the only 2025-2026 commit after Feb 2025 is a docs-domain update (2026-07-02).",
+  "bus_factor": "low: one author wrote the large majority of commits and activity stopped in Feb 2025.",
+  "summary": "Effectively dormant for ~20 months; usable but not moving. Manim Community, by contrast, released v0.22.0 on 2026-10-08."
+ },
+ "architecture": {
+  "summary": "Scenes are TypeScript generator functions: each `yield*` advances time, so an animation is a deterministic program over a frame clock. A Vite-based editor previews in real time and lets you scrub a timeline. Time events (`waitUntil('event')`, `useDuration('event')`) are named pauses whose timing is set by dragging pills in the editor and stored in a JSON meta file beside the scene, so audio sync is data, not code. Rendering is 2D canvas (vector shapes, text, LaTeX, code blocks with diff animations); export is image sequences or video via plugins.",
+  "key_points": [
+   "Determinism: frame N is a pure function of the scene program plus meta, so seeking anywhere re-runs the generator to that frame.",
+   "Time events separate 'what happens' (code) from 'when' (editor-adjusted JSON), and shifting one event ripples later events.",
+   "Signals (reactive values) bind properties to each other.",
+   "Manim (Python) is the larger peer: renders to video offline, Community edition actively released; no live editor timeline of the same kind."
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers. Rendering is offline-to-video; live preview speed is not benchmarked publicly."
+ },
+ "agent_usability": {
+  "how": "Code generation only: an agent writes TypeScript scenes and can edit the meta JSON of time events. No MCP server or control API found. For Manim, community MCP servers (e.g. paulnegz/manim-mcp) wrap LLM text-to-scene generation and rendering.",
+  "integration_effort": "Generate scene files, run the Vite editor or a render, inspect output frames.",
+  "readback": "Rendered frames/video only; no structured scene-graph readback API for an external agent.",
+  "granular_edits": "Edit source or the time-events JSON; hot reload picks it up. No id-addressed live patching.",
+  "history": "Deterministic timeline means any frame can be re-derived; scrubbing is human-facing in the editor.",
+  "summary": "Great for agents that write code and render; nothing for driving a live instance."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 1,
+  "readback": 2,
+  "granular_edits": 1,
+  "time_travel": 3,
+  "live_data_rate": 0,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 4,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Scenes are code; only time-event timings live in JSON.",
+  "readback": "Rendered frames are images an agent could inspect.",
+  "time_travel": "Scrubbable deterministic timeline in the editor; not an agent API.",
+  "teaching": "Built for narrated explainer videos with voice-over sync, but output is passive video.",
+  "maturity": "Used in production by explainer creators; development stalled.",
+  "openness": "MIT, single-maintainer control."
+ },
+ "steelman": "Motion Canvas solved the hardest practical problem in programmatic explainers: keeping animation in sync with narration without hard-coded timestamps. Scenes stay honest code (typed, versioned, reviewable), while timing is a separate, draggable JSON layer; re-record the voice-over and you nudge one pill and everything after it follows. Because scenes are deterministic generators, every frame is reproducible and the editor can seek anywhere instantly. For an author who thinks in code but teaches with a voice, it is the most elegant split of 'what' from 'when' in any tool, and its vector rendering looks like hand-made motion design. Manim, its larger cousin, adds a decade of mathematical explainers and an active community.",
+ "weaknesses": [
+  "Dormant: no release since 2025-02-16 alpha; no commits since 2026-07-11 (GitHub API).",
+  "Bus factor of one: ~645 of the author's commits vs a handful from others.",
+  "Output is passive video: a viewer cannot take over or interact.",
+  "No agent control surface or structured readback; Revideo forked it partly to add programmatic rendering.",
+  "Small install base (~5.6k npm downloads/week)."
+ ],
+ "relation_to_scene": {
+  "overlap": "Narrated walkthroughs driven by a timeline; deterministic replay of a pure program over time.",
+  "scene_reinvents": "Syncing narration to visual steps; Motion Canvas's time events already model this cleanly (named waits, adjustable durations, ripple editing).",
+  "borrow": [
+   "Named time events stored as data beside the tour: `waitUntil(name)` with timings editable without touching the script.",
+   "Ripple semantics: moving one event shifts all later events unless held.",
+   "Deterministic seek by re-running from the start (or a checkpoint) to frame N."
+  ],
+  "gap_left": "A live, interactive, agent-driven UI the learner can take over in a terminal; Motion Canvas produces video and has no runtime control.",
+  "verdict": "borrow",
+  "verdict_why": "Steal the time-event model for tour narration; the tool itself targets video, not live terminal UIs."
+ },
+ "sources": [
+  {
+   "title": "Motion Canvas docs: Introduction",
+   "url": "https://motioncanvas.io/docs/"
+  },
+  {
+   "title": "Motion Canvas docs: Time Events",
+   "url": "https://motioncanvas.io/docs/time-events"
+  },
+  {
+   "title": "GitHub API: motion-canvas/motion-canvas",
+   "url": "https://api.github.com/repos/motion-canvas/motion-canvas"
+  },
+  {
+   "title": "Meta file timeEvents example (Ahmad Rosid tutorial)",
+   "url": "https://ahmadrosid.com/blog/motion-canvas-animation-tutorial"
+  },
+  {
+   "title": "HN: Revideo fork discussion",
+   "url": "https://news.ycombinator.com/item?id=40651837"
+  },
+  {
+   "title": "npm downloads @motion-canvas/core",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@motion-canvas/core"
+  },
+  {
+   "title": "pypistats manim",
+   "url": "https://pypistats.org/api/packages/manim/recent"
+  },
+  {
+   "title": "paulnegz/manim-mcp",
+   "url": "https://github.com/paulnegz/manim-mcp"
+  }
+ ]
+}

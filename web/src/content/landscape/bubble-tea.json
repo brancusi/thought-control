@@ -1,0 +1,177 @@
+{
+ "id": "bubble-tea",
+ "name": "Bubble Tea",
+ "group": "terminal-frameworks",
+ "tagline": "Go Elm-architecture TUI framework; v2 adds the Cursed Renderer",
+ "links": {
+  "site": "https://charm.land/",
+  "repo": "https://github.com/charmbracelet/bubbletea",
+  "docs": "https://pkg.go.dev/charm.land/bubbletea/v2",
+  "other": [
+   {
+    "label": "v2 announcement",
+    "url": "https://charm.land/blog/v2/"
+   },
+   {
+    "label": "What's New in v2",
+    "url": "https://github.com/charmbracelet/bubbletea/discussions/1374"
+   },
+   {
+    "label": "Crush",
+    "url": "https://github.com/charmbracelet/crush"
+   },
+   {
+    "label": "teatest",
+    "url": "https://pkg.go.dev/github.com/charmbracelet/x/exp/teatest"
+   },
+   {
+    "label": "VHS",
+    "url": "https://github.com/charmbracelet/vhs"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "Bubble Tea, Lip Gloss, Bubbles, VHS are MIT. Crush (Charm's agent) is FSL-1.1-MIT (source-available, converts to MIT later); Fantasy (agent library) is Apache-2.0."
+ },
+ "language": "Go",
+ "backing": "Charm (Charmbracelet, Inc.), VC-backed; raised $6M led by Gradient Ventures (reported 2023).",
+ "first_release": "2020-04",
+ "latest_release": {
+  "tag": "v2.1.0",
+  "date": "2026-10-08"
+ },
+ "adoption": {
+  "github_stars": 45371,
+  "stars_fetched": "2026-10-09",
+  "downloads": "Go has no download counts; pkg.go.dev 'Imported by': 14,989 (v1 path) + 961 (charm.land/bubbletea/v2)",
+  "notable_users": [
+   "Crush (Charm's AI coding agent, 28.6k stars)",
+   "Charm says teams at NVIDIA, GitHub, Slack, Microsoft Azure build on it",
+   "'more than 25,000 open-source applications' (Charm)"
+  ],
+  "summary": "The standard Go TUI framework; Charm claims 25k+ open-source apps, and v2 has powered Crush in production since before release."
+ },
+ "maintainability": {
+  "release_cadence": "Roughly monthly patches: v2.0.6 2026-04-16, v2.0.7 06-01, v2.0.8 07-03, v2.0.9 08-19, v2.0.10 09-24, v2.1.0 10-08 (v2.0.0 2026-02-24).",
+  "contributors": "~167 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "~21 commits, 18 merged PRs since 2026-07-11 (GitHub API)",
+  "bus_factor": "medium-high: company-funded team (aymanbagabas, meowgorithm, muesli…), though a few people do most core work",
+  "summary": "Funded, steadily maintained, with a strong no-breaking-changes record (v2 was the first break in six years)."
+ },
+ "architecture": {
+  "summary": "The Elm Architecture in Go: a Model value with Init() Cmd, Update(Msg) (Model, Cmd) and View(). In v2 View returns a tea.View struct that declares the frame plus terminal modes (alt screen, mouse, bracketed paste, keyboard enhancements, cursor, title) instead of imperative commands. Side effects are Cmds (functions returning Msgs) run by the runtime; external goroutines inject messages with Program.Send. Rendering goes through the 'Cursed Renderer' (ncurses-style cell diffing, synchronized output mode 2026) built on Charm's Ultraviolet primitives; Lip Gloss is pure styling/layout and Bubbles supplies components.",
+  "key_points": [
+   "Model/Update/View with explicit Msg values — every input is a message",
+   "v2 declarative View struct replaces EnterAltScreen etc.",
+   "Cursed Renderer: ncurses-like cell diffing, 'orders of magnitude' less output, important over SSH (Wish)",
+   "Kitty keyboard enhancements, key release events, clipboard over SSH, color downsampling",
+   "tea.Raw for raw escape sequences; OSC 7501 Program Status Protocol in v2.1.0",
+   "teatest (x/exp) for golden-file tests of whole programs"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Cursed Renderer: 'Rendering is faster and more efficient by orders of magnitude'; for SSH 'the changes are monetarily quantifiable'",
+    "source": "https://charm.land/blog/v2/"
+   },
+   {
+    "text": "Wish users get 'lower bandwidth usage by orders of magnitude'",
+    "source": "https://github.com/charmbracelet/bubbletea/discussions/1374"
+   }
+  ],
+  "summary": "Strong qualitative claims, no published benchmark numbers found."
+ },
+ "agent_usability": {
+  "how": "Code generation (Charm even ships upgrade guides 'for humans and LLMs'). In-process, Program.Send(msg) lets any goroutine inject messages and teatest drives a program with keys and captures final output. No built-in socket/MCP; external drivers are PTY/tmux-based.",
+  "integration_effort": "Because every input is a Msg, adding a control socket that decodes JSON into Msgs and calls Send is straightforward — but each app must do it and must define its own Msg serialization.",
+  "readback": "Only the rendered string/frame (teatest golden output) or screen scraping; the Model is an arbitrary Go value with no standard serialization.",
+  "granular_edits": "None generic; the app's Update decides what a message means.",
+  "history": "None built in, though the Msg log of an Elm app is a natural replay source if the app records it.",
+  "summary": "Architecturally the friendliest of the code-first frameworks for agents (explicit messages, pure update), but ships no agent surface."
+ },
+ "scores": {
+  "ui_as_data": 2,
+  "agent_drivable": 2,
+  "readback": 2,
+  "granular_edits": 1,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 2,
+  "teaching": 2,
+  "maturity": 5,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "v2 View is declarative, but Model and View are Go code/values, not a wire format",
+  "agent_drivable": "Program.Send is an in-process API for injecting messages; no external protocol",
+  "granular_edits": "Messages can target app-defined parts, but nothing generic or id-addressed",
+  "live_data_rate": "Renderer claims orders-of-magnitude gains with no numbers",
+  "pixel_graphics": "v2 advertises inline images via raw sequences / community libs; no image component in Bubbles found",
+  "teaching": "Charm's VHS scripts keystrokes into GIF/video demos (separate tool); no in-app tours",
+  "openness": "MIT, but company-controlled"
+ },
+ "steelman": "Bubble Tea is the proof that the Elm Architecture is the right shape for terminal apps: a model value, a pure update over explicit messages, and a view — the exact discipline thc-scene adopts — battle-tested across 25,000+ open-source apps and companies like NVIDIA, GitHub and Slack. v2 went further than any peer on the boring hard parts: an ncurses-grade cell-diffing renderer that cut output by orders of magnitude (decisive over SSH via Wish), full kitty keyboard support, synchronized output, color downsampling and a declarative View that removes terminal-mode bugs. Charm dogfoods it in Crush, a 28k-star coding agent, and surrounds it with Lip Gloss, Bubbles, Glamour, Wish (TUIs over SSH), VHS (scripted terminal recordings) and Fantasy (Go agent library). Its message-driven design makes a control socket almost trivial to add, so agents can be wired in without fighting the framework.",
+ "weaknesses": [
+  "UI is Go code; the Model has no standard serialization, so no push/diff/store of a whole UI",
+  "No built-in introspection, readback or agent protocol",
+  "Single-goroutine Update means heavy work must be pushed into Cmds; large component trees need hand-written message routing",
+  "Performance claims are qualitative only",
+  "Images are not a first-class component",
+  "Company-controlled; Crush itself is FSL, not OSS"
+ ],
+ "relation_to_scene": {
+  "overlap": "Elm architecture with explicit messages, declarative view, cell-diffing renderer, terminal-first, agent product (Crush) built on it.",
+  "scene_reinvents": "The Elm runtime loop, declarative terminal-mode handling and a diffing renderer — Bubble Tea v2 is a polished, production version of scene's inner loop (in Go).",
+  "borrow": [
+   "v2's declarative View struct for terminal modes (alt screen, mouse, keyboard flags, cursor) as fields in scene's JSON root",
+   "Program.Send semantics: external messages enter the same queue as keys",
+   "teatest-style golden frames for scene tests",
+   "VHS tape format as inspiration for scripted, recordable tours",
+   "OSC 7501 program status as a cheap way to tell the host terminal what scene is doing"
+  ],
+  "gap_left": "UI as a serializable value over a socket, generic id-addressed patches and readback, data streams bypassing the model, hot-swap upgrade, pixel layer, agent time travel.",
+  "verdict": "borrow",
+  "verdict_why": "Same philosophy in another language; take its View and messaging ideas, not the library."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/charmbracelet/bubbletea",
+   "url": "https://api.github.com/repos/charmbracelet/bubbletea"
+  },
+  {
+   "title": "Charm v2 blog post (2026-02-23)",
+   "url": "https://charm.land/blog/v2/"
+  },
+  {
+   "title": "What's New in Bubble Tea v2",
+   "url": "https://github.com/charmbracelet/bubbletea/discussions/1374"
+  },
+  {
+   "title": "v2.1.0 release (OSC 7501)",
+   "url": "https://github.com/charmbracelet/bubbletea/releases/tag/v2.1.0"
+  },
+  {
+   "title": "pkg.go.dev bubbletea (Imported by)",
+   "url": "https://pkg.go.dev/github.com/charmbracelet/bubbletea"
+  },
+  {
+   "title": "charmbracelet/crush (license FSL-1.1-MIT)",
+   "url": "https://github.com/charmbracelet/crush"
+  },
+  {
+   "title": "charmbracelet/fantasy",
+   "url": "https://github.com/charmbracelet/fantasy"
+  },
+  {
+   "title": "teatest",
+   "url": "https://pkg.go.dev/github.com/charmbracelet/x/exp/teatest"
+  },
+  {
+   "title": "Charm raises $6M (r/golang)",
+   "url": "https://www.reddit.com/r/golang/comments/17m5tni/charm_raises_6m_from_googles_gradient_ventures_to/"
+  }
+ ]
+}

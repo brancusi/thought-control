@@ -1,0 +1,219 @@
+{
+ "id": "rerun",
+ "name": "Rerun",
+ "group": "time-travel",
+ "tagline": "Time-indexed multimodal data store and viewer, now agent-drivable via MCP",
+ "links": {
+  "site": "https://rerun.io",
+  "repo": "https://github.com/rerun-io/rerun",
+  "docs": "https://rerun.io/docs",
+  "other": [
+   {
+    "label": "Viewer MCP docs",
+    "url": "https://rerun.io/docs/reference/viewer/mcp"
+   },
+   {
+    "label": "0.34.0 release notes (Viewer MCP)",
+    "url": "https://github.com/rerun-io/rerun/releases/tag/0.34.0"
+   },
+   {
+    "label": "viewer_control.proto (ViewerControlService)",
+    "url": "https://github.com/rerun-io/rerun/blob/main/crates/store/re_protos/proto/rerun/v1alpha1/viewer_control.proto"
+   },
+   {
+    "label": "Blueprints",
+    "url": "https://rerun.io/docs/concepts/visualization/blueprints"
+   },
+   {
+    "label": "Timelines",
+    "url": "https://rerun.io/docs/concepts/logging-and-ingestion/timelines"
+   },
+   {
+    "label": "Column chunks blog (0.18 perf)",
+    "url": "https://rerun.io/blog/column-chunks"
+   },
+   {
+    "label": "Real-time kHz time series blog (0.13 perf)",
+    "url": "https://rerun.io/blog/fast-plots"
+   },
+   {
+    "label": "Blueprint undo (undo.rs)",
+    "url": "https://github.com/rerun-io/rerun/blob/main/crates/viewer_support/re_viewer_context/src/undo.rs"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT OR Apache-2.0",
+  "notes": "Dual MIT/Apache-2.0 (LICENSE-MIT and LICENSE-APACHE in repo; GitHub API reports Apache-2.0). Company-controlled open core: the commercial product is a hosted database/data platform for 'Physical AI'."
+ },
+ "language": "Rust (viewer on wgpu + egui; SDKs for Python, Rust, C++)",
+ "backing": "Rerun Technologies AB (Stockholm). $17M seed (March 2025) led by Point Nine with Costanoa, Sunflower Capital, Seedcamp; angels incl. Guillermo Rauch, Wes McKinney, Eric Jang.",
+ "first_release": "2023-02",
+ "latest_release": {
+  "tag": "0.38.1",
+  "date": "2026-09-17"
+ },
+ "adoption": {
+  "github_stars": 11570,
+  "stars_fetched": "2026-10-09",
+  "downloads": "354,165/week PyPI rerun-sdk (pypistats, recent week); crates.io rerun 545,236 recent (90-day) downloads, 2.1M total; 22,608/week npm @rerun-io/web-viewer",
+  "notable_users": [
+   "Meta (Project Aria tools)",
+   "Google Research (brush_splat)",
+   "Hugging Face LeRobot",
+   "Unitree"
+  ],
+  "summary": "The most popular open-source logger/visualizer for robotics and multimodal ML data (per the company's funding post), with real PyPI volume."
+ },
+ "maintainability": {
+  "release_cadence": "Minor every ~2–4 weeks with patch releases: 0.34.0 (2026-07-06), 0.35.0 (2026-07-23), 0.36.0 (2026-08-10), 0.37.0 (2026-09-01), 0.38.1 (2026-09-17). Each minor ships a migration guide (pre-1.0 API churn).",
+  "contributors": "195 (GitHub contributors API, incl. anonymous)",
+  "recent_activity": "~791 commits in the last 90 days; repo pushed 2026-10-09; 1,237 open issues+PRs.",
+  "bus_factor": "high: funded company team, many active committers",
+  "summary": "Very actively developed by a funded team; fast cadence with breaking changes between 0.x minors."
+ },
+ "architecture": {
+  "summary": "Data is logged by SDKs as entities (paths) with components (Apache Arrow columns), each stamped on one or more timelines (log_time, log_tick, plus user timelines such as frame or sensor time). The store keeps data in column chunks and answers latest-at and range queries for whatever time cursor each view has, so scrubbing is a query, not a replay. How data is shown is a separate 'blueprint' (layout, views, per-view properties and overrides), itself stored as a recording with its own timeline: blueprint undo/redo moves that timeline's cursor back and forth, and a new edit drops the redo tail. Since 0.34, `rerun viewer-mcp` lets an agent drive a running (or headless) Viewer over gRPC.",
+  "key_points": [
+   "Multiple timelines per recording; every view queries the store at the current time cursor (latest-at) or over a window (range).",
+   "Column chunks (0.18): sorted columnar chunks per entity, micro-batched on ingest; data in Arrow.",
+   "Blueprint = data: send_blueprint from code, or via MCP get_blueprint/set_blueprint as JSON keyed by blueprint entity path → archetype → field.",
+   "Blueprint undo is time travel over the blueprint store (MAX_UNDOS = 100, inflection-point heuristic groups slider drags).",
+   "ViewerControl RPCs: close_recordings, get_viewer_logs, get_viewer_state, open_url, save_screenshot, set_time_cursor, get_recording_schema, highlight_rect, list_commands, describe_commands, run_command, get_blueprint, capture_profile_trace, set_blueprint.",
+   "Low-level egui_mcp tools (query_tree, click, type_text, hover, scroll, screenshot) reach any widget via an accessibility tree.",
+   "MCP deliberately does not read data: agents query the Viewer's catalog server (rerun.catalog Python API) or read .rrd files with RrdReader."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Rerun 0.18 vs 0.17 on 9 plots × 5 series × 50k f64 scalars (2.25M points): ~100x faster write/ingestion and 35x lower memory overhead; datasets with millions of time points considered supported.",
+    "source": "https://rerun.io/blog/column-chunks"
+   },
+   {
+    "text": "12 × 5 series logged at 1 kHz each (60k scalars/s), 10-second windows, on a 2021 M1 MacBook Pro: viewer keeps 60 fps and less than 30 ms log-to-render latency.",
+    "source": "https://rerun.io/blog/fast-plots"
+   },
+   {
+    "text": "0.13 caching layer: rendering one frame of a 1M-point time series went from ~600 ms (0.12) to ~20 ms (0.13) on an M1 MacBook Pro, a 30x speedup; plots 20–30x faster overall.",
+    "source": "https://rerun.io/blog/primary-query-caching"
+   },
+   {
+    "text": "Known limitation: logging numpy images at high rate can build up seconds of latency (issue #9973).",
+    "source": "https://github.com/rerun-io/rerun/issues/9973"
+   }
+  ],
+  "summary": "Vendor-published but concrete, reproducible benchmarks (the 2.25M-point dataset is downloadable). Numbers are for data ingest/plotting, not UI control; no published latency for MCP calls."
+ },
+ "agent_usability": {
+  "how": "MCP server built into the CLI: `claude mcp add rerun -- rerun viewer-mcp` (stdio), connecting to a running or `rerun --headless` Viewer over gRPC (`rerun_connect` or `--endpoint`). Two families: high-level rerun_* tools generated from viewer_control.proto, and low-level egui widget tools. Data goes in via the Python/Rust/C++ SDKs, which agents write and run. Repo also ships agent skills (`npx skills add rerun-io/rerun`).",
+  "integration_effort": "Low: one MCP registration plus a running Viewer.",
+  "readback": "Strong: rerun_get_viewer_state (active recording, open recordings with timelines, time ranges and current cursor, every view with its warnings/errors), get_blueprint (JSON), get_recording_schema (entities, components, Arrow types), viewer logs appended to every tool result, screenshots of the whole Viewer or one view, an accessibility tree; values via the catalog server or RrdReader.",
+  "granular_edits": "Blueprint: set_blueprint replaces the whole blueprint ('anything it leaves out is cleared'); finer changes via run_command or widget clicks. Data: the SDK logs per entity path at a time point (append-only).",
+  "history": "Agent can seek (rerun_set_time_cursor: recording, timeline, time; optional play), read timelines and ranges, query data at any time through the catalog, and run command-palette commands including playback and blueprint undo. No fork of a recording; the data log is append-only and the app producing it is outside Rerun.",
+  "summary": "A shipping example of exactly the pattern scene wants — an agent seeking a time cursor, reading structured viewer state and screenshots, rewriting the layout as JSON and highlighting things for a human — on a GPU desktop viewer."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 4,
+  "readback": 5,
+  "granular_edits": 3,
+  "time_travel": 4,
+  "live_data_rate": 5,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 3,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Blueprint (layout, views, properties, overrides) is data readable/writable as JSON; view kinds themselves are fixed Rust code.",
+  "agent_drivable": "Official MCP controls a live Viewer (open, seek, layout, commands, clicks); data creation still through SDK code.",
+  "readback": "Structured viewer state + blueprint JSON + schema + screenshots + accessibility tree.",
+  "granular_edits": "set_blueprint is whole-document; per-view edits need commands or clicks.",
+  "time_travel": "Agent can read timelines and seek the cursor; blueprint undo exists; no fork/branch of state.",
+  "live_data_rate": "Published 60k scalars/s at 60 fps, <30 ms latency; data streams from SDK bypassing any model.",
+  "teaching": "highlight_rect to point a user at something, learning course, 'visual walkthroughs of papers' examples; no narrated tours.",
+  "openness": "MIT/Apache dual, but company-controlled with a commercial data platform."
+ },
+ "steelman": "Rerun is the closest shipping relative of thc-scene's whole thesis, just in pixels instead of cells. It separates data from presentation cleanly: data is an append-only, multi-timeline, columnar store you query at a cursor (so time travel over data is free and scrubbing millions of points is a query), and presentation is a blueprint that is itself data — stored as a recording, so layout undo is literally moving a time cursor back. Since 0.34 an agent drives a live or headless Viewer over MCP: it reads structured state including every view's own error reports, gets and sets the whole layout as JSON, seeks any timeline, runs any command-palette command, screenshots a single view, and draws a pulsing highlight to point a human at something. It has real, published performance (60k scalars/s at 60 fps with <30 ms latency; 100x ingest gains), $17M of funding, 195 contributors and adoption by Meta, Google, Hugging Face and Unitree. A fan would say scene should study how Rerun split 'high-level generated tools first, low-level widget pokes as fallback'.",
+ "weaknesses": [
+  "Desktop/web GPU viewer only; no terminal renderer.",
+  "Not a general UI toolkit: view types are fixed (2D/3D spatial, time series, text log, tables…); you cannot compose arbitrary forms or apps.",
+  "set_blueprint is all-or-nothing ('anything it leaves out is cleared'); no id-addressed patch op in the MCP.",
+  "MCP deliberately cannot read data values; the agent must switch to the Python catalog API or RrdReader.",
+  "Pre-1.0 with a migration guide every minor release (0.34 → 0.38 in ~10 weeks).",
+  "No forking: the recorded data is immutable history and the producing program lives outside Rerun.",
+  "High-rate image logging can accumulate seconds of latency (issue #9973)."
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent drives a live viewer over a local protocol; layout is data (blueprint JSON); time cursor seek; structured state + screenshot readback; highlight to point the human; data streams bypass the model; Rust.",
+  "scene_reinvents": "Time-indexed state with a cursor that every view reads, layout-as-data with undo-by-time, and an agent tool surface with state/screenshot/seek/highlight. Rerun has already shipped the agent ergonomics scene is planning (generated high-level tools, view error reports, logs piggybacked on every result).",
+  "borrow": [
+   "Store UI config (scene's pushed UI) as a timeline of its own, so undo/redo of agent pushes and patches is a cursor move and edits drop the redo tail (BlueprintUndoState).",
+   "Inflection-point heuristic to collapse bursts (slider drags, streaming patches) into single undo points.",
+   "get_viewer_state shape: list every view/component with the warnings/errors it reported last frame, so the agent learns why something is empty without a screenshot.",
+   "Append recent log lines to every tool result.",
+   "Two tool families: generated high-level ops from one proto/schema first, raw key/mouse as fallback.",
+   "highlight_rect semantics: one pulsing highlight at a time, dismissed by the user's click.",
+   "Multiple timelines (message index, wall time, data-source tick) with a cursor per view."
+  ],
+  "gap_left": "Terminal-native rendering, arbitrary composable UIs (not just data views), id-addressed patches of a live UI, fork/replay of UI state, and narrated teaching tours with learner takeover.",
+  "verdict": "borrow",
+  "verdict_why": "Different medium and domain (GPU viewer for robotics data), but the best shipped design for agent-driven, time-indexed viewers; scene should copy its MCP and blueprint-undo patterns."
+ },
+ "sources": [
+  {
+   "title": "rerun-io/rerun (GitHub API: stars, license, releases, contributors, commits)",
+   "url": "https://github.com/rerun-io/rerun"
+  },
+  {
+   "title": "Rerun 0.34.0 release notes",
+   "url": "https://github.com/rerun-io/rerun/releases/tag/0.34.0"
+  },
+  {
+   "title": "Viewer MCP docs",
+   "url": "https://rerun.io/docs/reference/viewer/mcp"
+  },
+  {
+   "title": "viewer_control.proto",
+   "url": "https://github.com/rerun-io/rerun/blob/main/crates/store/re_protos/proto/rerun/v1alpha1/viewer_control.proto"
+  },
+  {
+   "title": "undo.rs (BlueprintUndoState)",
+   "url": "https://github.com/rerun-io/rerun/blob/main/crates/viewer_support/re_viewer_context/src/undo.rs"
+  },
+  {
+   "title": "Exploiting column chunks for faster ingestion and lower memory use",
+   "url": "https://rerun.io/blog/column-chunks"
+  },
+  {
+   "title": "Real-time kHz time series in a multimodal visualizer",
+   "url": "https://rerun.io/blog/fast-plots"
+  },
+  {
+   "title": "How we sped up time series by 20-30x",
+   "url": "https://rerun.io/blog/primary-query-caching"
+  },
+  {
+   "title": "The Missing Data Infrastructure for Physical AI ($17M seed)",
+   "url": "https://rerun.io/blog/physical-ai-data"
+  },
+  {
+   "title": "TechCrunch: Rerun $17M seed",
+   "url": "https://techcrunch.com/2025/03/20/reruns-open-source-ai-platform-for-robots-drones-and-cars-revs-up-with-17m-seed/"
+  },
+  {
+   "title": "Blueprints docs",
+   "url": "https://rerun.io/docs/concepts/visualization/blueprints"
+  },
+  {
+   "title": "Issue #9973 image logging latency",
+   "url": "https://github.com/rerun-io/rerun/issues/9973"
+  },
+  {
+   "title": "pypistats rerun-sdk",
+   "url": "https://pypistats.org/packages/rerun-sdk"
+  }
+ ]
+}

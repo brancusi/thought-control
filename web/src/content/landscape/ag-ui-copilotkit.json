@@ -1,0 +1,177 @@
+{
+ "id": "ag-ui-copilotkit",
+ "name": "AG-UI + CopilotKit",
+ "group": "agent-ui-specs",
+ "tagline": "Event protocol connecting agent backends to app frontends, plus CopilotKit",
+ "links": {
+  "site": "https://ag-ui.com/",
+  "repo": "https://github.com/ag-ui-protocol/ag-ui",
+  "docs": "https://docs.ag-ui.com/concepts/events",
+  "other": [
+   {
+    "label": "CopilotKit",
+    "url": "https://github.com/CopilotKit/CopilotKit"
+   },
+   {
+    "label": "AG-UI 1.0 release discussion (#2792, 2026-09-18)",
+    "url": "https://github.com/ag-ui-protocol/ag-ui/discussions/2792"
+   },
+   {
+    "label": "AG-UI serialization (branching/time travel)",
+    "url": "https://docs.ag-ui.com/concepts/serialization"
+   },
+   {
+    "label": "Terminal client quickstart",
+    "url": "https://docs.ag-ui.com/quickstart/clients"
+   },
+   {
+    "label": "CopilotKit Series A (2026-05-05)",
+    "url": "https://www.copilotkit.ai/blog/series-a"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "Both AG-UI and CopilotKit are MIT. AG-UI is led by CopilotKit (company) with a biweekly working group; community SDKs in many languages."
+ },
+ "language": "TypeScript and Python (official SDKs); community Kotlin, Go, Dart, Java, Rust, Ruby, C++, .NET",
+ "backing": "CopilotKit (VC-backed: $27M Series A led by Glilot Capital, NfX, SignalFire, announced 2026-05-05)",
+ "first_release": "2025-05",
+ "latest_release": {
+  "tag": "AG-UI 1.0 spec (frozen); @ag-ui/core 1.0.2; CopilotKit v1.77.2",
+  "date": "2026-10-08"
+ },
+ "adoption": {
+  "github_stars": 16415,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@ag-ui/core 2,417,912/week, @ag-ui/client 1,500,823/week, @copilotkit/react-core 507,497/week, @copilotkit/runtime 427,748/week (npm, week ending 2026-10-07). CopilotKit repo: 37,871 stars.",
+  "notable_users": [
+   "Google ADK",
+   "Microsoft Agent Framework",
+   "AWS Strands Agents",
+   "Amazon Bedrock AgentCore",
+   "LangGraph",
+   "CrewAI",
+   "Mastra",
+   "Pydantic AI",
+   "Agno",
+   "LlamaIndex",
+   "AG2",
+   "Oracle Agent Spec",
+   "Claude Agent SDK (community integration)"
+  ],
+  "summary": "The most widely adopted agent-to-frontend protocol; nearly every major agent framework emits it, and CopilotKit says its libraries exceed 4M weekly downloads (company claim)."
+ },
+ "maintainability": {
+  "release_cadence": "AG-UI: date-tagged releases near-daily (2026-10-02, 10-05, 10-06, 10-08, 10-09); CopilotKit: v1.76.0 2026-10-01, v1.77.0 10-02, v1.77.1 10-07, v1.77.2 10-08",
+  "contributors": "AG-UI ~169, CopilotKit ~264 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "AG-UI 1,892 and CopilotKit 5,322 commits on main since 2026-07-11 (GitHub API)",
+  "bus_factor": "medium-high: one company leads, but large contributor base and many framework vendors depend on the protocol",
+  "summary": "Extremely active, funded, with a 1.0 frozen spec as of September 2026."
+ },
+ "architecture": {
+  "summary": "AG-UI is a transport-agnostic stream of typed JSON events from agent to frontend (SSE, WebSocket, webhooks): lifecycle (RUN_STARTED/FINISHED/ERROR, STEP_*), text messages, tool calls (START/ARGS/END/RESULT), state (STATE_SNAPSHOT, STATE_DELTA as RFC 6902 JSON Patch, MESSAGES_SNAPSHOT), activity snapshots/deltas, reasoning, subagent, raw and custom events. The frontend sends simple run inputs (messages, state, tools, context). Serialization defines persisting and compacting the event stream and branching runs via parentRunId ('time travel'). CopilotKit is the React/Angular/Vue/React Native client: shared state (useAgent with agent.state/setState), frontend tools the agent can call, human-in-the-loop, and generative UI in three flavours: controlled (AG-UI tool rendering), declarative (A2UI) and open-ended (MCP Apps).",
+  "key_points": [
+   "UI-agnostic: AG-UI carries state and events, not a component tree",
+   "STATE_DELTA = RFC 6902 patches over shared agent state; ACTIVITY_DELTA likewise",
+   "Run lineage via parentRunId; event compaction to snapshots",
+   "Transport binding for A2UI and MCP Apps (AG-UI is listed as an A2UI transport)",
+   "Terminal: docs include a CLI chat client quickstart; Channels SDK targets Slack/Teams; community Textual client 'gentui'"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "CopilotKit libraries reach over 4 million weekly downloads; millions of agent-user interactions per week",
+    "source": "https://www.copilotkit.ai/blog/series-a"
+   }
+  ],
+  "summary": "No published latency or throughput numbers for the protocol; adoption figures are company claims."
+ },
+ "agent_usability": {
+  "how": "Agent backends emit AG-UI events (via framework integrations); the frontend renders them. Agents call frontend-registered tools to act on the UI and read/write shared state.",
+  "integration_effort": "Low if your framework already has an AG-UI adapter (most do); CopilotKit provides the frontend components.",
+  "readback": "Shared state is bidirectional and frontend context is sent with each run, so the agent sees structured app state; it does not see the rendered view.",
+  "granular_edits": "STATE_DELTA JSON Patch on shared state is cheap and path-addressed; UI changes follow from state, not from addressing components.",
+  "history": "Event streams are serializable; runs can branch from prior runs (parentRunId) and be compacted. Conversation/run-level, not UI-frame-level.",
+  "summary": "Strong agent<->app state channel with real history semantics, but it leaves the UI itself to the app."
+ },
+ "scores": {
+  "ui_as_data": 2,
+  "agent_drivable": 3,
+  "readback": 3,
+  "granular_edits": 4,
+  "time_travel": 3,
+  "live_data_rate": 2,
+  "terminal_native": 2,
+  "pixel_graphics": 3,
+  "teaching": 0,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "State and events are JSON; the UI is React/Angular components unless A2UI is layered on.",
+  "agent_drivable": "Agents drive via events, shared state and frontend tools; no generic operate-the-UI channel.",
+  "readback": "Structured shared state and context, no rendered-view capture.",
+  "granular_edits": "RFC 6902 state deltas.",
+  "time_travel": "Serialized event log with branching runs; agent-level lineage rather than UI seek/replay.",
+  "terminal_native": "A CLI chat client example and community Textual client; nothing like a general terminal renderer.",
+  "pixel_graphics": "Whatever the web app's own components draw; nothing in the protocol.",
+  "openness": "MIT, but steered by one VC-backed company."
+ },
+ "steelman": "AG-UI won the plumbing layer. Google ADK, Microsoft Agent Framework, AWS Strands and Bedrock AgentCore, LangGraph, CrewAI, Mastra, Pydantic AI and more emit it, its 1.0 spec is frozen with JSON Schemas, and the npm core moves 2.4M downloads a week. It doesn't pick a UI language; it carries everything an interactive agent session needs (streamed text, tool calls, shared state as snapshots plus RFC 6902 deltas, activities, reasoning, subagents) and can carry A2UI or MCP Apps on top. It even has a principled history story: serialized event streams, compaction, and run branching via parentRunId. CopilotKit then gives app developers shared state, frontend tools and three generative-UI modes out of the box, and is funded to keep doing it.",
+ "weaknesses": [
+  "Not a UI format: generative UI requires CopilotKit components or a second spec (A2UI/MCP Apps)",
+  "Governance is effectively CopilotKit's; adoption claims (Fortune 500 majority, 4M weekly downloads) are company statements",
+  "Web/React-centric; terminal support is a chat-client tutorial, not a renderer",
+  "Agent sees state, never the rendered output",
+  "History is at run/conversation level; no UI-frame seek or replay"
+ ],
+ "relation_to_scene": {
+  "overlap": "Shared state synchronized between agent and UI with JSON Patch deltas; event-sourced sessions; branching history.",
+  "scene_reinvents": "An event vocabulary for agent<->UI sessions and run lineage; scene's socket ops and planned history log overlap with AG-UI's events and serialization.",
+  "borrow": [
+   "Consume AG-UI event streams so any AG-UI agent (ADK, LangGraph, Mastra...) can drive a scene",
+   "STATE_SNAPSHOT/STATE_DELTA semantics for scene's data model",
+   "parentRunId-style lineage for scene's fork/replay",
+   "Event compaction (collapse deltas into snapshots) for scene history export"
+  ],
+  "gap_left": "The terminal UI itself: a renderer, keys/mouse, screen readback, high-rate data bypass, pixels, tours. AG-UI moves events; scene is the surface.",
+  "verdict": "complement",
+  "verdict_why": "AG-UI is a likely input transport for scene, not a competitor to its rendering and control model."
+ },
+ "sources": [
+  {
+   "title": "ag-ui-protocol/ag-ui README",
+   "url": "https://github.com/ag-ui-protocol/ag-ui"
+  },
+  {
+   "title": "AG-UI events",
+   "url": "https://docs.ag-ui.com/concepts/events"
+  },
+  {
+   "title": "AG-UI serialization",
+   "url": "https://docs.ag-ui.com/concepts/serialization"
+  },
+  {
+   "title": "AG-UI client quickstart (terminal)",
+   "url": "https://docs.ag-ui.com/quickstart/clients"
+  },
+  {
+   "title": "AG-UI 1.0 is officially released (#2792)",
+   "url": "https://github.com/ag-ui-protocol/ag-ui/discussions/2792"
+  },
+  {
+   "title": "CopilotKit Series A",
+   "url": "https://www.copilotkit.ai/blog/series-a"
+  },
+  {
+   "title": "CopilotKit repo",
+   "url": "https://github.com/CopilotKit/CopilotKit"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@ag-ui/core"
+  }
+ ]
+}

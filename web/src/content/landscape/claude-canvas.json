@@ -1,0 +1,135 @@
+{
+ "id": "claude-canvas",
+ "name": "Claude Canvas",
+ "group": "agent-canvases",
+ "tagline": "Prebuilt Ink TUI canvases Claude Code spawns in tmux panes",
+ "links": {
+  "site": "",
+  "repo": "https://github.com/dvdsgl/claude-canvas",
+  "docs": "https://github.com/dvdsgl/claude-canvas/blob/main/canvas/skills/canvas/SKILL.md",
+  "other": [
+   {
+    "label": "tui-canvas (Czaruno), framework-agnostic MCP port",
+    "url": "https://github.com/Czaruno/tui-canvas"
+   },
+   {
+    "label": "tui-canvas (jredville), Go persistent markdown canvas",
+    "url": "https://github.com/jredville/tui-canvas"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "MIT. README: 'This is a proof of concept and is unsupported.'"
+ },
+ "language": "TypeScript (Bun, Ink 6, React 19)",
+ "backing": "Individual (David Siegel, GitHub dvdsgl)",
+ "first_release": "2026-01",
+ "latest_release": {
+  "tag": "",
+  "date": ""
+ },
+ "adoption": {
+  "github_stars": 1512,
+  "stars_fetched": "2026-10-09",
+  "downloads": null,
+  "notable_users": [],
+  "summary": "1.5k stars and 138 forks gathered in its launch week (Jan 2026, shared widely on X/LinkedIn), then no further commits. No known production users; no releases."
+ },
+ "maintainability": {
+  "release_cadence": "No GitHub releases; 19 commits total, all between 2026-01-06 and 2026-01-08",
+  "contributors": "3",
+  "recent_activity": "None since 2026-01-08 (last push)",
+  "bus_factor": "low: dormant single-author proof of concept",
+  "summary": "A launch-week demo that was never maintained after; treat as an idea, not a dependency."
+ },
+ "architecture": {
+  "summary": "A Claude Code plugin (marketplace + skills) plus a Bun CLI. `canvas spawn <kind> --scenario <name> --config '<json>'` opens a prebuilt Ink/React canvas (calendar, document, flight) in a tmux split pane. The canvas and the controller talk over a Unix domain socket: canvas to controller sends ready/selected/cancelled/error; controller to canvas sends update(config)/close/ping. A TypeScript high-level API (pickMeetingTime, editDocument, bookFlight) spawns a canvas and awaits the user's selection.",
+  "key_points": [
+   "Fixed catalogue of hand-written canvases; the agent picks kind + scenario and supplies JSON config",
+   "IPC over a Unix socket with a tiny message vocabulary (update/close/ping; ready/selected/cancelled/error)",
+   "Delivered as Claude Code skills that teach the model the CLI",
+   "Mouse support inside canvases; tmux is required",
+   "tui-canvas (Czaruno, 0 stars, MIT, Jan 2026) ports the idea to an MCP server with a protocol-first design and OpenTUI/Ink implementations; jredville/tui-canvas (0 stars) is a Go persistent markdown canvas with a socket daemon"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers."
+ },
+ "agent_usability": {
+  "how": "Claude Code skills instruct the agent to run the Bun CLI (spawn/show) with JSON config; the controller can send `update` with a new config over the socket. tui-canvas wraps the same idea as an MCP server.",
+  "integration_effort": "Install the plugin (/plugin marketplace add dvdsgl/claude-canvas); needs Bun and a tmux session. New canvas kinds require writing Ink components.",
+  "readback": "Only the user's result comes back (selected/cancelled events with data). The agent cannot read the rendered screen or canvas state.",
+  "granular_edits": "No; `update` replaces the canvas config wholesale.",
+  "history": "None.",
+  "summary": "A pleasant demo of 'give the agent a second screen', but the agent is limited to choosing among prebuilt canvases and receiving a selection."
+ },
+ "scores": {
+  "ui_as_data": 2,
+  "agent_drivable": 3,
+  "readback": 1,
+  "granular_edits": 2,
+  "time_travel": 0,
+  "live_data_rate": 1,
+  "terminal_native": 5,
+  "pixel_graphics": 0,
+  "teaching": 0,
+  "maturity": 1,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "only the config is JSON; each canvas is hand-written Ink code",
+  "agent_drivable": "CLI + socket protocol for spawn/update/close of prebuilt canvases",
+  "readback": "selection events only, no screen or state read",
+  "granular_edits": "whole-config update messages",
+  "live_data_rate": "ad hoc config pushes; no data sources",
+  "maturity": "self-described unsupported proof of concept, dormant since Jan 2026"
+ },
+ "steelman": "claude-canvas proved the demand in one week: 1.5k stars for the simple idea that a coding agent deserves its own display next to the chat, in the terminal, with real interaction (pick a meeting slot, select text to edit, choose a seat) rather than more scrolling text. Its design is pleasingly small: a skill, a CLI, a tmux split and a six-message socket protocol, with a typed async API that turns a canvas into a function call that returns the human's choice. That 'canvas as an awaitable question to the human' pattern is exactly what agents need for approvals and choices, and it works in any tmux today with no new terminal or framework.",
+ "weaknesses": [
+  "Self-described unsupported proof of concept; no commits since 2026-01-08",
+  "Fixed set of three canvases; new UIs require writing React/Ink code",
+  "No readback of the screen or state; agent only receives the final selection",
+  "Requires tmux and Bun",
+  "tui-canvas forks have zero stars and little activity"
+ ],
+ "relation_to_scene": {
+  "overlap": "An agent opens a terminal UI beside the conversation and exchanges messages with it over a Unix socket.",
+  "scene_reinvents": "Nothing substantial; scene already exceeds it. The awaitable 'ask the human and wait for selected/cancelled' round trip is the one thing done cleanly here.",
+  "borrow": [
+   "An awaitable high-level call (e.g. scene.ask(ui) -> {selected, data} | {cancelled}) for approvals and pickers",
+   "Ship the agent integration as a Claude Code plugin/skill with a marketplace entry",
+   "Spawn into a tmux/herdr split automatically when available"
+  ],
+  "gap_left": "claude-canvas has no UI-as-data, no readback, no patches, no data streams, no history, no pixels; thc-scene does all of these.",
+  "verdict": "ignore",
+  "verdict_why": "A dormant demo whose one good idea (awaitable human choice) is easy to borrow; it is not a foundation."
+ },
+ "sources": [
+  {
+   "title": "dvdsgl/claude-canvas README",
+   "url": "https://github.com/dvdsgl/claude-canvas"
+  },
+  {
+   "title": "claude-canvas canvas SKILL.md",
+   "url": "https://github.com/dvdsgl/claude-canvas/blob/main/canvas/skills/canvas/SKILL.md"
+  },
+  {
+   "title": "claude-canvas canvas-api.ts",
+   "url": "https://github.com/dvdsgl/claude-canvas/blob/main/canvas/src/api/canvas-api.ts"
+  },
+  {
+   "title": "GitHub API repos/dvdsgl/claude-canvas",
+   "url": "https://api.github.com/repos/dvdsgl/claude-canvas"
+  },
+  {
+   "title": "Czaruno/tui-canvas README",
+   "url": "https://github.com/Czaruno/tui-canvas"
+  },
+  {
+   "title": "jredville/tui-canvas",
+   "url": "https://github.com/jredville/tui-canvas"
+  }
+ ]
+}

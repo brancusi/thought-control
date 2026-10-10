@@ -1,0 +1,152 @@
+{
+ "id": "wave-terminal",
+ "name": "Wave Terminal",
+ "group": "agent-canvases",
+ "tagline": "Electron terminal with blocks, widgets, AI and a wsh control CLI",
+ "links": {
+  "site": "https://www.waveterm.dev",
+  "repo": "https://github.com/wavetermdev/waveterm",
+  "docs": "https://docs.waveterm.dev",
+  "other": [
+   {
+    "label": "wsh reference",
+    "url": "https://docs.waveterm.dev/wsh-reference"
+   },
+   {
+    "label": "Wave AI",
+    "url": "https://docs.waveterm.dev/waveai"
+   },
+   {
+    "label": "Custom widgets",
+    "url": "https://docs.waveterm.dev/customwidgets"
+   },
+   {
+    "label": "Release notes",
+    "url": "https://docs.waveterm.dev/releasenotes"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Apache-2.0. Wave AI includes free beta credits through Wave's service; BYOK and local models supported."
+ },
+ "language": "Go (backend, wsh) + TypeScript/React (Electron frontend)",
+ "backing": "Command Line Inc. (company, founded 2023 per Slashdot listing; funding not verified)",
+ "first_release": null,
+ "latest_release": {
+  "tag": "v0.14.5",
+  "date": "2026-04-16"
+ },
+ "adoption": {
+  "github_stars": 22463,
+  "stars_fetched": "2026-10-09",
+  "downloads": null,
+  "notable_users": [],
+  "summary": "Popular open-source desktop terminal (22.5k stars); distributed via its site, Snapcraft and package managers; no public download counts found."
+ },
+ "maintainability": {
+  "release_cadence": "Roughly monthly through 2025 to v0.14.5 (2026-04-16); no stable release in the ~6 months since",
+  "contributors": "~49 (GitHub contributors API with anon, last page index)",
+  "recent_activity": "39 commits since 2026-07-11; last push 2026-10-09",
+  "bus_factor": "medium: small company team",
+  "summary": "Steady development by a small company; release cadence has slowed in 2026."
+ },
+ "architecture": {
+  "summary": "An Electron app whose window is a tiled layout of 'blocks': terminals, web views, editors, file previews, sysinfo graphs, Wave AI chat and custom widgets defined in widgets.json. A Go backend (wavesrv) holds the object model (workspaces, tabs, blocks with metadata) and exposes RPC; the `wsh` CLI, available inside every Wave terminal including over SSH, talks to it to open views, edit files, set/get block metadata, read terminal scrollback, run commands in new blocks, set badges and list blocks as JSON. Wave AI has internal tools to read terminal output, screenshot widgets, read/write files with approval and navigate web widgets. A Go reactive widget framework, Tsunami (vdom-based, with an AI 'builder'), has been in progress since 2025 ('WaveApps builder framework, not yet released' per release notes).",
+  "key_points": [
+   "Blocks are addressable objects with ids and JSON metadata (wsh getmeta/setmeta)",
+   "wsh commands: view, edit, editor, getmeta, setmeta, ai, editconfig, setbg, badge, run, deleteblock, ssh, wsl, web, notify, conn, setconfig, file, launch, getvar/setvar, termscrollback, wavepath, blocks, secret",
+   "`wsh blocks list --json` filters by workspace/window/tab/view type",
+   "`wsh badge` marketed for Claude Code hooks to surface notifications on blocks",
+   "Wave AI tools: read terminal output, capture widget screenshots, read/list/write files (approval), navigate web widgets",
+   "Durable SSH sessions (v0.14) survive disconnects and restarts",
+   "Tsunami/WaveApps: Go vdom widget framework, unreleased"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers."
+ },
+ "agent_usability": {
+  "how": "An agent running in a Wave terminal shells out to `wsh` (open a web/preview/editor block, run a command in a new block, set block metadata, read scrollback, list blocks as JSON, badge/notify). Wave's own AI uses internal tools. No MCP server for Wave itself was found.",
+  "integration_effort": "Zero for CLI agents running inside Wave (wsh is on PATH); nothing for agents outside Wave.",
+  "readback": "Text scrollback via `wsh termscrollback`, block lists/metadata as JSON; widget screenshots only available to Wave AI internally.",
+  "granular_edits": "Block-level: setmeta by block id, deleteblock, open/replace views. No patching of UI inside a widget.",
+  "history": "None for UI/layout; durable SSH sessions preserve shell state.",
+  "summary": "Agent-drivable at the workspace layout level through a CLI: an agent can open panes and point them at things, but cannot build or patch a custom UI inside them (until Tsunami ships)."
+ },
+ "scores": {
+  "ui_as_data": 2,
+  "agent_drivable": 3,
+  "readback": 3,
+  "granular_edits": 3,
+  "time_travel": 0,
+  "live_data_rate": 2,
+  "terminal_native": 2,
+  "pixel_graphics": 4,
+  "teaching": 1,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "block metadata and widgets.json are JSON; widget internals are React code",
+  "agent_drivable": "wsh CLI covers open/run/close/setmeta of blocks for any in-terminal agent",
+  "readback": "scrollback text and block JSON; screenshots only for built-in AI",
+  "granular_edits": "id-addressed block metadata edits, not UI internals",
+  "live_data_rate": "sysinfo graphs and terminals stream; no published rates",
+  "terminal_native": "it is a terminal emulator, but its rich widgets are Electron/web, not terminal cells",
+  "maturity": "22k stars, years of releases; pre-1.0 versioning"
+ },
+ "steelman": "Wave already gives a coding agent what claude-canvas only demoed: a real second screen with many panes, driven from the command line the agent already lives in. Any CLI agent inside Wave can open a web page, a markdown preview, an image or an editor beside itself, run a command in its own block, badge a block when it needs attention, and read terminal scrollback, all through `wsh`, which works over SSH too. Blocks are addressable objects with JSON metadata, the built-in AI can screenshot widgets and act with approvals, and durable SSH sessions survive restarts. For 'an agent should be able to show me things next to the terminal', Wave is a shipping, Apache-licensed, 22k-star answer.",
+ "weaknesses": [
+  "Electron desktop app, not a terminal-native UI; you must switch terminals to use it",
+  "Agent control is coarse (blocks and URLs), with no API to build or patch widget UIs; Tsunami/WaveApps still unreleased",
+  "No MCP server for external agents; wsh only works inside Wave terminals",
+  "Widget screenshots and AI tools are internal to Wave AI",
+  "No stable release since 2026-04-16",
+  "No history/time travel of UI state"
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent opens and arranges panes beside the terminal and reads terminal text back; block ids with JSON metadata.",
+  "scene_reinvents": "If the need is only 'show a web page / file / image next to the agent', Wave's blocks already do it. Scene's value is the custom live UI inside a pane, which Wave lacks today.",
+  "borrow": [
+   "A small CLI (`wsh`-style) that works from any shell, including over SSH, as the agent's control surface alongside the socket/MCP",
+   "Badges/notify on panes for agent attention (Claude Code hooks)",
+   "`blocks list --json` style discovery of live scene instances and their ids",
+   "getmeta/setmeta as a generic id-addressed property patch"
+  ],
+  "gap_left": "Wave cannot render an agent-authored, data-bound, keyboard-driven UI in a pane, read it back as structure, patch it by node id, or rewind it; scene can, and runs in any terminal rather than requiring one desktop app.",
+  "verdict": "complement",
+  "verdict_why": "Wave is a host for panes; scene could run inside a Wave terminal block, while Wave's CLI ergonomics are worth copying."
+ },
+ "sources": [
+  {
+   "title": "wavetermdev/waveterm README",
+   "url": "https://github.com/wavetermdev/waveterm"
+  },
+  {
+   "title": "wsh reference (docs/docs/wsh-reference.mdx)",
+   "url": "https://docs.waveterm.dev/wsh-reference"
+  },
+  {
+   "title": "Wave AI docs",
+   "url": "https://docs.waveterm.dev/waveai"
+  },
+  {
+   "title": "Wave release notes",
+   "url": "https://docs.waveterm.dev/releasenotes"
+  },
+  {
+   "title": "Tsunami builder prompt (aiprompts/tsunami-builder.md)",
+   "url": "https://github.com/wavetermdev/waveterm/blob/main/aiprompts/tsunami-builder.md"
+  },
+  {
+   "title": "Slashdot listing (Command Line Inc.)",
+   "url": "https://slashdot.org/software/p/Wave-Terminal/"
+  },
+  {
+   "title": "GitHub API repos/wavetermdev/waveterm",
+   "url": "https://api.github.com/repos/wavetermdev/waveterm"
+  }
+ ]
+}

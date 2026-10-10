@@ -1,0 +1,166 @@
+{
+ "id": "tldraw-agent",
+ "name": "tldraw SDK + Agent starter kit",
+ "group": "agent-canvases",
+ "tagline": "Infinite-canvas SDK whose agent kit reads and edits shapes live",
+ "links": {
+  "site": "https://tldraw.dev",
+  "repo": "https://github.com/tldraw/tldraw",
+  "docs": "https://tldraw.dev/starter-kits/agent",
+  "other": [
+   {
+    "label": "Agent template repo",
+    "url": "https://github.com/tldraw/agent-template"
+   },
+   {
+    "label": "History (undo/redo, marks) docs",
+    "url": "https://tldraw.dev/sdk-features/history"
+   },
+   {
+    "label": "tldraw MCP App announcement",
+    "url": "https://tldraw.dev/blog/tldraw-mcp-app"
+   },
+   {
+    "label": "License",
+    "url": "https://tldraw.dev/community/license"
+   }
+  ]
+ },
+ "license": {
+  "spdx": null,
+  "notes": "SDK is source-available under the custom 'tldraw license': development use free; production needs a license key (100-day trial, commercial, or discretionary hobby license with 'made with tldraw' watermark). Explicitly 'not Open Source by any definition'. Many examples/starter kits are MIT (tldraw/agent-template is MIT). GitHub reports NOASSERTION."
+ },
+ "language": "TypeScript (React)",
+ "backing": "tldraw, Inc. (company; venture-funded, details not verified here)",
+ "first_release": "2021-05",
+ "latest_release": {
+  "tag": "v5.5.2",
+  "date": "2026-10-02"
+ },
+ "adoption": {
+  "github_stars": 50825,
+  "stars_fetched": "2026-10-09",
+  "downloads": "tldraw npm: 430,719/week (api.npmjs.org, 2026-10-01..07); site claims 512.6K weekly",
+  "notable_users": [
+   "Google",
+   "Replit",
+   "ClickUp",
+   "Autodesk",
+   "Luma",
+   "Runway",
+   "BlackRock",
+   "Padlet (company logos on tldraw.dev)"
+  ],
+  "summary": "The dominant whiteboard SDK; widely embedded in commercial products. The agent template repo itself is small (37 stars) but ships via `npm create tldraw -- --template agent`."
+ },
+ "maintainability": {
+  "release_cadence": "Frequent: v5.4.1 2026-09-08, v5.4.2 2026-09-10, v5.5.0 2026-09-30, v5.5.1 and v5.5.2 2026-10-02",
+  "contributors": "~223 (GitHub contributors API with anon, last page index)",
+  "recent_activity": "689 commits on main since 2026-07-11",
+  "bus_factor": "high: funded company team",
+  "summary": "Professionally maintained with a fast release train."
+ },
+ "architecture": {
+  "summary": "tldraw is a React canvas over a reactive record store: every shape, page, binding and camera is a JSON record, with getSnapshot/loadSnapshot, store listeners emitting diffs, and multiplayer sync. The Editor API (createShapes, updateShape, deleteShapes, run with history modes) mutates the store; a history manager stores diffs and marks for undo/redo/bailToMark/squashToMark. The agent starter kit puts an agent loop inside the app: PromptPartUtil classes gather context (user message, selection, viewport screenshot, simplified shape formats BlurryShape/FocusedShape/PeripheralShapeCluster, lints, session history) and AgentActionUtil classes define what it can do, with streaming application of each action, modes that swap parts/actions, and multi-provider models. A separate tldraw MCP App (launched with Cursor 2.6, March 2026) exposes create/edit/delete shape tools and returns a live canvas to MCP Apps hosts.",
+  "key_points": [
+   "Document is data: JSON records in a store with snapshots and diffs",
+   "Agent actions: create/update/delete shapes, freehand pen strokes, align/distribute/stack/reorder, viewport moves, todo list, scheduled follow-ups, external API calls",
+   "Dual readback: screenshot of agent viewport + structured simplified shapes",
+   "Actions stream and apply incrementally as the model emits them",
+   "History marks (markHistoryStoppingPoint), bailToMark, squashToMark, history modes record/record-preserveRedoStack/ignore; remote changes never recorded",
+   "Programmatic agent API: agent.prompt(), agent.request(), agent.cancel(), agent.reset(); modes with onEnter/onExit hooks",
+   "MCP App: three tools (create, edit, delete shapes) with canvas state passed back into the chat"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published throughput numbers for agent edits or sync found in the pages read."
+ },
+ "agent_usability": {
+  "how": "In-app agent loop (starter kit) calling typed AgentActionUtils on a live editor; externally via the tldraw MCP App (create/edit/delete shape tools, hosted at an HTTP MCP endpoint) or community MCP servers.",
+  "integration_effort": "Starter kit: `npm create tldraw@latest -- --template agent` plus provider API keys; production use needs a tldraw license key. MCP App: install in Cursor/other MCP Apps hosts.",
+  "readback": "Yes: viewport screenshot plus structured shape data in three detail levels, selection, user's recent actions, lints.",
+  "granular_edits": "Yes: shape-id-addressed create/update/delete, applied incrementally while streaming.",
+  "history": "Editor undo/redo with named marks and bail/squash; store snapshots and diffs; agent kit keeps chat/action history. No agent-facing seek/fork of document history out of the box.",
+  "summary": "The strongest example of an agent working on a live, structured, visual document with both screenshot and data readback and id-addressed edits, but it is a web canvas under a commercial license."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 4,
+  "readback": 5,
+  "granular_edits": 5,
+  "time_travel": 3,
+  "live_data_rate": 3,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 2,
+  "maturity": 4,
+  "openness": 2
+ },
+ "score_notes": {
+  "ui_as_data": "canvas document is fully JSON records; app chrome and custom shapes are React code",
+  "agent_drivable": "first-class in-app agent and MCP App, but external agents get only three coarse tools",
+  "readback": "screenshot plus structured shape formats",
+  "granular_edits": "id-addressed shape ops streamed incrementally",
+  "time_travel": "marks/undo/redo/bail/squash and snapshots exposed as APIs; no agent seek/fork",
+  "live_data_rate": "real-time multiplayer sync, no published rates",
+  "openness": "source-available, license key required in production"
+ },
+ "steelman": "tldraw is what an agent-drivable visual surface looks like when a well-funded team builds it for years: the whole document is JSON records with snapshots, diffs and multiplayer sync, the history system has named marks you can bail or squash to, and the agent kit is a thoughtful, production-shaped architecture rather than a demo. Its context system is genuinely clever: the model gets a screenshot and three levels of structured detail (focused shapes in full, viewport shapes 'blurry', off-screen shapes as clusters), plus lints and the user's recent actions, and its actions stream onto the canvas as they are generated. Modes, prompt parts and action utils make 'what the agent can see' and 'what it can do' explicit data. With 430k weekly downloads and logos like Google and Replit, it is the reference implementation for agents collaborating on a shared visual canvas.",
+ "weaknesses": [
+  "Not open source: production use requires a license key; hobby license requires a watermark",
+  "Web/React only; no terminal surface",
+  "The agent loop lives inside the browser app; external agents get only the MCP App's create/edit/delete tools",
+  "No agent-facing history seek/fork/replay beyond undo marks",
+  "A drawing canvas, not a general app UI toolkit; data binding to live streams is up to the integrator",
+  "Agent template repo has modest traction (37 stars)"
+ ],
+ "relation_to_scene": {
+  "overlap": "A live structured surface an agent edits by id, with dual readback (picture + structure), history marks, and an agent that explains and annotates.",
+  "scene_reinvents": "Multi-resolution context for the model (full detail for focus, summary for viewport, clusters off-screen) and history marks with bail/squash; scene's planned marks/time travel should study tldraw's mark semantics rather than invent new ones.",
+  "borrow": [
+   "Focused/Blurry/Peripheral context levels for scene's `state`/`screen` readback to keep tokens low",
+   "History marks with names plus bailToMark/squashToMark and record/preserveRedo/ignore modes (agent cursor moves = ignore)",
+   "Modes as data: per-mode lists of what the agent sees (parts) and can do (actions)",
+   "Streamed incremental application of agent actions so the human watches the agent work",
+   "Lints passed to the model (overlaps, truncated labels) as a readback channel"
+  ],
+  "gap_left": "tldraw is a browser whiteboard under a commercial license; it has no terminal renderer, no data sources bound to commands/streams, no keyboard-first app UI, and no binary hot-swap. thc-scene is a terminal app UI with live data.",
+  "verdict": "borrow",
+  "verdict_why": "Different medium and license, but its agent context design and history-mark semantics are the best reference for scene's readback and planned time travel."
+ },
+ "sources": [
+  {
+   "title": "tldraw Agent starter kit docs",
+   "url": "https://tldraw.dev/starter-kits/agent"
+  },
+  {
+   "title": "tldraw History docs",
+   "url": "https://tldraw.dev/sdk-features/history"
+  },
+  {
+   "title": "tldraw License",
+   "url": "https://tldraw.dev/community/license"
+  },
+  {
+   "title": "tldraw MCP App blog",
+   "url": "https://tldraw.dev/blog/tldraw-mcp-app"
+  },
+  {
+   "title": "Cursor 2.6 MCP Apps (date context)",
+   "url": "https://forum.cursor.com/t/cursor-2-6-mcp-apps-and-team-marketplaces-for-plugins/153479"
+  },
+  {
+   "title": "GitHub API repos/tldraw/tldraw",
+   "url": "https://api.github.com/repos/tldraw/tldraw"
+  },
+  {
+   "title": "tldraw/agent-template",
+   "url": "https://github.com/tldraw/agent-template"
+  },
+  {
+   "title": "npm downloads tldraw",
+   "url": "https://api.npmjs.org/downloads/point/last-week/tldraw"
+  }
+ ]
+}

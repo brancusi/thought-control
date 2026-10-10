@@ -1,0 +1,167 @@
+{
+ "id": "ratatui",
+ "name": "Ratatui (+ ratatui-image)",
+ "group": "terminal-frameworks",
+ "tagline": "Immediate-mode Rust TUI library; the Rust ecosystem default",
+ "links": {
+  "site": "https://ratatui.rs/",
+  "repo": "https://github.com/ratatui/ratatui",
+  "docs": "https://docs.rs/ratatui/",
+  "other": [
+   {
+    "label": "ratatui-image",
+    "url": "https://github.com/ratatui/ratatui-image"
+   },
+   {
+    "label": "Rendering concepts",
+    "url": "https://ratatui.rs/concepts/rendering/"
+   },
+   {
+    "label": "v0.30 highlights",
+    "url": "https://ratatui.rs/highlights/v030/"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "ratatui-image is also MIT. No CLA found."
+ },
+ "language": "Rust",
+ "backing": "Community GitHub org (ratatui) with a maintainer team (e.g. orhun, joshka, kdheepak); fork (2023) of fdehau's tui-rs. No company owner found.",
+ "first_release": "2023-03",
+ "latest_release": {
+  "tag": "ratatui-v0.30.2",
+  "date": "2026-06-19"
+ },
+ "adoption": {
+  "github_stars": 22918,
+  "stars_fetched": "2026-10-09",
+  "downloads": "58.3M all-time, 21.1M in the last 90 days (crates.io API 'recent_downloads'); ratatui-image 1.03M all-time, 483k recent, 274 reverse deps",
+  "notable_users": [
+   "OpenAI Codex CLI (codex-rs pins ratatui 0.30.2)",
+   "Netflix bpftop",
+   "xAI grok-build",
+   "OVHcloud shai",
+   "Oxide omicron",
+   "thc's own thc-tui"
+  ],
+  "summary": "The de facto Rust TUI library: ratatui.rs claims 6,200+ dependent crates; the logo wall lists Netflix, OpenAI, xAI, OVHcloud, Oxide, AWS."
+ },
+ "maintainability": {
+  "release_cadence": "Slow, large releases with point fixes: 0.30.0-alpha.5 2025-06-30, beta.0 2025-10-31, 0.30.0 2025-12-26, 0.30.1 2026-06-05, 0.30.2 2026-06-19. ratatui-image ships far faster (v11.0.7 2026-09-03 … v12.0.0-rc.2 2026-10-05).",
+  "contributors": "~311 (GitHub contributors API incl. anonymous, last-page count)",
+  "recent_activity": "~99 commits and 99 merged PRs since 2026-07-11 (GitHub API)",
+  "bus_factor": "high: org-owned, several active maintainers, already survived one maintainer handoff (tui-rs to ratatui)",
+  "summary": "Healthy, multi-maintainer community project; 0.30 modularised the crate (ratatui-core, -widgets, backends) and added no_std."
+ },
+ "architecture": {
+  "summary": "Immediate mode: each frame the app calls terminal.draw(|f| …) and renders widgets into a Buffer of cells; ratatui diffs the new buffer against the previous one and writes only changed cells to the backend (crossterm, termion, termwiz). State lives entirely in the application; widgets are throwaway values (StatefulWidget borrows external state such as list selection). Layout is a constraint solver (Cassowary). Extension is by implementing the Widget trait; there is no component tree, no event system and no retained scene.",
+  "key_points": [
+   "Widget::render(self, area, &mut Buffer) is the whole contract",
+   "Buffer diff on flush keeps output minimal",
+   "Backends pluggable; TestBackend gives an in-memory buffer for assertions",
+   "0.30: modular crates, no_std for embedded",
+   "ratatui-image: one Image/StatefulImage widget over Kitty, Sixel, iTerm2 and halfblock fallback, with a Picker that queries font size and protocol"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "\"The diffing algorithm in Ratatui ensures efficient\" output (only changed cells are written)",
+    "source": "https://ratatui.rs/concepts/rendering/under-the-hood/"
+   },
+   {
+    "text": "Issue #1338 'Extremely high CPU usage of terminal.draw': maintainers found a 17% win in the diff and noted 'immediate mode rendering in the terminal like this is just always going to do more work'",
+    "source": "https://github.com/ratatui/ratatui/issues/1338"
+   }
+  ],
+  "summary": "No published throughput/frame-time numbers on the site; benchmarks exist in-repo (criterion) but no headline figures found. Codex CLI is widely reported (anecdotally) as smooth versus Ink-based agents."
+ },
+ "agent_usability": {
+  "how": "Code generation only. A ratatui app has no protocol, socket or introspection; agents drive running apps via generic PTY/tmux harnesses (agent-tui, mcp-tui-server etc.) that send keys and scrape the screen.",
+  "integration_effort": "You build your own control channel (thc-scene is exactly that) or wrap the binary in a PTY driver.",
+  "readback": "In tests, TestBackend exposes the cell Buffer; at runtime, only screen scraping unless the app exposes its own state.",
+  "granular_edits": "None from outside; the UI is a function of app state the app owns.",
+  "history": "None built in; the immediate-mode style makes record/replay the app's job.",
+  "summary": "An excellent renderer and widget kit with zero agent surface; everything agent-facing must be built on top."
+ },
+ "scores": {
+  "ui_as_data": 0,
+  "agent_drivable": 1,
+  "readback": 2,
+  "granular_edits": 0,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 2,
+  "teaching": 1,
+  "maturity": 5,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "Widgets are Rust values built per frame; nothing serializable or storable",
+  "readback": "TestBackend buffer is structured but only in-process/test; live readback = screen scrape",
+  "live_data_rate": "Frame rate is whatever the app loop drives; no published numbers, so capped at 3",
+  "pixel_graphics": "Images via the separate ratatui-image crate (Kitty/Sixel/iTerm2/halfblocks)",
+  "teaching": "General-purpose; no tour/narration features",
+  "openness": "MIT, community org, no company control"
+ },
+ "steelman": "Ratatui is the boring, correct choice that the most demanding terminal agents already made: OpenAI rewrote Codex CLI from TypeScript to Rust on it, and Netflix, xAI, Oxide and thousands of crates ship it. Immediate mode means there is no hidden retained tree to drift out of sync: your state is the truth and each frame is a pure projection of it into a cell buffer that is diffed to the terminal, which is precisely the Elm-style discipline thc-scene preaches, without forcing any particular state shape. It is small, fast, no_std-capable, backend-agnostic, multi-maintainer and permissively licensed, with a large widget ecosystem (ratatui-image for Kitty/Sixel pixels, tui-textarea, tui-tree-widget…). If you want a JSON-driven UI you can build it on ratatui in a few thousand lines; you cannot build ratatui's breadth and community on top of a JSON spec.",
+ "weaknesses": [
+  "No component model, events, focus or retained tree: every app reinvents them",
+  "No agent/introspection surface at all; readback requires scraping or custom code",
+  "Large releases are slow (0.30 took ~6 months from alpha to final) and break APIs (BREAKING-CHANGES.md)",
+  "Immediate-mode redraw does more work per frame (maintainers' own words in #1338)",
+  "Pixels only via a separate crate; overlapping text-over-image composition is not a ratatui concept"
+ ],
+ "relation_to_scene": {
+  "overlap": "Same language, same cell-buffer-and-diff rendering model, same Elm-ish 'view is a pure function of state' stance; thc's own TUI (thc-tui) depends on ratatui. thc-scene renders through ratatui today: its view draws into a ratatui buffer.",
+  "scene_reinvents": "Cell buffers, diffing, layout constraints and basic widgets — if scene does not render through ratatui it is re-doing the most mature part of the stack.",
+  "borrow": [
+   "Render scene's JSON nodes into ratatui widgets/Buffer rather than a private renderer",
+   "TestBackend-style in-memory buffer as the 'screen' op's source of truth",
+   "ratatui-image's Picker (font-size + protocol query) and halfblock fallback for scene's pixel layer"
+  ],
+  "gap_left": "Everything above the renderer: UI as a serializable value, a live socket for push/patch/keys/screen, data sources that bypass the model, hot-swap upgrade, callout layers and agent time travel.",
+  "verdict": "use",
+  "verdict_why": "Scene should sit on ratatui as its renderer and widget substrate and add the agent layer ratatui deliberately does not have."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/ratatui/ratatui (stars, license, releases, contributors)",
+   "url": "https://api.github.com/repos/ratatui/ratatui"
+  },
+  {
+   "title": "crates.io ratatui",
+   "url": "https://crates.io/api/v1/crates/ratatui"
+  },
+  {
+   "title": "crates.io ratatui-image",
+   "url": "https://crates.io/api/v1/crates/ratatui-image"
+  },
+  {
+   "title": "ratatui.rs home (users, crate counts)",
+   "url": "https://ratatui.rs/"
+  },
+  {
+   "title": "Rendering under the hood",
+   "url": "https://ratatui.rs/concepts/rendering/under-the-hood/"
+  },
+  {
+   "title": "Issue #1338 high CPU in terminal.draw",
+   "url": "https://github.com/ratatui/ratatui/issues/1338"
+  },
+  {
+   "title": "ratatui-v0.30.0 release notes",
+   "url": "https://github.com/ratatui/ratatui/releases/tag/ratatui-v0.30.0"
+  },
+  {
+   "title": "ratatui-image README",
+   "url": "https://github.com/ratatui/ratatui-image"
+  },
+  {
+   "title": "openai/codex codex-rs/Cargo.toml",
+   "url": "https://github.com/openai/codex/blob/main/codex-rs/Cargo.toml"
+  }
+ ]
+}

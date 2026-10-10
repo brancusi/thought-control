@@ -1,0 +1,170 @@
+{
+ "id": "mcp-apps",
+ "name": "MCP Apps (SEP-1865)",
+ "group": "agent-ui-specs",
+ "tagline": "MCP extension: tools ship sandboxed HTML UIs into chat hosts",
+ "links": {
+  "site": "https://apps.extensions.modelcontextprotocol.io/",
+  "repo": "https://github.com/modelcontextprotocol/ext-apps",
+  "docs": "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx",
+  "other": [
+   {
+    "label": "MCP-UI (predecessor, community)",
+    "url": "https://github.com/MCP-UI-Org/mcp-ui"
+   },
+   {
+    "label": "MCP Apps announcement (2025-11-21)",
+    "url": "https://blog.modelcontextprotocol.io/posts/2025-11-21-mcp-apps/"
+   },
+   {
+    "label": "fka.dev: MCP Apps Should Work in the Terminal Too (2026-09-09)",
+    "url": "https://blog.fka.dev/blog/2026-09-09-mcp-apps-in-cli-harnesses/"
+   },
+   {
+    "label": "Claude Code issue #93973: plugin API for interactive TUI elements",
+    "url": "https://github.com/anthropics/claude-code/issues/93973"
+   },
+   {
+    "label": "Anthropic: donating MCP to the Agentic AI Foundation",
+    "url": "https://www.anthropic.com/news/donating-the-model-context-protocol-and-establishing-of-the-agentic-ai-foundation"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Repo LICENSE: MCP is transitioning MIT -> Apache-2.0; new code/spec contributions Apache-2.0, docs CC-BY-4.0, un-relicensed older contributions stay MIT (GitHub reports NOASSERTION; npm package still declares MIT). MCP-UI is Apache-2.0."
+ },
+ "language": "Spec + TypeScript SDK (@modelcontextprotocol/ext-apps); Views are HTML/JS",
+ "backing": "Model Context Protocol project, governed under the Agentic AI Foundation (Linux Foundation directed fund co-founded by Anthropic, Block and OpenAI, Dec 2025). SEP authors from MCP-UI (Ido Salomon, Liad Yosef), Anthropic and OpenAI among others.",
+ "first_release": "2025-11",
+ "latest_release": {
+  "tag": "@modelcontextprotocol/ext-apps v2.0.3 (spec 2026-01-26, Stable)",
+  "date": "2026-09-25"
+ },
+ "adoption": {
+  "github_stars": 2927,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@modelcontextprotocol/ext-apps 4,575,295/week; @mcp-ui/client 321,504/week; @mcp-ui/server 126,135/week (npm, week ending 2026-10-07)",
+  "notable_users": [
+   "Claude",
+   "ChatGPT",
+   "VS Code",
+   "Goose",
+   "Postman",
+   "MCPJam",
+   "mcp-use inspector",
+   "Alpic playground",
+   "CopilotKit (MCP Apps renderer)",
+   "json-render (@json-render/mcp)"
+  ],
+  "summary": "The de facto standard for UI inside chat hosts: Claude and ChatGPT both render it, and it unifies MCP-UI and OpenAI's Apps SDK. Star count understates adoption; the spec repo is small but the SDK has 4.6M weekly downloads."
+ },
+ "maintainability": {
+  "release_cadence": "SDK: v1.7.5 2026-07-23, v2.0.0 2026-09-08, v2.0.1 2026-09-24, v2.0.2/v2.0.3 2026-09-25; spec dated 2026-01-26",
+  "contributors": "~48 (ext-apps); MCP-UI ~20",
+  "recent_activity": "56 commits on ext-apps main since 2026-07-11; MCP-UI shows no main-branch commits in that window (last client release 7.1.1, 2026-05-09)",
+  "bus_factor": "high: foundation-governed, multiple vendors depend on it",
+  "summary": "Stable spec, active SDK, neutral governance; MCP-UI (the community predecessor) has gone quiet as the official extension took over."
+ },
+ "architecture": {
+  "summary": "A tool declares a ui:// resource (text/html;profile=mcp-app) in _meta.ui.resourceUri; when the model calls the tool, the host fetches the HTML and renders it in a sandboxed iframe (often via a sandbox proxy). The View talks to the host over JSON-RPC on postMessage using MCP's own message shapes: ui/initialize, ui/notifications/tool-input(-partial), tool-result, tool-cancelled, size-changed, host-context-changed; the View can call server tools through the host, send ui/message, ui/open-link, ui/request-display-mode and ui/update-model-context. Hosts theme Views through standardized CSS variables and enforce CSP declared by the server.",
+  "key_points": [
+   "UI is code (HTML/JS), not a declarative tree; security comes from iframe sandboxing, CSP, predeclared resources and auditable JSON-RPC",
+   "Bidirectional: host pushes tool input/result; View calls tools and updates model context",
+   "Display modes (inline/fullscreen/pip) and container sizing negotiated",
+   "Wire protocol unchanged between SDK 1.x and 2.x",
+   "No terminal host renders MCP Apps; fka.dev proposes a parallel JSON terminal view (vendor extension dev.fka/terminal-ui, A2UI-shaped createSurface/updateComponents/updateDataModel, catalog ids, state bindings, named actions)",
+   "Claude Code #93973 (opened 2026-09-13, open, unassigned) asks for plugin TUI slots: keybinding actions, read access to rendered messages with ids, overlay/side-panel slot with clicks"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published performance numbers; a View is an ordinary web page so its rendering/update rate is whatever the browser and the app code achieve."
+ },
+ "agent_usability": {
+  "how": "Indirect: the model calls an MCP tool and the host shows that tool's View. The View, not the model, drives the UI; it can call tools and push context to the model (ui/update-model-context).",
+  "integration_effort": "Write an MCP server that registers tools with UI resources (SDK + agent skills such as create-mcp-app); works in any compliant host without host changes.",
+  "readback": "Only what the View chooses to report via ui/update-model-context or tool calls; the model cannot query the DOM or see the render.",
+  "granular_edits": "No addressing: the host delivers tool inputs/results; the View app decides what to change.",
+  "history": "None.",
+  "summary": "Gives agents a way to ship arbitrary rich UI into the chat, but the UI is an opaque app the model neither inspects nor edits."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 3,
+  "readback": 2,
+  "granular_edits": 1,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 0,
+  "pixel_graphics": 5,
+  "teaching": 0,
+  "maturity": 4,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "The resource is a declared, reviewable HTML document, but the UI itself is code.",
+  "agent_drivable": "Model triggers Views via tool calls and gets tool calls back; it cannot directly manipulate a live View.",
+  "readback": "Structured but voluntary: whatever the View sends via update-model-context.",
+  "live_data_rate": "A View can open its own connections so data bypasses the model; no published numbers.",
+  "terminal_native": "HTML-only; terminal views exist only as a 2026-09 blog proposal.",
+  "pixel_graphics": "Full web platform (canvas, WebGL; Three.js and ShaderToy examples).",
+  "maturity": "Stable spec shipped in Claude, ChatGPT, VS Code, Goose; not yet ubiquitous across MCP clients.",
+  "openness": "Linux Foundation (AAIF) governed, Apache-2.0/MIT."
+ },
+ "steelman": "MCP Apps is where the users already are. It turned MCP-UI's community experiment and OpenAI's Apps SDK into one stable, foundation-governed standard, and Claude, ChatGPT, VS Code and Goose render it today, so one server reaches hundreds of millions of chat users with a real interactive app, not a widget catalog. It refuses to invent a UI language: a View is just HTML, so anything the web can draw (maps, 3D, sheet music, Excalidraw) works, and safety comes from proven browser isolation (sandboxed iframes, CSP, predeclared resources, auditable JSON-RPC over MCP's own messages). With 4.6M weekly SDK downloads and agent skills that scaffold an app in one prompt, it is the default answer to 'my tool needs a UI'.",
+ "weaknesses": [
+  "UI is opaque code: the model cannot read back, address or patch it; agent sees only what the View reports",
+  "HTML-only; no terminal host renders it (Claude Code, Codex CLI, Copilot CLI) and terminal views are only a blog proposal",
+  "Security relies on iframe sandboxing of arbitrary code, the opposite of A2UI's 'data not code' stance",
+  "No history or replay",
+  "MCP-UI predecessor now quiet; hosts differ in support (README: 'Host support varies')"
+ ],
+ "relation_to_scene": {
+  "overlap": "Both put an interactive UI in front of a user on an agent's behalf and let the UI call back into the agent's tools.",
+  "scene_reinvents": "Nothing in the UI model; scene's tooling should reuse MCP itself as the transport rather than a private socket protocol for remote agents.",
+  "borrow": [
+   "Expose scene as an MCP server (push/patch/keys/screen/state tools) so any MCP agent can drive it",
+   "Use the fka.dev extension shape: advertise a terminal-view resource next to HTML, negotiate catalogs in initialize capabilities",
+   "ui/update-model-context pattern: let the UI push a compact state summary to the model",
+   "CSP/predeclared-resource idea as a template for scene's command allowlist policy"
+  ],
+  "gap_left": "A terminal renderer for MCP tool UIs. scene could be the host-side terminal view the fka.dev proposal and Claude Code #93973 are asking for, with readback and patching MCP Apps doesn't offer.",
+  "verdict": "complement",
+  "verdict_why": "MCP Apps owns UI in web chat hosts; scene can fill the terminal gap and speak MCP as its control transport."
+ },
+ "sources": [
+  {
+   "title": "modelcontextprotocol/ext-apps README",
+   "url": "https://github.com/modelcontextprotocol/ext-apps"
+  },
+  {
+   "title": "SEP-1865 MCP Apps spec (2026-01-26)",
+   "url": "https://github.com/modelcontextprotocol/ext-apps/blob/main/specification/2026-01-26/apps.mdx"
+  },
+  {
+   "title": "ext-apps LICENSE (MIT -> Apache-2.0 transition)",
+   "url": "https://github.com/modelcontextprotocol/ext-apps/blob/main/LICENSE"
+  },
+  {
+   "title": "MCP-UI",
+   "url": "https://github.com/MCP-UI-Org/mcp-ui"
+  },
+  {
+   "title": "fka.dev: MCP Apps Should Work in the Terminal Too",
+   "url": "https://blog.fka.dev/blog/2026-09-09-mcp-apps-in-cli-harnesses/"
+  },
+  {
+   "title": "Claude Code issue #93973",
+   "url": "https://github.com/anthropics/claude-code/issues/93973"
+  },
+  {
+   "title": "Anthropic: Donating MCP to the AAIF (2025-12-09)",
+   "url": "https://www.anthropic.com/news/donating-the-model-context-protocol-and-establishing-of-the-agentic-ai-foundation"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@modelcontextprotocol/ext-apps"
+  }
+ ]
+}

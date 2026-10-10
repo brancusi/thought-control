@@ -1,0 +1,147 @@
+{
+ "id": "scrimba",
+ "name": "Scrimba",
+ "group": "teaching-and-live-data",
+ "tagline": "Interactive coding screencasts: pause the video, edit the teacher's code",
+ "links": {
+  "site": "https://scrimba.com",
+  "repo": "",
+  "docs": "https://scrimba.com/articles/how-scrimba-came-to-be/",
+  "other": [
+   {
+    "label": "Format announcement (2017)",
+    "url": "https://medium.com/scrimba/why-were-creating-a-new-video-format-for-code-9f674f8dcc46"
+   },
+   {
+    "label": "Launch HN (YC S20)",
+    "url": "https://news.ycombinator.com/item?id=24579699"
+   },
+   {
+    "label": "MDN partnership",
+    "url": "https://developer.mozilla.org/en-US/blog/mdn-scrimba-partnership/"
+   },
+   {
+    "label": "Imba (the language Scrimba is built in, MIT)",
+    "url": "https://github.com/imba/imba"
+   }
+  ]
+ },
+ "license": {
+  "spdx": null,
+  "notes": "Proprietary SaaS. The scrim format, recorder and player are closed; no public spec, SDK or API found. Only the underlying language, Imba, is open source (MIT, 6.5k stars)."
+ },
+ "language": "Imba (compiles to JavaScript), front end and back end",
+ "backing": "Scrimba AS (Oslo), co-founded by Per Harald Borgen (CEO) and Sindre Aarsæther (CTO, creator of Imba); Y Combinator S20; earlier backers listed on v1.scrimba.com/about: StartupLab, Nordic Makers, Alliance Venture, Amasia. Funding totals differ between aggregators (GetLatka/Caplight ~$0.38M; Crunchbase page shows an implausible figure), so not stated.",
+ "first_release": null,
+ "latest_release": {
+  "tag": null,
+  "date": null
+ },
+ "adoption": {
+  "github_stars": null,
+  "stars_fetched": "2026-10-09",
+  "downloads": null,
+  "notable_users": [
+   "MDN Web Docs (recommended course partner for the MDN Curriculum)"
+  ],
+  "summary": "CEO's LinkedIn describes a 1.5M+ learner platform; the 2020 Launch HN reported 3,000 paid enrolments in the first career path. MDN chose Scrimba as its recommended course partner in 2024."
+ },
+ "maintainability": {
+  "release_cadence": "Continuous SaaS deploys; no public versioning. A v2 platform replaced v1 (v1.scrimba.com still reachable for legacy recording).",
+  "contributors": null,
+  "recent_activity": "Active: 2026 articles, AI Engineer path, AI tutor built into Pro (per scrimba.com articles).",
+  "bus_factor": "medium: small private company; the platform rests on a niche in-house language (Imba) whose author is the CTO.",
+  "summary": "A going commercial concern with steady content output, but nothing an outsider can maintain or fork."
+ },
+ "architecture": {
+  "summary": "A scrim is a recording of editor and browser events plus the instructor's audio, not a pixel video. Playback re-creates the instructor's actions in a live in-browser IDE in the same environment, so at any moment the learner can pause, edit, run and copy the code. The IDE and the player are one tool, built in Imba. Execution is client-side (browser), which is why backend topics were hard to support early on.",
+  "key_points": [
+   "Record events, not pixels: small files, crisp text, searchable, editable at any frame.",
+   "Take-over: pausing turns the video into the learner's own editable workspace (a fork of the instructor's state at that time).",
+   "Audio track is synchronised to the event stream.",
+   "Closed platform: no export format, embed API or SDK documented publicly."
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers. The 2017 post argues file-size and searchability advantages qualitatively."
+ },
+ "agent_usability": {
+  "how": "None today. No MCP server, API or documented format; an agent could only drive scrimba.com through a browser like any user.",
+  "integration_effort": "Not feasible beyond browser automation; recording/authoring is a human-in-browser flow.",
+  "readback": "Only via screenshots/DOM scraping of the web app.",
+  "granular_edits": "No addressable edits for an agent; a human edits code in the paused scrim.",
+  "history": "Human scrubbing and rewind of the recording; nothing exposed to an agent.",
+  "summary": "The best model of 'teacher narrates, learner takes over', but a sealed product with no agent surface."
+ },
+ "scores": {
+  "ui_as_data": 2,
+  "agent_drivable": 0,
+  "readback": 0,
+  "granular_edits": 0,
+  "time_travel": 3,
+  "live_data_rate": 0,
+  "terminal_native": 0,
+  "pixel_graphics": 4,
+  "teaching": 5,
+  "maturity": 4,
+  "openness": 0
+ },
+ "score_notes": {
+  "ui_as_data": "The recording is an event log internally, but proprietary and not exposed as a value anyone can store or diff.",
+  "time_travel": "Learner can scrub, pause and fork-by-editing; human-facing only.",
+  "teaching": "Built around exactly record, narrate, take over, rewind.",
+  "maturity": "Years in production, large learner base, MDN partner.",
+  "openness": "Fully proprietary."
+ },
+ "steelman": "Scrimba proved, years before anyone said 'agent tours', that the right primitive for teaching software is a recording of events rather than pixels. Because the screencast is a replay of real editor state, the learner can stop at any second and be inside the instructor's actual code, editing and running it, then resume the narration. That one move removes the biggest failure of video tutorials (copying code line by line, setup breakage) and it scaled: a paying multi-path coding school with over a million learners and MDN's endorsement. Its authoring story is also humane: press record and talk while you code; no editing suite. If you want to know whether 'narrate, then let the learner take over' works pedagogically and commercially, Scrimba is the existence proof.",
+ "weaknesses": [
+  "Closed: no public format, embed API or SDK, so nothing can be built on it.",
+  "Browser-only, front-end-centric; backend execution was explicitly hard (Launch HN, 2020).",
+  "Learner is stuck in Scrimba's editor rather than their own tools (HN comment by mavsman, 2020).",
+  "Built in Imba, a niche language, which narrows contributor/hiring pool (HN comments).",
+  "No agent involvement: the narrator is always a pre-recorded human."
+ ],
+ "relation_to_scene": {
+  "overlap": "The teaching-tour concept: a narrated, replayable sequence where the learner can take over mid-stream and rewind.",
+  "scene_reinvents": "The record-events-not-pixels format and the pause-and-take-over interaction; Scrimba already shipped and validated both, for code in a browser.",
+  "borrow": [
+   "Make 'take over' a fork of the recorded state at the playhead, and let 'resume' either discard the fork or diff it against the instructor's path.",
+   "Audio/narration track keyed to the same timeline as UI events.",
+   "Authoring is just 'record while you talk'; derive the tour from a session trace rather than hand-writing steps."
+  ],
+  "gap_left": "An agent as the live narrator in a terminal, with a documented, open state/event format the agent can read, seek, fork and replay; Scrimba has no agent surface, no terminal and no open format.",
+  "verdict": "borrow",
+  "verdict_why": "The best proof of the teaching model scene plans, but closed and web-only, so take the interaction design, not the product."
+ },
+ "sources": [
+  {
+   "title": "Why we're creating a new video format for code (Per Harald Borgen, 2017)",
+   "url": "https://medium.com/scrimba/why-were-creating-a-new-video-format-for-code-9f674f8dcc46"
+  },
+  {
+   "title": "Launch HN: Scrimba (YC S20)",
+   "url": "https://news.ycombinator.com/item?id=24579699"
+  },
+  {
+   "title": "How Scrimba came to be",
+   "url": "https://scrimba.com/articles/how-scrimba-came-to-be/"
+  },
+  {
+   "title": "MDN partners with Scrimba",
+   "url": "https://developer.mozilla.org/en-US/blog/mdn-scrimba-partnership/"
+  },
+  {
+   "title": "About Scrimba (v1)",
+   "url": "https://v1.scrimba.com/about"
+  },
+  {
+   "title": "Per Borgen LinkedIn (1.5M+ learners)",
+   "url": "https://no.linkedin.com/in/perborgen"
+  },
+  {
+   "title": "Best AI tools and courses for learning to code (Scrimba, 2026)",
+   "url": "https://scrimba.com/articles/best-ai-tools-and-courses-for-learning-to-code/"
+  }
+ ]
+}

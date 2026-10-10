@@ -1,0 +1,181 @@
+{
+ "id": "replay-io",
+ "name": "Replay.io",
+ "group": "time-travel",
+ "tagline": "Deterministic browser recordings an agent can debug at any execution point",
+ "links": {
+  "site": "https://www.replay.io",
+  "repo": "https://github.com/replayio/devtools",
+  "docs": "https://docs.replay.io",
+  "other": [
+   {
+    "label": "Replay MCP tool reference",
+    "url": "https://docs.replay.io/basics/replay-mcp/tools"
+   },
+   {
+    "label": "How does time travel work",
+    "url": "https://docs.replay.io/reference/time-travel/how-does-time-travel-work"
+   },
+   {
+    "label": "Pricing",
+    "url": "https://www.replay.io/pricing"
+   },
+   {
+    "label": "replay-cli (npm replayio)",
+    "url": "https://github.com/replayio/replay-cli"
+   },
+   {
+    "label": "Replay Chromium fork",
+    "url": "https://github.com/replayio/chromium"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "NOASSERTION",
+  "notes": "Mixed: devtools frontend is MPL-2.0 (code adapted from Firefox) + BSD (Replay-written files); replay-cli npm package BSD-3-Clause; Chromium fork BSD-3-Clause. The recording/replay backend and the MCP server (https://dispatch.replay.io/nut/mcp) are a proprietary hosted service. Effectively proprietary SaaS with open clients."
+ },
+ "language": "C++ (instrumented browser runtime), TypeScript (devtools, CLI)",
+ "backing": "Replay.io, venture-backed startup founded by ex-Mozilla Firefox engineers (Brian Hackett). Funding amount not verified. Product now centred on 'Replay QA' (autonomous app testing), with time-travel recordings as the engine.",
+ "first_release": "2021-06",
+ "latest_release": {
+  "tag": "replayio (CLI) 1.9.1",
+  "date": "2026-09-01"
+ },
+ "adoption": {
+  "github_stars": 722,
+  "stars_fetched": "2026-10-09",
+  "downloads": "4,276/week npm replayio CLI (2026-10-01..07)",
+  "notable_users": [
+   "Vercel / Next.js team (testimonial: 'Next.js 13.4 wouldn't have been possible without Replay', Tim Neutkens)",
+   "Dan Abramov (testimonial)"
+  ],
+  "summary": "Respected among frontend framework authors; modest CLI usage. Stars are for replayio/devtools. first_release is the npm replayio package creation date, used as a proxy."
+ },
+ "maintainability": {
+  "release_cadence": "Continuous SaaS deploys; CLI 1.9.1 on 2026-09-01. Product Hunt launches 2026-07-20, 2026-08-17, 2026-09-08 (Replay QA).",
+  "contributors": "replayio/devtools 65 (GitHub contributors API)",
+  "recent_activity": "replayio/devtools: ~6 commits in last 90 days (open-source frontend mostly quiet); Chromium fork pushed 2026-10-08; MCP docs current.",
+  "bus_factor": "medium: company-run, closed core; viability tied to one startup's pivot to QA",
+  "summary": "Actively developed as a company product, but the open repos are peripheral and the company's focus has shifted from devtools to autonomous QA."
+ },
+ "architecture": {
+  "summary": "Runtime replay, not session replay: a modified browser (Chromium fork, also a Node runtime) records the nondeterministic inputs to the JS engine (network, timers, events), so the recording can be re-executed exactly in the cloud. Any 'execution point' can then be reconstructed on demand: evaluate expressions, read stacks and variables, add logpoints retroactively, take screenshots, walk the React fiber tree. Recordings upload to Replay's backend; humans use Replay DevTools in the browser, agents use the hosted Replay MCP server, both against the same recording ID.",
+  "key_points": [
+   "Determinism by recording runtime inputs, then re-running: 'When you add a console log to a line that already ran, the messages appear as if they had always been there.'",
+   "Execution points are the universal address: every tool that returns events returns points; inspection tools take points.",
+   "MCP tools use modes: 'summary' first, then drill-down modes (e.g. ReactRenders summary → waste-rank → component → commit-fibers → fiber-cause).",
+   "Framework-aware layers: React tree/renders/exceptions, Redux actions and state at a dispatch, Zustand, TanStack Query, Playwright steps.",
+   "Read-only analysis: the recording cannot be changed or branched; 'what if' is via Evaluate at a point.",
+   "GetPointLink hands a human a URL to the exact moment the agent is looking at."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "The first RecordingOverview call on an unanalyzed recording 'can take three to four minutes'; later calls are fast.",
+    "source": "https://docs.replay.io/basics/replay-mcp/tools"
+   },
+   {
+    "text": "Keep recordings short: a recording that captures just the reproduction is much faster for the agent to analyze.",
+    "source": "https://docs.replay.io/basics/replay-mcp/overview"
+   },
+   {
+    "text": "Logpoint evaluates an expression at up to 20 hits of a line.",
+    "source": "https://docs.replay.io/basics/replay-mcp/tools"
+   }
+  ],
+  "summary": "No published recording-overhead or replay-throughput numbers found. Analysis is minutes-scale on first open; inherently post hoc."
+ },
+ "agent_usability": {
+  "how": "Hosted MCP server (dispatch.replay.io/nut/mcp) with ~30 tools, plus agent skills (replay-mcp, replay-cli, replay-playwright). The agent records via `npx replayio record <url>` (a human reproduces, then closes the browser) or a Playwright run, then investigates by recording ID.",
+  "integration_effort": "Low: add the MCP server and skills to Claude Code/Cursor/Codex; requires a Replay account (free tier 25 credits/month) and uploading recordings to Replay's cloud.",
+  "readback": "Very strong, structured: RecordingOverview, ConsoleMessages, UserInteractions, NetworkRequest, LocalStorage, DescribePoint (variables, executed lines, dependency chain), Evaluate, GetStack, ReactComponentTree at a time, ReduxActions action-state by path, Screenshot at a timestamp, InspectElement.",
+  "granular_edits": "No edits to the recorded program; the only 'writes' are retroactive logpoints and expression evaluation at a point.",
+  "history": "Seek and read: any execution point or timestamp, for state, stack, DOM, screenshot, React tree, store state. No fork, no replay with modified inputs, no live control.",
+  "summary": "The most capable agent-facing read-only time travel found: an agent can interrogate any moment of a past run, but cannot change or branch it."
+ },
+ "scores": {
+  "ui_as_data": 0,
+  "agent_drivable": 3,
+  "readback": 5,
+  "granular_edits": 1,
+  "time_travel": 4,
+  "live_data_rate": 0,
+  "terminal_native": 0,
+  "pixel_graphics": 0,
+  "teaching": 2,
+  "maturity": 3,
+  "openness": 1
+ },
+ "score_notes": {
+  "ui_as_data": "Records arbitrary web apps; the UI stays code.",
+  "agent_drivable": "Rich MCP, but over recordings, not a live instance.",
+  "readback": "Structured state at any point plus screenshots at any timestamp.",
+  "granular_edits": "Only retroactive logpoints/evaluation.",
+  "time_travel": "Agent can read history and seek to any execution point; no fork or modified replay.",
+  "live_data_rate": "Post hoc only.",
+  "teaching": "GetPointLink and shareable recordings help explain bugs; no tour features.",
+  "openness": "Open clients (MPL/BSD), proprietary hosted core and MCP."
+ },
+ "steelman": "Replay is the strongest proof that agents debug better with time travel than with code reading: it records a whole browser's runtime inputs so the run is exactly reproducible, then hands the agent ~30 MCP tools addressed by execution point — evaluate any expression at any moment, read the stack, see which lines ran, ask why a React fiber re-rendered, read Redux state at a dispatch by path, screenshot the page at a timestamp, and send the human a link to that exact moment. It solved the hard problem (determinism for arbitrary, effectful JavaScript, not just pure Elm-style apps) and the agent-ergonomics problem (summary-first modes, every result carries points the next tool accepts). A fan would say: this is what 'agent-addressable time travel' means in practice, it already works with Claude Code today, and anything scene builds should match its readback depth.",
+ "weaknesses": [
+  "Proprietary hosted backend; recordings must be uploaded to Replay's cloud (Private Cloud from $1,000+/month, On-Prem from $5,000+/month).",
+  "Post hoc only: no live control of a running app, no fork or modified replay.",
+  "First analysis of a recording takes 3–4 minutes (docs).",
+  "Requires Replay's own browser/runtime; framework tools only for React, Redux, Zustand, TanStack Query, Playwright.",
+  "Company focus moved to 'Replay QA' (autonomous testing); the open devtools repo had ~6 commits in 90 days.",
+  "Credit-based pricing (Free 25 credits/month, Starter $17/month annual, Pro $170/month annual)."
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent-addressable history: read state at a past point, screenshot at a time, shareable link to a moment. scene's planned state_at/screen_at/diff are Replay's DescribePoint/Screenshot for a terminal UI.",
+  "scene_reinvents": "The agent-facing tool shape for history inspection (summary-first, point-addressed, drill-down modes). Replay has already iterated on what an agent needs to read from a past run; scene should copy the ergonomics, not invent them.",
+  "borrow": [
+   "One universal address for moments (Replay: execution point; scene: message index / tx id) returned by every history call and accepted by every inspection call.",
+   "Tool modes: summary first, then detail, to keep agent context small.",
+   "GetPointLink: a human-openable link/command that opens the UI at the exact moment the agent is discussing.",
+   "Dependency chain ('why did this change'): scene can answer it exactly from its message log — which message and data-source update produced a node's value.",
+   "Retroactive logpoints analogue: evaluate a template/query against the state at every past message."
+  ],
+  "gap_left": "Replay cannot fork, replay with changes, or drive a live UI; it is web-only, cloud-hosted and closed. scene gives an agent live control plus seek/fork on a local, open, terminal UI whose determinism comes from architecture rather than runtime recording.",
+  "verdict": "borrow",
+  "verdict_why": "Different domain (debugging arbitrary JS runs in the cloud) but the best existing model of what agents want to ask a history."
+ },
+ "sources": [
+  {
+   "title": "Replay MCP tools reference",
+   "url": "https://docs.replay.io/basics/replay-mcp/tools"
+  },
+  {
+   "title": "Replay MCP overview",
+   "url": "https://docs.replay.io/basics/replay-mcp/overview"
+  },
+  {
+   "title": "How does time travel work",
+   "url": "https://docs.replay.io/reference/time-travel/how-does-time-travel-work"
+  },
+  {
+   "title": "Replay pricing",
+   "url": "https://www.replay.io/pricing"
+  },
+  {
+   "title": "About Replay",
+   "url": "https://www.replay.io/about"
+  },
+  {
+   "title": "Replay Time Travelogue: Nadia's Debugging with AI + Replay MCP",
+   "url": "https://www.replay.io/blog/replay-time-travelogue-improving-nadias-debugging-with-ai-results-using-replay-mcp"
+  },
+  {
+   "title": "replayio/devtools LICENSE (MPL-2.0 + BSD)",
+   "url": "https://github.com/replayio/devtools"
+  },
+  {
+   "title": "npm replayio registry metadata",
+   "url": "https://registry.npmjs.org/replayio"
+  },
+  {
+   "title": "replayio/chromium",
+   "url": "https://github.com/replayio/chromium"
+  }
+ ]
+}

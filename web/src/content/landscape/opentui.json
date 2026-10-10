@@ -1,0 +1,181 @@
+{
+ "id": "opentui",
+ "name": "OpenTUI",
+ "group": "terminal-frameworks",
+ "tagline": "Zig-core terminal UI with TypeScript, React and Solid bindings",
+ "links": {
+  "site": "https://opentui.com/",
+  "repo": "https://github.com/anomalyco/opentui",
+  "docs": "https://opentui.com/docs/",
+  "other": [
+   {
+    "label": "Testing docs",
+    "url": "https://opentui.com/docs/core-concepts/testing/"
+   },
+   {
+    "label": "Image component",
+    "url": "https://opentui.com/docs/components/image/"
+   },
+   {
+    "label": "Issue #1506 (images under cell backgrounds)",
+    "url": "https://github.com/anomalyco/opentui/issues/1506"
+   },
+   {
+    "label": "PR #1525 (kitty z above cell background)",
+    "url": "https://github.com/anomalyco/opentui/pull/1525"
+   },
+   {
+    "label": "opencode",
+    "url": "https://github.com/anomalyco/opencode"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": ""
+ },
+ "language": "Zig (native core) + TypeScript (Bun); React and Solid reconcilers",
+ "backing": "Anomaly (the SST team; makers of opencode). SST went through YC in 2021 and was reported profitable in 2025.",
+ "first_release": "2025-08",
+ "latest_release": {
+  "tag": "v0.5.17",
+  "date": "2026-10-08"
+ },
+ "adoption": {
+  "github_stars": 13504,
+  "stars_fetched": "2026-10-09",
+  "downloads": "@opentui/core 1.02M/week, @opentui/react 402k/week, @opentui/solid 305k/week (npm, 2026-10-01..07); opencode-ai itself 3.07M/week",
+  "notable_users": [
+   "opencode (anomalyco/opencode, 212k stars) — 'OpenCode uses OpenTUI in production for millions of users'",
+   "opentui-python (third-party Python port over the Zig core)"
+  ],
+  "summary": "Young but already carried by one of the most-used agent CLIs; npm volume is mostly opencode installs."
+ },
+ "maintainability": {
+  "release_cadence": "Several per week: v0.5.12 2026-09-22, v0.5.13/14 09-30, v0.5.15/16 10-07, v0.5.17 10-08. Still 0.x with churn.",
+  "contributors": "~120 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "~210 commits, 174 merged PRs since 2026-07-11 (GitHub API) — the most active project in this group",
+  "bus_factor": "medium: company-funded, but kommander (550) and simonklee (307) dominate commits",
+  "summary": "Very fast-moving, company-backed, pre-1.0; APIs and behaviour still change week to week."
+ },
+ "architecture": {
+  "summary": "A native Zig core owns text buffers, edit buffers, hit testing, Yoga-style layout integration, graphics encoding, buffer painting and terminal output; TypeScript (Bun) exposes a retained tree of Renderables and a CliRenderer that schedules frames (demand-driven by default, or continuous with targetFps/maxFps). React and Solid reconcilers map JSX onto Renderables. Painting runs in one native call per frame; output is queued through a Session with ordered external writes, split-footer scrollback mode and remote (SSH) streams. Extras: tree-sitter Code/Diff/Markdown components, embedded terminal, framebuffer, images (Kitty/Sixel/blocks), Three.js WebGPU 3D, audio, keymap package, runtime plugins/slots.",
+  "key_points": [
+   "Zig core over FFI; TS/React/Solid surface",
+   "Retained renderable tree, flexbox layout",
+   "Main-screen split-footer mode that writes to native scrollback, or alternate screen",
+   "ImageRenderable: auto Kitty→Sixel→Unicode blocks; NativeImage for pixel buffers",
+   "Test renderer: captureCharFrame(), captureSpans(), mock keys/mouse/clock, TestRecorder of every frame",
+   "Ships an agent skill (npx skills add anomalyco/opentui)"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Native Zig rendering core; painting runs in one native call per frame; continuous mode with targetFps (e.g. 60) and maxFps cap (e.g. 120)",
+    "source": "https://opentui.com/docs/core-concepts/renderer/"
+   },
+   {
+    "text": "Comparison table: Ink 'JavaScript, 30 fps default via maxFps' vs OpenTUI 'Native Zig core over FFI'",
+    "source": "https://blog.openreplay.com/opentui-alternative-ink/"
+   }
+  ],
+  "summary": "Native benchmarks exist in the private @opentui/native workspace and a rendering-diagnostics guide documents timing hooks, but no headline numbers are published."
+ },
+ "agent_usability": {
+  "how": "Code generation, helped by an official agent skill with the docs. In-process: createTestRenderer() gives a real renderer with mock keyboard/mouse/clock, frame text and styled spans, and TestRecorder. No socket/MCP for a live instance.",
+  "integration_effort": "An app author must add their own control channel; the test harness is the closest thing to an agent API.",
+  "readback": "captureCharFrame()/captureSpans() and the renderable tree in-process; screen scraping from outside.",
+  "granular_edits": "Renderables are mutable objects in a retained tree (in-process); no external addressing.",
+  "history": "TestRecorder captures the buffer after every frame (tests only); no app-level undo/replay.",
+  "summary": "Excellent test harness and docs aimed at coding agents, but agents write OpenTUI code rather than drive OpenTUI apps."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 2,
+  "time_travel": 1,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 4,
+  "teaching": 1,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "JSX/Solid or TS renderables; not serializable",
+  "agent_drivable": "Agent skill + in-process test renderer; no live protocol",
+  "readback": "Structured frame + spans in-process only",
+  "time_travel": "TestRecorder records frames in tests; nothing user/agent-facing",
+  "live_data_rate": "Configurable fps up to a maxFps cap; no published throughput",
+  "pixel_graphics": "Built-in images (Kitty/Sixel/blocks), framebuffer and Three.js 3D; no compositing across protocols and text covers images at whole-cell granularity",
+  "maturity": "Huge deployment via opencode, but <1.5 years old and 0.x",
+  "openness": "MIT, company-controlled"
+ },
+ "steelman": "OpenTUI is what you get when the team behind the most-starred open-source coding agent decides Ink is too slow and builds the renderer properly: a native Zig core that owns text buffers, layout, hit testing and painting, with React and Solid on top so every web developer and model can write it. It ships the components agent UIs actually need — tree-sitter code and diff views, markdown, textarea, scrollbox, embedded terminal — plus images over Kitty/Sixel with a block fallback, a 3D framebuffer, audio, SSH serving and a split-footer mode that writes to real scrollback. Its testing kit is unusually complete (mock keys/mouse/clock, frame and span capture, per-frame recording), its docs ship as an agent skill, and it moves at 170+ merged PRs a quarter while running daily for millions of opencode users. If you want the fastest path to a polished agent TUI in TypeScript, this is it.",
+ "weaknesses": [
+  "Pre-1.0 with weekly releases; API churn",
+  "Requires Bun and a native Zig library per platform",
+  "No serializable UI and no control socket",
+  "Kitty images were first placed beneath non-default cell backgrounds (z ≈ -1.5e9, inside kitty's 'below cell background' range), which made opencode image previews render as grey boxes in cmux (#1506); PR #1525 moved placements into the normal negative-z range above cell backgrounds",
+  "Overlapping images must share one protocol; no alpha composition across protocols; text covers images at whole-cell granularity",
+  "Two maintainers write most of the code"
+ ],
+ "relation_to_scene": {
+  "overlap": "Native renderer, retained tree, images via Kitty with cell fallback, frame/spans readback, agent-era focus.",
+  "scene_reinvents": "A fast native cell renderer with rich components and image fallbacks — OpenTUI has more of this, more battle-tested, than scene.",
+  "borrow": [
+   "#1506/#1525 lesson: below-cell-background kitty z-indices break where apps paint cell backgrounds and in some hosts (cmux); scene's 'cards beneath text' layer needs a probe and a fallback z",
+   "Protocol resolution order auto→kitty→sixel→blocks and an env override (OPENTUI_IMAGE_PROTOCOL)",
+   "captureSpans() (styled spans, not just text) as a richer screen-readback format",
+   "Split-footer scrollback mode as an alternative to fullscreen",
+   "Shipping docs as an agent skill"
+  ],
+  "gap_left": "UI as a JSON value pushed/patched into a live instance over a socket, agent readback of state + screen, streams bypassing the model, hot-swap upgrade, agent time travel.",
+  "verdict": "borrow",
+  "verdict_why": "Different stack (Bun/Zig/TS) and no agent-control surface, but its image-layer experience and test/readback APIs are directly instructive."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/anomalyco/opentui",
+   "url": "https://api.github.com/repos/anomalyco/opentui"
+  },
+  {
+   "title": "OpenTUI README",
+   "url": "https://github.com/anomalyco/opentui"
+  },
+  {
+   "title": "npm downloads @opentui/core",
+   "url": "https://api.npmjs.org/downloads/point/last-week/@opentui/core"
+  },
+  {
+   "title": "Renderer docs",
+   "url": "https://opentui.com/docs/core-concepts/renderer/"
+  },
+  {
+   "title": "Testing docs",
+   "url": "https://opentui.com/docs/core-concepts/testing/"
+  },
+  {
+   "title": "Image docs",
+   "url": "https://opentui.com/docs/components/image/"
+  },
+  {
+   "title": "Issue #1506",
+   "url": "https://github.com/anomalyco/opentui/issues/1506"
+  },
+  {
+   "title": "PR #1525",
+   "url": "https://github.com/anomalyco/opentui/pull/1525"
+  },
+  {
+   "title": "OpenReplay: Is OpenTUI a real alternative to Ink?",
+   "url": "https://blog.openreplay.com/opentui-alternative-ink/"
+  },
+  {
+   "title": "techfundingnews: OpenCode background",
+   "url": "https://techfundingnews.com/opencode-the-background-story-on-the-most-popular-open-source-coding-agent-in-the-world/"
+  }
+ ]
+}

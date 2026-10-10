@@ -1,0 +1,160 @@
+{
+ "id": "marimo",
+ "name": "marimo",
+ "group": "teaching-and-live-data",
+ "tagline": "Reactive, reproducible Python notebooks stored as plain .py files",
+ "links": {
+  "site": "https://marimo.io",
+  "repo": "https://github.com/marimo-team/marimo",
+  "docs": "https://docs.marimo.io",
+  "other": [
+   {
+    "label": "MCP server docs",
+    "url": "https://docs.marimo.io/guides/editor_features/mcp/"
+   },
+   {
+    "label": "AI tools (edit_notebook in agent mode)",
+    "url": "https://docs.marimo.io/guides/editor_features/tools/"
+   },
+   {
+    "label": "marimo pair: notebooks as a tool for agents (2026-07-20)",
+    "url": "https://marimo.io/blog/notebooks-as-a-tool-for-agents"
+   },
+   {
+    "label": "marimo-pair repo",
+    "url": "https://github.com/marimo-team/marimo-pair"
+   },
+   {
+    "label": "Marimo is joining CoreWeave",
+    "url": "https://marimo.io/blog/joining-coreweave"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Apache-2.0. CoreWeave's acquisition announcement says the notebook 'will remain freely available and permissively-licensed'. marimo-pair is also Apache-2.0."
+ },
+ "language": "Python (kernel/server), TypeScript/React (front end)",
+ "backing": "Marimo Inc. (founders Akshay Agrawal, Myles Scolnick; $5M seed led by AIX Ventures, Nov 2024), acquired by CoreWeave (announced Oct 2025).",
+ "first_release": "2022-01",
+ "latest_release": {
+  "tag": "0.25.1",
+  "date": "2026-10-01"
+ },
+ "adoption": {
+  "github_stars": 23076,
+  "stars_fetched": "2026-10-09",
+  "downloads": "558,731/week PyPI marimo (pypistats, 2026-10-09)",
+  "notable_users": [],
+  "summary": "Fast-growing Jupyter alternative (23k stars, ~0.56M weekly downloads); integrations into Quarto, Jupyter Book and MDX. Named organisational users not verified here."
+ },
+ "maintainability": {
+  "release_cadence": "Every 1–3 weeks: 0.24.0 2026-08-17, 0.24.1 2026-09-10, 0.24.2 2026-09-11, 0.25.0 2026-09-23, 0.25.1 2026-10-01.",
+  "contributors": "~359 (GitHub, incl. anonymous)",
+  "recent_activity": "535 PRs merged since 2026-07-11; second launch week started 2026-09-28.",
+  "bus_factor": "medium-high: two founders dominate commits (mscolnick 2,629, akshayka 1,239) but a funded team under CoreWeave.",
+  "summary": "Very active, well-funded, with a growing contributor base."
+ },
+ "architecture": {
+  "summary": "A notebook is a Python file of cells; marimo statically analyses each cell's definitions and references to build a dataflow DAG. Running or editing a cell reruns its dependents (or marks them stale), and deleting a cell removes its variables, so there is no hidden state and the outputs always match the code. Notebooks run as apps (`marimo run`), as scripts, or in the browser via WebAssembly; `--sandbox` pins inline dependencies for reproducibility. UI elements (mo.ui.*) are reactive: interacting reruns dependent cells.",
+  "key_points": [
+   "Reproducibility by construction: DAG execution, no hidden state, git-friendly .py files.",
+   "MCP server (`marimo edit --mcp`) exposes read-only notebook data to agents.",
+   "marimo pair (2026): agent runs Python in the live kernel and edits cells through a transactional code-mode API (`marimo._code_mode`) whose batches are validated (syntax, multiply-defined names, cycles) before applying.",
+   "Built-in AI panel with an agent mode whose edit_notebook tool adds/removes/updates cells."
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published numbers for update rate. Live refresh is cell reruns (e.g. timer-driven refresh UI elements), seconds-scale."
+ },
+ "agent_usability": {
+  "how": "Three routes: (1) MCP server via `marimo edit notebook.py --mcp` (read-only inspection tools); (2) marimo pair, an agent skill plus CLI (`execute-code`) that runs Python in the live kernel, with `marimo._code_mode` to create/edit/delete/run cells in validated transactions (Claude Code, Codex CLI); (3) editing the .py file with `--watch`. Plus the built-in AI chat with agent-mode cell editing.",
+  "integration_effort": "Low: `npx skills add marimo-team/marimo-pair` and a running notebook.",
+  "readback": "Arbitrary live kernel values via executed Python; per-cell status (clean/errored/broken upstream) returned after each batch; notebook structure via MCP.",
+  "granular_edits": "Cell-id-addressed create/edit/delete/run, batched and atomically validated; rejected batches name the faulty cells.",
+  "history": "No agent-facing history or replay; reproducibility comes from deterministic DAG re-execution, not a recorded log. Code-mode API is explicitly unversioned/internal.",
+  "summary": "The most serious agent integration in this group: a model operates a live notebook with structured, transactional, validated edits."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 4,
+  "readback": 4,
+  "granular_edits": 4,
+  "time_travel": 2,
+  "live_data_rate": 2,
+  "terminal_native": 0,
+  "pixel_graphics": 4,
+  "teaching": 3,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Notebook is a Python file of cells; outputs are code-defined, not a JSON UI value.",
+  "agent_drivable": "Live create/edit/run via marimo pair, but the API is internal and unversioned, and MCP is read-only.",
+  "readback": "Structured live state via kernel Python; rendered view not offered to the agent as such.",
+  "granular_edits": "Cell-addressed, transactional, validated.",
+  "time_travel": "Undo in the editor; deterministic re-execution; no agent history API.",
+  "teaching": "Widely used for interactive course notebooks and slides; no tours or narration.",
+  "openness": "Apache-2.0, company-controlled (CoreWeave)."
+ },
+ "steelman": "marimo fixes the reproducibility rot that made Jupyter a poor medium for teaching and for agents: because execution follows a dataflow graph, what you see is always what the code produces, and the notebook is a plain .py file that diffs, reviews and runs as a script or app. That same rigour makes it the best agent substrate here. With marimo pair an agent works inside the live kernel, inspects any value with ordinary Python, and commits cells through transactions that marimo validates exactly as it validates a human's edit, rejecting the whole batch and naming the broken cells if the graph would break. The team learned in public that fixed MCP read tools were a detour and that 'give the model Python plus a small transactional API' works better: a design lesson worth more than the code. It is funded (CoreWeave), shipping weekly, and permissively licensed.",
+ "weaknesses": [
+  "Code-mode agent API is explicitly internal, unversioned and may change without notice (marimo blog).",
+  "MCP server is read-only; edits are not exposed through MCP (docs).",
+  "Browser UI only; no terminal renderer.",
+  "Live data is cell reruns; not built for high-frequency streams.",
+  "Corporate ownership by CoreWeave may steer roadmap toward its cloud (molab)."
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent operating a live, stateful instance with addressable units (cells vs nodes), structured readback, and validation before applying changes.",
+  "scene_reinvents": "Transactional, validated, id-addressed edits to a live document by an agent, with per-unit status reported back; marimo pair already does this well for notebooks.",
+  "borrow": [
+   "Batch transactions: queue patches in a context, validate the whole batch (ids exist, bindings resolve, no cycles), apply atomically or reject naming the faulty nodes.",
+   "Return per-node status after a batch (clean / errored / broken by upstream).",
+   "Self-describing agent API: the skill tells the model to call help() at runtime so docs and implementation can't drift.",
+   "Lesson from the 'MCP detour': fixed read-only tools underperform a general query surface; offer a flexible state query, not only canned getters."
+  ],
+  "gap_left": "A terminal UI with high-rate data streams bypassing the model, screen-as-text readback, pixel layer and teaching tours with recorded history; marimo is a browser notebook without an agent-facing history.",
+  "verdict": "borrow",
+  "verdict_why": "The best reference in this group for how an agent should edit a live structured instance; different medium and job from scene."
+ },
+ "sources": [
+  {
+   "title": "marimo MCP docs",
+   "url": "https://docs.marimo.io/guides/editor_features/mcp/"
+  },
+  {
+   "title": "marimo AI tools docs",
+   "url": "https://docs.marimo.io/guides/editor_features/tools/"
+  },
+  {
+   "title": "Implementing marimo pair (Trevor Manz, 2026-07-20)",
+   "url": "https://marimo.io/blog/notebooks-as-a-tool-for-agents"
+  },
+  {
+   "title": "CoreWeave acquires Marimo",
+   "url": "https://www.coreweave.com/news/coreweave-acquires-marimo-to-unify-the-generative-ai-developer-workflow"
+  },
+  {
+   "title": "Simon Willison on the acquisition (2025-10-31)",
+   "url": "https://simonwillison.net/2025/Oct/31/coreweave-acquires-marimo/"
+  },
+  {
+   "title": "HPCwire: Marimo emerges with $5M seed",
+   "url": "https://www.hpcwire.com/bigdatawire/2024/11/21/marimo-emerges-from-stealth-to-debut-its-python-notebook/"
+  },
+  {
+   "title": "marimo launch week 2",
+   "url": "https://marimo.io/blog/launch-week-2"
+  },
+  {
+   "title": "GitHub API marimo-team/marimo",
+   "url": "https://api.github.com/repos/marimo-team/marimo"
+  },
+  {
+   "title": "pypistats marimo",
+   "url": "https://pypistats.org/api/packages/marimo/recent"
+  }
+ ]
+}

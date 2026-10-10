@@ -1,6 +1,6 @@
 ---
 // Every page: the short mark thc█ and the tabs on a rule (acid under the current one), the acid
-// footer with the wordmark, and the keyboard: 1–6 switch pages as in thc, ? shows the keys, t
+// footer with the wordmark, and the keyboard: 1–7 switch pages as in thc, ? shows the keys, t
 // toggles the theme. Brand: Thought Control v2 "Redacted".
 import '@fontsource-variable/archivo/standard.css';
 import '@fontsource-variable/martian-mono/standard.css';
@@ -21,6 +21,7 @@ const tabs = [
   { k: '4', id: 'docs', label: 'docs', href: u('docs/') },
   { k: '5', id: 'changelog', label: 'changelog', href: u('changelog/') },
   { k: '6', id: 'hood', label: 'under the hood', short: 'internals', href: u('under-the-hood/') },
+  { k: '7', id: 'blog', label: 'blog', href: u('blog/') },
 ];
 const home = title === 'Thought Control';
 const full = home ? 'Thought Control · thc, a notebook in your terminal' : `${title} · Thought Control`;
@@ -78,7 +79,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
       </div>
       <div class="bar__row">
         <span class="dim">The CLI is the interface; the TUI drives it; agents use it too. Not affiliated with any agency, real or imagined.</span>
-        <span><kbd>1</kbd>–<kbd>6</kbd> pages · <kbd>t</kbd> theme · <kbd>?</kbd> keys</span>
+        <span><kbd>1</kbd>–<kbd>7</kbd> pages · <kbd>t</kbd> theme · <kbd>?</kbd> keys</span>
       </div>
     </div>
   </footer>
@@ -86,7 +87,7 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
   <div class="keys-help" hidden data-keys-help>
     <b>keys</b>, as in thc
     <table>
-      <tr><td><kbd>1</kbd>–<kbd>6</kbd></td><td>home · features · use cases · docs · changelog · under the hood</td></tr>
+      <tr><td><kbd>1</kbd>–<kbd>7</kbd></td><td>home · features · use cases · docs · changelog · under the hood · blog</td></tr>
       <tr><td><kbd>t</kbd></td><td>light or dark</td></tr>
       <tr><td><kbd>j</kbd> <kbd>k</kbd></td><td>scroll</td></tr>
       <tr><td><kbd>g</kbd> <kbd>G</kbd></td><td>top · bottom</td></tr>

@@ -1,0 +1,125 @@
+{
+ "id": "vercel-ai-sdk-genui",
+ "name": "Vercel AI SDK generative UI (RSC streamUI, AI SDK UI, @ai-sdk/tui)",
+ "group": "agent-ui-specs",
+ "tagline": "Model tool calls render React components; plus a canned agent TUI",
+ "links": {
+  "site": "https://ai-sdk.dev/",
+  "repo": "https://github.com/vercel/ai",
+  "docs": "https://ai-sdk.dev/docs/ai-sdk-rsc/overview",
+  "other": [
+   {
+    "label": "runAgentTUI reference",
+    "url": "https://ai-sdk.dev/docs/reference/ai-sdk-tui/run-agent-tui"
+   },
+   {
+    "label": "Migrating from RSC to AI SDK UI",
+    "url": "https://ai-sdk.dev/docs/ai-sdk-rsc/migrating-to-ui"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "LICENSE file is Apache-2.0 (Copyright Vercel); GitHub API reports NOASSERTION."
+ },
+ "language": "TypeScript",
+ "backing": "Vercel",
+ "first_release": "2023-06",
+ "latest_release": {
+  "tag": "ai@7.0.137; @ai-sdk/rsc 3.0.137; @ai-sdk/tui 1.0.138",
+  "date": "2026-10-09"
+ },
+ "adoption": {
+  "github_stars": 27211,
+  "stars_fetched": "2026-10-09",
+  "downloads": "ai 29,092,186/week; @ai-sdk/react 9,563,237/week; @ai-sdk/rsc 113,633/week; @ai-sdk/tui 27,329/week (npm, week ending 2026-10-07)",
+  "notable_users": [
+   "json-render (uses AI SDK streaming)",
+   "Vercel templates"
+  ],
+  "summary": "The AI SDK is the TypeScript standard for LLM apps; its RSC generative-UI API is a small, experimental corner."
+ },
+ "maintainability": {
+  "release_cadence": "Multiple releases per day across packages",
+  "contributors": "~730 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "1,477 commits on main since 2026-07-11",
+  "bus_factor": "high",
+  "summary": "Very well maintained SDK; RSC module kept but officially experimental."
+ },
+ "architecture": {
+  "summary": "AI SDK RSC (@ai-sdk/rsc): streamUI calls a model and lets tools return React Server Components that stream to the client; createStreamableUI/createStreamableValue push UI or values; useUIState/useAIState separate visual state from model context. The docs say RSC is experimental and recommend AI SDK UI (useChat with typed tool parts rendered by client components) for production. @ai-sdk/tui's runAgentTUI runs a ToolLoopAgent (or a remote ChatTransport) in a ready-made terminal chat UI with collapsible tool/reasoning sections and token statistics.",
+  "key_points": [
+   "Generative UI = tool call -> app-defined component; UI is React code, not data",
+   "RSC path tied to frameworks supporting React Server Components (Next.js)",
+   "runAgentTUI is a fixed chat UI, not a generative or agent-editable surface",
+   "No readback, addressing or history of rendered UI"
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published generative-UI performance numbers."
+ },
+ "agent_usability": {
+  "how": "The model chooses tools; the app maps tool results to components. runAgentTUI hosts an agent in a terminal chat.",
+  "integration_effort": "Low for Next.js/React apps.",
+  "readback": "AI state/messages only; the model never sees the rendered UI.",
+  "granular_edits": "createStreamableUI .update/.append/.done on one streamed node; coarse.",
+  "history": "Message history only.",
+  "summary": "Agent picks components via tools; no live control of the UI."
+ },
+ "scores": {
+  "ui_as_data": 1,
+  "agent_drivable": 2,
+  "readback": 1,
+  "granular_edits": 1,
+  "time_travel": 0,
+  "live_data_rate": 2,
+  "terminal_native": 2,
+  "pixel_graphics": 3,
+  "teaching": 0,
+  "maturity": 3,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Components are React code; only tool args/results are data.",
+  "terminal_native": "runAgentTUI renders a fixed chat UI in the terminal; no general terminal renderer.",
+  "maturity": "AI SDK is an ecosystem standard, but RSC generative UI is experimental and discouraged for production.",
+  "pixel_graphics": "Whatever React on the web draws."
+ },
+ "steelman": "The AI SDK is where most TypeScript LLM apps start (29M weekly downloads), and its generative-UI story is the simplest one there is: let the model call a tool, render a real component for the result, stream it. No new UI language for the model to learn, no catalog DSL, full React and design-system fidelity, type-safe tool parts in useChat, and with @ai-sdk/tui the same agent runs in a polished terminal chat in three lines. For teams that just need 'show a weather card when the model calls getWeather', it is hard to beat.",
+ "weaknesses": [
+  "RSC generative UI is labelled experimental; docs recommend migrating to AI SDK UI",
+  "UI is code: no serializable UI, no readback, no patching by id",
+  "runAgentTUI is a canned chat interface with display options only",
+  "Tied to React (and RSC-capable frameworks for streamUI)"
+ ],
+ "relation_to_scene": {
+  "overlap": "Agents surfacing UI to users; a terminal front end for agents (runAgentTUI).",
+  "scene_reinvents": "Nothing substantive.",
+  "borrow": [
+   "runAgentTUI's display modes (full/collapsed/auto-collapsed/hidden) for tool and reasoning sections",
+   "ChatTransport abstraction: run local agent or attach to remote one"
+  ],
+  "gap_left": "Everything scene is about: UI as data, live agent control, readback, patches, data streams, pixels, time travel.",
+  "verdict": "ignore",
+  "verdict_why": "Code-first generative UI and a fixed chat TUI; json-render is Vercel's data-first answer and the better comparison."
+ },
+ "sources": [
+  {
+   "title": "AI SDK RSC overview",
+   "url": "https://ai-sdk.dev/docs/ai-sdk-rsc/overview"
+  },
+  {
+   "title": "runAgentTUI reference",
+   "url": "https://ai-sdk.dev/docs/reference/ai-sdk-tui/run-agent-tui"
+  },
+  {
+   "title": "vercel/ai LICENSE",
+   "url": "https://github.com/vercel/ai/blob/main/LICENSE"
+  },
+  {
+   "title": "npm downloads API",
+   "url": "https://api.npmjs.org/downloads/point/last-week/ai"
+  }
+ ]
+}

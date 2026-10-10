@@ -1,0 +1,157 @@
+{
+ "id": "streamlit",
+ "name": "Streamlit",
+ "group": "teaching-and-live-data",
+ "tagline": "Python scripts become data apps by rerunning top to bottom",
+ "links": {
+  "site": "https://streamlit.io",
+  "repo": "https://github.com/streamlit/streamlit",
+  "docs": "https://docs.streamlit.io",
+  "other": [
+   {
+    "label": "st.fragment (run_every)",
+    "url": "https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment"
+   },
+   {
+    "label": "2026 release notes",
+    "url": "https://docs.streamlit.io/develop/quick-reference/release-notes/2026"
+   },
+   {
+    "label": "Build Streamlit apps with agent skills (Snowflake)",
+    "url": "https://www.snowflake.com/en/developers/guides/build-streamlit-apps-with-agent-skills/"
+   },
+   {
+    "label": "AppTest (headless testing)",
+    "url": "https://docs.streamlit.io/develop/api-reference/app-testing/st.testing.v1.AppTest"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "Apache-2.0",
+  "notes": "Apache-2.0; owned by Snowflake. Streamlit in Snowflake and Community Cloud are hosted commercial/free offerings."
+ },
+ "language": "Python (server), TypeScript/React (front end)",
+ "backing": "Snowflake (acquired March 2022 for a reported $800M, TechCrunch).",
+ "first_release": "2018-03",
+ "latest_release": {
+  "tag": "1.65.0",
+  "date": "2026-10-02"
+ },
+ "adoption": {
+  "github_stars": 45927,
+  "stars_fetched": "2026-10-09",
+  "downloads": "4,862,258/week PyPI streamlit (pypistats, 2026-10-09)",
+  "notable_users": [
+   "Snowflake (Streamlit in Snowflake)",
+   "Cortex Code CLI users"
+  ],
+  "summary": "The de facto Python data-app framework; homepage claims 'over 90% of Fortune 50' and ~19.4M monthly downloads. The usual target when an LLM is asked for a quick dashboard."
+ },
+ "maintainability": {
+  "release_cadence": "~every 2 weeks: 1.61.1 2026-08-05, 1.62.0 2026-08-19, 1.63.0 2026-09-01, 1.64.0 2026-09-15, 1.65.0 2026-10-02.",
+  "contributors": "~338 (GitHub, incl. anonymous)",
+  "recent_activity": "1,002 PRs merged since 2026-07-11 (GitHub search).",
+  "bus_factor": "high: funded Snowflake team, many committers.",
+  "summary": "Very active, corporate-funded, fast release train."
+ },
+ "architecture": {
+  "summary": "An app is a Python script; every interaction reruns it top to bottom, and the server streams a delta-encoded element tree (protobuf over WebSocket) to a React front end that reconciles it. State lives in st.session_state and caches (st.cache_data/resource). Fragments (@st.fragment) rerun only part of the page, on widget interaction or on a timer via run_every, which is the mechanism for live dashboards. Since 1.57 the server is Starlette/Uvicorn, exposed programmatically via st.App. Custom components extend the front end.",
+  "key_points": [
+   "Rerun model: UI is a function of the script plus session state; simple to reason about, costly for high-frequency updates.",
+   "st.fragment(run_every=...) gives timer-driven partial reruns for polling dashboards.",
+   "AppTest runs an app headlessly and exposes the element tree and widget values for assertions.",
+   "Ships agent skills in the pip package (1.57+), `streamlit skills` installs them for Claude Code (1.64 fix)."
+  ]
+ },
+ "performance": {
+  "claims": [],
+  "summary": "No published update-rate or throughput numbers. Live updates are polling reruns (run_every), suited to seconds-scale refresh, not streaming ticks."
+ },
+ "agent_usability": {
+  "how": "Code generation is the main path: Streamlit bundles 'developing-with-streamlit' agent skills (17 sub-skills, app and theme templates) in the pip package; Snowflake Cortex Code generates Streamlit-in-Snowflake apps. Community MCP wrappers exist (e.g. dkedar7/streamlit-mcp, 2 stars) but nothing official. AppTest lets an agent run and inspect an app headlessly.",
+  "integration_effort": "Low for generation (write a .py, `streamlit run`); higher for driving a live session (browser automation or AppTest).",
+  "readback": "AppTest exposes elements and values; live sessions need screenshots/DOM.",
+  "granular_edits": "Edit the script and the app hot-reloads; no id-addressed patches to a running UI.",
+  "history": "None for the UI; reruns are not recorded.",
+  "summary": "The most LLM-friendly code target for dashboards, with official agent skills, but agents author code rather than operate a live UI."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 2,
+  "readback": 3,
+  "granular_edits": 2,
+  "time_travel": 0,
+  "live_data_rate": 2,
+  "terminal_native": 0,
+  "pixel_graphics": 4,
+  "teaching": 2,
+  "maturity": 5,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "Declarative Python; the wire form is a protobuf element tree, not an authored value.",
+  "agent_drivable": "Official agent skills for code generation plus AppTest; no live-control protocol.",
+  "readback": "Structured via AppTest; screenshots for a live browser session.",
+  "granular_edits": "Hot reload on script edit; coarse.",
+  "live_data_rate": "run_every polling reruns; seconds-scale.",
+  "openness": "Apache-2.0 under Snowflake control."
+ },
+ "steelman": "Streamlit made the dashboard a twenty-line Python script, and that is exactly the shape an LLM writes best. The rerun model means there is no callback graph to get wrong: the UI is a pure function of the script and session state, which is why generated apps usually work on the first try. It is the default target for 'make me a dashboard' across ChatGPT, Claude and Snowflake's own Cortex Code, and Streamlit now ships agent skills inside the package so coding agents learn current APIs. Fragments with run_every give live dashboards without websockets plumbing, AppTest gives headless verification, and Snowflake's backing means a two-week release train and enterprise hosting. Nearly 5M weekly downloads say the model won.",
+ "weaknesses": [
+  "Full or fragment reruns make high-frequency streaming expensive; no published update-rate numbers.",
+  "Agents generate code; there is no protocol to patch or operate a running app.",
+  "Browser-only; no terminal renderer.",
+  "Corporate control by Snowflake; hosted features steer toward Snowflake.",
+  "No history or replay of UI state."
+ ],
+ "relation_to_scene": {
+  "overlap": "Agent-built dashboards bound to data, refreshed on a timer, with a pure 'state to view' model.",
+  "scene_reinvents": "The 'dashboard from a few declarative lines' experience and its huge catalog of chart/table/metric widgets; Streamlit is what an agent reaches for by default and it already works.",
+  "borrow": [
+   "Ship agent skills inside the package and offer to install them on first error (Streamlit 1.59/1.62).",
+   "run_every-style per-component refresh intervals as a first-class component property.",
+   "AppTest-style headless harness: run, set widget values, read the element tree."
+  ],
+  "gap_left": "A long-lived UI an agent patches by id at high rate, reads back as structured state and screen text, in the terminal; Streamlit regenerates code and reruns scripts in a browser.",
+  "verdict": "complement",
+  "verdict_why": "Streamlit owns browser dashboards authored as code; scene targets live agent-operated terminal UIs, and should learn from its agent-skills packaging."
+ },
+ "sources": [
+  {
+   "title": "st.fragment docs",
+   "url": "https://docs.streamlit.io/develop/api-reference/execution-flow/st.fragment"
+  },
+  {
+   "title": "Streamlit 2026 release notes",
+   "url": "https://docs.streamlit.io/develop/quick-reference/release-notes/2026"
+  },
+  {
+   "title": "Snowflake: Build Streamlit apps with agent skills",
+   "url": "https://www.snowflake.com/en/developers/guides/build-streamlit-apps-with-agent-skills/"
+  },
+  {
+   "title": "Recordly: Cortex Code best practices with Streamlit in Snowflake",
+   "url": "https://www.recordlydata.com/blog/cortex-code-best-practices-with-streamlit-in-snowflake"
+  },
+  {
+   "title": "TechCrunch: Snowflake acquires Streamlit for $800M",
+   "url": "https://techcrunch.com/2022/03/02/snowflake-acquires-streamlit-for-800m-to-help-customers-build-data-based-apps/"
+  },
+  {
+   "title": "GitHub API streamlit/streamlit",
+   "url": "https://api.github.com/repos/streamlit/streamlit"
+  },
+  {
+   "title": "pypistats streamlit",
+   "url": "https://pypistats.org/api/packages/streamlit/recent"
+  },
+  {
+   "title": "dkedar7/streamlit-mcp",
+   "url": "https://github.com/dkedar7/streamlit-mcp"
+  },
+  {
+   "title": "streamlit.io homepage",
+   "url": "https://streamlit.io/"
+  }
+ ]
+}

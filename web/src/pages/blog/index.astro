@@ -1,0 +1,39 @@
+---
+// The dev blog: posts from src/content/blog/, newest first.
+import Base from '../../layouts/Base.astro';
+import { getCollection } from 'astro:content';
+import { u } from '../../lib/url';
+
+const posts = (await getCollection('blog')).sort((a, b) => b.data.date.getTime() - a.data.date.getTime() || a.id.localeCompare(b.id));
+const day = (d: Date) => d.toISOString().slice(0, 10);
+---
+<Base title="Dev blog" description="Notes from building Thought Control: experiments, research and what we learned, with the code and data behind them." tab="blog">
+  <header class="page-head">
+    <p class="kicker"><span class="blk" aria-hidden="true"></span>dev blog · {posts.length} posts</p>
+    <h1>Working notes</h1>
+    <p class="lede">What we're trying, what we measured and what we found, written as we go. Experiments here may never ship; when they do, the <a href={u('changelog/')}>changelog</a> says so.</p>
+  </header>
+  <ol class="posts">
+    {posts.map((p) => (
+      <li>
+        <time datetime={day(p.data.date)}>{day(p.data.date)}</time>
+        <div>
+          {p.data.kicker && <p class="k">{p.data.kicker}</p>}
+          <h2><a href={u(`blog/${p.id}/`)}>{p.data.title}</a></h2>
+          <p>{p.data.description}</p>
+        </div>
+      </li>
+    ))}
+  </ol>
+</Base>
+<style>
+  .posts { list-style: none; padding: 0; margin: 0; }
+  .posts li { display: grid; grid-template-columns: 140px minmax(0, 1fr); gap: 32px; border-top: 1px solid var(--line); padding: 22px 0; }
+  .posts time { font: 500 12.5px var(--mono); color: var(--muted); padding-top: 4px; }
+  .posts .k { font: 500 11px var(--mono); letter-spacing: 0.08em; text-transform: uppercase; color: var(--accent); margin: 0 0 6px; }
+  .posts h2 { margin: 0 0 8px; font-size: 22px; text-transform: none; }
+  .posts h2 a { color: var(--text); text-decoration: none; }
+  .posts h2 a:hover { color: var(--accent); }
+  .posts p { margin: 0; color: var(--body); max-width: 68ch; }
+  @media (max-width: 720px) { .posts li { grid-template-columns: minmax(0, 1fr); gap: 6px; } }
+</style>

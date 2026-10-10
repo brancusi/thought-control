@@ -1,0 +1,39 @@
+---
+// One dev blog post: header, the Markdown body, and the neighbouring posts.
+import Base from '../../layouts/Base.astro';
+import { getCollection, render } from 'astro:content';
+import { u } from '../../lib/url';
+
+export async function getStaticPaths() {
+  const posts = (await getCollection('blog')).sort((a, b) => b.data.date.getTime() - a.data.date.getTime() || a.id.localeCompare(b.id));
+  return posts.map((p, i) => ({ params: { slug: p.id }, props: { entry: p, newer: posts[i - 1] ?? null, older: posts[i + 1] ?? null } }));
+}
+const { entry, newer, older } = Astro.props;
+const { Content } = await render(entry);
+const day = entry.data.date.toISOString().slice(0, 10);
+---
+<Base title={entry.data.title} description={entry.data.description} tab="blog">
+  <article class="post">
+    <header class="page-head">
+      <p class="kicker"><span class="blk" aria-hidden="true"></span><a href={u('blog/')}>dev blog</a> · <time datetime={day}>{day}</time>{entry.data.kicker && <> · {entry.data.kicker}</>}</p>
+      <h1>{entry.data.title}</h1>
+      <p class="lede">{entry.data.description}</p>
+    </header>
+    <div class="prose"><Content /></div>
+    <nav class="pager" aria-label="More posts">
+      {older ? <a href={u(`blog/${older.id}/`)}>← {older.data.title}</a> : <span />}
+      {newer ? <a href={u(`blog/${newer.id}/`)}>{newer.data.title} →</a> : <span />}
+    </nav>
+  </article>
+</Base>
+<style>
+  .post { max-width: 76ch; }
+  .post .kicker a { color: inherit; }
+  .post .prose img { width: 100%; height: auto; display: block; }
+  .post .prose figure { margin: 2rem 0; }
+  .post .prose p:has(> img) { margin: 2rem 0 0.4rem; }
+  .post .prose em:only-child { color: var(--muted); font-size: 14.5px; }
+  .pager { display: flex; justify-content: space-between; gap: 2ch; border-top: 1px solid var(--line); margin-top: 3rem; padding-top: 1.2rem; font: 13px var(--mono); }
+  .pager a { color: var(--muted); text-decoration: none; }
+  .pager a:hover { color: var(--accent); }
+</style>

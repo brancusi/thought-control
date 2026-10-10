@@ -1,0 +1,181 @@
+{
+ "id": "textual",
+ "name": "Textual",
+ "group": "terminal-frameworks",
+ "tagline": "Python TUI framework with DOM, CSS, widgets and web serving",
+ "links": {
+  "site": "https://textual.textualize.io/",
+  "repo": "https://github.com/Textualize/textual",
+  "docs": "https://textual.textualize.io/guide/",
+  "other": [
+   {
+    "label": "Devtools guide",
+    "url": "https://textual.textualize.io/guide/devtools/"
+   },
+   {
+    "label": "textual-serve",
+    "url": "https://pypi.org/project/textual-serve/"
+   },
+   {
+    "label": "Toad",
+    "url": "https://github.com/batrachianai/toad"
+   },
+   {
+    "label": "The future of Textualize",
+    "url": "https://textual.textualize.io/blog/2025/05/07/the-future-of-textualize/"
+   },
+   {
+    "label": "textual-mcp-server (third party)",
+    "url": "https://github.com/discohead/textual-mcp-server"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "Toad (Will McGugan's agent front end on Textual) is AGPL-3.0."
+ },
+ "language": "Python",
+ "backing": "Created by Will McGugan; Textualize Ltd (VC-backed) wound down in mid-2025 and Textual continues as an open-source project maintained mainly by McGugan (now on sabbatical, building Toad).",
+ "first_release": "2021-06",
+ "latest_release": {
+  "tag": "v8.2.8",
+  "date": "2026-06-30"
+ },
+ "adoption": {
+  "github_stars": 37416,
+  "stars_fetched": "2026-10-09",
+  "downloads": "14.5M/week, 55.5M/month on PyPI (pypistats.org recent); much of it transitive",
+  "notable_users": [
+   "Toad (batrachianai/toad, 3.5k stars)",
+   "Posting (HTTP client, shown in textual-serve docs)",
+   "Many Python devtools and agent front ends (e.g. gentui AG-UI client)"
+  ],
+  "summary": "The dominant Python TUI framework, with very high PyPI volume and a large app ecosystem."
+ },
+ "maintainability": {
+  "release_cadence": "Frequent until mid-2026, now quiet: v8.2.3 2026-04-05, v8.2.4 04-19, v8.2.5 04-30, v8.2.6 05-13, v8.2.7 05-19, v8.2.8 06-30. Last commit to main 2026-07-11.",
+  "contributors": "~192 (GitHub contributors API incl. anonymous)",
+  "recent_activity": "1 commit and 1 merged PR since 2026-07-11 (GitHub API): effectively dormant for 3 months",
+  "bus_factor": "low: willmcgugan has ~7,000 of the commits; the company that employed the other core devs closed in 2025",
+  "summary": "Mature and stable ('mature and battle-tested' per McGugan) but now a one-person project with activity dropping off."
+ },
+ "architecture": {
+  "summary": "Retained mode: an App owns a DOM of Widget objects composed in Python (compose() yields children), styled by Textual CSS (TCSS) with selectors, layout (grid/horizontal/vertical/dock) and live reload. Reactive attributes trigger refresh; message passing between widgets is async (asyncio). A compositor (inherited from Rich's Segment model) merges overlapping widgets into a final segment list and only updates changed regions. Output drivers target terminals and, via textual-serve/textual-web, a browser.",
+  "key_points": [
+   "DOM + CSS selectors (query_one('#id'), query('.cls')) addressable at runtime",
+   "Reactive attributes and message bus",
+   "Compositor over Rich Segments; partial screen updates",
+   "Pilot (App.run_test) drives an app headlessly: press keys, click selectors, pause, screenshot to SVG",
+   "textual run --dev: live CSS editing + devtools console (logs, events)",
+   "textual serve: any app in a browser with a few lines"
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Compositor design for partial updates and overlapping widgets, described as 'algorithms for high performance terminal apps'",
+    "source": "https://textual.textualize.io/blog/2024/12/12/algorithms-for-high-performance-terminal-apps/"
+   },
+   {
+    "text": "Dev mode: CSS changes 'reflected in the terminal a few milliseconds later'",
+    "source": "https://textual.textualize.io/guide/devtools/"
+   }
+  ],
+  "summary": "Design write-ups but no published frames/sec or update-throughput benchmarks found."
+ },
+ "agent_usability": {
+  "how": "Code generation, plus in-process automation via Pilot (run_test). Third-party MCP servers wrap Pilot (discohead/textual-mcp-server, 4 stars: 'drive Textual TUI apps headlessly'). Toad is the inverse: a Textual UI for agents over the Agent Client Protocol, not agents driving Textual.",
+  "integration_effort": "Moderate: write or adopt an MCP wrapper around Pilot; the agent then gets selector-addressed clicks/keys and SVG screenshots of a headless instance (not the user's live one).",
+  "readback": "Good in-process: the DOM can be queried by CSS selector, widget state read, and App.save_screenshot()/Pilot produce SVG renders. No built-in external socket for a live app.",
+  "granular_edits": "In-process code can mutate any widget by id/selector and change styles; from outside only via a custom wrapper.",
+  "history": "None (devtools console shows logs/events only).",
+  "summary": "The most introspectable of the mainstream frameworks (DOM + selectors + screenshots), but agent access is in-process/test-harness, not a live-instance protocol."
+ },
+ "scores": {
+  "ui_as_data": 3,
+  "agent_drivable": 2,
+  "readback": 4,
+  "granular_edits": 2,
+  "time_travel": 0,
+  "live_data_rate": 3,
+  "terminal_native": 5,
+  "pixel_graphics": 2,
+  "teaching": 2,
+  "maturity": 4,
+  "openness": 4
+ },
+ "score_notes": {
+  "ui_as_data": "compose() in Python plus TCSS; CSS is data, widget tree is code",
+  "agent_drivable": "Pilot is an API but only for a test/headless instance; MCP wrappers are third-party and tiny",
+  "readback": "Selector-queryable DOM plus SVG screenshots (in-process)",
+  "granular_edits": "Selector-addressed mutation exists in-process, not as a protocol",
+  "pixel_graphics": "Third-party textual-image (Kitty TGP / Sixel)",
+  "teaching": "textual serve, SVG screenshots and live CSS make demos easy; no tour features",
+  "maturity": "Widely used; dev slowdown after Textualize closed keeps it off 5",
+  "openness": "MIT but effectively single-maintainer controlled"
+ },
+ "steelman": "Textual is the closest thing the terminal has to a browser: a real DOM you can query by CSS selector, a real stylesheet language with live reload, a compositor that does overlapping layers and partial updates, a rich widget set (DataTable, TextArea with tree-sitter, Markdown, Tree, Tabs), and an app that runs unchanged in a web browser via textual serve. Its Pilot test driver already gives you what agents need in principle — press keys, click a selector, wait for idle, take an SVG screenshot — and the DOM means an agent can address 'the button with id save' instead of cell coordinates. It is MIT, battle-tested by thousands of apps and millions of weekly installs, and its author has gone all-in on agents with Toad. For Python shops it is the obvious substrate, and a thin MCP over Pilot gets you most of an agent-drivable TUI.",
+ "weaknesses": [
+  "Textualize the company closed in 2025; main branch has had one commit since 2026-07-11",
+  "Bus factor of one (willmcgugan ~7k commits)",
+  "UI is Python code, not a value: you cannot push or diff a whole UI",
+  "No live-instance control protocol; MCP wrappers are third-party and immature",
+  "Python/asyncio startup and per-frame overhead; no published throughput numbers",
+  "Images only via third-party textual-image"
+ ],
+ "relation_to_scene": {
+  "overlap": "Addressable widget tree (ids/selectors), stylesheet-driven theming, headless driving with keys/clicks and rendered screenshots, web serving.",
+  "scene_reinvents": "Selector-addressed nodes, a layout/style system, screenshot readback and a headless test driver — Textual has had these, polished, for years.",
+  "borrow": [
+   "Pilot's verbs (press, click(selector, offset), hover, pause/wait-for-idle) as the shape of scene's key/mouse ops",
+   "CSS-selector addressing in addition to plain ids for patch/click",
+   "SVG screenshot export of the cell frame for docs and readback",
+   "textual serve's idea: the same scene served to a browser"
+  ],
+  "gap_left": "A UI that is one serializable JSON value pushed/patched over a socket into a live (not test) instance, data streams bypassing the model at thousands/s, hot-swap upgrade, kitty pixel layer beneath text, agent time travel.",
+  "verdict": "borrow",
+  "verdict_why": "Textual's addressing, driver verbs and screenshot readback are proven designs scene should copy, but its code-defined UI and Python runtime don't fit a Rust JSON-scene."
+ },
+ "sources": [
+  {
+   "title": "GitHub API repos/Textualize/textual",
+   "url": "https://api.github.com/repos/Textualize/textual"
+  },
+  {
+   "title": "pypistats textual",
+   "url": "https://pypistats.org/api/packages/textual/recent"
+  },
+  {
+   "title": "The future of Textualize (2025-05-07)",
+   "url": "https://textual.textualize.io/blog/2025/05/07/the-future-of-textualize/"
+  },
+  {
+   "title": "Algorithms for high performance terminal apps",
+   "url": "https://textual.textualize.io/blog/2024/12/12/algorithms-for-high-performance-terminal-apps/"
+  },
+  {
+   "title": "Textual devtools guide",
+   "url": "https://textual.textualize.io/guide/devtools/"
+  },
+  {
+   "title": "Towards Textual Web Applications (textual-serve)",
+   "url": "https://textual.textualize.io/blog/2024/09/08/towards-textual-web-applications/"
+  },
+  {
+   "title": "Toad released (Will McGugan)",
+   "url": "https://willmcgugan.github.io/toad-released/"
+  },
+  {
+   "title": "batrachianai/toad",
+   "url": "https://github.com/batrachianai/toad"
+  },
+  {
+   "title": "discohead/textual-mcp-server",
+   "url": "https://github.com/discohead/textual-mcp-server"
+  },
+  {
+   "title": "lnqs/textual-image",
+   "url": "https://github.com/lnqs/textual-image"
+  }
+ ]
+}

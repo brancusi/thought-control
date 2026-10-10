@@ -1,0 +1,183 @@
+{
+ "id": "rrweb",
+ "name": "rrweb",
+ "group": "time-travel",
+ "tagline": "Record and replay the web as JSON snapshot and mutation events",
+ "links": {
+  "site": "https://rrweb.com",
+  "repo": "https://github.com/rrweb-io/rrweb",
+  "docs": "https://github.com/rrweb-io/rrweb/blob/master/guide.md",
+  "other": [
+   {
+    "label": "Event format",
+    "url": "https://rrweb.com/docs/events"
+   },
+   {
+    "label": "Full snapshot (glossary)",
+    "url": "https://rrweb.com/glossary/full-snapshot"
+   },
+   {
+    "label": "Incremental snapshot (glossary)",
+    "url": "https://rrweb.com/glossary/incremental-snapshot"
+   },
+   {
+    "label": "Sentry fork getsentry/rrweb",
+    "url": "https://github.com/getsentry/rrweb"
+   },
+   {
+    "label": "Sentry replay overhead benchmark",
+    "url": "https://docs.sentry.io/product/session-replay/web/performance-overhead/"
+   },
+   {
+    "label": "PostHog session replay over MCP",
+    "url": "https://posthog.com/docs/session-replay/surfaces/mcp"
+   }
+  ]
+ },
+ "license": {
+  "spdx": "MIT",
+  "notes": "MIT; community project funded through Open Collective sponsors. Major vendors maintain forks (getsentry/rrweb; PostHog ships @posthog/rrweb-* packages)."
+ },
+ "language": "TypeScript",
+ "backing": "Community maintainers (e.g. Juice10, eoghanmurray) with Open Collective sponsorship; commercial session-replay vendors contribute and fork.",
+ "first_release": "2018-11",
+ "latest_release": {
+  "tag": "rrweb@2.1.7",
+  "date": "2026-10-02"
+ },
+ "adoption": {
+  "github_stars": 20253,
+  "stars_fetched": "2026-10-09",
+  "downloads": "3,171,818/week npm rrweb + 751,449/week @rrweb/record (2026-10-01..07); posthog-js (15.8M/week) bundles PostHog's rrweb fork",
+  "notable_users": [
+   "PostHog (posthog-js depends on @posthog/rrweb, @posthog/rrweb-record)",
+   "Sentry (maintains getsentry/rrweb fork for Session Replay)"
+  ],
+  "summary": "The open-source substrate of web session replay; the leading open replay products run on it or forks of it."
+ },
+ "maintainability": {
+  "release_cadence": "Frequent patch releases in 2026: 2.1.2–2.1.4 (2026-09-08), 2.1.5 (2026-09-17), 2.1.6 (2026-09-18), 2.1.7 (2026-10-02). The legacy `rrweb` package is deprecated in favour of @rrweb/record and @rrweb/replay.",
+  "contributors": "143 (GitHub contributors API, incl. anonymous)",
+  "recent_activity": "~33 commits in the last 90 days (top: Juice10 9, eoghanmurray 8, github-actions 7).",
+  "bus_factor": "medium: two core maintainers plus vendor forks that would keep it alive",
+  "summary": "Steady, community-maintained; vendors carrying forks is both a safety net and a fragmentation risk."
+ },
+ "architecture": {
+  "summary": "The recorder serializes the DOM into a node tree with ids (FullSnapshot), then emits strictly-typed JSON IncrementalSnapshot events for every change: DOM mutations (via MutationObserver), mouse moves/interactions, scroll, viewport resize, input, media, stylesheet rules, canvas mutations, fonts. A recording begins with a Meta event (URL, viewport) and a FullSnapshot; each page load starts a new Meta+FullSnapshot pair, and streams can be concatenated. The Replayer rebuilds the DOM in a sandboxed iframe and applies events on a timer; it can seek (play(t), pause(t)), change speed, skip inactivity, and run in liveMode fed by addEvent. checkoutEveryNth / checkoutEveryNms insert periodic full snapshots so old segments can be dropped and seeks start nearby.",
+  "key_points": [
+   "Event = {type, data, timestamp}; types: DomContentLoaded, Load, FullSnapshot, IncrementalSnapshot, Meta, Custom, Plugin.",
+   "Node ids in the snapshot make every mutation an id-addressed patch.",
+   "Seek = latest full snapshot before t + apply incrementals (same pattern as keyframes in video).",
+   "checkoutEveryNth/Nms bound replay cost and allow 'keep the last N minutes'.",
+   "Privacy built in: blockClass, maskAllInputs, maskInputOptions (passwords masked by default).",
+   "Plugin API on record and replay (console, network, canvas…); packFn/unpackFn for compression; sampling to thin mousemove/scroll.",
+   "liveMode replays a stream in near real time (co-browsing, live view)."
+  ]
+ },
+ "performance": {
+  "claims": [
+   {
+    "text": "Sentry (rrweb-based Replay SDK) on its own web UI, medians: Total Blocking Time 2621.67 ms without Sentry, 2663.35 ms with Sentry SDK, 3036.80 ms with Sentry + Replay; network upload 21 B / 3.84 KB / 272.51 KB; max memory 320.66 / 359.21 / 339.03 MB. A simpler navigation scenario added ~100 ms total JS blocking time.",
+    "source": "https://docs.sentry.io/product/session-replay/web/performance-overhead/"
+   },
+   {
+    "text": "Sentry Session Replay plugin adds ~36 KB gzipped (as of 7.78.0).",
+    "source": "https://docs.sentry.io/product/session-replay/web/performance-overhead/"
+   }
+  ],
+  "summary": "rrweb itself publishes no benchmarks; the best numbers come from vendors measuring their forks (Sentry: ~+400 ms TBT on a mutation-heavy page). Cost scales with DOM mutation volume."
+ },
+ "agent_usability": {
+  "how": "No agent interface in rrweb itself; it is a JS library. Agents reach rrweb data through vendors: PostHog's MCP can search recordings, read a recording's metadata (duration, interaction and console counts, person summary), manage playlists and summarize sessions with PostHog AI; Replay Vision has AI watch recordings. An agent can also parse the event JSON directly or script the Replayer.",
+  "integration_effort": "Low to read raw events (JSON); moderate to build seek/inspect tools on top of the Replayer or rrdom in Node.",
+  "readback": "Events are structured JSON (node-id tree + mutations), so the DOM at any time can be reconstructed programmatically; vendor MCPs give summaries rather than DOM at time t.",
+  "granular_edits": "Not applicable: recordings are captured, not authored. Custom events can be added to a stream.",
+  "history": "Replayer seek (play(t)/pause(t)), speed, skip-inactive, live mode; no fork. Vendor MCPs (PostHog) expose search/summary, not seek.",
+  "summary": "An excellent, widely adopted UI-history format with no agent surface of its own; agents mostly see it through vendors' summaries."
+ },
+ "scores": {
+  "ui_as_data": 4,
+  "agent_drivable": 1,
+  "readback": 3,
+  "granular_edits": 1,
+  "time_travel": 3,
+  "live_data_rate": 3,
+  "terminal_native": 0,
+  "pixel_graphics": 1,
+  "teaching": 2,
+  "maturity": 5,
+  "openness": 5
+ },
+ "score_notes": {
+  "ui_as_data": "A recorded UI is fully serializable JSON (snapshot + id-addressed mutations) you can store, diff, send — but only as capture, not as an authoring format.",
+  "agent_drivable": "Nothing to drive; agents read files or vendor MCP summaries.",
+  "readback": "Structured events readable; DOM-at-time requires scripting the replayer.",
+  "granular_edits": "Event stream is id-addressed patches, but nothing edits a live UI.",
+  "time_travel": "Human/programmatic seek in a replayer; no agent tool, no fork.",
+  "live_data_rate": "Records mutations as they happen and supports liveMode; no published rate numbers.",
+  "pixel_graphics": "Replays DOM/canvas in a browser iframe; no rendering of its own.",
+  "teaching": "Replays are used to show what happened; no narration or takeover."
+ },
+ "steelman": "rrweb is the proof that a UI's entire history can be a compact, strictly-typed JSON stream: one full snapshot with node ids, then tiny id-addressed patches for every mutation, input, scroll and mouse move, with periodic checkpoints so you can seek anywhere and drop old segments. That simple format won — ~3.2M weekly downloads, the base of PostHog's and Sentry's session replay — because it is cheap to capture in production, privacy-aware by default (inputs masked, elements blockable), extensible via plugins, and replayable live or later. A fan would say scene's 'screen_at' and export format are already designed here: keyframe + deltas, meta events, custom events, checkpoints every N, and a replayer with seek, speed and skip-inactive.",
+ "weaknesses": [
+  "Captures the DOM, not application state or messages: you see what happened, not why (Replay.io's docs draw this 'session replay vs runtime replay' line).",
+  "No fork, no agent API; seeking is a JS library call or a human player.",
+  "Measurable overhead on mutation-heavy pages (Sentry benchmark: TBT 2663 ms → 3037 ms with Replay).",
+  "Fragmentation: PostHog and Sentry ship their own forks.",
+  "Replay fidelity depends on external resources (CSS, fonts, images) still being available; canvas/WebGL needs opt-in recording.",
+  "Recordings contain user data and need masking discipline."
+ ],
+ "relation_to_scene": {
+  "overlap": "A serialized UI tree with stable ids plus a stream of id-addressed changes over time; seek by snapshot + deltas; live streaming mode. scene's frames and patches by node id are the same idea.",
+  "scene_reinvents": "The recording format for screens over time (keyframe + incremental events, meta header, custom events, periodic checkouts) and the replayer controls (seek, speed, skip idle). scene's planned screen_at/export should reuse this structure.",
+  "borrow": [
+   "Event envelope {type, data, timestamp} with Meta (terminal size, theme, capabilities) + FullSnapshot + Incremental (patch, key, mouse, resize, data-source update) + Custom (agent narration, marks).",
+   "checkoutEveryNth / checkoutEveryNms: periodic full snapshots for seek and retention windows.",
+   "Skip-inactive and speed controls for replays and tours.",
+   "Masking options at capture time (e.g. mark nodes or data sources as private, never exported).",
+   "liveMode: the same replayer consumes a live stream, which gives scene 'watch an agent/learner live' for free.",
+   "A plugin hook on record and replay."
+  ],
+  "gap_left": "rrweb records but never authors or controls: no live agent control, no app state/messages, no fork, no terminal output. scene records its own messages and state, so it can fork and replay deterministically, not just show pixels-equivalent.",
+  "verdict": "borrow",
+  "verdict_why": "The de facto UI-history format; scene should mirror its event structure for screen history and export, while its message log supplies the 'why' rrweb lacks."
+ },
+ "sources": [
+  {
+   "title": "rrweb-io/rrweb (GitHub API: stars, license, releases, contributors)",
+   "url": "https://github.com/rrweb-io/rrweb"
+  },
+  {
+   "title": "rrweb guide.md (record/replay options)",
+   "url": "https://github.com/rrweb-io/rrweb/blob/master/guide.md"
+  },
+  {
+   "title": "rrweb Events docs",
+   "url": "https://rrweb.com/docs/events"
+  },
+  {
+   "title": "Sentry Web Replay Performance Overhead",
+   "url": "https://docs.sentry.io/product/session-replay/web/performance-overhead/"
+  },
+  {
+   "title": "getsentry/rrweb fork",
+   "url": "https://github.com/getsentry/rrweb"
+  },
+  {
+   "title": "posthog-js package metadata (rrweb fork dependencies)",
+   "url": "https://registry.npmjs.org/posthog-js/latest"
+  },
+  {
+   "title": "Use Session Replay over PostHog MCP",
+   "url": "https://posthog.com/docs/session-replay/surfaces/mcp"
+  },
+  {
+   "title": "Replay.io: Runtime Replay versus Session Replay",
+   "url": "https://docs.replay.io/reference/time-travel/how-does-time-travel-work"
+  },
+  {
+   "title": "npm downloads API (rrweb)",
+   "url": "https://api.npmjs.org/downloads/point/last-week/rrweb"
+  }
+ ]
+}
