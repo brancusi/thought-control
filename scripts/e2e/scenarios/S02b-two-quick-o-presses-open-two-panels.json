@@ -1,0 +1,55 @@
+{
+ "id": "S02b",
+ "title": "two quick o presses open two panels",
+ "spec": "sidebar.md (thc screen on main) §3",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "o"
+  },
+  {
+   "key": "j"
+  },
+  {
+   "key": "o"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "day",
+    "page"
+   ]
+  }
+ },
+ "size": "140x40",
+ "note": "o, j, o as fast as a person types: each act reads the stack it was pressed against, so the second mustn't lose the first"
+}

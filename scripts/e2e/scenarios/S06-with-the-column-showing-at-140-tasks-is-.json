@@ -1,0 +1,64 @@
+{
+ "id": "S06",
+ "title": "with the column showing at 140, Tasks is narrow",
+ "spec": "sidebar.md (thc screen on main) · container queries",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "assert": {
+    "screen": "sched"
+   }
+  },
+  {
+   "key": "1"
+  },
+  {
+   "key": "o"
+  },
+  {
+   "key": "3"
+  }
+ ],
+ "expect": {
+  "no_screen": "sched",
+  "sidebar": {
+   "kinds": [
+    "page"
+   ],
+   "shown": true
+  }
+ },
+ "size": "140x40",
+ "note": "the full Tasks table has a sched column; with the sidebar's column beside it, the narrow one doesn't"
+}

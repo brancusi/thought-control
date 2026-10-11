@@ -1,0 +1,52 @@
+{
+ "id": "S08",
+ "title": "below 120, o opens the panel and focuses it",
+ "spec": "sidebar.md (thc screen on main) §3 (narrow: the drawer)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "o"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "page"
+   ]
+  },
+  "focus_has": "page-"
+ },
+ "size": "100x30",
+ "note": "at 90–119 a panel opens over the view and takes the focus, so a script that types after o types into the panel",
+ "known": {
+  "thc-screen/real": "thc-screen: the first o at 100 columns opens the panel beside (the column) and keeps the focus in main: the host doesn't know the width until the sidebar's source has been read once (sidebar_beside true, $screen.width 100); headless gets it right"
+ }
+}

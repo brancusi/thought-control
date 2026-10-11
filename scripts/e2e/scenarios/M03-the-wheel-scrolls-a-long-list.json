@@ -781,7 +781,8 @@
   "no_screen": "Task 001 "
  },
  "known": {
-  "thc-tui/real": "thc: the wheel over a list moves the row cursor and never scrolls the list (mouse.md §4)"
+  "thc-tui/real": "thc: the wheel over a list moves the row cursor and never scrolls the list (mouse.md §4)",
+  "thc-screen/real": "flaky: thc-screen: arriving on Tasks sometimes lands scrolled, with the selection on Task 024 (seen in 2 of 4 runs, never headless), so `Task 001` isn't on screen before the wheel"
  },
  "note": "150 tasks: more rows than any window here (they've come up as tall as 88 rows)"
 }

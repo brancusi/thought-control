@@ -64,8 +64,5 @@
     "text": "Quick words"
    }
   ]
- },
- "known": {
-  "thc-screen/real": "thc-screen: typing right after opening a page goes to the very start of the text, before the first note's `- ` (`Quick words- An earlier note`); waits on fictty's `caret: end`"
  }
 }

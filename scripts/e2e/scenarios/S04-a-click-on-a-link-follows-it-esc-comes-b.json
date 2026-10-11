@@ -1,0 +1,63 @@
+{
+ "id": "S04",
+ "title": "a click on a link follows it; esc comes back",
+ "spec": "mouse.md §3 · sidebar.md §7",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "4"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "assert": {
+    "screen": "Compost by the fence"
+   }
+  },
+  {
+   "click": "See [[Hea|lth]]"
+  },
+  {
+   "assert": {
+    "screen": "Schedule annual physical",
+    "no_screen": "Compost by the fence"
+   }
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "screen": "Compost by the fence"
+ },
+ "size": "140x40"
+}

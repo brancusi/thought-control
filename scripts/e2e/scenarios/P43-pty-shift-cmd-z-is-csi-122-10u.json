@@ -18,8 +18,5 @@
   "fictty-notes": {
    "toast": "nothing to redo"
   }
- },
- "known": {
-  "thc-tui/real": "thc: CSI 122;10u (⇧⌘Z) is read as ⌘Z: 'nothing to undo' instead of redo"
  }
 }

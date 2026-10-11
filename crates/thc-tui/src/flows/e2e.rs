@@ -355,6 +355,30 @@ fn drive(f: &mut Flow, s: &Value, title: &str, notes: &[Note], anchor: Pos, head
     check(f, &e)
 }
 
+thread_local! {
+    /// Set while a scenario runs: its panics are caught and reported as its result.
+    static QUIET: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// `f` with this thread's panic messages kept off stderr: a scenario's panic (a flow's own checks)
+/// is caught and becomes its FAIL or XFAIL line, so printing it too reads as the test failing.
+/// Other threads' panics print as always.
+fn quietly<T>(f: impl FnOnce() -> T) -> T {
+    static HOOK: std::sync::Once = std::sync::Once::new();
+    HOOK.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !QUIET.with(|q| q.get()) {
+                prev(info);
+            }
+        }));
+    });
+    QUIET.with(|q| q.set(true));
+    let r = f();
+    QUIET.with(|q| q.set(false));
+    r
+}
+
 fn first(e: &str) -> &str {
     e.lines().find(|l| !l.trim().is_empty()).unwrap_or_default()
 }
@@ -383,12 +407,14 @@ fn the_e2e_scenarios_hold_headless() {
             continue;
         }
         let known = s["known"].get(format!("{TARGET}/headless")).or_else(|| s["known"].get(TARGET)).and_then(Value::as_str).map(String::from);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&s))).unwrap_or_else(|p| {
+        let r = quietly(|| std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run(&s)))).unwrap_or_else(|p| {
             Err(p.downcast_ref::<String>().cloned().or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string())).unwrap_or_else(|| "panicked".into()))
         });
         let line = match (&r, &known) {
             (Err(e), _) if e.starts_with("skip:") => format!("skip  {id:6} {e}"),
             (Ok(()), None) => format!("PASS  {id}"),
+            // A known failure marked `flaky: …` may pass or fail.
+            (Ok(()), Some(k)) if k.starts_with("flaky") => format!("PASS  {id}  (flaky: may fail)"),
             (Ok(()), Some(k)) => {
                 bad.push(format!("{id}: passes now; drop its known failure ({k})"));
                 format!("XPASS {id}  ({k})")

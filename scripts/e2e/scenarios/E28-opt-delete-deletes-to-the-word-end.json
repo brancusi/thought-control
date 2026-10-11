@@ -10,8 +10,5 @@
  ],
  "expect": {
   "doc": "one ▮ three"
- },
- "known": {
-  "thc-tui": "thc: ⌥Delete isn't bound (editing_keys.rs ACTIONS lacks caretline's edit.delete_word_forward); WezTerm does send CSI 3;3~"
  }
 }

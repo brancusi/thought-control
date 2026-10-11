@@ -12,7 +12,6 @@
   "doc": "one ▮"
  },
  "known": {
-  "thc-tui/real": "terminal + thc: no ⌘Delete forward in thc_keys.lua (WezTerm sends CSI 3~), and thc binds nothing to ⌘Delete (editing_keys.rs ACTIONS lacks edit.delete_to_line_end)",
-  "thc-tui/headless": "thc: ⌘Delete isn't bound (editing_keys.rs ACTIONS lacks caretline's edit.delete_to_line_end)"
+  "thc-tui/real": "harness: thc's TUI read back from the vault after a save, and saving trims a note's trailing space (`one ` saves as `one`); headless, where the editor is read, it passes"
  }
 }

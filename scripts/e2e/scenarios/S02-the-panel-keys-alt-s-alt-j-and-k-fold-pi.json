@@ -1,0 +1,145 @@
+{
+ "id": "S02",
+ "title": "the panel keys: alt s, alt j and k, fold, pin, close, reopen",
+ "spec": "sidebar.md (thc screen on main) §5.3",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "o"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "kinds": [
+      "page"
+     ]
+    }
+   }
+  },
+  {
+   "key": "j"
+  },
+  {
+   "key": "o"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "kinds": [
+      "day",
+      "page"
+     ]
+    }
+   }
+  },
+  {
+   "key": "a-s"
+  },
+  {
+   "assert": {
+    "focus_has": "day-"
+   }
+  },
+  {
+   "key": "a-j"
+  },
+  {
+   "assert": {
+    "focus_has": "page-"
+   }
+  },
+  {
+   "key": "a-k"
+  },
+  {
+   "assert": {
+    "focus_has": "day-"
+   }
+  },
+  {
+   "key": "a-c"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "folded": 1
+    },
+    "focus_has": "day-"
+   }
+  },
+  {
+   "key": "a-p"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "pinned": 1
+    },
+    "focus_has": "day-"
+   }
+  },
+  {
+   "key": "a-j"
+  },
+  {
+   "assert": {
+    "focus_has": "page-"
+   }
+  },
+  {
+   "key": "a-w"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "kinds": [
+      "day"
+     ],
+     "closed": 1
+    }
+   }
+  },
+  {
+   "key": "a-s-t"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "day",
+    "page"
+   ],
+   "closed": 0
+  }
+ },
+ "size": "140x40",
+ "note": "o on Book the physical (its page, Health), then on Alpha task (today's day); the newest panel is on top, and ⌥⇧T puts the closed one back where it was"
+}

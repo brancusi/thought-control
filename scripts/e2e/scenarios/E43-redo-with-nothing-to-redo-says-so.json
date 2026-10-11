@@ -18,8 +18,5 @@
   "fictty-notes": {
    "toast": "nothing to redo"
   }
- },
- "known": {
-  "thc-tui/real": "thc: ⇧⌘Z through the forward (CSI 122;10u) is read as ⌘Z: the bar says 'nothing to undo', not 'nothing to redo' (headless <s-d-z> passes)"
  }
 }
