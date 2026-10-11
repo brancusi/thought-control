@@ -28,4 +28,4 @@ thc-core = { path = "../thc-core" }
 thc-tui = { path = "../thc-tui" }
 thc-daemon = { path = "../thc-daemon" }
 thc-screen = { path = "../thc-screen" }
-fictty = { git = "https://github.com/brancusi/fictty", rev = "a1738e3e266f54b8343fbda696f6bda5bcbc115a" }
+fictty = { git = "https://github.com/brancusi/fictty", rev = "ec2fb6461240f3a69ab2c0515da2e6e075bd8b62" }

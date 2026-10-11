@@ -409,7 +409,7 @@ fn a_journal_day_opens_as_text_and_a_new_line_lands_in_the_day() {
     let st = s.state();
     assert!(text.contains("§ Sunday, October 11 2026") && text.contains("- [ ] Call the bank due:2026-10-08 !high"), "focus {focus:?} → {:?}, status {:?}\n{text}", st.focus, st.status);
     s.keys(&["d-down", "bs"]);
-    type_in(&mut s, "\n- Lunch with Sam");
+    type_in(&mut s, "\nLunch with Sam");
     let check = open(&root, human());
     let day = check.store.journal_node("2026-10-11").unwrap().unwrap();
     assert!(check.store.children(&day).unwrap().iter().any(|n| n.text == "Lunch with Sam"));
@@ -640,7 +640,7 @@ fn q4_with_two(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless, St
     let host = ThcHost::new(v).at(now());
     let mut s = page(&host, &q4);
     s.keys(&["d-down"]);
-    type_in(&mut s, "- one\n- two");
+    type_in(&mut s, "- one\ntwo");
     (root, host, s, q4)
 }
 
@@ -672,7 +672,7 @@ fn e22_tab_nests_the_selected_lines_and_keeps_the_selection() {
 #[test]
 fn enter_type_tab_writes_a_nested_child() {
     let (root, _host, mut s, q4) = q4_with_two("child");
-    type_in(&mut s, "\n- three");
+    type_in(&mut s, "\nthree");
     s.keys(&["tab"]);
     assert!(s.screen().contains("  - three"), "{}", s.screen());
     let top = kids(&root, &q4);
@@ -779,9 +779,6 @@ fn an_agents_change_toasts_and_marks_its_row_live() {
     // 3 s on the screen's clock: the mark has gone, the toast is still there.
     s.msg(fictty::state::Msg::Tick { now_ms: 3_001 });
     assert_eq!(s.state().store["live"].read()["value"], json!({}), "the clock took the mark away");
-    // TODO(fictty): a Tick is a quiet message, so the sources reading `live` don't refetch until
-    // the next message that isn't; drop this nudge when an expiring Tick refills args.
-    s.msg(fictty::state::Msg::Changed { host: "frame".into() });
     assert!(!gutter(&mut s), "the live mark went at 3 s");
     assert!(s.screen().lines().nth(31).unwrap().contains("◆ claude added"));
     // 4 s: the toast has gone, and the daemon state is back in the bar.
@@ -979,5 +976,67 @@ fn below_60_by_24_only_one_line_shows() {
     }
     let mut s = screen(&host, View::Today, 60, 24);
     assert!(s.screen().contains("Today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- harness round 3 -------------------------------------------------------------------------
+
+/// E12: Esc with a selection in a page drops the selection and keeps writing; Esc again closes
+/// the page, back on its row in Pages.
+#[test]
+fn e12_esc_drops_a_selection_first_then_closes_the_page() {
+    let (root, v) = seeded("e12");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Pages, 120, 32);
+    s.keys(&["down", "down", "enter"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
+    s.keys(&["d-up", "s-right", "s-right"]);
+    let sel = caret(&mut s);
+    assert_ne!(sel["ranges"][0]["anchor"], sel["ranges"][0]["head"], "a selection: {sel}");
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"), "still writing");
+    let after = caret(&mut s);
+    assert_eq!(after["ranges"][0]["anchor"], after["ranges"][0]["head"], "collapsed: {after}");
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages"), "closed");
+    assert!(!s.screen().contains("write here"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// N04 at 120 wide: found with the finder, opened, Esc: the list has the focus on that page.
+#[test]
+fn n04_esc_from_a_page_opened_through_the_finder_lands_on_it() {
+    let (root, v) = seeded("n04-wide");
+    let health = node_id(&root, "Health");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["4"]);
+    type_in(&mut s, "Health");
+    s.keys(&["enter", "esc"]);
+    let st = s.state();
+    assert_eq!(st.focus.as_deref(), Some("pages"), "the list, not the prompt");
+    let sel = st.local["pages"].key.clone();
+    assert_eq!(sel.as_deref(), Some(health.as_str()), "on Health");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// T02 (fictty ec2fb64 continues lists): Enter at the end of `- Parent item`, type, Tab: a child
+/// note under it in the vault.
+#[test]
+fn t02_enter_continues_the_list_and_tab_makes_a_child() {
+    let (root, v) = seeded("t02");
+    let q4 = node_id(&root, "Q4 Planning");
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &q4);
+    s.keys(&["d-down"]);
+    type_in(&mut s, "- Parent item");
+    s.keys(&["enter"]);
+    type_in(&mut s, "Child note");
+    s.keys(&["tab"]);
+    let text = s.screen();
+    assert!(text.contains("- Parent item") && text.contains("  - Child note"), "{text}");
+    let top = kids(&root, &q4);
+    let parent = top.iter().find(|k| k.0 == "Parent item").unwrap_or_else(|| panic!("{top:?}"));
+    assert_eq!(kid_texts(&root, &parent.1), vec!["Child note"]);
     let _ = std::fs::remove_dir_all(root);
 }

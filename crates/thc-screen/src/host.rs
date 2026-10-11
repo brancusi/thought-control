@@ -304,9 +304,6 @@ impl ThcHost {
 
     /// A toast (§7.3), for `TOAST_MS` on the screen's clock, in a theme token's tone.
     fn toast(&self, text: &str, tone: &str) -> anyhow::Result<()> {
-        // The bar hides its own line while `toasting` lasts (the toast's lifetime, on the same
-        // clock): fictty's toasts node draws a toast's text over the line, not a cleared line.
-        self.write_store("toasting", fictty::store::Write::Put { value: true.into() }, Some(TOAST_MS))?;
         self.send(fictty::state::Msg::Toast { text: text.into(), tone: Some(tone.into()), ms: Some(TOAST_MS) })
     }
 

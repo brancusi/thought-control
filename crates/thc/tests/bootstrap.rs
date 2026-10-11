@@ -299,17 +299,31 @@ fn first_run_no_means_no_skill() {
 #[test]
 fn setup_wezterm_adds_one_block_and_undo_removes_it() {
     let original = "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nconfig.font_size = 14\nreturn config\n";
-    for (case, rel, env_file) in [("xdg", ".config/wezterm/wezterm.lua", false), ("dot", ".wezterm.lua", false), ("env", "custom/wez.lua", true)] {
+    // (case, the config file, $WEZTERM_CONFIG_FILE names it, $XDG_CONFIG_HOME): the modules go
+    // where WezTerm looks for its config, `$XDG_CONFIG_HOME/wezterm` when that's set.
+    for (case, rel, env_file, xdg) in [
+        ("config", ".config/wezterm/wezterm.lua", false, None),
+        ("dot", ".wezterm.lua", false, None),
+        ("env", "custom/wez.lua", true, None),
+        ("xdg", "xdg/wezterm/wezterm.lua", false, Some("xdg")),
+    ] {
         let home = thc_core::scratch::dir(&format!("thc-wezterm-{case}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&home);
         let file = home.join(rel);
         std::fs::create_dir_all(file.parent().unwrap()).unwrap();
         std::fs::write(&file, original).unwrap();
+        let dir = match xdg {
+            Some(x) => home.join(x).join("wezterm"),
+            None => home.join(".config/wezterm"),
+        };
         let run = |args: &[&str]| {
             let mut c = common::thc();
             c.args(args).env("HOME", &home).env_remove("XDG_CONFIG_HOME").env_remove("WEZTERM_CONFIG_FILE");
             if env_file {
                 c.env("WEZTERM_CONFIG_FILE", &file);
+            }
+            if let Some(x) = xdg {
+                c.env("XDG_CONFIG_HOME", home.join(x));
             }
             c.output().unwrap()
         };
@@ -325,16 +339,18 @@ fn setup_wezterm_adds_one_block_and_undo_removes_it() {
         assert_eq!(now.matches("-- thc: begin").count(), 1, "{case}: {now}");
         assert!(now.find("require('thc_keys').apply(config)").unwrap() < now.rfind("return config").unwrap(), "{case}: {now}");
         assert!(now.contains("config.font_size = 14"), "{case}: the rest is untouched");
-        assert!(home.join(".config/wezterm/thc_keys.lua").exists());
-        // fictty's module too, for `thc screen` (written by fictty's own setup).
-        let fictty = std::fs::read_to_string(home.join(".config/wezterm/fictty.lua")).unwrap_or_else(|_| panic!("{case}: fictty.lua"));
+        assert!(dir.join("thc_keys.lua").exists(), "{case}");
+        // The block loads modules from the folder they were written to (and fictty's from beside it).
+        assert!(now.contains(&format!("package.path = '{}/?.lua;'", dir.display())), "{case}: {now}");
+        // fictty's module too, for `thc screen` (written by fictty's own setup), in the same folder.
+        let fictty = std::fs::read_to_string(dir.join("fictty.lua")).unwrap_or_else(|_| panic!("{case}: fictty.lua"));
         assert_eq!(fictty, fictty::setup::wezterm_lua(), "{case}");
         let backups = std::fs::read_dir(file.parent().unwrap()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains(".bak-")).count();
         assert!(backups >= 1, "{case}: backed up");
         // --undo --yes: the file as it was, the module gone.
         assert!(run(&["--yes", "setup", "wezterm", "--undo"]).status.success());
         assert_eq!(std::fs::read_to_string(&file).unwrap(), original, "{case}");
-        assert!(!home.join(".config/wezterm/thc_keys.lua").exists());
+        assert!(!dir.join("thc_keys.lua").exists());
         let _ = std::fs::remove_dir_all(&home);
     }
     // No `return config` to put it before: the block is printed, the file untouched.
@@ -415,6 +431,26 @@ return config
     let all = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
     assert!(!all.contains("thc_keys:") && !all.to_lowercase().contains("error"), "{all}");
     let _ = std::fs::remove_dir_all(&home);
+    // The block setup writes loads both modules in WezTerm itself, with and without
+    // $XDG_CONFIG_HOME (thc_keys.lua and fictty.lua from the same folder).
+    for xdg in [false, true] {
+        let home = thc_core::scratch::dir(&format!("thc-wezblock-{xdg}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let dir = if xdg { home.join("xdg/wezterm") } else { home.join(".config/wezterm") };
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("wezterm.lua");
+        std::fs::write(&file, "local wezterm = require 'wezterm'\nlocal config = wezterm.config_builder()\nreturn config\n").unwrap();
+        let mut c = common::thc();
+        c.args(["--yes", "setup", "wezterm"]).env("HOME", &home).env_remove("XDG_CONFIG_HOME").env_remove("WEZTERM_CONFIG_FILE");
+        if xdg {
+            c.env("XDG_CONFIG_HOME", home.join("xdg"));
+        }
+        assert!(c.status().unwrap().success());
+        let o = std::process::Command::new("wezterm").args(["--config-file", file.to_str().unwrap(), "show-keys"]).env("HOME", &home).env_remove("XDG_CONFIG_HOME").output().unwrap();
+        let all = format!("{}{}", String::from_utf8_lossy(&o.stdout), String::from_utf8_lossy(&o.stderr));
+        assert!(!all.to_lowercase().contains("error") && !all.contains("not found"), "xdg {xdg}: {all}");
+        let _ = std::fs::remove_dir_all(&home);
+    }
 }
 
 /// A newer thc keeps its own WezTerm module current (⌘[ ⌘] came after 0.9.43): opening the TUI
@@ -427,7 +463,7 @@ fn the_tui_refreshes_an_older_wezterm_module() {
     std::fs::create_dir_all(home.join("p")).unwrap();
     let tui = || {
         let mut c = common::thc();
-        c.args(["tui"]).current_dir(home.join("p")).env("HOME", &home).env("THC_VAULT", home.join("p/vault")).env("THC_CACHE_DIR", home.join("cache")).env("THC_TUI_SNAPSHOT", "100x24").env("THC_TUI_KEYS", "");
+        c.args(["tui"]).current_dir(home.join("p")).env("HOME", &home).env_remove("XDG_CONFIG_HOME").env("THC_VAULT", home.join("p/vault")).env("THC_CACHE_DIR", home.join("cache")).env("THC_TUI_SNAPSHOT", "100x24").env("THC_TUI_KEYS", "");
         let o = c.output().unwrap();
         assert!(o.status.success(), "{}", String::from_utf8_lossy(&o.stderr));
     };
@@ -443,5 +479,10 @@ fn the_tui_refreshes_an_older_wezterm_module() {
     let now = std::fs::read_to_string(&module).unwrap();
     assert!(now.contains("'\\x1b[91;9u'"), "rewritten with ⌘[: {now}");
     assert_eq!(std::fs::read_to_string(home.join(".config/wezterm/wezterm.lua")).unwrap(), "-- mine\n");
+    // Only upwards: a newer thc's module (a higher version) is left as it is.
+    let newer = "-- thc's WezTerm keys, module version 999 (thc_keys.lua)\nreturn {}\n";
+    std::fs::write(&module, newer).unwrap();
+    tui();
+    assert_eq!(std::fs::read_to_string(&module).unwrap(), newer, "never downgraded");
     let _ = std::fs::remove_dir_all(&home);
 }

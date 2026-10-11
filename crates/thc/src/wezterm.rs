@@ -12,7 +12,7 @@ use std::path::PathBuf;
 /// else the key goes through untouched (`SendKey`, ⌘V a normal paste), so zsh, editors and SSH
 /// keep their own behaviour. It also turns on WezTerm's kitty keyboard protocol, for every
 /// program, so ⇧Enter is told from Enter.
-pub const MODULE: &str = r#"-- thc_keys.lua: macOS / VS Code editing keys for thc (written by `thc setup wezterm`).
+pub const MODULE: &str = r#"-- thc's WezTerm keys, module version 2 (thc_keys.lua: macOS / VS Code editing keys for thc).
 -- Used from your WezTerm config by the block `thc setup wezterm --yes` adds (marked
 -- `-- thc: begin` … `-- thc: end`); `thc setup wezterm --undo --yes` removes both.
 -- Rewritten by `thc setup wezterm --yes`; edit your own wezterm.lua instead of this file.
@@ -181,23 +181,45 @@ return M
 pub const BLOCK_BEGIN: &str = "-- thc: begin (macOS editing keys and ⌘V screenshots inside thc; delete this block to undo)";
 pub const BLOCK_END: &str = "-- thc: end";
 
+/// The block: the folder the modules were written to (thc_keys.lua, and fictty.lua it loads),
+/// by its full path, so WezTerm finds them whatever its own environment says.
 fn block() -> String {
-    format!("{BLOCK_BEGIN}\npackage.path = wezterm.home_dir .. '/.config/wezterm/?.lua;' .. package.path\nrequire('thc_keys').apply(config)\n{BLOCK_END}\n")
+    let dir = config_dir().map(|d| d.display().to_string()).unwrap_or_else(|| "~/.config/wezterm".into());
+    let lua = dir.replace('\\', "\\\\").replace('\'', "\\'");
+    format!("{BLOCK_BEGIN}\npackage.path = '{lua}/?.lua;' .. package.path\nrequire('thc_keys').apply(config)\n{BLOCK_END}\n")
 }
 
-/// The module's home: ~/.config/wezterm (the block's package.path names it).
+/// The module's version (its first line says it), so a thc only ever upgrades it.
+pub const MODULE_VERSION: u32 = 2;
+
+/// The version a module file says it is: 1 for the first ones (`-- thc_keys.lua: …`, no
+/// number), None for a file that isn't thc's module.
+pub fn module_version(text: &str) -> Option<u32> {
+    let first = text.lines().next()?;
+    if first.starts_with("-- thc_keys.lua") {
+        return Some(1);
+    }
+    let rest = first.strip_prefix("-- thc's WezTerm keys, module version ")?;
+    rest.split(|c: char| !c.is_ascii_digit()).next()?.parse().ok()
+}
+
+/// Where WezTerm's config lives, as WezTerm looks for it: `$XDG_CONFIG_HOME/wezterm`, else
+/// `~/.config/wezterm` (fictty::setup writes fictty.lua to the same place).
 fn config_dir() -> Option<PathBuf> {
-    std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/wezterm"))
+    match std::env::var_os("XDG_CONFIG_HOME").filter(|x| !x.is_empty()) {
+        Some(x) => Some(PathBuf::from(x).join("wezterm")),
+        None => std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".config/wezterm")),
+    }
 }
 
-/// The config WezTerm actually loads: $WEZTERM_CONFIG_FILE, else ~/.config/wezterm/wezterm.lua,
-/// else ~/.wezterm.lua.
+/// The config WezTerm actually loads: $WEZTERM_CONFIG_FILE, else wezterm.lua in the config dir
+/// (`$XDG_CONFIG_HOME/wezterm`, else ~/.config/wezterm), else ~/.wezterm.lua.
 pub fn user_file() -> Option<PathBuf> {
     if let Some(f) = std::env::var_os("WEZTERM_CONFIG_FILE").filter(|f| !f.is_empty()) {
         return Some(PathBuf::from(f));
     }
     let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    [home.join(".config/wezterm/wezterm.lua"), home.join(".wezterm.lua")].into_iter().find(|p| p.exists())
+    [config_dir().map(|d| d.join("wezterm.lua")), Some(home.join(".wezterm.lua"))].into_iter().flatten().find(|p| p.exists())
 }
 
 /// `text` with thc's block in place: replaced if it's there, else inserted before the last
@@ -238,12 +260,16 @@ fn backup(f: &std::path::Path) -> Result<PathBuf> {
 }
 
 /// thc's own module, kept current: once `thc setup wezterm` has written it, a newer thc rewrites
-/// it when its keys change (⌘[ ⌘] came later), and WezTerm reloads it. Only the module, never
+/// it when its keys change (⌘[ ⌘] came later), and WezTerm reloads it. Only upwards: a module
+/// of a newer version is left alone, so an older thc never downgrades it. Only the module, never
 /// the user's wezterm.lua; nothing when it was never set up. True when it was rewritten.
+///
+/// (thc 0.10.1 and before rewrite any file starting `-- thc_keys.lua` that differs from theirs;
+/// version 2's first line doesn't, so they leave it alone too.)
 pub fn refresh_module() -> bool {
     let Some(module) = config_dir().map(|d| d.join("thc_keys.lua")) else { return false };
     match std::fs::read_to_string(&module) {
-        Ok(cur) if cur != MODULE && cur.starts_with("-- thc_keys.lua") => {
+        Ok(cur) if cur != MODULE && module_version(&cur).is_some_and(|v| v < MODULE_VERSION) => {
             thc_core::sandbox::check(&module);
             std::fs::write(&module, MODULE).is_ok()
         }
@@ -360,5 +386,17 @@ mod tests {
         assert!(m.contains(&format!("pane:send_text('{}')", thc_tui::cmd_click::MARKER)), "thc_keys.lua must send {}", thc_tui::cmd_click::MARKER);
         assert!(m.contains("mouse_reporting = true") && m.contains("mods = 'SUPER'"));
         assert!(m.contains("table.insert(config.mouse_bindings, b)"));
+    }
+
+    /// The module says its version on its first line; the first modules (no number) are 1, and
+    /// nothing else is thc's.
+    #[test]
+    fn the_module_carries_its_version() {
+        assert_eq!(super::module_version(super::MODULE), Some(super::MODULE_VERSION));
+        assert_eq!(super::module_version("-- thc_keys.lua: macOS / VS Code editing keys\n"), Some(1));
+        assert_eq!(super::module_version("-- thc's WezTerm keys, module version 7 (thc_keys.lua)\n"), Some(7));
+        assert_eq!(super::module_version("local wezterm = require 'wezterm'\n"), None);
+        // thc 0.10.1's refresh rewrote any file starting so; this one doesn't.
+        assert!(!super::MODULE.starts_with("-- thc_keys.lua"));
     }
 }

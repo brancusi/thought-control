@@ -504,6 +504,7 @@ fn global_binds() -> Vec<Bind> {
     k.push(b("U", "redo", redo()));
     k.push(b("L", "review agents' changes", Action::Do { steps: vec![Action::Put { put: "log_by".into(), value: "agents".into(), for_ms: None }, show(6)] }));
     k.push(b("t", "next theme", Action::Theme { theme: "next".into() }));
+    k.push(b("esc", "close the page or day", close_documents()));
     k
 }
 
@@ -581,8 +582,7 @@ fn bar(feed: &str, hints: &[(&str, &str)]) -> Node {
     let right = format!(" {{live|true=<done>●</> <muted>live</>;*=<muted>○ local</>}}   {} ", crate::feeds::hints(hints, "  "));
     let plain: String = hints.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join("  ");
     let width = unicode_width::UnicodeWidthStr::width(format!(" ○ local   {plain} ").as_str()) as u16;
-    // While a toast shows (`toasting`, as long as it lasts), the view's line steps aside.
-    let view = when(variant(row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]), "bar"), "!toasting");
+    let view = variant(row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]), "bar");
     sized(node(Kind::Stack { children: vec![view, node(Kind::Toasts {})] }), cells(1))
 }
 
@@ -611,9 +611,21 @@ fn open_over(v: View, what: Value, focus: &str) -> Action {
     Action::Do { steps: vec![Action::Put { put: open_key(v), value: what, for_ms: None }, Action::Focus { focus: focus.into() }] }
 }
 
-/// Close what's open over a view: the view again, the focus where it was (navigation.md §2).
+/// Close what's open over a view: the view again, its list focused, still on the row it opened
+/// (navigation.md §2). (Not `$prev`: an open from the finder's prompt moves the focus twice in one
+/// key, so `$prev` is the prompt, N04.)
 fn close_over(v: View) -> Action {
-    Action::Do { steps: vec![Action::Put { put: open_key(v), value: Value::Null, for_ms: None }, Action::Focus { focus: "$prev".into() }] }
+    Action::Do { steps: vec![Action::Put { put: open_key(v), value: Value::Null, for_ms: None }, Action::Focus { focus: main_id(v) }] }
+}
+
+/// Esc anywhere it isn't bound closes a page or a day being written in. A document doesn't bind
+/// Esc: there fictty drops a selection first (E12), and only Esc with nothing selected reaches
+/// this. Each close focuses its own view's list, which is only there in its own tab.
+fn close_documents() -> Action {
+    let vs = [View::Pages, View::Journal];
+    let mut steps: Vec<Action> = vs.iter().map(|v| Action::Put { put: open_key(*v), value: Value::Null, for_ms: None }).collect();
+    steps.extend(vs.iter().map(|v| Action::Focus { focus: main_id(*v) }));
+    Action::Do { steps }
 }
 
 /// What opens over a view, as layers shown while its `open_` entry says so (each modal: the focus
@@ -633,7 +645,8 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()) };
             let mut doc = id(bound(node(editor), &k), &format!("{}_doc", v.name()));
             doc.pad = Some(Pad::X(1));
-            doc.keys.insert("esc".into(), close_over(v));
+            // No Esc here: the UI's Esc (`close_documents`) closes it, after fictty has let Esc
+            // drop a selection (E12).
             // The title is a heading row above the text, not a line of it (writing.md): ⌘A, ⌘↑
             // and ⇧⌘↑ stay in the content. (Renaming a page is its own action.)
             let heading = format!("{}_heading", v.name());
