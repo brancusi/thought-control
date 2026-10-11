@@ -1,0 +1,46 @@
+{
+ "id": "W13",
+ "title": "backslash hides the detail pane and brings it back",
+ "spec": "keymap.md §12.1 \\",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "assert": {
+    "screen": "History"
+   }
+  },
+  {
+   "key": "\\"
+  },
+  {
+   "assert": {
+    "no_screen": "History",
+    "store_value": {
+     "no_detail": "off"
+    }
+   }
+  },
+  {
+   "key": "\\"
+  }
+ ],
+ "expect": {
+  "screen": "History"
+ }
+}

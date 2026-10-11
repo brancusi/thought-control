@@ -1,0 +1,33 @@
+{
+ "id": "W17",
+ "title": "tilde cycles the theme",
+ "spec": "keymap.md (theme key ~)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "~"
+  }
+ ],
+ "expect": {
+  "theme_not": "ember-dark",
+  "fictty_state": {
+   "theme": "ember-light"
+  }
+ }
+}

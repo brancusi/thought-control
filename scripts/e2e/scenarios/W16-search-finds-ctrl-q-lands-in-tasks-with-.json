@@ -1,0 +1,50 @@
+{
+ "id": "W16",
+ "title": "search finds, ctrl q lands in Tasks with text:",
+ "spec": "navigation.md §6 · keymap.md §12.6 Search ⌃Q",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "add",
+   "Seed packets",
+   "--inbox"
+  ],
+  [
+   "add",
+   "Water timer",
+   "--inbox"
+  ],
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence"
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "key": "6"
+  },
+  {
+   "type": "Seed"
+  },
+  {
+   "assert": {
+    "screen": "Seed packets",
+    "no_screen": "Water timer"
+   }
+  },
+  {
+   "key": "c-q"
+  }
+ ],
+ "expect": {
+  "rule_under": "Tasks",
+  "screen": [
+   "text:Seed",
+   "Seed packets"
+  ]
+ }
+}

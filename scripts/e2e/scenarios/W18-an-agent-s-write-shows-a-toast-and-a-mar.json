@@ -1,0 +1,96 @@
+{
+ "id": "W18",
+ "title": "an agent's write shows a toast and a mark; u undoes it, not after 5 s",
+ "spec": "status.md §7.3 the agent toast",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "wait": 500
+  },
+  {
+   "thc": [
+    "todo",
+    "Agent wrote this",
+    "--due",
+    "today"
+   ],
+   "actor": "claude"
+  },
+  {
+   "assert": {
+    "screen": "Agent wrote this",
+    "bar_has": "claude",
+    "row_has": {
+     "find": "Agent wrote this",
+     "contains": "•"
+    }
+   },
+   "within": 3000
+  },
+  {
+   "key": "u"
+  },
+  {
+   "assert": {
+    "vault": [
+     {
+      "q": "text:Agent",
+      "count": 0
+     }
+    ],
+    "no_screen": "Agent wrote this"
+   },
+   "within": 3000
+  },
+  {
+   "thc": [
+    "todo",
+    "Second agent write",
+    "--due",
+    "today"
+   ],
+   "actor": "claude"
+  },
+  {
+   "assert": {
+    "screen": "Second agent write"
+   },
+   "within": 3000
+  },
+  {
+   "wait": 5500
+  },
+  {
+   "key": "u"
+  },
+  {
+   "wait": 1000
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:Second",
+    "count": 1
+   }
+  ],
+  "screen": "Second agent write"
+ },
+ "note": "the toast names the agent in the bar row and a • marks the row; u in the toast's 5 s undoes the write; after that u does nothing"
+}

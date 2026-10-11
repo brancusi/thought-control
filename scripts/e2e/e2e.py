@@ -20,6 +20,7 @@ real run and put back after (`--no-system-clipboard` leaves it alone and skips t
 """
 
 import argparse
+import datetime
 import base64
 import json
 import os
@@ -201,6 +202,12 @@ def check_vault(e, thc):
         for k in ("status", "text", "due", "id"):
             if k in q:
                 check(items and items[0].get(k) == q[k], f"vault {q['q']!r}: want {k}={q[k]!r}, got {[i.get(k) for i in items]}")
+        if "parent_title" in q:
+            check(items and items[0].get("parent"), f"vault {q['q']!r}: want a parent, got {[i.get('parent') for i in items]}")
+            node = json.loads(thc("--json", "show", items[0]["parent"]))
+            node = node.get("node", node)
+            title = node.get("title") or node.get("text")
+            check(title == q["parent_title"], f"vault {q['q']!r}: want it under {q['parent_title']!r}, it's under {title!r}")
 
 
 def visual_row(screen, needle, last):
@@ -226,6 +233,27 @@ def check_rows(e, screen, text, head):
         seg = visual_row(screen, e["caret_at_row_end"], False)
         check(text[:head].rstrip(" ").endswith(seg) and len(text[:head]) - len(text[:head].rstrip(" ")) <= 1,
               f"caret: want it at the end of the row {seg!r}, it's after {text[max(0, head - 30):head]!r}")
+
+
+def check_screen_rows(e, screen):
+    """`bar_has: T`: the bar (the last row with anything on it) holds T. `row_has: {find, contains}`:
+    the row showing `find` also holds `contains` (a mark beside a row)."""
+    rows = [r for r in screen.split("\n") if r.strip()]
+    if "bar_has" in e:
+        check(rows and e["bar_has"] in rows[-1], f"bar: want {e['bar_has']!r} in it, it reads {rows[-1].strip() if rows else ''!r}")
+    if "row_has" in e:
+        f, c = e["row_has"]["find"], e["row_has"]["contains"]
+        hit = [r for r in rows if f in r]
+        check(hit and any(c in r for r in hit), f"row: want {c!r} on the row with {f!r}: {[r.strip() for r in hit]}")
+
+
+def check_store_dates(e, state):
+    """`store_date: {key: days}`: a store entry holds the date `days` from today (`2026-10-10`)."""
+    for k, days in e.get("store_date", {}).items():
+        want = (datetime.date.today() + datetime.timedelta(days=days)).isoformat()
+        ent = state["store"].get(k)
+        got = ent.get("value") if isinstance(ent, dict) else ent
+        check(got == want, f"store {k}: want {want}, got {got!r}")
 
 
 def check_caret_line(e, line):
@@ -771,7 +799,11 @@ def run_steps_real(term, steps, sent, between=None, thc=None):
             term.send(st["bytes"])
             sent.append(f"bytes {show_bytes(st['bytes'])}")
         elif "type" in st:
-            term.send(st["type"])
+            # In bursts a person could type (32 characters, 20 ms apart), not one write a
+            # program might take for a paste.
+            for i in range(0, len(st["type"]), 32):
+                term.send(st["type"][i:i + 32])
+                time.sleep(0.02)
             sent.append(f"text {st['type']!r}")
         elif "paste" in st:
             term.send(f"\x1b[200~{st['paste']}\x1b[201~")
@@ -1146,12 +1178,12 @@ class ThcTui:
 
 def build_screen():
     """thc with `thc screen`: THC_SCREEN_BIN, or built from THC_SCREEN_REV (the screens branch,
-    default f8af743, PR #95) against an export of the fictty commit it was written for
-    (THC_SCREEN_FICTTY_REV, default 197ea78), all under target/e2e."""
+    default 75521e9, PR #95) against an export of the fictty commit it was written for
+    (THC_SCREEN_FICTTY_REV, default ec2fb64), all under target/e2e."""
     if os.environ.get("THC_SCREEN_BIN"):
-        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "197ea78"), os.environ.get("THC_SCREEN_PROBE")
-    rev = os.environ.get("THC_SCREEN_REV", "f8af743")
-    frev = os.environ.get("THC_SCREEN_FICTTY_REV", "197ea78")
+        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "ec2fb64"), os.environ.get("THC_SCREEN_PROBE")
+    rev = os.environ.get("THC_SCREEN_REV", "75521e9")
+    frev = os.environ.get("THC_SCREEN_FICTTY_REV", "ec2fb64")
     fd, _, _, _ = build_fictty(frev, probe_too=False)
     d = BUILD / f"screen-{rev}-on-{frev}"
     src = d / "src"
@@ -1214,7 +1246,7 @@ class ThcScreen(FicttyNotes):
     def header(self, s):
         """What the page's text starts with: up to 1697cb4 its heading and a blank line (the title
         was text in the editor); from 18b2762 on, nothing (the title is a heading row outside)."""
-        old = os.environ.get("THC_SCREEN_REV", "f8af743") in ("5ca8d24", "1697cb4")
+        old = os.environ.get("THC_SCREEN_REV", "75521e9") in ("5ca8d24", "1697cb4")
         return f"# {self.title(s)}\n\n" if old else ""
 
     def doc_of(self, state, s=None):
@@ -1247,7 +1279,7 @@ class ThcScreen(FicttyNotes):
         return text[n:], r["anchor"] - n, r["head"] - n
 
     def editor_id(self):
-        old = os.environ.get("THC_SCREEN_REV", "f8af743") in ("5ca8d24", "1697cb4")
+        old = os.environ.get("THC_SCREEN_REV", "75521e9") in ("5ca8d24", "1697cb4")
         return "doc" if old else "pages_doc"
 
     def origin(self, s):
@@ -1431,6 +1463,16 @@ class ThcScreen(FicttyNotes):
         def assert_all(a):
             screen = term.text()
             check_common(a, screen)
+            check_screen_rows(a, screen)
+            if "store_date" in a or "store_value" in a or "theme_not" in a:
+                st = state()
+                check_store_dates(a, st)
+                for k, v in a.get("store_value", {}).items():
+                    ent = st["store"].get(k)
+                    got = ent.get("value") if isinstance(ent, dict) else ent
+                    check(got == v, f"store {k}: want {v!r}, got {got!r}")
+                if "theme_not" in a:
+                    check(st.get("theme") != a["theme_not"], f"theme: want anything but {a['theme_not']!r}, it's {st.get('theme')!r}")
             if "rule_under" in a:
                 rule_under(screen, a["rule_under"])
             if "fictty_state" in a:
@@ -1584,7 +1626,8 @@ def run_real(target, scenarios, keep, clip_on):
     # fictty's forwards for fictty's targets (E2E_FICTTY_KEYS=1 adds them to any, =0 leaves them out).
     want = os.environ.get("E2E_FICTTY_KEYS", "1" if target.kind == "fictty" else "0") == "1"
     term = Terminal(target.name, keep, fictty=fictty_cli() if want else None, setup=setup_thc())
-    print(f"   WezTerm key modules: {', '.join(term.modules)}")
+    size = json.loads(term.cli("list", "--format", "json"))[0].get("size", {})
+    print(f"   WezTerm key modules: {', '.join(term.modules)} · window {size.get('cols')}x{size.get('rows')}")
     root = term.root
     clipboard = Clipboard(clip_on)
     failed = False

@@ -1,0 +1,60 @@
+{
+ "id": "W14",
+ "title": "ctrl w puts focus on the detail, j and k scroll it",
+ "spec": "keymap.md §12.1 ⌃W · panes.md",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "c-w"
+  },
+  {
+   "assert": {
+    "fictty_state": {
+     "focus": "today_pane"
+    }
+   }
+  },
+  {
+   "key": "j"
+  },
+  {
+   "key": "j"
+  },
+  {
+   "key": "k"
+  },
+  {
+   "assert": {
+    "selected_row": {
+     "list": "today",
+     "text": "Alpha task"
+    }
+   }
+  },
+  {
+   "key": "c-w"
+  }
+ ],
+ "expect": {
+  "fictty_state": {
+   "focus": "today"
+  }
+ },
+ "note": "j/k in the pane mustn't move the list's row; the pane here is shorter than its space, so the scroll itself isn't asserted"
+}
