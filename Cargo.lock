@@ -720,7 +720,7 @@ checksum = "28dea519a9695b9977216879a3ebfddf92f1c08c05d984f8996aecd6ecdc811d"
 [[package]]
 name = "fictty"
 version = "0.1.0"
-source = "git+https://github.com/brancusi/fictty?rev=ec2fb6461240f3a69ab2c0515da2e6e075bd8b62#ec2fb6461240f3a69ab2c0515da2e6e075bd8b62"
+source = "git+https://github.com/brancusi/fictty?rev=56fbdff45177422055af3ec8b11c3201d784a92d#56fbdff45177422055af3ec8b11c3201d784a92d"
 dependencies = [
  "anyhow",
  "base64 0.22.1",

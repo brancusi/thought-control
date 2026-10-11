@@ -719,6 +719,23 @@ fn typed_ahead_keys_land_in_the_page() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// T04: open a page that has text and type at once: the caret starts at the end (fictty's
+/// `"caret": "end"`), so the words are appended, not put before the first line.
+#[test]
+fn t04_typing_right_after_opening_a_page_appends() {
+    let (root, v) = seeded("t04");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Pages, 120, 32);
+    let mut keys = vec!["down".to_string(), "down".to_string(), "enter".to_string()];
+    keys.extend(typed("Quick words"));
+    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    s.keys(&refs);
+    let texts = kid_texts(&root, &home);
+    assert_eq!(texts, vec!["Water plants #garden", "Wifi password is on the fridge", "Quick words"], "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// ⌃T cycles a line plain → task → done → plain; each time the vault's node changes kind (a
 /// task is a node with a status) and keeps its id.
 #[test]
@@ -1077,8 +1094,6 @@ fn inbox_triage_moves_on_after_each_action() {
     // m: the picker, fuzzy.
     s.keys(&["m"]);
     assert_eq!(s.state().focus.as_deref(), Some("inbox_move_q"));
-    // (A frame first, as a terminal draws one: the field learns its width.)
-    let _ = s.screen();
     type_in(&mut s, "q4");
     let text = s.screen();
     assert!(text.contains("› q4") && text.contains("move to") && text.contains("¶ Q4 Planning") && !text.contains("¶ Atomic Habits"), "{text}");

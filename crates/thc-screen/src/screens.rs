@@ -748,7 +748,7 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             // view-cycling binding here: in a document it's the editor's (indent, E22).
             // Tab nests and un-nests the lines (the outliner Tab, E22); ⌃T cycles a line through
             // task, done and text (E75).
-            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()) };
+            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: Some("end".into()) };
             let mut doc = id(bound(node(editor), &k), &format!("{}_doc", v.name()));
             doc.pad = Some(Pad::X(1));
             // No Esc here: the UI's Esc (`close_documents`) closes it, after fictty has let Esc
@@ -985,7 +985,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
-            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None }), "@pages");
+            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None, caret: None }), "@pages");
             preview.id = Some("preview".into());
             preview.pad = Some(Pad::X(1));
             let content = over_list(finder_row, col(vec![sized(text(""), cells(2)), split(l, preview)]));
