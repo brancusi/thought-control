@@ -1,6 +1,9 @@
-//! Lists (owner decision, 2026-10-11): a list's style is a property of its parent, never of an
-//! item. `list = "1."` on a note says its children are numbered `1.` `2.` `3.`; the numbers come
-//! from sibling order, so a reorder renumbers by itself and no number is ever stored.
+//! Lists (owner decision, 2026-10-11): a **list** is a run of consecutive sibling items (a
+//! paragraph between them ends it). Its style is the `list` prop on the run's **first item**,
+//! meaning "the style of the list that starts here"; it's never an item's own numbering. Numbers
+//! come from order, so a reorder renumbers by itself and no number is ever stored. When the first
+//! item moves or goes, the run's new first item takes the prop (writers re-derive it from the
+//! text), and a prop left on an item that no longer starts a run means nothing.
 //!
 //! **Styles** are the first item's marker, as the editor (fictty `lists.rs`) writes it: a bullet
 //! `-` `*` `+`, or an ordered count (`1` numbers, `a`/`A` letters, `i`/`I` roman) with `.` or `)`.
@@ -16,7 +19,7 @@
 
 use crate::store::Store;
 
-/// The property on a list's parent that holds its style.
+/// The property on a list's first item that holds the list's style.
 pub const LIST: &str = "list";
 
 /// How an ordered marker counts.
@@ -199,16 +202,60 @@ pub fn explicit(store: &Store, id: &str) -> Option<ListStyle> {
     store.props_of(id).ok()?.get(LIST)?.as_str().and_then(ListStyle::parse)
 }
 
-/// The level of `id`'s children: its explicit style, or the default from its ancestors' lists.
-pub fn level(store: &Store, id: &str) -> Level {
-    let mut chain = vec![id.to_string()];
-    while let Some(p) = store.node(chain.last().expect("one")).ok().flatten().and_then(|n| n.parent) {
-        if chain.contains(&p) {
-            break;
-        }
-        chain.push(p);
+/// Where a note stands among its siblings: a list item (its list's style and its number), or a
+/// paragraph (None); and `inner`, the level its own children's lists sit in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Place {
+    pub item: Option<(ListStyle, usize)>,
+    pub inner: Level,
+}
+
+impl Place {
+    /// The marker it's written with (None for a paragraph).
+    pub fn marker(self) -> Option<String> {
+        self.item.map(|(style, n)| style.marker(n))
     }
-    chain.iter().rev().fold(Level::NONE, |lv, n| lv.child(explicit(store, n)))
+}
+
+/// Each sibling's place, given whether it's a paragraph and its own `list` prop, and the level
+/// the siblings' lists sit in. A run of items is one list: its style is its first item's prop,
+/// else the default; a paragraph ends it, and its children start afresh (it isn't an item).
+pub fn places(enclosing: Level, kids: impl IntoIterator<Item = (bool, Option<ListStyle>)>) -> Vec<Place> {
+    let mut run: Option<(Level, usize)> = None;
+    kids.into_iter()
+        .map(|(para, explicit)| {
+            if para {
+                run = None;
+                return Place { item: None, inner: Level::NONE };
+            }
+            let (level, n) = match run {
+                Some((level, n)) => (level, n + 1),
+                None => (enclosing.child(explicit), 1),
+            };
+            run = Some((level, n));
+            Place { item: Some((level.style, n)), inner: level }
+        })
+        .collect()
+}
+
+/// The places of `parent`'s children (in order) from the store, given the level they sit in.
+pub fn places_under(store: &Store, parent: &str, enclosing: Level) -> anyhow::Result<Vec<(crate::model::Node, Place)>> {
+    let kids = store.children(parent)?;
+    let p = places(enclosing, kids.iter().map(|c| (crate::edit::is_paragraph(store, c), explicit(store, &c.id))));
+    Ok(kids.into_iter().zip(p).collect())
+}
+
+/// A note's place among its siblings, from the store (None for a note with no parent).
+pub fn place_of(store: &Store, id: &str) -> Option<Place> {
+    let parent = store.node(id).ok().flatten()?.parent?;
+    let enclosing = enclosing(store, &parent);
+    places_under(store, &parent, enclosing).ok()?.into_iter().find(|(n, _)| n.id == id).map(|(_, p)| p)
+}
+
+/// The level the lists among `id`'s children sit in: a top-level note's (a page's, a day's)
+/// start afresh, and so do a paragraph's.
+pub fn enclosing(store: &Store, id: &str) -> Level {
+    place_of(store, id).map_or(Level::NONE, |p| p.inner)
 }
 
 #[cfg(test)]

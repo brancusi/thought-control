@@ -1,6 +1,6 @@
 //! Read-only Markdown export (Obsidian-readable) and a full JSON snapshot.
 
-use crate::list::ListStyle;
+use crate::list::{Level, ListStyle};
 use crate::model::Node;
 use crate::store::Store;
 use anyhow::Result;
@@ -68,26 +68,22 @@ fn item_line(store: &Store, n: &Node, marker: &str) -> String {
 
 /// Plain Markdown lists (list.rs): a numbered list keeps its numbers and its `.` or `)`; letters
 /// and roman numerals, which Markdown doesn't have, fall back to numbers. Paragraphs export as
-/// `-` lines (as before), and one between items starts a new list, as in the editor.
-fn markdown_marker(style: ListStyle, para: bool, n: usize) -> String {
-    match style {
-        ListStyle::Ordered(_, delim) if !para => format!("{n}{delim}"),
-        ListStyle::Bullet(c) if !para => c.to_string(),
-        _ => "-".into(),
+/// `-` lines (as before); one between items starts a new list, as in the editor.
+fn markdown_marker(item: Option<(ListStyle, usize)>) -> String {
+    match item {
+        Some((ListStyle::Ordered(_, delim), n)) => format!("{n}{delim}"),
+        Some((ListStyle::Bullet(c), _)) => c.to_string(),
+        None => "-".into(),
     }
 }
 
-fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Result<()> {
+fn outline(store: &Store, parent: &str, enclosing: Level, depth: usize, out: &mut String) -> Result<()> {
     let mut prev_para: Option<bool> = None;
-    let style = crate::list::level(store, parent).style;
-    let mut n = 0;
-    for c in store.children(parent)? {
-        let is_para = crate::edit::is_paragraph(store, &c);
-        n = if is_para { 0 } else { n + 1 };
+    for (c, place) in crate::list::places_under(store, parent, enclosing)? {
         // A blank line before a top-level note where it has one (`gap`, writing.md §1): its own
         // when set, else the default (a paragraph keeps a blank line on either side).
         if depth == 0 {
-            let para = crate::edit::has_para_style(store, &c.id) && c.status.is_none();
+            let para = place.item.is_none();
             if let Some(p) = prev_para {
                 if crate::edit::gap_of(store, &c.id).unwrap_or(p || para) {
                     out.push('\n');
@@ -95,11 +91,11 @@ fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Resul
             }
             prev_para = Some(para);
         }
-        let line = item_line(store, &c, &markdown_marker(style, is_para, n));
+        let line = item_line(store, &c, &markdown_marker(place.item));
         out.push_str(&"    ".repeat(depth));
         out.push_str(&line);
         out.push('\n');
-        outline(store, &c.id, depth + 1, out)?;
+        outline(store, &c.id, place.inner, depth + 1, out)?;
     }
     Ok(())
 }
@@ -125,7 +121,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
         if let Some(j) = &r.journal {
             let mut s = String::from(HEADER);
             s.push_str(&format!("# {j}\n\n"));
-            outline(store, &r.id, 0, &mut s)?;
+            outline(store, &r.id, Level::NONE, 0, &mut s)?;
             fs::write(tmp.join("journal").join(format!("{j}.md")), s)?;
             stats.journals += 1;
         } else if let Some(t) = &r.title {
@@ -138,7 +134,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
                 s.push_str(&store.render_text(&r.text));
                 s.push_str("\n\n");
             }
-            outline(store, &r.id, 0, &mut s)?;
+            outline(store, &r.id, Level::NONE, 0, &mut s)?;
             let mut name = slug(t);
             if tmp.join("pages").join(format!("{name}.md")).exists() {
                 name = format!("{name}-{}", &r.id[..5]);
@@ -148,7 +144,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
         } else {
             inbox.push_str(&task_line(store, r));
             inbox.push('\n');
-            outline(store, &r.id, 1, &mut inbox)?;
+            outline(store, &r.id, crate::list::enclosing(store, &r.id), 1, &mut inbox)?;
         }
     }
     fs::write(tmp.join("inbox.md"), inbox)?;
@@ -198,8 +194,8 @@ mod tests {
 
     #[test]
     fn letters_and_roman_export_as_numbers() {
-        let m = |s: &str, para: bool, n: usize| markdown_marker(ListStyle::parse(s).unwrap(), para, n);
-        assert_eq!([m("a.", false, 2), m("I)", false, 3), m("1.", false, 4), m("*", false, 1)], ["2.", "3)", "4.", "*"]);
-        assert_eq!(m("1.", true, 0), "-", "a paragraph stays a - line");
+        let m = |s: &str, n: usize| markdown_marker(Some((ListStyle::parse(s).unwrap(), n)));
+        assert_eq!([m("a.", 2), m("I)", 3), m("1.", 4), m("*", 1)], ["2.", "3)", "4.", "*"]);
+        assert_eq!(markdown_marker(None), "-", "a paragraph stays a - line");
     }
 }

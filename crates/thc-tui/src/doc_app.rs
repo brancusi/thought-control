@@ -118,7 +118,7 @@ impl App {
                 id: n.id.clone(), parent: n.parent.clone(), depth: 0, kind: if n.status.is_some() { Kind::Task } else { Kind::Bullet }, status: n.status.clone(),
                 text: n.text.clone(), scheduled: n.scheduled.clone(), due: n.due.clone(), priority: n.priority.clone(),
                 repeat: n.repeat.as_ref().and_then(|r| r.get("text")).and_then(|t| t.as_str()).map(str::to_string),
-                tags: vec![], rev: None, text_rev: None, conflict: false, done_at: n.done_at.clone(), gap: None,
+                tags: vec![], rev: None, text_rev: None, conflict: false, done_at: n.done_at.clone(), gap: None, marker: None,
             };
             let why = crate::editor::meta_text(&block, self.today);
             let o = origin(&n.id);

@@ -4,8 +4,10 @@
 //! **One nesting rule (owner decision, 2026-10-11):** an indented line is a child of the note
 //! above it, whatever either kind (a paragraph, a list item, a task). A note's own later lines
 //! are joined by a trailing `\` (a line break); a paragraph's wrapped lines may also continue at
-//! the paragraph's own indent. **Lists** (list.rs): an item's marker comes from its parent's
-//! `list` style and its place among its siblings; numbers are never stored.
+//! the paragraph's own indent. **Lists** (list.rs): a run of sibling items is one list; an
+//! item's marker comes from the list's style (the `list` prop on its first item, else the
+//! default) and its place in the run; numbers are never stored. `Writer` is the one writer of
+//! notes as Markdown lines, for this text and for the blocks' copy (outline::markdown).
 
 use crate::builder::TxBuilder;
 use crate::capture;
@@ -44,93 +46,112 @@ fn fields(n: &Node) -> String {
 
 pub fn render(store: &Store, root_id: &str) -> Result<Rendered> {
     let root = store.must_node(root_id)?;
-    let mut out = String::new();
+    let mut w = Writer::default();
     let mut ids = HashMap::new();
     let short = store.short(&root.id);
     ids.insert(short.clone(), root.id.clone());
-    // The note before, in document order: whether it was a paragraph (the default gap).
-    let mut prev_para: Option<bool> = None;
     let depth = if root.title.is_some() || root.journal.is_some() {
         let t = root.title.clone().unwrap_or_else(|| format!("{} (journal)", root.journal.clone().unwrap_or_default()));
-        out.push_str(&format!("# {t} ^{short}\n\n"));
+        w.out.push_str(&format!("# {t} ^{short}\n\n"));
         0
     } else {
         // One note and its subtree: the note is shown alone, so not numbered as an item of its
         // list (its list isn't in the text).
         let para = is_paragraph(store, &root);
-        render_note(store, &root, 0, (!para).then(|| ListStyle::BULLET.marker(1)).as_deref(), &mut out, &mut ids);
-        prev_para = Some(para);
+        render_note(store, &root, 0, (!para).then(|| ListStyle::BULLET.marker(1)).as_deref(), &mut w, &mut ids);
         1
     };
-    render_children(store, &root.id, list::level(store, &root.id), depth, &mut out, &mut ids, &mut prev_para)?;
+    render_children(store, &root.id, list::enclosing(store, &root.id), depth, &mut w, &mut ids)?;
+    let mut out = w.out;
     out.push('\n');
     out.push_str(HELP);
     out.push('\n');
     Ok(Rendered { text: out, ids, root: root.id })
 }
 
-/// A note's children at `depth`, each after the blank line its `gap` says (or the default: a
-/// paragraph keeps a blank line on either side), then its own children: every kind nests the
-/// same way. A list item's marker is its list's style at its place in its run of items (a
-/// paragraph between them starts a new list).
-fn render_children(
-    store: &Store,
-    parent: &str,
-    level: Level,
-    depth: usize,
-    out: &mut String,
-    ids: &mut HashMap<String, String>,
-    prev_para: &mut Option<bool>,
-) -> Result<()> {
-    let mut n = 0;
-    for c in store.children(parent)? {
-        let para = is_paragraph(store, &c);
-        if prev_para.is_some_and(|p| gap_of(store, &c.id).unwrap_or(p || para)) {
-            out.push('\n');
-        }
-        *prev_para = Some(para);
-        n = if para { 0 } else { n + 1 };
-        render_note(store, &c, depth, (!para).then(|| level.style.marker(n)).as_deref(), out, ids);
-        render_children(store, &c.id, level.child(list::explicit(store, &c.id)), depth + 1, out, ids, prev_para)?;
+/// A note's children at `depth`, then each one's own children: every kind nests the same way.
+/// A list item's marker is its list's style at its place in its run of items (list.rs).
+fn render_children(store: &Store, parent: &str, enclosing: Level, depth: usize, w: &mut Writer, ids: &mut HashMap<String, String>) -> Result<()> {
+    for (c, place) in list::places_under(store, parent, enclosing)? {
+        render_note(store, &c, depth, place.marker().as_deref(), w, ids);
+        render_children(store, &c.id, place.inner, depth + 1, w, ids)?;
     }
     Ok(())
 }
 
-/// One note at `depth`: a list item behind its `marker`, or a paragraph (escaped where its first
-/// line would read as an item). Fields follow the first line. A line break is a trailing `\`
-/// (a Markdown hard break), the next line at the note's text column. The `^id` ends the last line.
-fn render_note(store: &Store, n: &Node, depth: usize, marker: Option<&str>, out: &mut String, ids: &mut HashMap<String, String>) {
+fn render_note(store: &Store, n: &Node, depth: usize, marker: Option<&str>, w: &mut Writer, ids: &mut HashMap<String, String>) {
     let short = store.short(&n.id);
     ids.insert(short.clone(), n.id.clone());
-    let pad = " ".repeat(depth * INDENT);
     let text = store.render_text(&n.text);
-    let mut lines: Vec<&str> = text.lines().collect();
-    if lines.is_empty() {
-        lines.push("");
-    }
-    let (head, column) = match marker {
-        Some(m) => (format!("{pad}{m} {}", checkbox(n.status.as_deref())), " ".repeat(pad.len() + m.chars().count() + 1)),
-        None => (pad.clone(), pad.clone()),
-    };
-    let last = lines.len() - 1;
-    for (i, l) in lines.iter().enumerate() {
-        let mut line = if i == 0 {
-            let first = if marker.is_none() { list::escape(l) } else { l.to_string() };
-            format!("{head}{first}{}", fields(n))
-        } else {
-            format!("{column}{l}")
-        };
-        if i < last {
-            line.push_str(" \\");
-        } else {
-            if !line.trim().is_empty() {
-                line.push(' ');
-            }
-            line.push('^');
-            line.push_str(&short);
+    let fields = fields(n);
+    w.note(&Note { depth, marker, status: n.status.as_deref(), text: &text, fields: &fields, gap: gap_of(store, &n.id), id: Some(&short) });
+}
+
+/// One note as Markdown lines.
+pub struct Note<'a> {
+    /// Its nesting (2 spaces a level).
+    pub depth: usize,
+    /// Its list marker (`-`, `3.`); None for a paragraph.
+    pub marker: Option<&'a str>,
+    pub status: Option<&'a str>,
+    pub text: &'a str,
+    /// Its fields as capture tokens (` due:… !high`), after the first line.
+    pub fields: &'a str,
+    /// Its `gap` prop, if it has one.
+    pub gap: Option<bool>,
+    /// The `^id` that ends its last line (`thc edit`), or none (a copy).
+    pub id: Option<&'a str>,
+}
+
+/// The one writer of notes as Markdown lines, in document order: `thc edit`'s text and the
+/// blocks' copy (outline::markdown) are both written here.
+#[derive(Default)]
+pub struct Writer {
+    pub out: String,
+    /// The note before: whether it was a paragraph.
+    prev_para: Option<bool>,
+}
+
+impl Writer {
+    /// A note: after the blank line its `gap` says (or the default: a paragraph keeps a blank line
+    /// on either side), a list item behind its marker or a paragraph (escaped where its first line
+    /// would read as an item). Fields follow the first line. A line break is a trailing `\` (a
+    /// Markdown hard break), the next line at the note's text column. An id ends the last line.
+    pub fn note(&mut self, n: &Note) {
+        let para = n.marker.is_none();
+        if self.prev_para.is_some_and(|p| n.gap.unwrap_or(p || para)) {
+            self.out.push('\n');
         }
-        out.push_str(&line);
-        out.push('\n');
+        self.prev_para = Some(para);
+        let pad = " ".repeat(n.depth * INDENT);
+        let mut lines: Vec<&str> = n.text.lines().collect();
+        if lines.is_empty() {
+            lines.push("");
+        }
+        let (head, column) = match n.marker {
+            Some(m) => (format!("{pad}{m} {}", checkbox(n.status)), " ".repeat(pad.len() + m.chars().count() + 1)),
+            None => (pad.clone(), pad.clone()),
+        };
+        let last = lines.len() - 1;
+        for (i, l) in lines.iter().enumerate() {
+            let mut line = if i == 0 {
+                let first = if para { list::escape(l) } else { l.to_string() };
+                format!("{head}{first}{}", n.fields)
+            } else {
+                format!("{column}{l}")
+            };
+            if i < last {
+                line.push_str(" \\");
+            } else if let Some(id) = n.id {
+                if !line.trim().is_empty() {
+                    line.push(' ');
+                }
+                line.push('^');
+                line.push_str(id);
+            }
+            self.out.push_str(line.trim_end_matches(' '));
+            self.out.push('\n');
+        }
     }
 }
 
@@ -193,16 +214,11 @@ pub fn para_ids(store: &Store) -> HashSet<String> {
         .unwrap_or_default()
 }
 
-/// A note shown as prose: written as a paragraph, and still plain (no status, dates, priority
-/// or repeat, no title). It may have children, like any note.
+/// A note shown as prose: written as a paragraph and not a task (outline.rs `Kind::Para`, the
+/// same rule). Its fields are written after its first line, as an item's are; it may have
+/// children, like any note.
 pub fn is_paragraph(store: &Store, n: &Node) -> bool {
-    has_para_style(store, &n.id)
-        && n.status.is_none()
-        && n.scheduled.is_none()
-        && n.due.is_none()
-        && n.priority.is_none()
-        && n.repeat.is_none()
-        && n.title.is_none()
+    n.status.is_none() && has_para_style(store, &n.id)
 }
 
 /// One note as written in an edit text.
@@ -351,9 +367,9 @@ pub struct EditSummary {
     pub deleted: usize,
 }
 
-/// A list as written, against the `list` its parent has: the level it ends up at, and the value
-/// to write (empty clears it) when the text shows a style other than the one it has. Only a
-/// style that differs from the default is stored; a list with no items keeps its prop.
+/// A list as written, against the `list` its first item has: the level it ends up at, and the
+/// value to write (empty clears it) when the text shows a style other than the one it has. Only
+/// a style that differs from the default is stored.
 fn decide(enclosing: Level, have: Option<ListStyle>, written: Option<ListStyle>) -> (Level, Option<String>) {
     let default = enclosing.default_inside();
     let now = have.unwrap_or(default);
@@ -424,27 +440,15 @@ pub fn apply(b: &mut TxBuilder, rendered: &Rendered, edited: &str) -> Result<Edi
         }
     }
 
-    // Each list's style is its first item's marker (list.rs); by parent item, None for the
-    // root's children (or, editing one note, the list that note sits in: not in the text, so
-    // never written).
-    let mut written: HashMap<Option<usize>, ListStyle> = HashMap::new();
-    for it in &items {
-        if let Some(m) = it.marker {
-            written.entry(it.parent).or_insert(m);
-        }
-    }
-    let mut levels: HashMap<Option<usize>, Level> = HashMap::new();
-    let enclosing = root.parent.as_deref().map_or(Level::NONE, |p| list::level(store, p));
-    if header {
-        let (level, write) = decide(enclosing, list::explicit(store, &root.id), written.get(&None).copied());
-        if let Some(w) = write {
-            b.set_props(&root.id, &[(LIST.into(), w)])?;
-            summary.updated += 1;
-        }
-        levels.insert(None, level);
-    } else {
-        levels.insert(None, enclosing);
-    }
+    // Lists (list.rs): a run of sibling items is one list, its style its first item's marker,
+    // stored on that first item when it isn't the default. It's re-derived from the text, so
+    // when a list's first item moves or goes, the new first one takes the prop and an item that
+    // no longer starts a list loses its own. By parent item: the level its children's lists sit
+    // in, and the list now open among them. None: the root's children (editing one note: that
+    // note and its siblings, whose list isn't in the text, so never written).
+    let root_inner = list::enclosing(store, &root.id);
+    let mut enclosing: HashMap<Option<usize>, Level> = HashMap::from([(None, root_inner)]);
+    let mut open_list: HashMap<Option<usize>, Level> = HashMap::new();
 
     // Resolve final ids for new items as we go (parents precede children).
     let mut final_ids: Vec<String> = Vec::with_capacity(items.len());
@@ -459,10 +463,21 @@ pub fn apply(b: &mut TxBuilder, rendered: &Rendered, edited: &str) -> Result<Edi
         if !it.more.is_empty() {
             cap.text = format!("{}\n{}", cap.text, it.more.join("\n"));
         }
-        // This note's own list: the style its children were written in.
+        // Its place in a list: the first item writes the list's style; any other note clears one.
         let have_list = it.id.as_deref().and_then(|id| list::explicit(store, id));
-        let (level, list_want) = decide(levels[&it.parent], have_list, written.get(&Some(i)).copied());
-        levels.insert(Some(i), level);
+        let (inner, list_want) = if !header && it.parent.is_none() {
+            (if it.para() { Level::NONE } else { root_inner }, None)
+        } else if it.para() {
+            open_list.remove(&it.parent);
+            (Level::NONE, have_list.map(|_| String::new()))
+        } else if let Some(&level) = open_list.get(&it.parent) {
+            (level, have_list.map(|_| String::new()))
+        } else {
+            let (level, write) = decide(enclosing[&it.parent], have_list, it.marker);
+            open_list.insert(it.parent, level);
+            (level, write)
+        };
+        enclosing.insert(Some(i), inner);
         match &it.id {
             Some(id) => {
                 let node = store.must_node(id)?;
@@ -735,17 +750,19 @@ mod tests {
             save(&mut v, &page, &text);
             assert_eq!(body(&v, &page), text, "{s}");
             round_trips(&mut v, &page);
-            // Each level's style is on its parent, written only where it isn't the default.
+            // Each list's style is on its first item, written only where it isn't the default.
             let one = kid(&v, &page, 0);
             let sub = kid(&v, &one.id, 0);
+            let deep = kid(&v, &sub.id, 0);
             let want = |default: &str| (s != default).then(|| s.to_string());
             let (d2, d3) = if st.is_ordered() { ("a.", "i.") } else { ("-", "-") };
-            assert_eq!(list_of(&v, &page), want("-"), "{s} at depth 1");
-            assert_eq!(list_of(&v, &one.id), want(d2), "{s} at depth 2");
-            assert_eq!(list_of(&v, &sub.id), want(d3), "{s} at depth 3");
-            // No item stores a number.
-            let deep = kid(&v, &sub.id, 1);
-            assert!(v.store.props_of(&deep.id).unwrap().is_empty(), "{s}");
+            assert_eq!(list_of(&v, &one.id), want("-"), "{s} at depth 1");
+            assert_eq!(list_of(&v, &sub.id), want(d2), "{s} at depth 2");
+            assert_eq!(list_of(&v, &deep.id), want(d3), "{s} at depth 3");
+            // No other item stores anything, and none a number.
+            for other in [kid(&v, &sub.id, 1), kid(&v, &one.id, 1), kid(&v, &page, 1)] {
+                assert!(v.store.props_of(&other.id).unwrap().is_empty(), "{s}");
+            }
         }
     }
 
@@ -755,33 +772,62 @@ mod tests {
         let text = "1. one\n  a. sub\n    i. deep\n      1. deeper\n";
         save(&mut v, &page, text);
         assert_eq!(body(&v, &page), text);
-        assert_eq!(list_of(&v, &page).as_deref(), Some("1."));
         let one = kid(&v, &page, 0);
         let sub = kid(&v, &one.id, 0);
         let deep = kid(&v, &sub.id, 0);
-        assert_eq!([list_of(&v, &one.id), list_of(&v, &sub.id), list_of(&v, &deep.id)], [None, None, None]);
+        let deeper = kid(&v, &deep.id, 0);
+        assert_eq!(list_of(&v, &one.id).as_deref(), Some("1."));
+        assert_eq!([list_of(&v, &sub.id), list_of(&v, &deep.id), list_of(&v, &deeper.id)], [None, None, None]);
         round_trips(&mut v, &page);
     }
 
     #[test]
-    fn a_reorder_renumbers() {
+    fn a_reorder_renumbers_and_the_style_stays_with_the_list() {
         let (mut v, page) = setup();
-        save(&mut v, &page, "1. alpha\n2. beta\n3. gamma\n");
+        save(&mut v, &page, "a. alpha\nb. beta\nc. gamma\n");
         let r = render(&v.store, &page).unwrap();
         let line = |t: &str| r.text.lines().find(|l| l.contains(t)).unwrap().to_string();
-        // Gamma moved to the top, its old number kept as typed.
-        let edited = format!("# Notes\n\n{}\n{}\n{}\n", line("gamma"), line("alpha"), line("beta"));
+        // The first item moved to the end, its old letter kept as typed.
+        let edited = format!("# Notes\n\n{}\n{}\n{}\n", line("beta"), line("gamma"), line("alpha"));
         let sum = apply_text(&mut v, &r, &edited);
-        assert_eq!((sum.moved, sum.updated), (1, 0), "a move, and no number stored");
-        assert_eq!(body(&v, &page), "1. gamma\n2. alpha\n3. beta\n");
-        assert_eq!(list_of(&v, &page).as_deref(), Some("1."));
+        assert_eq!(sum.moved, 1);
+        assert_eq!(body(&v, &page), "a. beta\nb. gamma\nc. alpha\n");
+        let ids: Vec<String> = v.store.children(&page).unwrap().into_iter().map(|n| n.id).collect();
+        assert_eq!(list_of(&v, &ids[0]).as_deref(), Some("a."), "the new first item takes the style");
+        assert_eq!(list_of(&v, &ids[2]), None, "the old one no longer starts a list");
+        round_trips(&mut v, &page);
+    }
+
+    #[test]
+    fn deleting_a_list_s_first_item_keeps_its_style() {
+        let (mut v, page) = setup();
+        save(&mut v, &page, "I. alpha\nII. beta\nIII. gamma\n");
+        let r = render(&v.store, &page).unwrap();
+        let edited: String = r.text.lines().filter(|l| !l.contains("alpha")).map(|l| format!("{l}\n")).collect();
+        let sum = apply_text(&mut v, &r, &edited);
+        assert_eq!(sum.deleted, 1);
+        assert_eq!(body(&v, &page), "I. beta\nII. gamma\n");
+        assert_eq!(list_of(&v, &kid(&v, &page, 0).id).as_deref(), Some("I."));
+        round_trips(&mut v, &page);
+    }
+
+    #[test]
+    fn lists_of_different_styles_on_one_level() {
+        let (mut v, page) = setup();
+        let text = "- milk\n- eggs\n\nThen, in order:\n\n1. preheat\n2. whisk\n\nAnd finally:\n\ni) serve\nii) eat\n";
+        save(&mut v, &page, text);
+        assert_eq!(body(&v, &page), text);
+        let kids = v.store.children(&page).unwrap();
+        let styles: Vec<Option<String>> = kids.iter().map(|k| list_of(&v, &k.id)).collect();
+        assert_eq!(styles, [None, None, None, Some("1.".into()), None, None, Some("i)".into()), None]);
+        round_trips(&mut v, &page);
     }
 
     #[test]
     fn a_list_with_mixed_markers_takes_its_first_item_s_style() {
         let (mut v, page) = setup();
         save(&mut v, &page, "b) one\n1. two\n- three\nvii. four\n");
-        assert_eq!(list_of(&v, &page).as_deref(), Some("a)"));
+        assert_eq!(list_of(&v, &kid(&v, &page, 0).id).as_deref(), Some("a)"));
         assert_eq!(body(&v, &page), "a) one\nb) two\nc) three\nd) four\n");
         round_trips(&mut v, &page);
     }
@@ -793,12 +839,14 @@ mod tests {
         save(&mut v, &page, text);
         assert_eq!(body(&v, &page), text);
         let one = kid(&v, &page, 0);
-        assert_eq!(list_of(&v, &one.id).as_deref(), Some("-"), "differs from the default a.");
+        assert_eq!(list_of(&v, &kid(&v, &one.id, 0).id).as_deref(), Some("-"), "differs from the default a.");
         round_trips(&mut v, &page);
         // Cycled back to the default: the prop goes.
-        save(&mut v, &page, "1. one\n  a. sub\n");
-        let one = kid(&v, &page, 0);
-        assert_eq!(list_of(&v, &one.id), None);
+        let r = render(&v.store, &page).unwrap();
+        let edited = r.text.replacen("  - sub ", "  a. sub ", 1);
+        apply_text(&mut v, &r, &edited);
+        assert_eq!(list_of(&v, &kid(&v, &one.id, 0).id), None);
+        assert_eq!(body(&v, &page), "1. one\n  a. sub\n  b. sub two\n2. two\n  * starred\n");
     }
 
     #[test]
@@ -817,7 +865,7 @@ mod tests {
         assert!(is_paragraph(&v.store, &a) && a.text == "1. not a list");
         assert!(is_paragraph(&v.store, &b) && b.text == "+ nor a bullet");
         assert_eq!(body(&v, &page), "1\\. not a list\n\n\\+ nor a bullet\n");
-        assert_eq!(list_of(&v, &page), None);
+        assert_eq!(list_of(&v, &a.id), None);
         round_trips(&mut v, &page);
     }
 
@@ -831,9 +879,20 @@ mod tests {
         assert!(r.text.starts_with(&format!("- two ^{short}\n")), "shown alone: {}", r.text);
         let edited = r.text.replace(&format!("- two ^{short}"), &format!("- two ^{short}\n  i. first\n  ii. second\n  A paragraph under it"));
         apply_text(&mut v, &r, &edited);
-        assert_eq!(list_of(&v, &page).as_deref(), Some("1."), "its own list is untouched");
-        assert_eq!(list_of(&v, &two.id).as_deref(), Some("i."));
+        assert_eq!(list_of(&v, &kid(&v, &page, 0).id).as_deref(), Some("1."), "its own list is untouched");
+        assert_eq!(list_of(&v, &two.id), None);
+        assert_eq!(list_of(&v, &kid(&v, &two.id, 0).id).as_deref(), Some("i."));
         assert!(is_paragraph(&v.store, &kid(&v, &two.id, 2)));
         assert_eq!(body(&v, &page), "1. one\n2. two\n  i. first\n  ii. second\n  A paragraph under it\n");
+    }
+
+    #[test]
+    fn the_blocks_copy_is_the_edit_text_without_ids() {
+        let (mut v, page) = setup();
+        let text = "Para \\\nline two\n  1. child\n  2. child two\n\n- [ ] task due:2026-10-20 \\\n  more\n\n1\\. escaped\n";
+        save(&mut v, &page, text);
+        let copy = crate::outline::markdown(&crate::outline::render(&v.store, &page).unwrap());
+        assert_eq!(copy, body(&v, &page));
+        assert_eq!(copy, text);
     }
 }

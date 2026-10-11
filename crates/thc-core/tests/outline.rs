@@ -262,5 +262,6 @@ fn a_paragraphs_children_save_under_it_and_export_indented() {
     let depth = |id: &str| blocks.iter().find(|b| b.id == id).unwrap().depth;
     assert_eq!((depth(&p), depth(&c), depth(&t)), (0, 1, 1));
     let md = outline::markdown(&blocks);
-    assert_eq!(md, "Para line\n\n  first subtask\n  more of it\n\n  - [ ] a task under it\n", "{md}");
+    // The same lines `thc edit` writes: a line break inside a note is a trailing `\`.
+    assert_eq!(md, "Para line\n\n  first subtask \\\n  more of it\n\n  - [ ] a task under it\n", "{md}");
 }

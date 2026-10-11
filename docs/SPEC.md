@@ -428,9 +428,10 @@ building.                                                   ^a1b2c
   as paragraphs, at any depth, with their children under them, and a blank line next to them unless
   their `gap` says otherwise. Everything else renders as a list item, and items stay tight.
 - **List markers:** `- ` `* ` `+ `, or an ordered one: `1.` `a.` `A.` `i.` `I.`, each with `.` or `)`.
-  A list's style is its first item's marker, stored on the parent as `list` (FORMAT.md) when it isn't
-  the default; render numbers the items from their order, so the numbers typed are never kept (a list
-  after a paragraph starts at 1). A paragraph whose first line would read as an item is escaped as
+  A list is a run of sibling items (a paragraph ends it). Its style is its first item's marker, stored
+  on that first item as `list` (FORMAT.md) when it isn't the default; render numbers the items from
+  their order, so the numbers typed are never kept (a list after a paragraph starts at 1). Copying
+  blocks as Markdown (`outline::markdown`) writes exactly these lines, without the ids. A paragraph whose first line would read as an item is escaped as
   CommonMark does (`1\. `, `\- `).
 - No new node kind and no format change: a paragraph is an ordinary note and a list is a prop.
 
