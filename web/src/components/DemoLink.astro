@@ -1,0 +1,11 @@
+---
+// A demo link on a page; see src/lib/demo-link.mjs. With `latest`, the date is the checkout's
+// HEAD at build time, so the landing page says which thc it runs.
+import { execSync } from 'node:child_process';
+import { demoHtml } from '../lib/demo-link.mjs';
+interface Props { name: string; script: string; date?: string; commit?: string; latest?: boolean; needs?: string; compact?: boolean }
+const p = Astro.props;
+const head = (fmt: string) => { try { return execSync(`git log -1 --format=${fmt}`, { encoding: 'utf8' }).trim(); } catch { return ''; } };
+const date = p.date ?? (p.latest ? head('%cI') : undefined);
+---
+<Fragment set:html={demoHtml({ ...p, date })} />

@@ -7,6 +7,7 @@ them.
 | Read | When |
 |---|---|
 | [Why it's like this](philosophy.md) | You want the ideas first |
+| [Try it in one line](try.md) | You want to look before installing |
 | [Your first ten minutes](first-ten-minutes.md) | You've just installed it |
 | [Learn by doing](demo.md) | Explore an interactive scratch workshop in a local demo build |
 | [Every view, one by one](views.md) | You want to know what each screen is for |

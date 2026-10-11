@@ -163,6 +163,25 @@ pre code { color: var(--text); }
 .install button:hover { background: var(--text); color: var(--bg); }
 .install-note { color: var(--muted); font-size: 14px; margin-top: 0.7rem; }
 
+/* ---- the demo link (src/lib/demo-link.mjs): name, date, version, the one line, copy ---- */
+.demo-link { display: grid; grid-template-columns: minmax(0, 1fr); gap: 8px; max-width: 100%; margin: 1.6em 0; padding: 12px 14px; border: 1px dashed var(--line); background: var(--surface); font: 400 12.5px/1.45 var(--mono); }
+.demo-link .dl-head { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 12px; }
+.demo-link .dl-label { font: 800 11px var(--sans); font-stretch: 115%; letter-spacing: 0.07em; text-transform: uppercase; color: var(--accent); }
+.demo-link .dl-name { color: var(--text); font-weight: 500; }
+.demo-link .dl-date { color: var(--muted); }
+.demo-link .dl-tag { color: var(--muted); border: 1px solid var(--line); border-radius: 999px; padding: 1px 8px; font-size: 11px; }
+.demo-link .dl-tag a { color: var(--body); }
+.demo-link .dl-latest { color: var(--text); border-color: var(--accent); }
+.demo-link .dl-cmd { display: flex; align-items: center; gap: 10px; border: 1px solid var(--line); background: var(--bg); padding: 4px 4px 4px 12px; min-width: 0; }
+.demo-link .dl-cmd code { flex: 1; min-width: 0; overflow-x: auto; white-space: nowrap; background: none; border: 0; padding: 6px 0; color: var(--text); font: inherit; }
+.demo-link .dl-cmd .d { color: var(--accent); user-select: none; }
+.demo-link .dl-cmd button { flex: none; border: 0; background: var(--raised); color: var(--body); font: 700 11.5px var(--sans); font-stretch: 115%; letter-spacing: 0.07em; text-transform: uppercase; padding: 8px 12px; cursor: pointer; }
+.demo-link .dl-cmd button:hover { background: var(--acid); color: var(--on-acid); }
+.demo-link .dl-foot { color: var(--muted); font-size: 12px; margin: 0; font-family: var(--sans); }
+.demo-link .dl-foot code { color: var(--body); background: none; border: 0; padding: 0; }
+/* compact: tighter, for the hero */
+.demo-link.dl-compact { margin: 1.1rem 0 0; padding: 10px 12px; gap: 6px; }
+
 /* ---- the blinking caret (also a censor bar) ---- */
 .caret { display: inline-block; width: 0.6em; height: 1.1em; background: var(--acid); vertical-align: -0.18em; animation: blink 1.1s steps(1) infinite; }
 @keyframes blink { 50% { opacity: 0; } }
