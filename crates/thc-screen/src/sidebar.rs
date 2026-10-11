@@ -51,6 +51,19 @@ impl Panel {
         self.key().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
     }
 
+    /// What in the panel takes the focus (the end of its node ids): its body, `panel-…` (a page
+    /// or day's editor) or `rows-…` (a list's rows), or its header, `head-…`, when it's folded.
+    pub fn target(&self) -> String {
+        let what = if self.folded {
+            "head"
+        } else if self.kind.is_doc() {
+            "panel"
+        } else {
+            "rows"
+        };
+        format!("{what}-{}", self.id())
+    }
+
     /// The panel's key, unique in the stack: `page:<id>`, `day:today`, `query:#health`.
     pub fn key(&self) -> String {
         format!("{}:{}", serde_json::to_value(self.kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(), self.target)
@@ -225,6 +238,82 @@ impl Stack {
         self.open.swap(i, j);
         Some(j)
     }
+}
+
+/// Where the sidebar shows at a screen width (§6.1): the column, the drawer, or replace.
+pub fn place(width: u64) -> &'static str {
+    match width {
+        120.. => "sidebar",
+        90..=119 => "drawer",
+        _ => "replace",
+    }
+}
+
+/// What `thc ui aside <target>` opens (sidebar.md §10.3): `today` or a date is a day, `@today`
+/// (`inbox`, `tasks`, `log`) a view, `#tag` or any other query a list, a page id or title a page.
+pub fn panel_for_target(store: &thc_core::store::Store, target: &str, today: chrono::NaiveDate) -> anyhow::Result<Panel> {
+    let t = target.trim();
+    if t == "today" {
+        return Ok(Panel::new(Kind::Day, "today"));
+    }
+    if let Some(v) = t.strip_prefix('@').filter(|v| ["today", "inbox", "tasks", "log"].contains(v)) {
+        return Ok(Panel::new(Kind::View, v));
+    }
+    if t.starts_with('#') || t.starts_with('@') || t.contains(':') {
+        return Ok(Panel::new(Kind::Query, t));
+    }
+    if let Ok(id) = store.resolve(t) {
+        return Ok(Panel::new(Kind::Page, &id));
+    }
+    if let Some(id) = store.find_root_by_title(t, false)? {
+        return Ok(Panel::new(Kind::Page, &id));
+    }
+    if let Ok(d) = thc_core::dates::parse(t, today) {
+        return Ok(Panel::new(Kind::Day, &d.date().format("%Y-%m-%d").to_string()));
+    }
+    Err(thc_core::error::not_found(format!("no page or day {t:?}")))
+}
+
+/// One `thc ui aside` against a running screen, as the requests on its socket (sidebar.md
+/// §10.3): from the stack as `read` returned it (`{rev, value}`), the write of the next stack
+/// guarded by that revision (refused if the person changed it since: read again and retry),
+/// then whether it shows, the active panel (never the focus, §10.4) and, for an agent, the
+/// toast. An agent's panel says who opened it; `close` never closes a pinned one. The panel's
+/// key and the requests, in order.
+#[allow(clippy::too_many_arguments)]
+pub fn aside_requests(store: &thc_core::store::Store, read: &serde_json::Value, target: &str, agent: Option<&str>, pin: bool, fold: bool, close: bool, today: chrono::NaiveDate) -> anyhow::Result<(String, Stack, Vec<serde_json::Value>)> {
+    use serde_json::json;
+    let mut stack = Stack::from_value(&read["value"]);
+    let mut p = panel_for_target(store, target, today)?;
+    let key = p.key();
+    let by = agent.map(|a| format!("agent:{a}")).unwrap_or_else(|| "person".into());
+    if close {
+        if stack.open.iter().any(|q| q.key() == key && q.pinned) {
+            return Err(thc_core::error::invalid(format!("{target} is pinned: only the person can close it")));
+        }
+        stack.close(&key);
+    } else {
+        p.opened_by = agent.map(|_| by.clone());
+        stack.open(p);
+        if let Some(q) = stack.position(&key) {
+            if pin && !stack.open[q].pinned {
+                stack.toggle_pin(&key);
+            }
+            if fold && !stack.open[stack.position(&key).unwrap_or(q)].folded {
+                stack.toggle_fold(&key);
+            }
+        }
+    }
+    let put = |k: &str, value: serde_json::Value, if_rev: Option<u64>| json!({"op": "write", "key": k, "write": "put", "value": value, "if_rev": if_rev, "by": by});
+    let mut reqs = vec![put("sidebar", stack.to_value(), read["rev"].as_u64()), put("sidebar_shown", true.into(), None), put("sidebar_beside", (!stack.open.is_empty()).into(), None)];
+    if let Some(a) = stack.open.iter().find(|q| q.key() == key) {
+        reqs.push(put("sidebar_active", a.id().into(), None));
+        reqs.push(put("sidebar_target", a.target().into(), None));
+    }
+    if let (Some(a), false) = (agent, close) {
+        reqs.push(json!({"op": "toast", "text": format!("◆ {a} opened {target} beside you"), "tone": "agent", "ms": 4000}));
+    }
+    Ok((key, stack, reqs))
 }
 
 /// Where a vault's stack is kept on this device (sidebar.md §11): its cache. Not the TUI's

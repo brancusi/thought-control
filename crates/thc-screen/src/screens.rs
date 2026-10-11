@@ -448,7 +448,9 @@ fn input(id_: &str, seed: &str, placeholder: &str) -> Node {
     id(node(Kind::Input { text: seed.into(), placeholder: Some(placeholder.into()), accept: None }), id_)
 }
 
-const WIDE: &str = "$screen.width>=120";
+/// The main area is wide enough for a split (§3.4). It reads the width of the area it's laid out
+/// in, so beside the sidebar it's the main pane's width that counts (sidebar.md §6.2).
+const WIDE: &str = "$width>=120";
 
 /// A status cell (§4): `[ ]` `[/]` `[w]` `[x]` `[-]`, a note's ` · `, and Search's ` ¶ ` / ` # `.
 const STATUS: &str = "{status|todo=<text>[ ]</> ;doing=<doing>[/]</> ;waiting=<waiting>[w]</> ;done=<done>[x]</> ;cancelled=<muted>[-]</> ;note=<muted> · </> ;page=<muted> ¶ </> ;tag=<muted> # </> }";
@@ -751,7 +753,7 @@ fn close_documents() -> Action {
     let mut steps: Vec<Action> = vs.iter().map(|v| Action::Put { put: open_key(*v), value: Value::Null, for_ms: None }).collect();
     steps.extend(vs.iter().map(|v| Action::Focus { focus: main_id(*v) }));
     // A page ⌥M opened from the sidebar goes back to where ⌥M was pressed (`return_tab`).
-    steps.push(act("return", json!({"tab": "{store.return_tab}"})));
+    steps.push(act("return", json!({"tab": "{store.return_tab}", "open": "{store.return_open}"})));
     Action::Do { steps }
 }
 
@@ -769,9 +771,11 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             // view-cycling binding here: in a document it's the editor's (indent, E22).
             // Tab nests and un-nests the lines (the outliner Tab, E22); ⌃T cycles a line through
             // task, done and text (E75).
-            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: Some("end".into()) };
+            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: Some("end".into()), links: doc_links(v) };
             let mut doc = id(bound(node(editor), &k), &format!("{}_doc", v.name()));
             doc.pad = Some(Pad::X(1));
+            // ⌃O follows the link at the caret, ⌥O opens it aside (E66).
+            doc.keys.extend(key_map(&link_binds(v)));
             // No Esc here: the UI's Esc (`close_documents`) closes it, after fictty has let Esc
             // drop a selection (E12).
             // The title is a heading row above the text, not a line of it (writing.md): ⌘A, ⌘↑
@@ -851,11 +855,15 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     store.insert("today_mode".into(), "".into());
     // The view ⌥M left, for Esc to come back to (null: none).
     store.insert("return_tab".into(), Value::Null);
+    store.insert("return_open".into(), Value::Null);
+    // The active panel (its id) and what in it takes the focus (`panel-…`, `rows-…`, `head-…`).
+    store.insert("sidebar_active".into(), "".into());
+    store.insert("sidebar_target".into(), "".into());
     // The sidebar's stack (sidebar::Stack), whether it shows, and whether it's beside the view.
     store.insert("sidebar".into(), crate::sidebar::Stack::default().to_value());
     store.insert("sidebar_shown".into(), false.into());
     store.insert("sidebar_beside".into(), false.into());
-    data.insert("sidebar_rows".into(), source("sidebar", json!({"stack": "{store.sidebar}"})));
+    data.insert("sidebar_rows".into(), source("sidebar", json!({"stack": "{store.sidebar}", "active": "{store.sidebar_active}", "width": "{$screen.width}", "height": "{$screen.height}"})));
     store.insert("no_detail".into(), "".into());
     for k in ["ask_id", "ask_text"] {
         store.insert(k.into(), "".into());
@@ -930,26 +938,29 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
 /// The sidebar has panels and shows.
 const BESIDE: &str = "sidebar.open & sidebar_shown";
 
-/// An act on the stack (sidebar.md §3): `op` on the selected panel, against the stack as it is.
-fn panel_op(op: &str) -> Action {
-    act("panel", json!({"op": op, "key": "{id}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))
+/// An act on the stack (sidebar.md §3): `op` on a panel (`{$item.…}`: the one its node is in),
+/// against the stack as it is, from tab `v` (the focus follows the panel there).
+fn panel_op(v: View, op: &str) -> Action {
+    act("panel", json!({"op": op, "key": "{$item.key}", "at": "{$item.at}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
 }
 
 /// A day panel to another day: `by` days, or null for today.
-fn day_op(by: Value) -> Action {
-    act("panel", json!({"op": "day", "by": by, "key": "{id}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))
+fn day_op(v: View, by: Value) -> Action {
+    act("panel", json!({"op": "day", "by": by, "key": "{$item.key}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
 }
 
-/// Open a row's page or day aside (§2: `o`, `⌥O`, `⇧Enter`).
-/// Narrow, the drawer (or replace) opens at once and takes the focus (§2 rule 1, §6.4); in the
-/// column, the focus stays where it is: only a shown node takes it.
+/// The focus to a panel: `by` 0 the active one, 1 and -1 the next and previous.
+fn focus_op(v: View, by: i64, from: &str) -> Action {
+    act("panel", json!({"op": "focus", "by": by, "key": from, "id": "{store.sidebar_active}", "stack": "{store.sidebar}", "shown": true, "view": v.name()}))
+}
+
+/// Open a row's page or day aside (§2: `o`, `⌥O`, `⇧Enter`). Narrow, the drawer (or replace)
+/// opens at once and the new panel takes the focus (§2 rule 1, §6.4); beside, it stays.
 fn aside_row(v: View) -> Action {
     Action::Do {
         steps: vec![
-            act("aside", json!({"id": "{id}", "stack": "{store.sidebar}"})),
             Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
-            Action::Focus { focus: format!("drawer_{}", v.name()) },
-            Action::Focus { focus: format!("replace_{}", v.name()) },
+            act("aside", json!({"id": "{id}", "stack": "{store.sidebar}", "view": v.name()})),
         ],
     }
 }
@@ -957,88 +968,154 @@ fn aside_row(v: View) -> Action {
 /// The keys that work wherever the focus is in a tab, writing included (`⌥` chords type
 /// nothing): `⌥S` to the sidebar (showing it), `⌥⇧T` reopen, `⌥\` hide or show.
 fn everywhere_binds(v: View) -> Vec<Bind> {
-    let n = v.name();
     vec![
-        b(
-            "a-s",
-            "sidebar",
-            // Only the one that shows takes the focus: the column, the drawer or replace.
-            Action::Do {
-                steps: vec![
-                    Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
-                    act("panel", json!({"op": "show", "stack": "{store.sidebar}", "shown": true})),
-                    Action::Focus { focus: format!("sidebar_{n}") },
-                    Action::Focus { focus: format!("drawer_{n}") },
-                    Action::Focus { focus: format!("replace_{n}") },
-                ],
-            },
-        ),
+        b("a-s", "sidebar", Action::Do { steps: vec![Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None }, focus_op(v, 0, "")] }),
         b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
         b("a-\\", "sidebar hide / show", act("panel", json!({"op": "toggle", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
     ]
 }
 
-/// The stack as a list of panel headers (§4.1), one instance per place it shows: the column at
-/// 120+, the drawer at 90–119, replace below. The places differ only in what Esc does: the
-/// column gives the focus back; the drawer and replace also close.
-///
-/// TODO(fictty): each panel's body (a page or day as an editor on its hosted entry, a list
-/// panel's rows) under its header needs a node that repeats a template per item of a bound
-/// list; until then the stack shows its headers.
-fn sidebar_list(v: View, place: &str) -> Node {
-    let r = Rows {
-        item: Some("{fold_m|markup} {glyph_m|markup} {title_m|markup}\t{right_m|markup} ".into()),
-        mark: Some("<accent+b>▌</>".into()),
-        lead: Some(" ".into()),
-        key: Some("id".into()),
-        empty: Some(" <muted>nothing beside you · o or ⌥O on a row</>".into()),
-        ..Rows::default()
-    };
-    let mut l = list(&format!("{place}_{}", v.name()), "sidebar_rows.rows", r);
-    let back = if place == "sidebar" {
-        Action::Focus { focus: "$prev".into() }
-    } else {
-        Action::Do { steps: vec![Action::Put { put: "sidebar_shown".into(), value: "".into(), for_ms: None }, Action::Focus { focus: main_id(v) }] }
-    };
-    let binds = [
-        b("a-j", "next panel", Action::Named("down".into())),
-        b("a-k", "previous panel", Action::Named("up".into())),
-        b("a-c", "fold", panel_op("fold")),
-        b("enter", "fold", panel_op("fold")),
-        b("a-w", "close", panel_op("close")),
-        b("a-p", "pin / unpin", panel_op("pin")),
-        b("a-s-k", "move up", panel_op("up")),
-        b("a-s-j", "move down", panel_op("down")),
-        b("a-m", "to main", act("to_main", json!({"key": "{id}", "stack": "{store.sidebar}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)}))),
-        // A day panel: the day before, after, today (§8.1).
-        b("[", "the day before", day_op(json!(-1))),
-        b("]", "the day after", day_op(json!(1))),
-        b("T", "today", day_op(Value::Null)),
+/// Back to the main view from the sidebar (§5.1): its list, or what's open over it. The column
+/// stays; the drawer and replace close.
+fn sidebar_back(v: View, place: &str) -> Action {
+    let mut steps = Vec::new();
+    if place != "sidebar" {
+        steps.push(Action::Put { put: "sidebar_shown".into(), value: "".into(), for_ms: None });
+    }
+    // The last that's there wins: the view's list, its detail, its page or day, its outline.
+    for id in [main_id(v), format!("{}_detail", v.name()), format!("{}_doc", v.name()), "pages_outline_rows".into()] {
+        steps.push(Action::Focus { focus: id });
+    }
+    Action::Do { steps }
+}
+
+/// The keys of a panel, on its header and its body alike (§5.3): `⌥J` `⌥K` the next and
+/// previous panel, `⌥C` fold, `⌥W` close, `⌥P` pin, `⌥⇧K` `⌥⇧J` move, `⌥M` to main, `⌥S` and
+/// Esc back to main.
+fn panel_binds(v: View, place: &str) -> Vec<Bind> {
+    let back = sidebar_back(v, place);
+    vec![
+        b("a-j", "next panel", focus_op(v, 1, "{$item.key}")),
+        b("a-k", "previous panel", focus_op(v, -1, "{$item.key}")),
+        b("a-c", "fold", panel_op(v, "fold")),
+        b("a-w", "close", panel_op(v, "close")),
+        b("a-p", "pin / unpin", panel_op(v, "pin")),
+        b("a-s-k", "move up", panel_op(v, "up")),
+        b("a-s-j", "move down", panel_op(v, "down")),
+        b("a-m", "to main", act("to_main", json!({"key": "{$item.key}", "stack": "{store.sidebar}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)}))),
+        b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+        // A day panel to the day before or after (§8.1: ⌃P ⌃N, ⌥[ ⌥]).
+        b("c-p", "the day before", day_op(v, json!(-1))),
+        b("c-n", "the day after", day_op(v, json!(1))),
+        b("a-[", "the day before", day_op(v, json!(-1))),
+        b("a-]", "the day after", day_op(v, json!(1))),
         b("a-s", "back to main", back.clone()),
         b("esc", "back to main", back),
-    ];
-    l.keys.extend(key_map(&binds));
-    l
+    ]
+}
+
+/// One panel (§4): its header row, then its body unless folded: a page or a day as an editor on
+/// its hosted entry (the same entry the main view writes in, so one text and one undo), or a
+/// list panel's rows. A template, one instance per panel (`each`); ids carry the place, the tab
+/// and the panel.
+fn panel_template(v: View, place: &str) -> Node {
+    let pre = format!("{place}_{}", v.name());
+    let binds = panel_binds(v, place);
+    // The header: one row, on `selection` when it has the focus (a list's mark shows on its
+    // selected row focused or not, so it has none here); Enter folds.
+    let mut head = node(Kind::List {
+        items: vec![json!({"id": "{$item.id}", "m": "{$item.header_m}"})],
+        rows: Rows { item: Some("{m|markup}".into()), mark: Some(" ".into()), lead: Some(" ".into()), ..Rows::default() },
+    });
+    head.id = Some(format!("{pre}_head-{{$item.id}}"));
+    head.keys.extend(key_map(&binds));
+    head.keys.insert("enter".into(), panel_op(v, "fold"));
+    for (k, by) in [("[", json!(-1)), ("]", json!(1)), ("T", Value::Null)] {
+        head.keys.insert(k.into(), day_op(v, by));
+    }
+    // TODO(fictty): a click on the header should fold it (§12), but the host moves the focus with
+    // a click message, which would run it too: that needs a focus message without the click.
+    let head = sized(head, cells(1));
+    // A page or a day: the editor (Tab nests, ⌃T cycles a line, links as in the main view).
+    let editor = Kind::Editor { text: String::new(), doc: Some("{$item.doc}".into()), placeholder: Some("Type to start.".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: None, links: doc_links(v) };
+    let mut doc = id(node(editor), &format!("{pre}_panel-{{$item.id}}"));
+    doc.keys.extend(key_map(&binds));
+    doc.keys.extend(key_map(&link_binds(v)));
+    doc.pad = Some(Pad::X(2));
+    let doc = when(sized(doc, spec("*")), "sidebar_rows.show.{$item.id}.doc");
+    // A list: its rows, with the row keys (x done, o aside…), and the panel's.
+    let mut rows_ = keys(tree(&format!("{pre}_rows-{{$item.id}}"), "sidebar_rows.lists.{$item.id}"), node_keys(v));
+    rows_.keys.remove("enter");
+    rows_.keys.insert("enter".into(), act("to_main_node", json!({"id": "{id}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)})));
+    rows_.keys.extend(key_map(&binds));
+    let rows_ = when(sized(rows_, spec("*")), "sidebar_rows.show.{$item.id}.list");
+    let mut panel = col(vec![head, doc, rows_]);
+    panel.size = Some(spec("{$item.total}"));
+    panel
+}
+
+/// The stack, a panel per item (§3); `nothing beside you` when there's none.
+fn sidebar_panels(v: View, place: &str) -> Node {
+    let each = bound(node(Kind::Each { template: Box::new(panel_template(v, place)), row: false, gap: Some(1) }), "sidebar_rows.rows");
+    let mut c = col(vec![each, sized(text(""), spec("*"))]);
+    c.id = None;
+    c
 }
 
 /// The sidebar's three places in a tab (§6.1, §6.4): the column beside the view (a third of the
-/// width, 40–64), the drawer over its right 60 columns, replace over all of it.
+/// width, 40–64), the drawer over its right 60 columns, replace over all of it. The same stack
+/// in each; they differ only in what Esc does.
 fn sidebar_places(v: View) -> (Node, Node, Node) {
-    let mut column = sized(sidebar_list(v, "sidebar"), spec("33%"));
+    let mut column = sized(sidebar_panels(v, "sidebar"), spec("33%"));
     column.min = Some(40);
     column.max = Some(64);
     let column = when(column, &format!("$screen.width>=120 & {BESIDE}"));
     // The drawer: a `│` left edge in `line`, the stack on `raised` (§6.4). Narrow, it shows
     // while `sidebar_shown` (an open puts it there at once, so the open can focus it).
     let edge = sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1));
-    let mut drawer = variant(row(vec![edge, sidebar_list(v, "drawer")]), "overlay");
+    let mut drawer = variant(row(vec![edge, sidebar_panels(v, "drawer")]), "overlay");
     drawer.float = Some(Float { width: Some(cells(60)), height: None, at: Some("right".into()), margin: None });
     let drawer = when(drawer, "$screen.width>=90 & $screen.width<120 & sidebar_shown");
     let back_row = sized(bound(text(" <accent>‹</> <muted+u>main</>   <muted>beside it: {count} panels</>"), "sidebar_rows"), cells(1));
-    let mut replace = col(vec![back_row, sidebar_list(v, "replace")]);
+    let mut replace = col(vec![back_row, sidebar_panels(v, "replace")]);
     replace.float = Some(Float { width: None, height: None, at: None, margin: None });
     let replace = when(replace, "$screen.width<90 & sidebar_shown");
     (column, drawer, replace)
+}
+
+// ---- links in documents (sidebar.md §12.1, editing.md E63–E69) -----------------------------------
+
+/// How a document's links act: a click on `[[Page]]` follows it in the main view (saving
+/// first; Esc comes back), a ⇧-click opens it aside; a tag only places the caret on a click,
+/// and a ⇧-click opens its list aside. Addresses place the caret (the spec has nothing more).
+fn doc_links(v: View) -> Vec<fictty::model::LinkSpec> {
+    let from = View::TABS.iter().position(|t| *t == v).unwrap_or(0);
+    vec![
+        fictty::model::LinkSpec { kind: "wiki".into(), click: Some(follow(v, from, "{$match}")), s_click: Some(aside_title(v, "page", "{$match}")) },
+        fictty::model::LinkSpec { kind: "tag".into(), click: None, s_click: Some(aside_title(v, "tag", "{$match}")) },
+        fictty::model::LinkSpec { kind: "url".into(), click: None, s_click: None },
+    ]
+}
+
+/// The keys for the link at the caret (E66): ⌃O follows it, ⌥O opens it aside.
+fn link_binds(v: View) -> Vec<Bind> {
+    let from = View::TABS.iter().position(|t| *t == v).unwrap_or(0);
+    vec![b("c-o", "follow the link", follow(v, from, "{$link}")), b("a-o", "the link aside", aside_title(v, "link", "{$link}"))]
+}
+
+/// Follow a link in the main view: the page, open to write in, and Esc back to where it was.
+fn follow(v: View, from: usize, title: &str) -> Action {
+    act("follow", json!({"title": title, "from": from, "back": format!("{{store.{}}}", open_key(v))}))
+}
+
+/// Open a link's page (or a tag's list) aside.
+fn aside_title(v: View, kind: &str, title: &str) -> Action {
+    Action::Do {
+        steps: vec![
+            Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
+            act("aside", json!({"title": title, "as": kind, "stack": "{store.sidebar}", "view": v.name()})),
+        ],
+    }
 }
 
 /// Big enough to draw (§3: 60×24).
@@ -1123,7 +1200,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             narrow.keys.extend(key_map(&own));
             groups.push(("Tasks".into(), own));
             groups.push(("on a row".into(), node_binds(v)));
-            let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$screen.width<120")]);
+            let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$width<120")]);
             view(content, "tasks", &[("f", "filter"), ("x", "done"), ("enter", "open")])
         }
         View::Pages => {
@@ -1141,7 +1218,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
-            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None, caret: None }), "@pages");
+            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None, caret: None, links: vec![] }), "@pages");
             preview.id = Some("preview".into());
             preview.pad = Some(Pad::X(1));
             let content = over_list(finder_row, col(vec![sized(text(""), cells(2)), split(l, preview)]));

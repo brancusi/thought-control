@@ -103,36 +103,9 @@ fn ask(socket: &std::path::Path, req: &serde_json::Value) -> Result<serde_json::
     Ok(serde_json::from_str(&line)?)
 }
 
-/// What `thc ui aside <target>` opens (sidebar.md §10.3): `today` or a date is a day, `@today`
-/// (`inbox`, `tasks`, `log`) a view, `#tag` or any other query a list, a page id or title a page.
-pub fn panel_for(store: &thc_core::store::Store, target: &str) -> Result<thc_screen::sidebar::Panel> {
-    use thc_screen::sidebar::{Kind, Panel};
-    let t = target.trim();
-    if t == "today" {
-        return Ok(Panel::new(Kind::Day, "today"));
-    }
-    if let Some(v) = t.strip_prefix('@').filter(|v| ["today", "inbox", "tasks", "log"].contains(v)) {
-        return Ok(Panel::new(Kind::View, v));
-    }
-    if t.starts_with('#') || t.starts_with('@') || t.contains(':') {
-        return Ok(Panel::new(Kind::Query, t));
-    }
-    if let Ok(id) = store.resolve(t) {
-        return Ok(Panel::new(Kind::Page, &id));
-    }
-    if let Some(id) = store.find_root_by_title(t, false)? {
-        return Ok(Panel::new(Kind::Page, &id));
-    }
-    if let Ok(d) = thc_core::dates::parse(t, thc_core::dates::today()) {
-        return Ok(Panel::new(Kind::Day, &d.date().format("%Y-%m-%d").to_string()));
-    }
-    Err(thc_core::error::not_found(format!("no page or day {t:?}")))
-}
-
 /// `thc ui aside` against a running `thc screen` (no TUI on this vault): the same rules
-/// (sidebar::Stack), as a store write on the screen's socket guarded by the entry's revision,
-/// retried when the person changed the stack in between. An agent's panel says who opened it;
-/// the person's focus never moves. `close` takes a panel away (never a pinned one); `ls` reads.
+/// (thc_screen::sidebar::aside_requests), as store writes on the screen's socket, the stack's
+/// guarded by its revision and retried when the person changed it in between. `ls` reads.
 pub fn aside(paths: &Paths, actor: Option<&str>, target: Option<&str>, pin: bool, fold: bool, close: bool, ls: bool) -> Result<Option<serde_json::Value>> {
     use serde_json::json;
     use thc_screen::sidebar::Stack;
@@ -140,57 +113,30 @@ pub fn aside(paths: &Paths, actor: Option<&str>, target: Option<&str>, pin: bool
     if !socket.exists() {
         return Ok(None);
     }
-    let by = actor.map(|a| format!("agent:{a}")).unwrap_or_else(|| "person".into());
+    let vault = Vault::open(paths.clone(), Actor { kind: "human".into(), name: None }, "screen")?;
     for _ in 0..5 {
         let cur = ask(&socket, &json!({"op": "read", "key": "sidebar"}))?;
-        let mut stack = Stack::from_value(&cur["value"]);
         if ls {
             // Each panel with a title to read: its page's, else its day, view or query.
-            let v = Vault::open(paths.clone(), Actor { kind: "human".into(), name: None }, "screen")?;
-            let mut out = stack.to_value();
+            let mut out = Stack::from_value(&cur["value"]).to_value();
             for p in out["open"].as_array_mut().into_iter().flatten() {
                 let r = p["ref"].as_str().unwrap_or_default().to_string();
-                let title = v.store.node(&r).ok().flatten().map(|n| n.label()).unwrap_or(r);
+                let title = vault.store.node(&r).ok().flatten().map(|n| n.label()).unwrap_or(r);
                 p["title"] = title.into();
             }
             return Ok(Some(json!({"sidebar": out})));
         }
         let t = target.ok_or_else(|| usage("thc ui aside <page | day | @view | #tag | query> (or --ls)"))?;
-        let store = Vault::open(paths.clone(), Actor { kind: "human".into(), name: None }, "screen")?;
-        let mut p = panel_for(&store.store, t)?;
-        let key = p.key();
-        if close {
-            if stack.open.iter().any(|q| q.key() == key && q.pinned) {
-                return Err(thc_core::error::invalid(format!("{t} is pinned: only the person can close it")));
-            }
-            stack.close(&key);
-        } else {
-            if actor.is_some() {
-                p.opened_by = Some(by.clone());
-            }
-            stack.open(p);
-            if let Some(q) = stack.open.iter().position(|q| q.key() == key) {
-                if pin && !stack.open[q].pinned {
-                    stack.toggle_pin(&key);
-                }
-                if fold {
-                    stack.toggle_fold(&key);
-                }
-            }
-        }
-        let rev = cur["rev"].as_u64();
-        let r = ask(&socket, &json!({"op": "write", "key": "sidebar", "write": "put", "value": stack.to_value(), "if_rev": rev, "by": by}))?;
+        let (key, stack, reqs) = thc_screen::sidebar::aside_requests(&vault.store, &cur, t, actor, pin, fold, close, thc_core::dates::today())?;
+        let r = ask(&socket, &reqs[0])?;
         if r["ok"].as_bool() != Some(true) {
             continue;
         }
+        for q in &reqs[1..] {
+            ask(&socket, q)?;
+        }
         // Kept on this device as the screen keeps it (sidebar.md §11).
         thc_screen::sidebar::save(&paths.cache, &stack);
-        let beside = !stack.open.is_empty();
-        ask(&socket, &json!({"op": "write", "key": "sidebar_shown", "write": "put", "value": true, "by": by}))?;
-        ask(&socket, &json!({"op": "write", "key": "sidebar_beside", "write": "put", "value": beside, "by": by}))?;
-        if let (Some(a), false) = (actor, close) {
-            ask(&socket, &json!({"op": "toast", "text": format!("◆ {a} opened {t} beside you"), "tone": "agent", "ms": 4000}))?;
-        }
         return Ok(Some(json!({"ok": true, "panel": key, "sidebar": stack.to_value(), "rev": r["rev"]})));
     }
     Err(thc_core::error::invalid("the stack kept changing under the write; try again".to_string()))

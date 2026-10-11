@@ -457,12 +457,16 @@ pub fn tasks(cx: &Cx, query: &str, keep: &[String]) -> Result<Value> {
 /// store: fold glyph, kind glyph (`¶` `§` `≡`, `#` in `tag`), the title (bold for the newest),
 /// then on the right `◆ claude` for an agent's open, the folded count (`3 open`, `12 notes`, a
 /// list's row count), `pinned` and `×`. A row's `id` is the panel's key.
-pub fn sidebar(cx: &Cx, stack: &crate::sidebar::Stack) -> Result<Value> {
+pub fn sidebar(cx: &Cx, stack: &crate::sidebar::Stack, active: &str, height: usize, width: usize) -> Result<Value> {
+    // The text's width in a panel: the column's (a third, 40–64) or the drawer's (60), less the
+    // body's padding, so a long line counts the rows it wraps to.
+    let text_w = if width >= 120 { (width / 3).clamp(40, 64) } else { 60 }.saturating_sub(5).max(10);
     use crate::sidebar::Kind;
     let g = cx.g;
     let today = cx.today();
     let newest = stack.open.iter().position(|p| !p.pinned);
     let mut rows = Vec::new();
+    let (mut show, mut lists, mut naturals) = (serde_json::Map::new(), serde_json::Map::new(), Vec::new());
     for (i, p) in stack.open.iter().enumerate() {
         let (glyph, title, count) = match p.kind {
             Kind::Page => match cx.store.node(&p.target)? {
@@ -521,13 +525,114 @@ pub fn sidebar(cx: &Cx, stack: &crate::sidebar::Stack) -> Result<Value> {
         }
         right.push(tok(Token::Muted, g.close));
         let title_m = if Some(i) == newest { styled("text+b", &title) } else { tok(Token::Text, &title) };
+        let fold_m = tok(Token::Muted, if p.folded { g.fold_closed } else { g.fold_open });
+        // The body (§4.2): a page or a day as its document's text, a list panel as its rows.
+        let (doc, natural) = match p.kind {
+            Kind::Page | Kind::Day if !p.folded => {
+                let key = match p.kind {
+                    Kind::Page => format!("page/{}", p.target),
+                    _ => format!("day/{}", if p.target == "today" { today.format("%Y-%m-%d").to_string() } else { p.target.clone() }),
+                };
+                let lines = doc_lines(cx, &key, text_w);
+                (key, lines)
+            }
+            Kind::View | Kind::Query if !p.folded => {
+                let rows_of = list_panel_rows(cx, p)?;
+                let n = count_rows(&rows_of);
+                lists.insert(p.id(), Value::Array(rows_of));
+                (String::new(), n.max(1))
+            }
+            _ => (String::new(), 0),
+        };
+        show.insert(p.id(), json!({"doc": !doc.is_empty(), "list": lists.contains_key(&p.id())}));
+        naturals.push((p.id(), natural));
         rows.push(json!({
-            "id": p.key(), "kind": "panel", "panel": serde_json::to_value(p.kind)?, "ref": p.target,
-            "fold_m": tok(Token::Muted, if p.folded { g.fold_closed } else { g.fold_open }),
-            "glyph_m": glyph, "title_m": format!("{title_m}{today_m}"), "right_m": right.join("  "),
+            "id": p.id(), "at": i, "key": p.key(), "kind": "panel", "panel": serde_json::to_value(p.kind)?, "ref": p.target, "folded": p.folded,
+            "fold_m": fold_m, "glyph_m": glyph, "title_m": format!("{title_m}{today_m}"), "right_m": right.join("  "),
+            "header_m": format!("{fold_m} {glyph} {title_m}{today_m}\t{} ", right.join("  ")),
+            "doc": doc,
         }));
     }
-    Ok(json!({"rows": rows, "count": stack.open.len()}))
+    // Sharing the height (§6.3): each panel a header and its body, a blank row between them.
+    let sizes = share_height(&naturals, active, height);
+    for (row, (body, more)) in rows.iter_mut().zip(sizes) {
+        row["h"] = body.into();
+        row["total"] = (body + 1).into();
+        row["more_m"] = if more > 0 { tok(Token::Muted, &format!("{} {more} more", g.more)) } else { String::new() }.into();
+    }
+    Ok(json!({"rows": rows, "count": stack.open.len(), "show": show, "lists": lists}))
+}
+
+/// How many rows a page or day takes (its text as an editor has it, each line wrapped at
+/// `width` cells).
+fn doc_lines(cx: &Cx, key: &str, width: usize) -> usize {
+    let root = match crate::docs::Doc::parse(key) {
+        Some(crate::docs::Doc::Page(id)) => Some(id),
+        Some(crate::docs::Doc::Day(d)) => cx.store.journal_node(&d.format("%Y-%m-%d").to_string()).ok().flatten(),
+        None => None,
+    };
+    let rows = |text: &str| -> usize { text.lines().map(|l| unicode_width::UnicodeWidthStr::width(l).div_ceil(width.max(1)).max(1)).sum() };
+    root.and_then(|r| thc_core::edit::render(cx.store, &r).ok()).map_or(1, |r| rows(&crate::docs::shown(&r.text)).max(1))
+}
+
+/// A list panel's rows (§8.2): the view's sections and rows as in the main view, or a query's
+/// rows, all as node rows (`text_m`, `meta_m`).
+fn list_panel_rows(cx: &Cx, p: &crate::sidebar::Panel) -> Result<Vec<Value>> {
+    let v = match (p.kind, p.target.as_str()) {
+        (crate::sidebar::Kind::View, "today") => today(cx)?,
+        (crate::sidebar::Kind::View, "inbox") => inbox(cx)?,
+        (crate::sidebar::Kind::View, "log") => json!({"rows": []}),
+        (crate::sidebar::Kind::View, _) => tasks(cx, "status:open", &[])?,
+        (_, q) => tasks(cx, q, &[])?,
+    };
+    let mut rows = v["rows"].as_array().cloned().unwrap_or_default();
+    // Tasks rows are table rows: as node rows.
+    for r in rows.iter_mut() {
+        if r.get("text_m").is_none() && r.get("task_m").is_some() {
+            r["text_m"] = r["task_m"].clone();
+            r["meta_m"] = r["due_m"].clone();
+        }
+    }
+    if rows.is_empty() {
+        rows.push(json!({"kind": "empty", "m": tok(Token::Muted, "nothing here")}));
+    }
+    Ok(rows)
+}
+
+/// Rows in a tree, children included.
+fn count_rows(rows: &[Value]) -> usize {
+    rows.iter().map(|r| 1 + r["children"].as_array().map_or(0, |c| count_rows(c))).sum()
+}
+
+/// §6.3: each panel 1 header row, its body, 1 blank row between panels, in `height - 3` rows
+/// (under the tab rule, above the bar). If everything fits, each body is its natural height.
+/// Else the bodies other than the active one are capped at 6 rows, and the active one takes
+/// what's left, at least 3. What's still too tall folds for room from the bottom (body 0). Each
+/// body's rows, and how many of its rows don't show (`↓ N more`).
+pub fn share_height(naturals: &[(String, usize)], active: &str, height: usize) -> Vec<(usize, usize)> {
+    let avail = height.saturating_sub(3);
+    let n = naturals.len();
+    if n == 0 {
+        return vec![];
+    }
+    let frame = n + n.saturating_sub(1);
+    let total: usize = naturals.iter().map(|(_, h)| h).sum::<usize>() + frame;
+    if total <= avail {
+        return naturals.iter().map(|(_, h)| (*h, 0)).collect();
+    }
+    let act = naturals.iter().position(|(id, _)| id == active).unwrap_or(0);
+    let mut body: Vec<usize> = naturals.iter().enumerate().map(|(i, (_, h))| if i == act { *h } else { (*h).min(6) }).collect();
+    let others: usize = body.iter().enumerate().filter(|(i, _)| *i != act).map(|(_, b)| b).sum();
+    body[act] = avail.saturating_sub(frame + others).clamp(3.min(naturals[act].1), naturals[act].1);
+    // Still too tall: fold for room from the bottom, never the active one.
+    let mut i = n;
+    while body.iter().sum::<usize>() + frame > avail && i > 0 {
+        i -= 1;
+        if i != act {
+            body[i] = 0;
+        }
+    }
+    body.iter().zip(naturals).map(|(b, (_, h))| (*b, h.saturating_sub(*b))).collect()
 }
 
 // ---- Pages and outlines ---------------------------------------------------------------------------
