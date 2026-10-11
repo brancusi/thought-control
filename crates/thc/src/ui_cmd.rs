@@ -510,15 +510,16 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             if_rev,
             target_tui,
         } => {
-            // No TUI on this vault, but `thc screen` runs: the same verb, as a store write on
-            // its socket (screen_cmd::aside).
-            if target_tui.session.is_none() && pick(paths, &target_tui).is_err() {
+            // A `thc screen`: the same verb, as store writes on its socket (screen_cmd::aside).
+            let s = pick(paths, &target_tui)?;
+            if is_screen(&s) {
                 if !ls {
                     may_control(cli)?;
                 }
                 let actor = crate::parse_actor(cli.actor.as_deref());
                 let name = (actor.kind == "agent").then(|| actor.name.clone().unwrap_or_else(|| "agent".into()));
-                if let Some(r) = crate::screen_cmd::aside(paths, name.as_deref(), target.as_deref(), pin, fold, close, ls)? {
+                let socket = PathBuf::from(s["socket"].as_str().unwrap_or_default());
+                if let Some(r) = crate::screen_cmd::aside(paths, &socket, name.as_deref(), target.as_deref(), pin, fold, close, ls)? {
                     if ls {
                         return print_aside(cli, &r["sidebar"]);
                     }
@@ -706,25 +707,30 @@ fn ls(cli: &Cli, paths: &Paths, all: bool) -> Result<()> {
         return Ok(());
     }
     if list.is_empty() {
-        println!("no TUI is running on {}{}", vault::tilde(&paths.vault), if all { "" } else { " (--all: every vault)" });
+        println!("no TUI or screen is running on {}{}", vault::tilde(&paths.vault), if all { "" } else { " (--all: every vault)" });
         return Ok(());
     }
     for s in &list {
-        println!("{:<8} {:<14} {:<14} {}", s["pid"], s["vault"].as_str().unwrap_or(""), s["tty"].as_str().unwrap_or("-"), s["socket"].as_str().unwrap_or(""));
+        println!("{:<8} {:<7} {:<14} {:<14} {}", s["pid"], s["kind"].as_str().unwrap_or("tui"), s["vault"].as_str().unwrap_or(""), s["tty"].as_str().unwrap_or("-"), s["socket"].as_str().unwrap_or(""));
     }
     Ok(())
 }
 
-/// The TUI to talk to: `--session PID`, else the only one on this vault.
+/// A session that's a `thc screen` (fictty's protocol, bridged by screen_cmd::ui_request).
+fn is_screen(s: &Value) -> bool {
+    s["kind"].as_str() == Some("screen")
+}
+
+/// The UI to talk to (a TUI or a `thc screen`): `--session PID`, else the only one on this vault.
 fn pick(paths: &Paths, target: &Target) -> Result<Value> {
     let all = thc_tui::ui_sessions();
     if let Some(pid) = target.session {
-        return all.into_iter().find(|s| s["pid"].as_u64() == Some(pid as u64)).ok_or_else(|| thc_core::error::not_found(format!("no TUI with pid {pid} answers · thc ui ls")));
+        return all.into_iter().find(|s| s["pid"].as_u64() == Some(pid as u64)).ok_or_else(|| thc_core::error::not_found(format!("no TUI or screen with pid {pid} answers · thc ui ls")));
     }
     let here = real_vault(paths);
     let mine: Vec<Value> = all.into_iter().filter(|s| on_vault(s, &here)).collect();
     match mine.len() {
-        0 => Err(thc_core::error::not_found(format!("no TUI is running on {} · start one with thc, or pass --session", vault::tilde(&paths.vault)))),
+        0 => Err(thc_core::error::not_found(format!("no TUI or screen is running on {} · start one with thc (or thc screen), or pass --session", vault::tilde(&paths.vault)))),
         1 => Ok(mine.into_iter().next().unwrap()),
         _ => Err(thc_core::error::ThcError::Ambiguous { prefix: "--session".into(), candidates: mine.iter().map(|s| format!("{} ({})", s["pid"], s["tty"].as_str().unwrap_or("-"))).collect() }.into()),
     }
@@ -738,6 +744,9 @@ fn connect(s: &Value) -> Result<std::os::unix::net::UnixStream> {
 /// One request, its result (an error response becomes the matching exit code).
 fn request(paths: &Paths, target: &Target, req: &Value) -> Result<Value> {
     let s = pick(paths, target)?;
+    if is_screen(&s) {
+        return result(crate::screen_cmd::ui_request(Path::new(s["socket"].as_str().unwrap_or_default()), req)?);
+    }
     let mut stream = connect(&s)?;
     let r = roundtrip(&mut stream, req)?;
     result(r)
@@ -775,8 +784,31 @@ fn result(r: Value) -> Result<Value> {
 fn send(cli: &Cli, paths: &Paths, target: &Target, words: Vec<String>, raw: bool, apply_effects: bool) -> Result<()> {
     use std::io::{BufRead, Write};
     let s = pick(paths, target)?;
-    let mut stream = connect(&s)?;
+    // A `thc screen` answers through the bridge, request by request.
+    let screen = is_screen(&s).then(|| PathBuf::from(s["socket"].as_str().unwrap_or_default()));
+    if let (Some(sock), true) = (&screen, words.is_empty()) {
+        let mut failed = false;
+        for line in std::io::stdin().lock().lines() {
+            let line = line?;
+            if line.trim().is_empty() {
+                continue;
+            }
+            let req: Value = serde_json::from_str(&line).map_err(|e| invalid(format!("not JSON: {e}")))?;
+            let resp = crate::screen_cmd::ui_request(sock, &req)?;
+            failed |= resp.get("error").is_some();
+            println!("{resp}");
+        }
+        if failed {
+            return Err(usage("a request failed"));
+        }
+        return Ok(());
+    }
+    let mut stream = match &screen {
+        Some(_) => None,
+        None => Some(connect(&s)?),
+    };
     if words.is_empty() {
+        let Some(stream) = stream.as_mut() else { unreachable!("a screen's stdin requests are answered above") };
         // JSON requests from stdin, one per line; every response printed.
         let mut reader = std::io::BufReader::new(stream.try_clone()?);
         let mut failed = false;
@@ -858,6 +890,25 @@ fn send(cli: &Cli, paths: &Paths, target: &Target, words: Vec<String>, raw: bool
             req["apply_effects"] = json!(true);
         }
     }
+    let Some(stream) = stream.as_mut() else {
+        // A screen: through the bridge; it says what it can't do.
+        let r = result(crate::screen_cmd::ui_request(screen.as_deref().unwrap_or(Path::new("")), &req)?)?;
+        if raw {
+            match op.as_str() {
+                "render" => {
+                    print!("{}", r["frame"].as_str().unwrap_or(""));
+                    return Ok(());
+                }
+                "state.get" => {
+                    println!("{}", serde_json::to_string_pretty(&r["state"])?);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        println!("{}", json!({"result": r}));
+        return Ok(());
+    };
     if op == "subscribe" {
         writeln!(stream, "{req}")?;
         let reader = std::io::BufReader::new(stream.try_clone()?);
@@ -876,7 +927,7 @@ fn send(cli: &Cli, paths: &Paths, target: &Target, words: Vec<String>, raw: bool
         }
         return Ok(());
     }
-    let r = result(roundtrip(&mut stream, &req)?)?;
+    let r = result(roundtrip(stream, &req)?)?;
     if raw {
         match op.as_str() {
             "render" => {

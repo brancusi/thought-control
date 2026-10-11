@@ -118,6 +118,8 @@ impl Server {
         };
         let info = json!({
             "pid": pid,
+            // `thc screen` advertises here too, as `screen` (it speaks fictty's protocol).
+            "kind": "tui",
             "socket": s.socket,
             "vault": vault,
             "vault_path": vault_path,

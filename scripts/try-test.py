@@ -14,8 +14,9 @@ thc tui) that must show the seeded notes and the new one.
 
 --pty also runs the screen for real, piped into `sh` inside a fresh pseudo-terminal: it waits for
 each --expect text to be drawn, sends each --key, then runs each --second command with only
-~/.thc-try/bin added to PATH while the screen is up: `thc ui ls` must find it, and a task added
-there must show on it (read back with `thc ui render`).
+~/.thc-try/bin added to PATH while the screen is up: `thc ui ls` must find it (a TUI or a `thc
+screen`, which advertise in the same place), `thc ui state` and `thc ui send keys` must reach
+it, and a task added there must show on it (read back with `thc ui render`).
 
 Either way it checks the reader's real thc is untouched: ~/thought, ~/.config/thought and the
 daemon's socket folder (/tmp/thc-<uid>) have the same files, sizes and times afterwards, and no
@@ -246,14 +247,23 @@ def run_pty(a, line, env, try_home, second) -> bool:
 
         threading.Thread(target=drain, daemon=True).start()
         live = f'thc todo "{LIVE}" --due today --key try-test-live'
-        for cmd in ["thc ui ls --json | grep -q pid", live, *a.second]:
+        checks = [
+            "thc ui ls --json | grep -q pid",
+            # The agent API reaches the running screen: its state, and keys (Today again).
+            "thc ui state --raw | grep -q focus",
+            "thc ui send keys 1",
+            live,
+            *a.second,
+        ]
+        for cmd in checks:
             r = subprocess.run(["sh", "-c", cmd], env=second, capture_output=True, text=True, timeout=60)
             ok = ok and r.returncode == 0
             print(f"{'✓' if r.returncode == 0 else '✗'} second terminal: {cmd} -> {(r.stdout or r.stderr).strip()[:160]!r}", flush=True)
         # The running screen shows the second terminal's task: read it back through `thc ui render`.
         frame, end = "", time.time() + 20
         while LIVE not in frame and time.time() < end:
-            r = subprocess.run(["sh", "-c", f"thc ui render {a.render}"], env=second, capture_output=True, text=True, timeout=60)
+            # At its own size: a `thc screen` draws only that (the TUI draws any size too).
+            r = subprocess.run(["sh", "-c", "thc ui render"], env=second, capture_output=True, text=True, timeout=60)
             frame = r.stdout
             time.sleep(0.5)
         ok = ok and LIVE in frame
