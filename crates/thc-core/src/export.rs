@@ -1,5 +1,6 @@
 //! Read-only Markdown export (Obsidian-readable) and a full JSON snapshot.
 
+use crate::list::ListStyle;
 use crate::model::Node;
 use crate::store::Store;
 use anyhow::Result;
@@ -27,14 +28,19 @@ pub fn slug(s: &str) -> String {
 }
 
 fn task_line(store: &Store, n: &Node) -> String {
+    item_line(store, n, "-")
+}
+
+/// A note as a Markdown list item behind `marker` (`-`, or `3.` in a numbered list).
+fn item_line(store: &Store, n: &Node, marker: &str) -> String {
     let cb = match n.status.as_deref() {
-        Some("done") => "- [x] ",
-        Some("cancelled") => "- [-] ",
-        Some("doing") => "- [/] ",
-        Some(_) => "- [ ] ",
-        None => "- ",
+        Some("done") => "[x] ",
+        Some("cancelled") => "[-] ",
+        Some("doing") => "[/] ",
+        Some(_) => "[ ] ",
+        None => "",
     };
-    let mut s = format!("{cb}{}", store.render_text(&n.text).replace('\n', " "));
+    let mut s = format!("{marker} {cb}{}", store.render_text(&n.text).replace('\n', " "));
     if let Some(p) = &n.priority {
         s.push_str(match p.as_str() {
             "high" => " ⏫",
@@ -60,9 +66,24 @@ fn task_line(store: &Store, n: &Node) -> String {
     s
 }
 
+/// Plain Markdown lists (list.rs): a numbered list keeps its numbers and its `.` or `)`; letters
+/// and roman numerals, which Markdown doesn't have, fall back to numbers. Paragraphs export as
+/// `-` lines (as before), and one between items starts a new list, as in the editor.
+fn markdown_marker(style: ListStyle, para: bool, n: usize) -> String {
+    match style {
+        ListStyle::Ordered(_, delim) if !para => format!("{n}{delim}"),
+        ListStyle::Bullet(c) if !para => c.to_string(),
+        _ => "-".into(),
+    }
+}
+
 fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Result<()> {
     let mut prev_para: Option<bool> = None;
+    let style = crate::list::level(store, parent).style;
+    let mut n = 0;
     for c in store.children(parent)? {
+        let is_para = crate::edit::is_paragraph(store, &c);
+        n = if is_para { 0 } else { n + 1 };
         // A blank line before a top-level note where it has one (`gap`, writing.md §1): its own
         // when set, else the default (a paragraph keeps a blank line on either side).
         if depth == 0 {
@@ -74,7 +95,7 @@ fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Resul
             }
             prev_para = Some(para);
         }
-        let line = task_line(store, &c);
+        let line = item_line(store, &c, &markdown_marker(style, is_para, n));
         out.push_str(&"    ".repeat(depth));
         out.push_str(&line);
         out.push('\n');
@@ -169,4 +190,16 @@ pub fn json_snapshot(store: &Store) -> Result<serde_json::Value> {
         out.push(v);
     }
     Ok(json!({ "format": crate::event::FORMAT_VERSION, "nodes": out }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_and_roman_export_as_numbers() {
+        let m = |s: &str, para: bool, n: usize| markdown_marker(ListStyle::parse(s).unwrap(), para, n);
+        assert_eq!([m("a.", false, 2), m("I)", false, 3), m("1.", false, 4), m("*", false, 1)], ["2.", "3)", "4.", "*"]);
+        assert_eq!(m("1.", true, 0), "-", "a paragraph stays a - line");
+    }
 }

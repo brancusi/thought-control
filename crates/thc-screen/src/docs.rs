@@ -117,33 +117,17 @@ pub fn with_ids(rendered: &str, edited: &str) -> String {
         .collect()
 }
 
-/// A paragraph's id ends its last line (edit.rs: prose lines join until a blank line or a
-/// bullet, and only a trailing `^id` is an id). Lines that became one paragraph keep the first
-/// id they carried, moved to the paragraph's last line; any other id in the run was joined away.
+/// A note's id ends its last line (edit.rs reads the notes: `edit::parse`, and only a trailing
+/// `^id` is an id). Lines that became one note keep the first id they carried, moved to the
+/// note's last line; any other id in it was joined away.
 fn paragraph_ids_last(lines: &[&str], ids: &mut [Option<String>]) {
-    let is_bullet = |t: &str| t.starts_with("- ") || t.starts_with("* ") || t == "-";
-    let mut run: Vec<usize> = Vec::new();
-    let close = |run: &mut Vec<usize>, ids: &mut [Option<String>]| {
-        let id = run.iter().find_map(|&k| ids[k].clone());
-        for &k in run.iter() {
+    for span in thc_core::edit::parse(&lines.join("\n"), true).spans {
+        let id = span.lines.clone().find_map(|k| ids[k].clone());
+        for k in span.lines.clone() {
             ids[k] = None;
         }
-        if let Some(&last) = run.last() {
-            ids[last] = id;
-        }
-        run.clear();
-    };
-    for (k, l) in lines.iter().enumerate() {
-        let t = l.trim();
-        let indent = l.len() - l.trim_start().len();
-        let heading = k == 0 && t.starts_with("# ");
-        if !t.is_empty() && !heading && !is_bullet(t) && (indent == 0 || !run.is_empty()) {
-            run.push(k);
-        } else {
-            close(&mut run, ids);
-        }
+        ids[span.lines.end - 1] = id;
     }
-    close(&mut run, ids);
 }
 
 /// Every line of a render with the node it shows (full ids): what a document has shown, so a
@@ -188,6 +172,10 @@ mod tests {
         // A paragraph that grew a line: its id moves to the paragraph's last line.
         let r = "# Home ^aaaa1\n\nA plain paragraph ^bbbb2\n- Wifi ^dddd4\n";
         assert_eq!(with_ids(r, "A plain paragraph\nits later line\n- Wifi\n"), "# Home ^aaaa1\n\nA plain paragraph\nits later line ^bbbb2\n- Wifi ^dddd4\n");
+        // A paragraph's indented line is its child, with an id of its own; a numbered item's
+        // line break keeps the id on the item's last line.
+        let r = "# Home ^aaaa1\n\nPara ^bbbb2\n  child ^cccc3\n1. first \\\n   more ^dddd4\n";
+        assert_eq!(with_ids(r, "Para\n  child\n1. first \\\n   more\n"), r);
         assert!(Doc::parse("day/2026-10-11").is_some() && Doc::parse("page/").is_none() && Doc::parse("x/1").is_none());
     }
 }

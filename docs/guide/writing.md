@@ -16,11 +16,21 @@ Pages and journal days are outlines, as in Logseq: every line you type is a note
 | `Enter` on an empty note | Comes out a level (at the top level it does nothing) |
 | `⌫` at a note's start | Joins it to the note above |
 | `[ ] call` / `[x] call` | A task, open or done |
+| `1. step`, `a. step`, `i. step` | A numbered list (also `A.` `I.`, and `)` for `.`) |
 | `# Title`, `## Section` | A heading |
 
 A note with several lines shows as one bullet with its lines hanging under the first.
 Paragraphs come only from imported Markdown (`thc import`, a pasted document): they keep their
 blank lines, Enter splits them into notes, and `⇧Enter` still breaks their lines.
+
+**Indenting always nests.** An indented line is a child of the note above it, whatever kinds
+they are: a paragraph can have notes under it, just like a list item or a task.
+
+**Numbered lists number themselves.** A list's style (numbers, letters, roman numerals or
+bullets) belongs to the list, and its first item decides it. The numbers come from the order,
+so moving an item renumbers the list, and a list after a paragraph starts again at 1. A list
+nested in a numbered one goes `1.` → `a.` → `i.` by itself; anything else you choose is kept.
+In a Markdown export, letters and roman numerals become numbers.
 
 Each note has its own identity, dates and history, and you never see that machinery. Delete the
 `[ ]` and it's a plain note again, because what you see is the truth.
