@@ -34,6 +34,10 @@ struct Inner {
     /// A pinned "now" (tests, renders); else thc's clock (THC_NOW, or the real one).
     at: Option<NaiveDateTime>,
     watch: bool,
+    /// Keep the sidebar's stack in the vault's cache (live screens; never snapshots).
+    persist: bool,
+    /// Panels dropped on load because their page is gone: said once, at the start.
+    dropped: Mutex<Vec<String>>,
     live: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
 }
@@ -44,7 +48,7 @@ impl ThcHost {
     pub fn new(mut vault: Vault) -> ThcHost {
         // What happened before the screen opened isn't news to it (no toast, no live marks).
         let _ = vault.take_news();
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -75,7 +79,58 @@ impl ThcHost {
 
     /// The screen for a route, as of now.
     pub fn screen(&self, route: &Route) -> fictty::model::Ui {
-        screens::build(route, self.now().date())
+        let mut ui = screens::build(route, self.now().date());
+        // The stack this device kept for this vault (sidebar.md §11), starting where it was.
+        if let Some(stack) = self.load_stack() {
+            let beside = !stack.open.is_empty();
+            ui.store.insert("sidebar".into(), stack.to_value());
+            ui.store.insert("sidebar_shown".into(), beside.into());
+            ui.store.insert("sidebar_beside".into(), beside.into());
+        }
+        ui
+    }
+
+    /// Keep the stack across runs: `.persisting()` on a live screen.
+    pub fn persisting(self) -> ThcHost {
+        self.rebuild(|i| i.persist = true)
+    }
+
+    /// Where the stack is kept: the vault's cache, per vault and per device (§11).
+    fn stack_file(&self) -> Option<std::path::PathBuf> {
+        let v = self.inner.vault.lock().ok()?;
+        Some(crate::sidebar::file(&v.paths.cache))
+    }
+
+    /// The kept stack, without panels whose page was deleted (named in `dropped`, for the bar).
+    fn load_stack(&self) -> Option<crate::sidebar::Stack> {
+        if !self.inner.persist {
+            return None;
+        }
+        let raw = std::fs::read(self.stack_file()?).ok()?;
+        let mut stack = crate::sidebar::Stack::from_value(&serde_json::from_slice(&raw).ok()?);
+        let v = self.inner.vault.lock().ok()?;
+        let mut gone = Vec::new();
+        stack.open.retain(|p| {
+            let here = p.kind != crate::sidebar::Kind::Page || v.store.node(&p.target).ok().flatten().is_some_and(|n| !n.deleted);
+            if !here {
+                gone.push(p.target.clone());
+            }
+            here
+        });
+        if let Ok(mut d) = self.inner.dropped.lock() {
+            *d = gone;
+        }
+        Some(stack)
+    }
+
+    /// Write the stack to the cache (atomically: a temp file, then a rename).
+    fn save_stack(&self, stack: &crate::sidebar::Stack) {
+        if !self.inner.persist {
+            return;
+        }
+        if let Ok(v) = self.inner.vault.lock() {
+            crate::sidebar::save(&v.paths.cache, stack);
+        }
     }
 
     /// A fictty app on this vault, showing `route` in `theme`: run it (`run`) or draw it
@@ -362,6 +417,11 @@ impl ThcHost {
                         }
                     }
                     Some("close_all") => stack.close_unpinned(),
+                    // A day panel's `[` `]` `T` (§8.1).
+                    Some("day") => {
+                        let by = args.get("by").and_then(Value::as_i64);
+                        stack.retarget_day(&key, by, self.now().date());
+                    }
                     // ⌥S showed it; ⌥\ hides or shows it.
                     Some("show") => shown = true,
                     Some("toggle") => shown = !shown,
@@ -397,9 +457,26 @@ impl ThcHost {
                 stack.close(&key);
                 self.put_stack(&stack, true)?;
                 self.put(&format!("open_{view}"), open)?;
+                // A step in the main view (§3.4): Esc from the page comes back to the view ⌥M was
+                // pressed in.
+                if let Some(from) = args.get("from").and_then(Value::as_u64).filter(|f| *f != tab as u64) {
+                    self.put("return_tab", from.into())?;
+                }
                 self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
                 self.send(fictty::state::Msg::Click { id: format!("{view}_doc"), row: None, tab: None })?;
                 Ok(json!({"ok": true}))
+            }
+            // Esc from a page or day opened by ⌥M: back to the view it came from, its list focused.
+            "return" => {
+                let Some(tab) = args.get("tab").and_then(Value::as_u64).map(|t| t as usize).filter(|t| *t < screens::View::TABS.len()) else {
+                    return Ok(json!({"ok": true, "returned": null}));
+                };
+                self.put("return_tab", Value::Null)?;
+                self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
+                if let Some(list) = screens::first_focus(&screens::Route::to(screens::View::TABS[tab])) {
+                    self.send(fictty::state::Msg::Click { id: list, row: None, tab: None })?;
+                }
+                Ok(json!({"ok": true, "returned": tab}))
             }
             // `{"keys": "p h"}`: press a command's keys (the palette runs a command this way, so it
             // does just what its key does).
@@ -440,6 +517,7 @@ impl ThcHost {
     /// Write the stack, whether it shows, and whether it's beside the view (both: the detail pane
     /// and the Journal's calendar yield to it, §6.2).
     fn put_stack(&self, stack: &crate::sidebar::Stack, shown: bool) -> anyhow::Result<()> {
+        self.save_stack(stack);
         self.put("sidebar", stack.to_value())?;
         self.put("sidebar_shown", shown.into())?;
         self.put("sidebar_beside", (shown && !stack.open.is_empty()).into())
@@ -497,6 +575,13 @@ impl Host for ThcHost {
         if self.inner.watch {
             let host = self.clone();
             std::thread::spawn(move || host.watch());
+        }
+        // A kept panel whose page was deleted is said once (sidebar.md §11).
+        let gone = self.inner.dropped.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default();
+        if let Some(id) = gone.first() {
+            let title = self.inner.vault.lock().ok().and_then(|v| v.store.node(id).ok().flatten().map(|n| n.label())).unwrap_or_else(|| id.clone());
+            let more = if gone.len() > 1 { format!(" (and {} more)", gone.len() - 1) } else { String::new() };
+            let _ = self.toast(&format!("¶ {title} was deleted · removed from the sidebar{more}"), "text");
         }
     }
 

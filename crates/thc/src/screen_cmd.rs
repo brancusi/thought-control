@@ -79,7 +79,7 @@ fn run(cli: &Cli, paths: &Paths, a: ScreenArgs) -> Result<()> {
         print!("{}", thc_screen::render(&host, &route, &a.theme, w, h, &keys, a.ansi)?);
         return Ok(());
     }
-    let host = ThcHost::new(vault).watching();
+    let host = ThcHost::new(vault).watching().persisting();
     let socket = a.socket.unwrap_or_else(|| default_socket(paths));
     host.app(&route, &a.theme).socket(socket).run()
 }
@@ -183,6 +183,8 @@ pub fn aside(paths: &Paths, actor: Option<&str>, target: Option<&str>, pin: bool
         if r["ok"].as_bool() != Some(true) {
             continue;
         }
+        // Kept on this device as the screen keeps it (sidebar.md §11).
+        thc_screen::sidebar::save(&paths.cache, &stack);
         let beside = !stack.open.is_empty();
         ask(&socket, &json!({"op": "write", "key": "sidebar_shown", "write": "put", "value": true, "by": by}))?;
         ask(&socket, &json!({"op": "write", "key": "sidebar_beside", "write": "put", "value": beside, "by": by}))?;

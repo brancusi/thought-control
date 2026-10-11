@@ -1333,7 +1333,7 @@ fn s16_s17_the_drawer_and_replace() {
     s.keys(&["o"]);
     let text = s.screen();
     assert!(text.lines().nth(2).unwrap().contains("§ Sun 11 Oct · today"), "the drawer, over the right: {text}");
-    s.keys(&["a-s"]);
+    // The open put the focus in the drawer.
     assert_eq!(s.state().focus.as_deref(), Some("drawer_today"));
     s.keys(&["esc"]);
     assert!(!s.screen().contains("§ Sun 11 Oct"), "closed");
@@ -1392,5 +1392,112 @@ fn one_page_two_editors_one_text_one_undo() {
     s.keys(&["d-z"]);
     assert_eq!(s.screen().matches("Repot the fern").count(), 0, "one undo history: {}", s.screen());
     assert!(!kid_texts(&root, &home).contains(&"Repot the fern".to_string()));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §2 rule 1 and §6.4: narrow, an open opens the drawer and focuses it (wide, the focus stays);
+/// the drawer has its `│` left edge, 60 columns from the right.
+#[test]
+fn narrow_an_open_focuses_the_drawer_which_has_its_edge() {
+    let (root, v) = seeded("drawer-focus");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 100, 30);
+    s.keys(&["o"]);
+    assert_eq!(s.state().focus.as_deref(), Some("drawer_today"), "the drawer takes it");
+    let text = s.screen();
+    let edge: Vec<char> = text.lines().nth(4).unwrap().chars().collect();
+    assert_eq!(edge.get(40), Some(&'│'), "the edge at 100 - 60: {text}");
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"), "beside, the focus stays");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S14: a day panel changes day with `[` `]`, and `T` makes it the relative today.
+#[test]
+fn s14_a_day_panel_changes_day() {
+    let (root, v) = seeded("day-panel");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o", "a-s", "["]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-10"]);
+    assert!(s.screen().contains("§ Sat 10 Oct"), "{}", s.screen());
+    s.keys(&["]", "]"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-12"]);
+    s.keys(&["T"]);
+    assert_eq!(panels(&mut s), vec!["day:today"]);
+    assert!(s.screen().contains("§ Sun 11 Oct · today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S20: the stack is kept in the vault's cache (per vault, per device) and comes back on the
+/// next run; a panel whose page was deleted is dropped, and the bar says so once.
+#[test]
+fn s20_the_stack_comes_back_and_a_deleted_page_goes() {
+    let (root, v) = seeded("persist");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o", "down", "o", "a-s", "a-p"]);
+    let before = panels(&mut s);
+    assert_eq!(before.len(), 2);
+    drop(s);
+    drop(host);
+    assert!(thc_screen::sidebar::file(&root.join("c")).exists(), "kept in the vault's cache");
+    let host = ThcHost::new(open(&root, human())).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert_eq!(panels(&mut s), before, "the same stack");
+    assert!(s.screen().contains("¶ Home") && s.screen().contains("pinned"), "{}", s.screen());
+    drop(s);
+    drop(host);
+    // Home deleted elsewhere: dropped on the next run, said once.
+    let mut other = open(&root, human());
+    other
+        .transact(|st| {
+            let mut b = TxBuilder::new(st, today());
+            b.delete(&home)?;
+            Ok((b.finish(), ()))
+        })
+        .unwrap();
+    drop(other);
+    let host = ThcHost::new(open(&root, human())).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11"]);
+    assert!(toasts(&mut s).iter().any(|t| t == "¶ Home was deleted · removed from the sidebar"), "{:?}", toasts(&mut s));
+    // Snapshots and tests that don't persist neither read nor write it.
+    let host = ThcHost::new(open(&root, human())).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert!(panels(&mut s).is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S12: ⌥M is a step in the main view: Esc from the page comes back to the view ⌥M was
+/// pressed in, its list focused.
+#[test]
+fn s12_esc_after_open_in_main_comes_back() {
+    let (root, v) = seeded("to-main-back");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["down", "o", "a-s", "a-m"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
+    s.keys(&["esc"]);
+    let st = s.state();
+    assert_eq!(st.focus.as_deref(), Some("today"), "back in Today");
+    assert_eq!(st.local["views"].tab, 0);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §0 frame B: with the column showing, the bar still spans the screen under it.
+#[test]
+fn the_bar_spans_the_width_beside_the_column() {
+    let (root, v) = seeded("bar-width");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o"]);
+    let text = s.screen();
+    let bar = text.lines().nth(39).unwrap();
+    let right = bar.chars().count();
+    assert!(bar.starts_with(" today ·") && right >= 138, "to the right edge: {bar:?}");
+    assert!(!bar.contains('│'), "{bar:?}");
     let _ = std::fs::remove_dir_all(root);
 }

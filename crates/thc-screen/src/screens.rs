@@ -577,9 +577,9 @@ fn node_binds(v: View) -> Vec<Bind> {
     };
     k.push(b("m", "move to a page", ask("move", format!("{}_move_q", v.name()))));
     // Its page or day beside the view (sidebar.md §2).
-    k.push(b("o", "open aside", aside_row()));
-    k.push(b("a-o", "open aside", aside_row()));
-    k.push(b("s-enter", "open aside", aside_row()));
+    k.push(b("o", "open aside", aside_row(v)));
+    k.push(b("a-o", "open aside", aside_row(v)));
+    k.push(b("s-enter", "open aside", aside_row(v)));
     k.push(b("D", "delete", ask("confirm", format!("{}_confirm", v.name()))));
     k
 }
@@ -718,8 +718,8 @@ fn banner() -> Node {
 
 /// One view's place in the tabs: the conflict banner (while there are conflicts), its content,
 /// its bar.
-fn view(content: Node, feed: &str, hints: &[(&str, &str)]) -> Node {
-    col(vec![banner(), content, bar(feed, hints)])
+fn view(content: Node, feed: &str, hints: &[(&str, &str)]) -> (Node, Node) {
+    (col(vec![banner(), content]), bar(feed, hints))
 }
 
 // ---- the views ------------------------------------------------------------------------------------
@@ -750,6 +750,8 @@ fn close_documents() -> Action {
     let vs = [View::Pages, View::Journal];
     let mut steps: Vec<Action> = vs.iter().map(|v| Action::Put { put: open_key(*v), value: Value::Null, for_ms: None }).collect();
     steps.extend(vs.iter().map(|v| Action::Focus { focus: main_id(*v) }));
+    // A page ⌥M opened from the sidebar goes back to where ⌥M was pressed (`return_tab`).
+    steps.push(act("return", json!({"tab": "{store.return_tab}"})));
     Action::Do { steps }
 }
 
@@ -847,6 +849,8 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     // Today's sections or agenda (`w`), the detail pane on or off (`\`), and what the move
     // picker and the delete question are about.
     store.insert("today_mode".into(), "".into());
+    // The view ⌥M left, for Esc to come back to (null: none).
+    store.insert("return_tab".into(), Value::Null);
     // The sidebar's stack (sidebar::Stack), whether it shows, and whether it's beside the view.
     store.insert("sidebar".into(), crate::sidebar::Stack::default().to_value());
     store.insert("sidebar_shown".into(), false.into());
@@ -866,7 +870,7 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         .map(|(i, v)| {
             let base = if i == tab && View::TABS.contains(&route.view) { route.clone() } else { Route::to(*v) };
             let mut groups: Groups = Vec::new();
-            let under = tab_view(&base, today, &mut data, &mut store, &mut groups);
+            let (under, view_bar) = tab_view(&base, today, &mut data, &mut store, &mut groups);
             let over = layers(*v, &mut data);
             // A modal layer clears what it covers.
             let mut all = vec![under];
@@ -876,7 +880,8 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
             let rule = when(sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1)), &format!("$screen.width>=120 & {BESIDE}"));
             let main = sized(node(Kind::Stack { children: all }), spec("*"));
             let beside = node(Kind::Stack { children: vec![row(vec![main, rule, column]), drawer, replace] });
-            let mut content = tab_keys(beside, i);
+            // The bar spans the width under them all (sidebar.md §0, frame B).
+            let mut content = tab_keys(col(vec![beside, view_bar]), i);
             // ⌥S, ⌥⇧T, ⌥\ from anywhere in the tab, writing included.
             let anywhere = everywhere_binds(*v);
             content = with_keys_everywhere(content, &anywhere);
@@ -930,9 +935,23 @@ fn panel_op(op: &str) -> Action {
     act("panel", json!({"op": op, "key": "{id}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))
 }
 
+/// A day panel to another day: `by` days, or null for today.
+fn day_op(by: Value) -> Action {
+    act("panel", json!({"op": "day", "by": by, "key": "{id}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))
+}
+
 /// Open a row's page or day aside (§2: `o`, `⌥O`, `⇧Enter`).
-fn aside_row() -> Action {
-    act("aside", json!({"id": "{id}", "stack": "{store.sidebar}"}))
+/// Narrow, the drawer (or replace) opens at once and takes the focus (§2 rule 1, §6.4); in the
+/// column, the focus stays where it is: only a shown node takes it.
+fn aside_row(v: View) -> Action {
+    Action::Do {
+        steps: vec![
+            act("aside", json!({"id": "{id}", "stack": "{store.sidebar}"})),
+            Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
+            Action::Focus { focus: format!("drawer_{}", v.name()) },
+            Action::Focus { focus: format!("replace_{}", v.name()) },
+        ],
+    }
 }
 
 /// The keys that work wherever the focus is in a tab, writing included (`⌥` chords type
@@ -990,7 +1009,11 @@ fn sidebar_list(v: View, place: &str) -> Node {
         b("a-p", "pin / unpin", panel_op("pin")),
         b("a-s-k", "move up", panel_op("up")),
         b("a-s-j", "move down", panel_op("down")),
-        b("a-m", "to main", act("to_main", json!({"key": "{id}", "stack": "{store.sidebar}"}))),
+        b("a-m", "to main", act("to_main", json!({"key": "{id}", "stack": "{store.sidebar}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)}))),
+        // A day panel: the day before, after, today (§8.1).
+        b("[", "the day before", day_op(json!(-1))),
+        b("]", "the day after", day_op(json!(1))),
+        b("T", "today", day_op(Value::Null)),
         b("a-s", "back to main", back.clone()),
         b("esc", "back to main", back),
     ];
@@ -1005,13 +1028,16 @@ fn sidebar_places(v: View) -> (Node, Node, Node) {
     column.min = Some(40);
     column.max = Some(64);
     let column = when(column, &format!("$screen.width>=120 & {BESIDE}"));
-    let mut drawer = variant(col(vec![sidebar_list(v, "drawer")]), "overlay");
+    // The drawer: a `│` left edge in `line`, the stack on `raised` (§6.4). Narrow, it shows
+    // while `sidebar_shown` (an open puts it there at once, so the open can focus it).
+    let edge = sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1));
+    let mut drawer = variant(row(vec![edge, sidebar_list(v, "drawer")]), "overlay");
     drawer.float = Some(Float { width: Some(cells(60)), height: None, at: Some("right".into()), margin: None });
-    let drawer = when(drawer, &format!("$screen.width>=90 & $screen.width<120 & {BESIDE}"));
+    let drawer = when(drawer, "$screen.width>=90 & $screen.width<120 & sidebar_shown");
     let back_row = sized(bound(text(" <accent>‹</> <muted+u>main</>   <muted>beside it: {count} panels</>"), "sidebar_rows"), cells(1));
     let mut replace = col(vec![back_row, sidebar_list(v, "replace")]);
     replace.float = Some(Float { width: None, height: None, at: None, margin: None });
-    let replace = when(replace, &format!("$screen.width<90 & {BESIDE}"));
+    let replace = when(replace, "$screen.width<90 & sidebar_shown");
     (column, drawer, replace)
 }
 
@@ -1020,7 +1046,7 @@ const BIG: &str = "$screen.width>=60 & $screen.height>=24";
 
 /// A tab's view (what layers open over), the sources it reads, the store it seeds, and its
 /// bindings by group (for its help and palette).
-fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>, groups: &mut Groups) -> Node {
+fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>, groups: &mut Groups) -> (Node, Node) {
     // A list's feed also reads `live`, so the rows an agent just changed carry their `•`.
     let mut feed = |name: &str, args: Value| {
         let mut args = args;
@@ -1108,7 +1134,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // Enter writes in the page or day, over the list (which keeps its selection and query).
             let open_row = open_over(View::Pages, json!({"kind": "{open}", "id": "{id}", "key": "{doc}"}), "pages_doc");
             let mut l = list("pages", "pages.rows", r);
-            let own = vec![b("enter", "write in it", open_row.clone()), b("a-o", "open aside", aside_row()), b("s-enter", "open aside", aside_row())];
+            let own = vec![b("enter", "write in it", open_row.clone()), b("a-o", "open aside", aside_row(View::Pages)), b("s-enter", "open aside", aside_row(View::Pages))];
             l.keys.extend(key_map(&own));
             let (l, prompt) = finder(l, variant(input("pages_q", "", "type to find a page, tag or day"), "input"), open_row);
             groups.push(("Pages".into(), own));
@@ -1154,7 +1180,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let mut results = tree("search", "search.rows");
             // ⌃Q: the search as a Tasks filter (§5.6).
             let as_query = Action::Do { steps: vec![Action::Put { put: "tasks_q".into(), value: "text:{store.search_q}".into(), for_ms: None }, show(2)] };
-            let own = vec![b("enter", "open", open_row.clone()), b("c-q", "as a Tasks filter", as_query.clone()), b("a-o", "open aside", aside_row()), b("s-enter", "open aside", aside_row())];
+            let own = vec![b("enter", "open", open_row.clone()), b("c-q", "as a Tasks filter", as_query.clone()), b("a-o", "open aside", aside_row(View::Search)), b("s-enter", "open aside", aside_row(View::Search))];
             results.keys.extend(key_map(&own));
             let (results, mut field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
             field.keys.insert("c-q".into(), as_query);
