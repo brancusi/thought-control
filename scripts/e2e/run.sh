@@ -15,7 +15,8 @@
 # ~/Documents/projects/fictty), FICTTY_REV (default its local main), THC_SCREEN_BIN or
 # THC_SCREEN_REV / THC_SCREEN_FICTTY_REV (thc screen, default 1697cb4 (PR #95) on fictty da34390),
 # WEZTERM (default /Applications/WezTerm.app/Contents/MacOS/wezterm), E2E_SETTLE (s between
-# inputs, 0.12), E2E_GRACE (ms a check may take to come true, 600).
+# inputs, 0.12), E2E_GRACE (ms a check may take to come true, 600), E2E_FICTTY_KEYS (1: also install
+# `fictty setup wezterm`'s module after thc's, the default for fictty-notes and thc-screen; 0: thc's only).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if [[ ! -x ${THC_BIN:-target/debug/thc} ]]; then

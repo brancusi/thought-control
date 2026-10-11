@@ -20,6 +20,6 @@
   "doc": "⟦ab ‖ cd▮⟧"
  },
  "known": {
-  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+  "thc-screen/real": "terminal: thc_keys.lua and fictty.lua both bind the ⌘ keys and WezTerm keeps the later (fictty's); thc screen on fictty da34390 doesn't set the `fictty` user var, so fictty's module re-sends every ⌘ key bare (⌘Z as `z`, ⌘← as ←). Passes on fictty 8670f90, which sets the var, or with thc_keys alone"
  }
 }

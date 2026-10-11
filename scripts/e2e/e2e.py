@@ -198,6 +198,39 @@ def check_vault(e, thc):
                 check(items and items[0].get(k) == q[k], f"vault {q['q']!r}: want {k}={q[k]!r}, got {[i.get(k) for i in items]}")
 
 
+def visual_row(screen, needle, last):
+    """The text of the screen row holding `needle` (its last such row, or its first), between the
+    borders around it: one visual row of a wrapped editor line."""
+    rows = [r for r in screen.split("\n") if needle in r]
+    if not rows:
+        raise Fail(f"{needle!r} isn't on screen:\n{compact(screen)}")
+    row = rows[-1] if last else rows[0]
+    i = row.rindex(needle) if last else row.index(needle)
+    start = max(row.rfind(b, 0, i) for b in "│┃║") + 1
+    ends = [j for j in (row.find(b, i) for b in "│┃║") if j >= 0]
+    return row[start:min(ends) if ends else len(row)].strip()
+
+
+def check_rows(e, screen, text, head):
+    """`caret_at_row_start: W` / `caret_at_row_end: W`: the caret is at the start of the last
+    visual row showing W, or at the end of the first, as drawn now (any width)."""
+    if "caret_at_row_start" in e:
+        seg = visual_row(screen, e["caret_at_row_start"], True)
+        check(text[head:].startswith(seg), f"caret: want it at the start of the row {seg!r}, it's before {text[head:head + 30]!r}")
+    if "caret_at_row_end" in e:
+        seg = visual_row(screen, e["caret_at_row_end"], False)
+        check(text[:head].rstrip(" ").endswith(seg) and len(text[:head]) - len(text[:head].rstrip(" ")) <= 1,
+              f"caret: want it at the end of the row {seg!r}, it's after {text[max(0, head - 30):head]!r}")
+
+
+def check_caret_line(e, line):
+    """`caret_line_min` / `caret_line_max`: the caret's line (0-based; a note in thc's TUI)."""
+    if "caret_line_min" in e:
+        check(line >= e["caret_line_min"], f"caret: want it on line {e['caret_line_min']} or later, it's on {line}")
+    if "caret_line_max" in e:
+        check(line <= e["caret_line_max"], f"caret: want it on line {e['caret_line_max']} or earlier, it's on {line}")
+
+
 def compact(screen):
     """A screen for a failure message: its non-blank rows, trimmed."""
     rows = [r.rstrip()[:160] for r in screen.split("\n") if r.strip()]
@@ -210,6 +243,13 @@ def check_common(e, screen, clip=None, osc52=None):
         check(t in screen, f"screen: want {t!r} on screen:\n{compact(screen)}")
     for t in ([e["no_screen"]] if isinstance(e.get("no_screen"), str) else e.get("no_screen", [])):
         check(t not in screen, f"screen: want no {t!r}:\n{compact(screen)}")
+    # A row of the screen starts or ends with this (borders, bars and padding aside): where a
+    # wrapped line's visual row begins or ends, whatever the width.
+    rows = [r.strip(" │▌┃║") for r in screen.split("\n")]
+    if "row_starts" in e:
+        check(any(r.startswith(e["row_starts"]) for r in rows), f"screen: want a row starting {e['row_starts']!r}:\n{compact(screen)}")
+    if "row_ends" in e:
+        check(any(r.endswith(e["row_ends"]) for r in rows), f"screen: want a row ending {e['row_ends']!r}:\n{compact(screen)}")
     if "clip" in e and clip is not None:
         check(clip == e["clip"], f"clipboard: want {e['clip']!r}, got {clip!r}")
     if "clip" in e and osc52 is not None:
@@ -220,6 +260,11 @@ def check_common(e, screen, clip=None, osc52=None):
 
 def fictty_rev():
     return os.environ.get("FICTTY_REV") or subprocess.run(["git", "-C", str(FICTTY_DIR), "rev-parse", "--short", "main"], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def fictty_cli():
+    """The fictty binary whose `setup wezterm` module the terminal installs: local main's."""
+    return build_fictty(probe_too=False)[1]
 
 
 def build_fictty(rev=None, probe_too=True):
@@ -241,6 +286,7 @@ def build_fictty(rev=None, probe_too=True):
     probe.mkdir(exist_ok=True)
     (probe / "src").mkdir(exist_ok=True)
     shutil.copy(E2E / "fictty-probe" / "main.rs", probe / "src" / "main.rs")
+    shutil.copy(E2E / "fictty-probe" / "app_fictty.rs", probe / "src" / "app.rs")
     (probe / "Cargo.toml").write_text(
         '[package]\nname = "fictty-probe"\nversion = "0.0.0"\nedition = "2024"\npublish = false\n\n'
         '[dependencies]\nfictty = { path = "../src" }\nserde_json = "1"\nanyhow = "1"\n\n[workspace]\n')
@@ -356,14 +402,17 @@ local function canon(key, mods)
   return key, norm(mods)
 end
 
+-- WezTerm builds its key map from the list in order, so a later entry for the same key wins.
 local function find(tbl, key, mods)
   local want_k, want_m = canon(key, mods)
+  local found
   for _, k in ipairs(tbl or {}) do
     local kk, km = canon(k.key, k.mods)
     if kk == want_k and km == want_m then
-      return k
+      found = k
     end
   end
+  return found
 end
 
 local function press(window, pane, key, mods)
@@ -438,7 +487,7 @@ done
 class Terminal:
     """One WezTerm process with its own config, class, HOME and socket."""
 
-    def __init__(self, target, keep=False):
+    def __init__(self, target, keep=False, fictty=None):
         # A short path: WezTerm's and thc's sockets live under it (sun_path is 104 bytes).
         self.root = Path(tempfile.mkdtemp(prefix="thce2e.", dir="/tmp"))
         self.home = self.root / "h"
@@ -455,6 +504,21 @@ class Terminal:
         r = subprocess.run([str(thc_bin()), "setup", "wezterm", "--yes"], env=dict(self.sandbox_env(), WEZTERM_CONFIG_FILE=str(cfg)), capture_output=True, text=True)
         if r.returncode or "thc: begin" not in cfg.read_text():
             raise RuntimeError(f"thc setup wezterm failed: {r.stdout}{r.stderr}")
+        # fictty's ⌘ forwards (`fictty setup wezterm`), wired in after thc's block as its own
+        # comment says: `require('fictty').apply(config)`. Both modules bind the same keys, and
+        # WezTerm keeps the later one, so fictty's decides; that's the setup a user of both has.
+        self.modules = ["thc_keys"]
+        if fictty:
+            r = subprocess.run([str(fictty), "setup", "wezterm"], env=dict(self.sandbox_env(), WEZTERM_CONFIG_FILE=str(cfg)), capture_output=True, text=True)
+            mod = self.home / ".config/wezterm/fictty.lua"
+            if not mod.exists():
+                mod.write_text(subprocess.run([str(fictty), "setup", "wezterm", "--print"], capture_output=True, text=True, check=True).stdout)
+            t = cfg.read_text()
+            if "require('fictty')" not in t and 'require("fictty")' not in t:
+                i = t.rindex("return config")
+                t = t[:i] + "package.path = wezterm.home_dir .. '/.config/wezterm/?.lua;' .. package.path\nrequire('fictty').apply(config)\n" + t[i:]
+                cfg.write_text(t)
+            self.modules.append("fictty")
         self.cfg = cfg
         wenv = {k: v for k, v in os.environ.items() if not k.startswith("WEZTERM_")}
         wenv.update(HOME=str(self.home), E2E_ROOT=str(self.root))
@@ -789,9 +853,18 @@ class FicttyNotes:
         finally:
             shutil.rmtree(tmp, ignore_errors=True)
 
+    def doc_of(self, state):
+        return fictty_doc(state)
+
     def assert_fictty(self, e, state, screen, copied, osc52=None):
+        if "caret_line_min" in e or "caret_line_max" in e:
+            text, _, head = self.doc_of(state)
+            check_caret_line(e, text[:head].count("\n"))
+        if "caret_at_row_start" in e or "caret_at_row_end" in e:
+            text, _, head = self.doc_of(state)
+            check_rows(e, screen, text, head)
         if "doc" in e:
-            got = notation.show_plain(*fictty_doc(state))
+            got = notation.show_plain(*self.doc_of(state))
             check(got == notation.norm_plain(e["doc"]), f"doc: want {notation.norm_plain(e['doc'])}\n      got  {got}")
         if "fictty_state" in e:
             probs = subset(e["fictty_state"], state)
@@ -989,6 +1062,12 @@ class ThcTui:
 
     def assert_thc(self, term, e, page, clip_file, clipboard):
         screen = term.text()
+        if "caret_line_min" in e or "caret_line_max" in e:
+            _, _, h, _ = self.doc_now(term, page, None)
+            check_caret_line(e, h[0])
+        if "caret_at_row_start" in e or "caret_at_row_end" in e:
+            b, _, h, _ = self.doc_now(term, page, None)
+            check_rows(e, screen, b[h[0]]["text"] if h[0] < len(b) else "", h[1])
         if "doc" in e:
             b, a, h, _ = self.doc_now(term, page, None)
             got = notation.show_notes(*self.trim(b, a, h))
@@ -1031,17 +1110,17 @@ def build_screen():
     default 1697cb4, PR #95) against an export of the fictty commit it was written for
     (THC_SCREEN_FICTTY_REV, default da34390), all under target/e2e."""
     if os.environ.get("THC_SCREEN_BIN"):
-        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "da34390")
+        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "da34390"), os.environ.get("THC_SCREEN_PROBE")
     rev = os.environ.get("THC_SCREEN_REV", "1697cb4")
     frev = os.environ.get("THC_SCREEN_FICTTY_REV", "da34390")
     fd, _, _, _ = build_fictty(frev, probe_too=False)
-    d = BUILD / f"screen-{rev}"
+    d = BUILD / f"screen-{rev}-on-{frev}"
     src = d / "src"
     if not (src / "Cargo.toml").exists():
         src.mkdir(parents=True, exist_ok=True)
         r = subprocess.run(["git", "-C", str(REPO), "archive", "--format=tar", "-o", str(d / "src.tar"), rev], capture_output=True, text=True)
         if r.returncode:
-            return None, f"no commit {rev} here ({r.stderr.strip()})"
+            return None, f"no commit {rev} here ({r.stderr.strip()})", None
         subprocess.run(["tar", "-xf", str(d / "src.tar"), "-C", str(src)], check=True)
     for toml in src.glob("crates/*/Cargo.toml"):
         t = toml.read_text()
@@ -1049,11 +1128,23 @@ def build_screen():
             toml.write_text(re.sub(r"^fictty = .*$", f'fictty = {{ path = "{fd / "src"}" }}', t, flags=re.M))
     r = subprocess.run(["cargo", "build", "-p", "thc", "--quiet"], cwd=src, env=dict(os.environ, CARGO_TARGET_DIR=str(d / "target")), capture_output=True, text=True)
     if r.returncode:
-        return None, f"building {rev} failed: {r.stderr[-1500:]}"
-    return d / "target/debug/thc", frev
+        return None, f"building {rev} failed: {r.stderr[-1500:]}", None
+    # The headless half: fictty-probe on thc screen's own app (app_screen.rs), from the same tree.
+    probe = d / "probe"
+    (probe / "src").mkdir(parents=True, exist_ok=True)
+    shutil.copy(E2E / "fictty-probe" / "main.rs", probe / "src" / "main.rs")
+    shutil.copy(E2E / "fictty-probe" / "app_screen.rs", probe / "src" / "app.rs")
+    (probe / "Cargo.toml").write_text(
+        '[package]\nname = "screen-probe"\nversion = "0.0.0"\nedition = "2024"\npublish = false\n\n[dependencies]\n'
+        f'fictty = {{ path = "{fd / "src"}" }}\nthc-screen = {{ path = "{src / "crates/thc-screen"}" }}\n'
+        f'thc-core = {{ path = "{src / "crates/thc-core"}" }}\nserde_json = "1"\nanyhow = "1"\n\n[workspace]\n')
+    r = subprocess.run(["cargo", "build", "--quiet"], cwd=probe, env=dict(os.environ, CARGO_TARGET_DIR=str(d / "target")), capture_output=True, text=True)
+    if r.returncode:
+        return None, f"building the screen probe failed: {r.stderr[-1500:]}", None
+    return d / "target/debug/thc", frev, d / "target/debug/screen-probe"
 
 
-class ThcScreen:
+class ThcScreen(FicttyNotes):
     """`thc screen`: thc's views on fictty. Seeded like the TUI (a scratch vault through the CLI),
     read back from the terminal, fictty's own state (`fictty get --state` on its socket) and the
     vault."""
@@ -1061,7 +1152,7 @@ class ThcScreen:
     kind = "fictty"
 
     def __init__(self):
-        self.bin, self.frev = build_screen()
+        self.bin, self.frev, self.probe = build_screen()
         self.fictty = None
         if self.bin:
             self.fictty = build_fictty(self.frev, probe_too=False)[1]
@@ -1077,9 +1168,155 @@ class ThcScreen:
         e.update(pane_env(root, root / "h"))
         return e
 
+    # -- editor goldens: a page's Markdown in the `doc` editor (store entry page/<id>)
+    def title(self, s):
+        return f"g{re.sub('[^a-z0-9]', '', s['id'].lower())}z"
+
+    def header(self, s):
+        """What the page's text starts with: its heading and a blank line."""
+        return f"# {self.title(s)}\n\n"
+
+    def doc_of(self, state, s=None):
+        """(text, anchor, head) of the page editor, its heading left out (offsets shift with it)."""
+        s = s or self.current
+        key = f"page/{self.page_id}"
+        entry = state["store"].get(key)
+        if entry is None:
+            raise Fail(f"no store entry {key} (keys: {sorted(state['store'])[:12]})")
+        text = (entry.get("doc") or {}).get("text")
+        if text is None:
+            raise Fail(f"store entry {key} isn't a text: {json.dumps(entry)[:200]}")
+        view = state["local"].get("doc", {}).get("editors", {}).get(key)
+        if view is None:
+            raise Fail(f"the doc editor has no view of {key}: local.doc = {json.dumps(state['local'].get('doc'))[:300]}")
+        sel = view["selection"]
+        r = sel["ranges"][sel.get("primary_index", 0)]
+        h = self.header(s)
+        if not text.startswith(h):
+            raise Fail(f"the page's text lost its heading {h!r}: {text[:80]!r}")
+        n = len(h)
+        if min(r["anchor"], r["head"]) < n:
+            # The heading is text in this editor: say so rather than draw a mark outside the golden.
+            body = notation.show_plain(text[n:], max(r["anchor"] - n, 0), max(r["head"] - n, 0))
+            raise Fail(f"the {'caret' if r['anchor'] == r['head'] else 'selection'} reaches into the page heading "
+                       f"(anchor {r['anchor'] - n}, caret {r['head'] - n} from the body's start): {body}")
+        return text[n:], r["anchor"] - n, r["head"] - n
+
+    def page_text(self, s):
+        text, _, _ = notation.plain(s["setup"])
+        return self.header(s) + text
+
+    def place_keys(self, s):
+        _, anchor, head = notation.plain(s["setup"])
+        n = len(self.header(s))
+        return ["c-home"] + ["right"] * (n + anchor) + ["s-right" if head >= anchor else "s-left"] * abs(head - anchor)
+
+    def new_page(self, s, thc):
+        out = json.loads(thc("--json", "page", "new", self.title(s)))
+        self.page_id = out["nodes"][0]["id"]
+        self.current = s
+        return self.page_id
+
+    def headless_editor(self, s):
+        if not self.probe:
+            raise Fail("skip: no screen probe built (THC_SCREEN_PROBE)")
+        e = expect_for(s, self.name)
+        if "clip_before" in s:
+            raise Fail("skip: ⌘V pastes the system clipboard, which Headless doesn't have")
+        root = Path(tempfile.mkdtemp(prefix="thce2e-h.", dir="/tmp"))
+        try:
+            (root / "h").mkdir()
+            (root / "w").mkdir()
+            env = self.env(root)
+            subprocess.run([str(self.bin), "init", str(root / "vault")], env=env, capture_output=True, cwd=root / "w")
+
+            def thc(*a, input=None):
+                r = subprocess.run([str(self.bin), *a], env=env, capture_output=True, text=True, cwd=root / "w", input=input)
+                if r.returncode:
+                    raise Fail(f"thc {' '.join(a)}: {r.stderr.strip()}")
+                return r.stdout
+            pid = self.new_page(s, thc)
+            steps = [{"msg": {"msg": "write", "key": f"page/{pid}", "write": "put", "value": self.page_text(s), "by": "agent"}}]
+            steps += [{"key": k} for k in self.place_keys(s)] + [{"snap": "setup"}]
+            steps += fictty_headless_steps(s.get("steps", []), editor="doc", origin=f"# {self.title(s)}")
+            plan = {"vault": str(root / "vault"), "view": "page", "id": pid, "size": [120, 32], "steps": steps}
+            r = subprocess.run([str(self.probe)], input=json.dumps(plan), capture_output=True, text=True, env=env, cwd=root / "w")
+            if r.returncode:
+                raise Fail(f"screen probe: {r.stderr.strip()[-1500:]}")
+            snaps = json.loads(r.stdout)["snaps"]
+            for sn in snaps:
+                if sn["label"] == "setup":
+                    got = notation.show_plain(*self.doc_of(sn["state"], s))
+                    check(got == notation.norm_plain(s["setup"]), f"setup: want {notation.norm_plain(s['setup'])}\n       got  {got}")
+                elif sn["label"] != "end":
+                    self.assert_fictty(for_target(json.loads(sn["label"]), self.name), sn["state"], sn["screen"], sn["copied"])
+            end = snaps[-1]
+            self.assert_fictty(e, end["state"], end["screen"], end["copied"])
+        finally:
+            shutil.rmtree(root, ignore_errors=True)
+
+    def real_editor(self, term, s, clipboard, sent):
+        e = expect_for(s, self.name)
+        term.fresh_vault(s["id"])
+
+        def thc(*a, input=None):
+            r = subprocess.run([str(self.bin), *a], env=term.sandbox_env(), capture_output=True, text=True, cwd=term.root, input=input)
+            if r.returncode:
+                raise Fail(f"thc {' '.join(a)}: {r.stderr.strip()}")
+            return r.stdout
+        pid = self.new_page(s, thc)
+        clip_file = term.root / "clip"
+        clip_file.write_text(s.get("clip_before", ""))
+        if "clip_before" in s:
+            clipboard.set(s["clip_before"])
+        elif "clip" in e:
+            clipboard.set(f"e2e-sentinel-{s['id']}")
+        sock = term.root / "s.sock"
+        term.run(f"{self.bin} screen --view page --id {pid} --socket {sock}")
+        fenv = {**term.sandbox_env(), "FICTTY_SOCKET": str(sock)}
+
+        def fictty(*a, input=None):
+            r = subprocess.run([str(self.fictty), *a], env=fenv, capture_output=True, text=True, input=input)
+            if r.returncode:
+                raise Fail(f"fictty {' '.join(a)}: {r.stderr or r.stdout}")
+            return r.stdout
+
+        def state():
+            return json.loads(fictty("get", "--state"))
+        deadline = time.time() + 15
+        while not sock.exists() and time.time() < deadline:
+            if term.finished():
+                raise Fail(f"thc screen exited:\n{compact(term.text())}")
+            time.sleep(0.05)
+        time.sleep(0.5)
+        try:
+            # The golden's text, through fictty's hosted store: thc's host saves it to the vault.
+            fictty("put", f"page/{pid}", "-", input=json.dumps(self.page_text(s)))
+            time.sleep(0.3)
+            term.send("".join(SETUP_BYTES[k] for k in self.place_keys(s)))
+            within(lambda: check(notation.show_plain(*self.doc_of(state(), s)) == notation.norm_plain(s["setup"]),
+                                 f"setup: want {notation.norm_plain(s['setup'])}\n       got  {notation.show_plain(*self.doc_of(state(), s))}"), GRACE)
+            run_steps_real(term, s.get("steps", []), sent,
+                           between=lambda a: self.assert_fictty(for_target(a, self.name), state(), term.text(), None, osc52=clipboard.get() if "clip" in a else None))
+            time.sleep(0.3)
+            within(lambda: self.assert_fictty(e, state(), term.text(), None, osc52=clipboard.get() if "clip" in e else None), s.get("within", GRACE))
+        except Fail as f:
+            if os.environ.get("E2E_DUMP"):
+                try:
+                    Path(os.environ["E2E_DUMP"], f"{s['id']}-{self.name}.json").write_text(json.dumps(state(), indent=1, ensure_ascii=False))
+                except Fail:
+                    pass
+            raise f
+        finally:
+            if not term.finished():
+                subprocess.run(["pkill", "-TERM", "-f", f"^{self.bin} screen --view page --id {pid} --socket {sock}"], capture_output=True)
+                if not term.wait_done(5):
+                    subprocess.run(["pkill", "-KILL", "-f", f"^{self.bin} screen --view page --id {pid} --socket {sock}"], capture_output=True)
+                    term.wait_done(3)
+
     def headless(self, s):
         if "setup" in s:
-            raise Fail("skip: thc screen has no editor yet")
+            return self.headless_editor(s)
         keys = []
         for st in s.get("steps", []):
             if "key" in st:
@@ -1115,7 +1352,7 @@ class ThcScreen:
 
     def real(self, term, s, clipboard, sent):
         if "setup" in s:
-            raise Fail("skip: thc screen has no editor yet")
+            return self.real_editor(term, s, clipboard, sent)
         e = expect_for(s, self.name)
         term.fresh_vault(s["id"])
 
@@ -1286,7 +1523,10 @@ def run_real(target, scenarios, keep, clip_on):
         return out
     if not Path(WEZ).exists():
         sys.exit(f"no WezTerm at {WEZ} (set WEZTERM)")
-    term = Terminal(target.name, keep)
+    # fictty's forwards for fictty's targets (E2E_FICTTY_KEYS=1 adds them to any, =0 leaves them out).
+    want = os.environ.get("E2E_FICTTY_KEYS", "1" if target.kind == "fictty" else "0") == "1"
+    term = Terminal(target.name, keep, fictty=fictty_cli() if want else None)
+    print(f"   WezTerm key modules: {', '.join(term.modules)}")
     root = term.root
     clipboard = Clipboard(clip_on)
     failed = False
@@ -1343,29 +1583,33 @@ def run_keys(keys, keep):
     """What WezTerm sends for each key, to a program named thc and to any other, for the kitty
     flags thc (1) and fictty (1|4) push. The truth table the forwards and decoders must agree on."""
     bins = build_keydump()
-    term = Terminal("keys", keep)
+    term = Terminal("keys", keep, fictty=fictty_cli() if os.environ.get("E2E_FICTTY_KEYS", "1") == "1" else None)
+    print(f"WezTerm key modules: {', '.join(term.modules)}")
     table = {}
     try:
-        for prog in ("thc", "keydump"):
-            for flags in (1, 5):
-                log = term.root / f"keys-{prog}-{flags}.log"
-                log.write_text("")
-                term.run(f"{bins / prog} {flags} {log}")
-                term.wait_text(f"keydump ready (flags {flags})", 10)
-                time.sleep(0.2)
-                table.setdefault("(flags query)", {})[f"{prog}/{flags}"] = (log.read_text().strip().replace("\n", " ") or "(no answer)", "-")
+        # A program named thc (thc's forwards), any other program, and one that says it's a fictty
+        # screen (the `fictty` user var: fictty's forwards), with thc's and fictty's kitty flags.
+        for prog, flags, var in (("thc", 1, ""), ("thc", 5, ""), ("keydump", 1, ""), ("keydump", 5, ""), ("keydump", 5, "fictty")):
+            col = f"{prog}/{flags}" + (f"+{var}" if var else "")
+            log = term.root / f"keys-{prog}-{flags}{var}.log"
+            log.write_text("")
+            term.run(f"{bins / prog} {flags} {log} {var}".rstrip())
+            term.wait_text(f"keydump ready (flags {flags})", 10)
+            time.sleep(0.2)
+            table.setdefault("(flags query)", {})[col] = (log.read_text().strip().replace("\n", " ") or "(no answer)", "-")
+            if True:
                 for k in keys:
                     before = log.read_text()
                     how = term.key(k)
                     time.sleep(0.15)
                     got = log.read_text()[len(before):].strip().replace("\n", " ")
-                    table.setdefault(k, {})[f"{prog}/{flags}"] = (got or "(nothing)", how)
+                    table.setdefault(k, {})[col] = (got or "(nothing)", how)
                 subprocess.run(["pkill", "-TERM", "-f", f"^{bins / prog} {flags}"], capture_output=True)
                 term.wait_done(5)
     finally:
         if not keep:
             term.close()
-    cols = ["thc/1", "thc/5", "keydump/1", "keydump/5"]
+    cols = ["thc/1", "thc/5", "keydump/1", "keydump/5", "keydump/5+fictty"]
     print(f"{'key':10} {'SendKey':28} " + " ".join(f"{c:22}" for c in cols) + "  via")
     for k, row in table.items():
         wk, wm = wez_key(k)

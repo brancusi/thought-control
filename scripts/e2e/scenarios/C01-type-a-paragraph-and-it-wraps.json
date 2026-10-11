@@ -1,0 +1,22 @@
+{
+ "id": "C01",
+ "title": "type a paragraph and it wraps",
+ "spec": "writing.md · the common case",
+ "setup": "▮",
+ "steps": [
+  {
+   "type": "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+  }
+ ],
+ "expect": {
+  "doc": "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega▮",
+  "screen": "omega",
+  "no_screen": "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega"
+ },
+ "note": "about 290 characters: no editor row here holds them all, so the text wrapped (a page's fresh line in thc's TUI is a list item)",
+ "expect_by_target": {
+  "thc-tui": {
+   "doc": "- alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega▮"
+  }
+ }
+}

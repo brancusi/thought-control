@@ -2,7 +2,8 @@
 //! real terminal (as `keydump`, and as `thc`, so thc's WezTerm forwards treat it as thc) with the
 //! kitty keyboard flags a program asks for, presses keys through WezTerm and reads the log.
 //!
-//!     keydump FLAGS LOG      FLAGS: the kitty flags to push (0: none; thc pushes 1, fictty 1|4 = 5)
+//!     keydump FLAGS LOG [fictty]   FLAGS: the kitty flags to push (0: none; thc pushes 1, fictty 1|4 = 5);
+//!                                  `fictty` sets the user var a fictty screen sets
 //!
 //! Each read is one line of the log: the bytes, escaped (`\x1b[99;9u`). SIGTERM ends it.
 
@@ -21,6 +22,11 @@ fn main() {
     let mut out = std::io::stdout();
     if flags > 0 {
         let _ = write!(out, "\x1b[>{flags}u");
+    }
+    // `keydump FLAGS LOG fictty`: say what a fictty screen says (the `fictty` user var, OSC 1337),
+    // so fictty's WezTerm module forwards its ⌘ keys here.
+    if args.get(3).is_some_and(|a| a == "fictty") {
+        let _ = write!(out, "\x1b]1337;SetUserVar=fictty=MQ==\x07");
     }
     // Ask which flags are on: the answer (`CSI ? flags u`) is the log's first line.
     let _ = write!(out, "\x1b[?u");

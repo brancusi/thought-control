@@ -1,0 +1,20 @@
+{
+ "id": "C09",
+ "title": "triple click a line, then backspace",
+ "spec": "mouse.md §3 · editing.md §3 E16",
+ "setup": "First line ‖ ▮The quick fox ‖ Last",
+ "steps": [
+  {
+   "tclick": "The qu|ick fox"
+  },
+  {
+   "key": "bs"
+  }
+ ],
+ "expect": {
+  "doc": "First line ‖ ▮ ‖ Last"
+ },
+ "known": {
+  "thc-tui/real": "thc: a real triple click (three SGR clicks) then ⌫ deletes the whole note and its boundary (`First line ‖ Last ‖ ▮`) instead of leaving it empty (E45: the note, without the boundary); the flow passes"
+ }
+}

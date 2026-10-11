@@ -3,8 +3,7 @@
  "title": "a copy across notes is markdown",
  "spec": "editing.md §5 E34",
  "targets": [
-  "thc-tui",
-  "thc-screen"
+  "thc-tui"
  ],
  "setup": "[ ] Buy ⟦milk ‖ [ ] Call ▮⟧Sam",
  "steps": [
@@ -15,5 +14,6 @@
  "expect": {
   "doc": "[ ] Buy ⟦milk ‖ [ ] Call ▮⟧Sam",
   "clip": "milk\n- [ ] Call "
- }
+ },
+ "note": "thc screen's page is Markdown text (`- [ ] `): its form of this golden is S34"
 }

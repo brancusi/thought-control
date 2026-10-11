@@ -1,0 +1,33 @@
+{
+ "id": "C02",
+ "title": "cmd right and cmd left on a wrapped line",
+ "spec": "editing.md §9 ⌘← ⌘→ (the visual row, macOS)",
+ "setup": "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau upsilon phi chi psi omega▮",
+ "steps": [
+  {
+   "key": "d-up"
+  },
+  {
+   "key": "d-right"
+  },
+  {
+   "assert": {
+    "caret_at_row_end": "alpha beta"
+   }
+  },
+  {
+   "key": "d-down"
+  },
+  {
+   "key": "d-left"
+  }
+ ],
+ "expect": {
+  "caret_at_row_start": "omega"
+ },
+ "note": "⌘→ from the start goes to the end of the first visual row; ⌘← from the end to the start of the last (rows as drawn, so any width)",
+ "known": {
+  "thc-screen": "thc-screen: the page's heading (`# title`) is text in its editor, so ⌘A / ⌘↑ / ⇧⌘↑ reach into it (thc's TUI keeps the title out of the document); spec question",
+  "thc-tui": "thc: ⌘↓ lands on the fresh empty line after the last note, not at the end of the last note"
+ }
+}

@@ -3,8 +3,8 @@
 //! against a fictty source tree, writing its Cargo.toml beside a copy of this file, so thc's
 //! workspace never depends on fictty.
 //!
-//! Plan: `{"ui": PATH, "store": PATH?, "themes": PATH?, "size": [W, H], "dir": PATH?,
-//!          "steps": [STEP]}`, a STEP one of
+//! Plan: `{"size": [W, H], "dir": PATH?, "steps": [STEP]}` plus what app.rs reads to make the
+//! screen (a UI file, or a vault and a route), a STEP one of
 //! - `{"key": NAME}`: a key by fictty's name (`d-s-z`, `a-left`, `c-home`)
 //! - `{"msg": MSG}`: any message, as the socket takes it (`{"msg": "paste", "text": "…"}`)
 //! - `{"point": {"id", "find", "at", "origin", "extend"?}}`: a click in editor `id`'s text at the
@@ -17,6 +17,10 @@
 
 use serde_json::{Value, json};
 use std::io::Read;
+
+/// The screen under test: fictty's own (app_fictty.rs, a UI file) or thc's (app_screen.rs, a
+/// route on a vault). The harness copies one of them in as app.rs.
+mod app;
 
 /// Where `needle` first shows on screen: its column (in cells, ASCII) and row.
 fn locate(screen: &str, needle: &str) -> Option<(u16, u16)> {
@@ -44,13 +48,7 @@ fn main() -> anyhow::Result<()> {
     if let Some(dir) = plan["dir"].as_str() {
         std::env::set_current_dir(dir)?;
     }
-    let mut app = fictty::App::file(plan["ui"].as_str().expect("plan.ui"));
-    if let Some(p) = plan["store"].as_str() {
-        app = app.store(p);
-    }
-    if let Some(p) = plan["themes"].as_str() {
-        app = app.themes_file(std::path::Path::new(p))?;
-    }
+    let app = app::make(&plan)?;
     let w = plan["size"][0].as_u64().unwrap_or(100) as u16;
     let h = plan["size"][1].as_u64().unwrap_or(30) as u16;
     let mut screen = app.headless(w, h)?;

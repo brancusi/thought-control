@@ -183,6 +183,15 @@ fn check(f: &mut Flow, e: &serde_json::Map<String, Value>) -> Result<(), String>
             return Err(format!("clipboard: want {clip:?}, got {got:?}"));
         }
     }
+    if e.contains_key("caret_line_min") || e.contains_key("caret_line_max") {
+        let line = f.pane_doc().ok_or("no document open")?.caret().line as u64;
+        if let Some(min) = e.get("caret_line_min").and_then(Value::as_u64).filter(|m| line < *m) {
+            return Err(format!("caret: want it on note {min} or later, it's on {line}"));
+        }
+        if let Some(max) = e.get("caret_line_max").and_then(Value::as_u64).filter(|m| line > *m) {
+            return Err(format!("caret: want it on note {max} or earlier, it's on {line}"));
+        }
+    }
     let frame = f.shot.frame();
     let list = |v: Option<&Value>| -> Vec<String> {
         match v {
@@ -199,6 +208,33 @@ fn check(f: &mut Flow, e: &serde_json::Map<String, Value>) -> Result<(), String>
     for t in list(e.get("no_screen")) {
         if frame.contains(&t) {
             return Err(format!("screen: want no {t:?}:\n{frame}"));
+        }
+    }
+    for (key, last) in [("caret_at_row_start", true), ("caret_at_row_end", false)] {
+        let Some(Value::String(needle)) = e.get(key) else { continue };
+        let rows: Vec<&str> = frame.lines().filter(|r| r.contains(needle.as_str())).collect();
+        let row = (if last { rows.last() } else { rows.first() }).ok_or(format!("{needle:?} isn't on screen:\n{frame}"))?;
+        let i = if last { row.rfind(needle.as_str()) } else { row.find(needle.as_str()) }.unwrap_or(0);
+        let start = row[..i].rfind(['│', '┃', '║']).map_or(0, |b| b + '│'.len_utf8());
+        let end = row[i..].find(['│', '┃', '║']).map_or(row.len(), |b| i + b);
+        let seg = row[start..end].trim();
+        let d = f.pane_doc().ok_or("no document open")?;
+        let c = d.caret();
+        let text = &d.blocks()[c.line].text;
+        let ok = if last { text[c.byte..].starts_with(seg) } else { text[..c.byte].trim_end_matches(' ').ends_with(seg) };
+        if !ok {
+            return Err(format!("caret: want it at the {} of the row {seg:?}; the note reads {:?} around byte {}", if last { "start" } else { "end" }, text, c.byte));
+        }
+    }
+    let rows: Vec<&str> = frame.lines().map(|r| r.trim_matches(|c: char| " │▌┃║".contains(c))).collect();
+    if let Some(Value::String(t)) = e.get("row_starts") {
+        if !rows.iter().any(|r| r.starts_with(t.as_str())) {
+            return Err(format!("screen: want a row starting {t:?}:\n{frame}"));
+        }
+    }
+    if let Some(Value::String(t)) = e.get("row_ends") {
+        if !rows.iter().any(|r| r.ends_with(t.as_str())) {
+            return Err(format!("screen: want a row ending {t:?}:\n{frame}"));
         }
     }
     if let Some(want) = e.get("thc_state") {

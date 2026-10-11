@@ -14,5 +14,8 @@
  ],
  "expect": {
   "doc": "First⏎▮Second"
+ },
+ "known": {
+  "thc-screen": "thc-screen: a page is one Markdown text, so ⌥⌫ at a line's start just removes the line break; thc joins notes with a soft break (writing.md §1)"
  }
 }

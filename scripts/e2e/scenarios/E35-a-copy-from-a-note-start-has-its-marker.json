@@ -3,8 +3,7 @@
  "title": "a copy from a note start has its marker",
  "spec": "editing.md §5 E35",
  "targets": [
-  "thc-tui",
-  "thc-screen"
+  "thc-tui"
  ],
  "setup": "⟦One ‖ [x] Two▮⟧",
  "steps": [
@@ -15,5 +14,6 @@
  "expect": {
   "doc": "⟦One ‖ [x] Two▮⟧",
   "clip": "One\n\n- [x] Two"
- }
+ },
+ "note": "thc screen's page is Markdown text (`- [ ] `): its form of this golden is none (it copies its text as is)"
 }

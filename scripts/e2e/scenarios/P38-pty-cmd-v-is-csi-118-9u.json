@@ -15,5 +15,8 @@
  "expect": {
   "doc": "Hello X▮ld"
  },
- "clip_before": "X"
+ "clip_before": "X",
+ "known": {
+  "thc-screen/real": "terminal: thc_keys.lua sends ⌘V as CSI 118;9u to any process named thc (thc's TUI reads the clipboard itself); thc screen is thc, so fictty gets ⌘V and pastes caretline's own register, not the system clipboard"
+ }
 }

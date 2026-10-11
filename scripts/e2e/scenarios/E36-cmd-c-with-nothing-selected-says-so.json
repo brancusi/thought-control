@@ -19,7 +19,5 @@
    "toast": "nothing selected"
   }
  },
- "known": {
-  "fictty-notes/real": "terminal: outside thc, ⌘C is WezTerm's CopyTo of its own (empty) selection: fictty never sees the key and the system clipboard is emptied"
- }
+ "known": {}
 }

@@ -21,6 +21,6 @@
  },
  "known": {
   "thc-tui": "thc: the fresh empty line a page opens with counts as document: ⌘A / ⌘↓ / ⇧⌘↓ go past the last note onto it",
-  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+  "thc-screen": "thc-screen: the page's heading (`# title`) is text in its editor, so ⌘A / ⌘↑ / ⇧⌘↑ reach into it (thc's TUI keeps the title out of the document); spec question"
  }
 }
