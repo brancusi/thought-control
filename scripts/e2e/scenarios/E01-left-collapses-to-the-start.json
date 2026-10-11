@@ -1,0 +1,14 @@
+{
+ "id": "E01",
+ "title": "left collapses to the start",
+ "spec": "editing.md §2 E1",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "left"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ▮world"
+ }
+}

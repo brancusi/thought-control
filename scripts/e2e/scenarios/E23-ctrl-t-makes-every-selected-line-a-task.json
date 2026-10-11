@@ -1,0 +1,21 @@
+{
+ "id": "E23",
+ "title": "ctrl t makes every selected line a task",
+ "spec": "editing.md §3 E23",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "o⟦ne ‖ tw▮⟧o",
+ "steps": [
+  {
+   "key": "c-t"
+  }
+ ],
+ "expect": {
+  "doc": "[ ] o⟦ne ‖ [ ] tw▮⟧o"
+ },
+ "known": {
+  "thc-tui/headless": "thc: after ⌃T on two paragraphs, the state restored on a fresh session draws the trailing fresh line one row higher (the flows' restore check; cf. 02pjq)"
+ }
+}

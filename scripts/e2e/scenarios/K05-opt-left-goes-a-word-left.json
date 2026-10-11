@@ -1,0 +1,14 @@
+{
+ "id": "K05",
+ "title": "opt left goes a word left",
+ "spec": "editing.md §9 ⌥←",
+ "setup": "one two thr▮ee",
+ "steps": [
+  {
+   "key": "a-left"
+  }
+ ],
+ "expect": {
+  "doc": "one two ▮three"
+ }
+}

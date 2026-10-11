@@ -1,0 +1,14 @@
+{
+ "id": "E30",
+ "title": "ctrl k deletes to the line end",
+ "spec": "editing.md §4 E30",
+ "setup": "one ▮two⏎three",
+ "steps": [
+  {
+   "key": "c-k"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮⏎three"
+ }
+}

@@ -1,0 +1,41 @@
+{
+ "id": "W04",
+ "title": "edit a page and see it saved",
+ "spec": "writing.md · navigation.md §2",
+ "targets": [
+  "thc-tui"
+ ],
+ "vault": [
+  {
+   "page": "Notes",
+   "notes": [
+    "First line"
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "key": "4"
+  },
+  {
+   "type": "Notes"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "type": "Added from the e2e harness"
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:harness",
+    "count": 1
+   }
+  ]
+ }
+}

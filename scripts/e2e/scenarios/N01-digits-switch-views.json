@@ -1,0 +1,113 @@
+{
+ "id": "N01",
+ "title": "digits switch views",
+ "spec": "keymap.md §12.1 1–7",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "today",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "tasks"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Tasks"
+    }
+   }
+  },
+  {
+   "key": "2"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "inbox"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Inbox"
+    }
+   }
+  },
+  {
+   "key": "4"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "pages"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Pages"
+    }
+   }
+  },
+  {
+   "key": "7"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "log"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Log"
+    }
+   }
+  },
+  {
+   "key": "1"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "view": "today"
+   }
+  },
+  "thc-screen": {
+   "rule_under": "Today"
+  }
+ },
+ "known": {
+  "thc-screen": "thc-screen: arriving on Pages focuses its find prompt (pages_q), so the next digit types into it instead of switching views (navigation.md §6)"
+ }
+}

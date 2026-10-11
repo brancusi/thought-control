@@ -1,0 +1,14 @@
+{
+ "id": "E45",
+ "title": "triple click selects the note",
+ "spec": "editing.md §6 E45",
+ "setup": "▮The quick fox",
+ "steps": [
+  {
+   "tclick": "The qu|ick fox"
+  }
+ ],
+ "expect": {
+  "doc": "⟦The quick fox▮⟧"
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "id": "E21",
+ "title": "enter replaces the selection with a break",
+ "spec": "editing.md §3 E21",
+ "setup": "ab⟦cd▮⟧ef",
+ "steps": [
+  {
+   "key": "enter"
+  }
+ ],
+ "expect": {
+  "doc": "ab⏎▮ef"
+ }
+}

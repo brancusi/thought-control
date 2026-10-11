@@ -1,0 +1,14 @@
+{
+ "id": "E13",
+ "title": "shift click extends from the anchor",
+ "spec": "editing.md §2 E13",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "sclick": "Hello wo|rld"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wo▮⟧rld"
+ }
+}

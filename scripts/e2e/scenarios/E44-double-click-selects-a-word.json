@@ -1,0 +1,14 @@
+{
+ "id": "E44",
+ "title": "double click selects a word",
+ "spec": "editing.md §6 E44",
+ "setup": "▮The quick fox",
+ "steps": [
+  {
+   "dclick": "The qu|ick fox"
+  }
+ ],
+ "expect": {
+  "doc": "The ⟦quick▮⟧ fox"
+ }
+}

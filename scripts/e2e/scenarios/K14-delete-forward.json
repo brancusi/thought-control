@@ -1,0 +1,14 @@
+{
+ "id": "K14",
+ "title": "delete forward",
+ "spec": "editing.md §9 Del",
+ "setup": "one ▮two",
+ "steps": [
+  {
+   "key": "del"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮wo"
+ }
+}

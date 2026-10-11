@@ -1,0 +1,50 @@
+{
+ "id": "N04",
+ "title": "enter opens a page, esc comes back",
+ "spec": "navigation.md §2 N1",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "key": "4"
+  },
+  {
+   "type": "Health"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "assert": {
+    "screen": "Schedule annual physical"
+   }
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "view": "pages"
+   }
+  },
+  "thc-screen": {
+   "no_screen": "Schedule annual physical"
+  }
+ },
+ "note": "thc's TUI previews the page beside the Pages list, so its check is the state, not the screen",
+ "known": {
+  "thc-screen": "thc-screen: Esc on an opened page doesn't go back to the Pages list (navigation.md §2)"
+ }
+}

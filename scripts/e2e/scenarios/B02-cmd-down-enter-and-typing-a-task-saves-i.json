@@ -1,0 +1,77 @@
+{
+ "id": "B02",
+ "title": "cmd down, enter and typing a task saves it",
+ "spec": "coordinator, thc screen live run on 1697cb4 (PR #95)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Garden note"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Health note"
+   ]
+  },
+  {
+   "page": "Q4 Planning",
+   "notes": [
+    {
+     "text": "Planning kickoff agenda",
+     "id": "kkkkkkkkkkkk"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "click": "Pages"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "key": "d-down"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "type": "[ ] shipped"
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:shipped",
+    "count": 1,
+    "status": "todo"
+   }
+  ],
+  "selected_row": {
+   "list": "pages",
+   "text": "Q4 Planning"
+  }
+ },
+ "note": "Esc goes back to Pages with the page just left selected (navigation.md §2 N1)",
+ "known": {
+  "thc-screen/real": "thc-screen: Esc back to Pages selects the first page (Garden), not the page just left (navigation.md §2 N1)"
+ }
+}

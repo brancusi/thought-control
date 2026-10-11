@@ -1,0 +1,20 @@
+{
+ "id": "E24",
+ "title": "one undo brings the selection back",
+ "spec": "editing.md §3 E24",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "type": "XY"
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld"
+ },
+ "known": {
+  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+ }
+}

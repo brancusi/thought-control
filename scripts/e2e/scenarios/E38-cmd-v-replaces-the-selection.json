@@ -1,0 +1,15 @@
+{
+ "id": "E38",
+ "title": "cmd v replaces the selection",
+ "spec": "editing.md §5 E38",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "d-v"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ },
+ "clip_before": "X"
+}

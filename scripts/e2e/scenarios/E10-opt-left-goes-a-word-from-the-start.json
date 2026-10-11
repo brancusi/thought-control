@@ -1,0 +1,14 @@
+{
+ "id": "E10",
+ "title": "opt left goes a word from the start",
+ "spec": "editing.md §2 E10",
+ "setup": "one two ⟦thr▮⟧ee",
+ "steps": [
+  {
+   "key": "a-left"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮two three"
+ }
+}

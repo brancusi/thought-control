@@ -1,0 +1,14 @@
+{
+ "id": "E08",
+ "title": "up goes from the start",
+ "spec": "editing.md §2 E8",
+ "setup": "Line one ‖ Line ⟦two and▮⟧ more",
+ "steps": [
+  {
+   "key": "up"
+  }
+ ],
+ "expect": {
+  "doc": "Line ▮one ‖ Line two and more"
+ }
+}

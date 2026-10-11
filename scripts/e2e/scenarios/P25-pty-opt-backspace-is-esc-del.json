@@ -1,0 +1,14 @@
+{
+ "id": "P25",
+ "title": "pty opt backspace is ESC DEL",
+ "spec": "editing.md §11 (E25)",
+ "setup": "one two thr▮ee",
+ "steps": [
+  {
+   "bytes": "\u001b"
+  }
+ ],
+ "expect": {
+  "doc": "one two ▮ee"
+ }
+}

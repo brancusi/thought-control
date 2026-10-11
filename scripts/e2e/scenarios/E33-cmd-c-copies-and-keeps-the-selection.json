@@ -1,0 +1,18 @@
+{
+ "id": "E33",
+ "title": "cmd c copies and keeps the selection",
+ "spec": "editing.md §5 E33",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "d-c"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld",
+  "clip": "wor"
+ },
+ "known": {
+  "fictty-notes/real": "terminal: outside thc, ⌘C is WezTerm's CopyTo of its own (empty) selection: fictty never sees the key and the system clipboard is emptied"
+ }
+}

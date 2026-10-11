@@ -1,0 +1,17 @@
+{
+ "id": "E46a",
+ "title": "drag selects",
+ "spec": "mouse.md §3 drag",
+ "setup": "▮The quick fox",
+ "steps": [
+  {
+   "drag": [
+    "The q|uick fox",
+    "The quick f|ox"
+   ]
+  }
+ ],
+ "expect": {
+  "doc": "The q⟦uick f▮⟧ox"
+ }
+}

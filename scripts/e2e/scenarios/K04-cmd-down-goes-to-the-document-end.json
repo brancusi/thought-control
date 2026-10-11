@@ -1,0 +1,18 @@
+{
+ "id": "K04",
+ "title": "cmd down goes to the document end",
+ "spec": "editing.md §9 ⌘↓",
+ "setup": "o▮ne ‖ two",
+ "steps": [
+  {
+   "key": "d-down"
+  }
+ ],
+ "expect": {
+  "doc": "one ‖ two▮"
+ },
+ "known": {
+  "thc-tui": "thc: the fresh empty line a page opens with counts as document: ⌘A / ⌘↓ / ⇧⌘↓ go past the last note onto it",
+  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+ }
+}

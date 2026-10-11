@@ -1,0 +1,19 @@
+{
+ "id": "E35",
+ "title": "a copy from a note start has its marker",
+ "spec": "editing.md §5 E35",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "⟦One ‖ [x] Two▮⟧",
+ "steps": [
+  {
+   "key": "d-c"
+  }
+ ],
+ "expect": {
+  "doc": "⟦One ‖ [x] Two▮⟧",
+  "clip": "One\n\n- [x] Two"
+ }
+}

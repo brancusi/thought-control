@@ -1,0 +1,26 @@
+{
+ "id": "E37",
+ "title": "cmd x cuts, cmd z puts it back",
+ "spec": "editing.md §5 E37",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "d-x"
+  },
+  {
+   "assert": {
+    "doc": "Hello ▮ld",
+    "clip": "wor"
+   }
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld"
+ },
+ "known": {
+  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+ }
+}

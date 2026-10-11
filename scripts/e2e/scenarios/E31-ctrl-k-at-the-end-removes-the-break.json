@@ -1,0 +1,14 @@
+{
+ "id": "E31",
+ "title": "ctrl k at the end removes the break",
+ "spec": "editing.md §4 E31",
+ "setup": "one▮⏎three",
+ "steps": [
+  {
+   "key": "c-k"
+  }
+ ],
+ "expect": {
+  "doc": "one▮three"
+ }
+}

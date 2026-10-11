@@ -1,0 +1,14 @@
+{
+ "id": "E17",
+ "title": "delete deletes the selection",
+ "spec": "editing.md §3 E17",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "del"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ▮ld"
+ }
+}

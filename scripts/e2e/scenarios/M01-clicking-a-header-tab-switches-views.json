@@ -1,0 +1,65 @@
+{
+ "id": "M01",
+ "title": "clicking a header tab switches views",
+ "spec": "mouse.md §5 tabs",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "today",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "click": "Tasks"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "tasks"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Tasks"
+    }
+   }
+  },
+  {
+   "click": "Today"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "view": "today"
+   }
+  },
+  "thc-screen": {
+   "rule_under": "Today"
+  }
+ }
+}

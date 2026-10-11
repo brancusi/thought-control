@@ -1,0 +1,14 @@
+{
+ "id": "E14",
+ "title": "a click collapses where you click",
+ "spec": "editing.md §2 E14",
+ "setup": "⟦Hello▮⟧ world",
+ "steps": [
+  {
+   "click": "Hello wor|ld"
+  }
+ ],
+ "expect": {
+  "doc": "Hello wor▮ld"
+ }
+}

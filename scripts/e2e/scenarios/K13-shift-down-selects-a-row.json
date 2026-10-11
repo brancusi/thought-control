@@ -1,0 +1,14 @@
+{
+ "id": "K13",
+ "title": "shift down selects a row",
+ "spec": "editing.md §2 ⇧↓",
+ "setup": "o▮ne ‖ two",
+ "steps": [
+  {
+   "key": "s-down"
+  }
+ ],
+ "expect": {
+  "doc": "o⟦ne ‖ t▮⟧wo"
+ }
+}

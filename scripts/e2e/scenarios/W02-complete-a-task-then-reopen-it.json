@@ -1,0 +1,70 @@
+{
+ "id": "W02",
+ "title": "complete a task, then reopen it",
+ "spec": "keymap.md §12.2 x / X",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "+3d",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "key": "x"
+  },
+  {
+   "assert": {
+    "vault": [
+     {
+      "q": "text:Alpha status:done",
+      "count": 1
+     }
+    ]
+   }
+  },
+  {
+   "key": "k"
+  },
+  {
+   "key": "X"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:Alpha status:todo",
+    "count": 1
+   }
+  ]
+ },
+ "known": {
+  "thc-screen": "thc-screen: a task done with x leaves the Tasks list at once (navigation.md §8 keeps it in place), so X can't reopen it"
+ }
+}

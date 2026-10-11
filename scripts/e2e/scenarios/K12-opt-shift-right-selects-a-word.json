@@ -1,0 +1,14 @@
+{
+ "id": "K12",
+ "title": "opt shift right selects a word",
+ "spec": "editing.md §9 ⇧⌥→",
+ "setup": "o▮ne two",
+ "steps": [
+  {
+   "key": "a-s-right"
+  }
+ ],
+ "expect": {
+  "doc": "o⟦ne▮⟧ two"
+ }
+}

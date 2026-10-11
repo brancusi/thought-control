@@ -1,0 +1,25 @@
+{
+ "id": "P43",
+ "title": "pty shift cmd z is CSI 122;10u",
+ "spec": "editing.md §11 (E43)",
+ "setup": "Hello X▮ld",
+ "steps": [
+  {
+   "bytes": "\u001b[122;10u"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ },
+ "expect_by_target": {
+  "thc-tui": {
+   "screen": "nothing to redo"
+  },
+  "fictty-notes": {
+   "toast": "nothing to redo"
+  }
+ },
+ "known": {
+  "thc-tui/real": "thc: CSI 122;10u (⇧⌘Z) is read as ⌘Z: 'nothing to undo' instead of redo"
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "id": "E28",
+ "title": "opt delete deletes to the word end",
+ "spec": "editing.md §4 E28",
+ "setup": "one ▮two three",
+ "steps": [
+  {
+   "key": "a-del"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮ three"
+ },
+ "known": {
+  "thc-tui": "thc: ⌥Delete isn't bound (editing_keys.rs ACTIONS lacks caretline's edit.delete_word_forward); WezTerm does send CSI 3;3~"
+ }
+}

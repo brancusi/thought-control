@@ -1,0 +1,83 @@
+{
+ "id": "N02",
+ "title": "tab and shift tab cycle views",
+ "spec": "navigation.md §6 N16",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "today",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "tab"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "inbox"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Inbox"
+    }
+   }
+  },
+  {
+   "key": "tab"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "view": "tasks"
+     }
+    },
+    "thc-screen": {
+     "rule_under": "Tasks"
+    }
+   }
+  },
+  {
+   "key": "s-tab"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "view": "inbox"
+   }
+  },
+  "thc-screen": {
+   "rule_under": "Inbox"
+  }
+ },
+ "known": {
+  "thc-screen": "thc-screen: Tab moves focus between nodes (fictty's default focus_next) instead of cycling views (navigation.md §6)"
+ }
+}

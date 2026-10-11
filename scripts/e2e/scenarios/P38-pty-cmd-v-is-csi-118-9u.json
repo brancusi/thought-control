@@ -1,0 +1,19 @@
+{
+ "id": "P38",
+ "title": "pty cmd v is CSI 118;9u",
+ "spec": "editing.md §11 (E38)",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "bytes": "\u001b[118;9u"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ },
+ "clip_before": "X"
+}

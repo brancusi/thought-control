@@ -1,0 +1,14 @@
+{
+ "id": "E06",
+ "title": "shift back onto the anchor is no selection",
+ "spec": "editing.md §2 E6",
+ "setup": "ab ⟦▮c⟧ d",
+ "steps": [
+  {
+   "key": "s-right"
+  }
+ ],
+ "expect": {
+  "doc": "ab c▮ d"
+ }
+}

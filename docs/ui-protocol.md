@@ -86,7 +86,8 @@ What's **not** in the state:
   state changes, so a state names a node by its id and never carries its text.
 - **The document's text and undo:** these live in the editor's own model. `document` carries
   only presentation: `caret_id` and `caret_byte` (an anchor that survives edits elsewhere),
-  `scroll`, and, reported but ignored on writes, `target`, `dirty` and `revision`. A state file
+  `scroll`, and, reported but ignored on writes, `target`, `dirty`, `revision` and `anchor` (the
+  selection's other end, `{id, byte}`, while something is selected). A state file
   can't carry unsaved typing.
 - **Runtime handles:** the vault connection, channels, terminal capabilities, the last frame's
   hit regions and the image protocol. They live beside the state, not in it.

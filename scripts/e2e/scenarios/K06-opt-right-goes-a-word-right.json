@@ -1,0 +1,14 @@
+{
+ "id": "K06",
+ "title": "opt right goes a word right",
+ "spec": "editing.md §9 ⌥→",
+ "setup": "on▮e two three",
+ "steps": [
+  {
+   "key": "a-right"
+  }
+ ],
+ "expect": {
+  "doc": "one▮ two three"
+ }
+}

@@ -1,0 +1,25 @@
+{
+ "id": "E42",
+ "title": "select all, backspace, undo",
+ "spec": "editing.md §5 E42",
+ "setup": "⟦ab ‖ cd▮⟧",
+ "steps": [
+  {
+   "key": "bs"
+  },
+  {
+   "assert": {
+    "doc": "▮"
+   }
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "⟦ab ‖ cd▮⟧"
+ },
+ "known": {
+  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+ }
+}

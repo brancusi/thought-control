@@ -1,0 +1,21 @@
+{
+ "id": "E46",
+ "title": "double click then drag extends by words",
+ "spec": "editing.md §6 E46",
+ "setup": "▮The quick fox",
+ "steps": [
+  {
+   "drag": [
+    "The qu|ick fox",
+    "The quick f|ox"
+   ],
+   "double": true
+  }
+ ],
+ "expect": {
+  "doc": "The ⟦quick fox▮⟧"
+ },
+ "known": {
+  "thc-tui/real": "thc: a drag after a double-click extends by nothing (the word stays selected), not by words"
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "id": "K01",
+ "title": "cmd left goes to the row start",
+ "spec": "editing.md §9 ⌘←",
+ "setup": "one tw▮o ‖ three",
+ "steps": [
+  {
+   "key": "d-left"
+  }
+ ],
+ "expect": {
+  "doc": "▮one two ‖ three"
+ },
+ "known": {
+  "fictty-notes/real": "terminal: thc_keys.lua forwards ⌘ keys only while thc is the foreground process; elsewhere it re-sends the key with SendKey, which WezTerm 20240203 encodes without ⌘ (kitty flags on or not), so fictty gets the bare key"
+ }
+}

@@ -1046,6 +1046,10 @@ impl Session {
                 dirty: d.blocks().iter().any(|l| l.edited()),
                 revision: d.revision(),
                 fresh_end: d.has_fresh_end(),
+                anchor: d.anchor().filter(|p| *p != d.caret()).map(|p| {
+                    let l = &d.blocks()[p.line];
+                    crate::ui_state::SelectionEnd { id: if l.is_new { String::new() } else { l.id.clone() }, byte: p.byte }
+                }),
             }
         });
         if self.app.ui.document != doc {

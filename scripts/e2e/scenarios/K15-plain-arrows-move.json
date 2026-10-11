@@ -1,0 +1,20 @@
+{
+ "id": "K15",
+ "title": "plain arrows move",
+ "spec": "editing.md §2",
+ "setup": "o▮ne",
+ "steps": [
+  {
+   "key": "right"
+  },
+  {
+   "key": "right"
+  },
+  {
+   "key": "left"
+  }
+ ],
+ "expect": {
+  "doc": "on▮e"
+ }
+}
