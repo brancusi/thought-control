@@ -713,7 +713,21 @@ fn bar(feed: &str, hints: &[(&str, &str)]) -> Node {
     let plain: String = hints.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join("  ");
     let width = unicode_width::UnicodeWidthStr::width(format!(" ○ local   {plain} ").as_str()) as u16;
     let view = variant(row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]), "bar");
-    sized(node(Kind::Stack { children: vec![view, node(Kind::Toasts {})] }), cells(1))
+    // Pages and the Journal open a page or a day to write in over the view: while one is open
+    // the bar is the document's (`¶ Q4 Planning · 3 open · writing`, the writing keys), from
+    // the same source as its heading row.
+    let mut lines = vec![view];
+    if matches!(feed, "pages" | "journal") {
+        let open = format!("open_{feed}.key");
+        let keys = [("⌃T", "task"), ("⌃O", "open"), ("⌥O", "aside"), ("⌥L", "list"), ("⌥S", "sidebar"), ("Esc", "done")];
+        let right = format!(" {{live|true=<done>●</> <muted>live</>;*=<muted>○ local</>}}   {} ", crate::feeds::hints(&keys, "  "));
+        let plain: String = keys.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join("  ");
+        let width = unicode_width::UnicodeWidthStr::width(format!(" ○ local   {plain} ").as_str()) as u16;
+        let writing = variant(row(vec![variant(bound(text(" {bar_m|markup}"), &format!("{feed}_heading")), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]), "bar");
+        lines = vec![when(lines.remove(0), &format!("!{open}")), when(writing, &open)];
+    }
+    lines.push(node(Kind::Toasts {}));
+    sized(node(Kind::Stack { children: lines }), cells(1))
 }
 
 /// The conflict banner (§7.4): one row under the tabs while the vault has open conflicts.

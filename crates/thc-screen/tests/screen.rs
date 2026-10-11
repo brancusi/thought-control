@@ -1834,18 +1834,62 @@ fn a_reorder_renumbers() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The page as a fresh screen opens it: a new vault handle and a new host, so nothing an
+/// editor held in memory comes back, only what was saved.
+fn reopened(root: &Path, id: &str) -> String {
+    let host = ThcHost::new(open(root, human())).at(now());
+    let mut s = page(&host, id);
+    s.state().store[&format!("page/{id}")].read()["text"].as_str().unwrap_or("").to_string()
+}
+
 /// What the editor holds is what thc-core renders: a page with a bulleted list, a paragraph and
-/// a numbered list (with a lettered level) reads back exactly, and so does a fresh open of it.
+/// a numbered list (with a lettered level) reads back exactly from the vault in a fresh screen.
 #[test]
 fn a_page_of_lists_round_trips_through_the_editor() {
-    let (root, host, mut s, page_id) = lists_page("round-trip");
+    let (root, _host, mut s, page_id) = lists_page("round-trip");
     type_in(&mut s, "- milk\neggs\n\nA plain paragraph between them.\n\n1. first\nsecond");
     s.keys(&["enter", "tab"]);
     type_in(&mut s, "a nested one");
     let written = doc_text(&mut s, &page_id);
-    let rendered = host.load_doc(&format!("page/{page_id}")).unwrap();
-    assert_eq!(written.trim_end(), rendered.trim_end(), "the editor's text is thc-core's render");
-    let again = page(&host, &page_id).state().store[&format!("page/{page_id}")].read()["text"].as_str().unwrap_or("").to_string();
-    assert_eq!(again, rendered, "reopening gives the same text");
+    drop(s);
+    assert_eq!(reopened(&root, &page_id).trim_end(), written.trim_end(), "a fresh open gives back what was written");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A numbered list right after a bulleted one (no paragraph between) stays numbered once saved.
+#[test]
+#[ignore = "thc-core: a `1.` item right after `- ` items joins their run and is saved as a bullet (the core fix is in progress)"]
+fn a_numbered_list_right_after_bullets_round_trips() {
+    let (root, _host, mut s, page_id) = lists_page("adjacent");
+    type_in(&mut s, "- milk\neggs\n");
+    // Enter on the empty `- ` item ends the bullets; the numbered list starts on the next line.
+    s.keys(&["enter"]);
+    type_in(&mut s, "1. first\nsecond");
+    let written = doc_text(&mut s, &page_id);
+    assert!(written.contains("- eggs\n") && written.contains("1. first\n2. second"), "{written:?}");
+    drop(s);
+    assert_eq!(reopened(&root, &page_id).trim_end(), written.trim_end(), "a fresh open gives back what was written");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// While a page or a day is being written in, the bar is the document's (`¶ Q4 Planning · 0
+/// open · writing`, the writing keys), not the view's; closing it brings the view's back.
+#[test]
+fn the_bar_is_the_documents_while_writing() {
+    let (root, v) = seeded("writing-bar");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Pages, 120, 32);
+    let bar = |s: &mut fictty::Headless| s.screen().lines().last().unwrap_or("").to_string();
+    assert!(bar(&mut s).starts_with(" pages ·"), "{:?}", bar(&mut s));
+    s.keys(&["down", "down", "down", "enter"]);
+    let line = bar(&mut s);
+    assert!(line.starts_with(" ¶ Q4 Planning · 0 open · writing") && line.contains("⌥L list"), "{line:?}");
+    s.keys(&["esc"]);
+    assert!(bar(&mut s).starts_with(" pages ·"), "{:?}", bar(&mut s));
+    // A journal day too.
+    let mut s = screen(&host, View::Journal, 120, 32);
+    s.keys(&["enter"]);
+    let line = bar(&mut s);
+    assert!(line.starts_with(" § Sunday, October 11 2026 · ") && line.contains(" open · writing"), "{line:?}");
     let _ = std::fs::remove_dir_all(root);
 }
