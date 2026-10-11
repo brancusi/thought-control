@@ -69,21 +69,9 @@ pub fn discovery_dir() -> PathBuf {
     std::env::temp_dir().join("thc-ui")
 }
 
-const MAX_SOCKET_PATH: usize = if cfg!(target_os = "linux") { 107 } else { 103 };
-
 fn socket_path() -> Result<PathBuf, String> {
-    let pid = std::process::id();
-    let preferred = std::env::temp_dir().join(format!("thc-ui-{pid}.sock"));
-    if preferred.as_os_str().len() <= MAX_SOCKET_PATH {
-        return Ok(preferred);
-    }
-    let dir = PathBuf::from(format!("/tmp/thc-ui-{}", unsafe { libc::getuid() }));
-    {
-        use std::os::unix::fs::DirBuilderExt;
-        let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
-    }
-    let path = dir.join(format!("{pid}.sock"));
-    if path.as_os_str().len() > MAX_SOCKET_PATH {
+    let path = thc_core::proto::screen_socket("thc-ui", &std::process::id().to_string());
+    if path.as_os_str().len() > thc_core::proto::MAX_SOCKET_PATH {
         return Err(format!("{}: too long for a socket path", path.display()));
     }
     Ok(path)

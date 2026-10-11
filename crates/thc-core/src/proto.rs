@@ -102,6 +102,31 @@ pub fn socket_path(paths: &Paths) -> PathBuf {
     PathBuf::from(format!("/tmp/thc-{uid}")).join(format!("{:016x}.sock", fnv(&paths.cache.to_string_lossy())))
 }
 
+/// The longest path a Unix socket can bind to (`sun_path`, less its terminating NUL).
+pub const MAX_SOCKET_PATH: usize = if cfg!(target_os = "linux") { 107 } else { 103 };
+
+/// A socket for a screen the person runs (the TUI's `thc-ui`, `thc screen`'s `thc-screen`):
+/// `$TMPDIR/<kind>-<name>.sock`, or `/tmp/<kind>-<uid>/<name>.sock` (a 0700 folder) when the
+/// first is too long to bind, as under a deep `$TMPDIR`. The same inputs give the same path, so a
+/// client finds the socket the way the screen chose it.
+pub fn screen_socket(kind: &str, name: &str) -> PathBuf {
+    screen_socket_in(&std::env::temp_dir(), kind, name)
+}
+
+fn screen_socket_in(tmp: &Path, kind: &str, name: &str) -> PathBuf {
+    let preferred = tmp.join(format!("{kind}-{name}.sock"));
+    if preferred.as_os_str().len() <= MAX_SOCKET_PATH {
+        return preferred;
+    }
+    // SAFETY: getuid has no preconditions.
+    let dir = PathBuf::from(format!("/tmp/{kind}-{}", unsafe { libc::getuid() }));
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        let _ = std::fs::DirBuilder::new().mode(0o700).create(&dir);
+    }
+    dir.join(format!("{name}.sock"))
+}
+
 pub fn info_path(paths: &Paths) -> PathBuf {
     paths.cache.join("daemon.json")
 }
@@ -238,5 +263,16 @@ mod tests {
     fn socket_path_is_short() {
         let p = Paths { vault: PathBuf::from("/v"), cache: PathBuf::from("/a/very/long/cache/path/".repeat(10)) };
         assert!(socket_path(&p).to_string_lossy().len() < 64);
+    }
+
+    #[test]
+    fn a_screen_socket_falls_back_to_tmp_when_the_temp_dir_is_too_deep() {
+        let shallow = screen_socket_in(Path::new("/var/t"), "thc-screen", "2a59783c");
+        assert_eq!(shallow, PathBuf::from("/var/t/thc-screen-2a59783c.sock"));
+        let deep = PathBuf::from("/var/sandbox/main.sandbox/tmp/").join("x".repeat(60));
+        let p = screen_socket_in(&deep, "thc-screen", "2a59783c");
+        assert!(p.to_string_lossy().starts_with("/tmp/thc-screen-"), "{}", p.display());
+        assert!(p.as_os_str().len() <= MAX_SOCKET_PATH);
+        assert_eq!(p, screen_socket_in(&deep, "thc-screen", "2a59783c"), "the same inputs, the same path");
     }
 }
