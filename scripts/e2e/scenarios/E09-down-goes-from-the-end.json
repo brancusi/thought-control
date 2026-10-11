@@ -1,0 +1,14 @@
+{
+ "id": "E09",
+ "title": "down goes from the end",
+ "spec": "editing.md §2 E9",
+ "setup": "Line ⟦one▮⟧ ‖ Line two",
+ "steps": [
+  {
+   "key": "down"
+  }
+ ],
+ "expect": {
+  "doc": "Line one ‖ Line two▮"
+ }
+}

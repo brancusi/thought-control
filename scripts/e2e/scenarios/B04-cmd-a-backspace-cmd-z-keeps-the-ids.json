@@ -1,0 +1,75 @@
+{
+ "id": "B04",
+ "title": "cmd a, backspace, cmd z keeps the ids",
+ "spec": "coordinator, thc screen live run on 1697cb4 (PR #95)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Garden note"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Health note"
+   ]
+  },
+  {
+   "page": "Q4 Planning",
+   "notes": [
+    {
+     "text": "Planning kickoff agenda",
+     "id": "kkkkkkkkkkkk"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "click": "Pages"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "key": "d-a"
+  },
+  {
+   "key": "bs"
+  },
+  {
+   "assert": {
+    "no_screen": "Planning kickoff agenda"
+   }
+  },
+  {
+   "key": "d-z"
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:kickoff",
+    "count": 1,
+    "id": "kkkkkkkkkkkk",
+    "text": "Planning kickoff agenda"
+   }
+  ]
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "id": "K10",
+ "title": "cmd shift down selects to the end",
+ "spec": "editing.md §9 ⇧⌘↓",
+ "setup": "o▮ne ‖ two",
+ "steps": [
+  {
+   "key": "d-s-down"
+  }
+ ],
+ "expect": {
+  "doc": "o⟦ne ‖ two▮⟧"
+ },
+ "known": {
+  "thc-tui": "thc: the fresh empty line a page opens with counts as document: ⌘A / ⌘↓ / ⇧⌘↓ go past the last note onto it"
+ }
+}

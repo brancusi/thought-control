@@ -1,0 +1,18 @@
+{
+ "id": "E32",
+ "title": "cmd delete deletes to the row end",
+ "spec": "editing.md §4 E32",
+ "setup": "one ▮two",
+ "steps": [
+  {
+   "key": "d-del"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮"
+ },
+ "known": {
+  "thc-tui/real": "terminal + thc: no ⌘Delete forward in thc_keys.lua (WezTerm sends CSI 3~), and thc binds nothing to ⌘Delete (editing_keys.rs ACTIONS lacks edit.delete_to_line_end)",
+  "thc-tui/headless": "thc: ⌘Delete isn't bound (editing_keys.rs ACTIONS lacks caretline's edit.delete_to_line_end)"
+ }
+}

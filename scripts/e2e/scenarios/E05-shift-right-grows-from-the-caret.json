@@ -1,0 +1,14 @@
+{
+ "id": "E05",
+ "title": "shift right grows from the caret",
+ "spec": "editing.md §2 E5",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "s-right"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦worl▮⟧d"
+ }
+}

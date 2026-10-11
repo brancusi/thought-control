@@ -1,0 +1,17 @@
+{
+ "id": "P24",
+ "title": "pty cmd z is CSI 122;9u",
+ "spec": "editing.md §11 (E24)",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "type": "XY"
+  },
+  {
+   "bytes": "\u001b[122;9u"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld"
+ }
+}

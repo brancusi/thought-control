@@ -1,0 +1,14 @@
+{
+ "id": "K02",
+ "title": "cmd right goes to the row end",
+ "spec": "editing.md §9 ⌘→",
+ "setup": "o▮ne two ‖ three",
+ "steps": [
+  {
+   "key": "d-right"
+  }
+ ],
+ "expect": {
+  "doc": "one two▮ ‖ three"
+ }
+}

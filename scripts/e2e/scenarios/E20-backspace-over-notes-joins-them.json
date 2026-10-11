@@ -1,0 +1,14 @@
+{
+ "id": "E20",
+ "title": "backspace over notes joins them",
+ "spec": "editing.md §3 E20",
+ "setup": "A⟦a ‖ Bb ‖ C▮⟧c",
+ "steps": [
+  {
+   "key": "bs"
+  }
+ ],
+ "expect": {
+  "doc": "A▮c"
+ }
+}

@@ -1,0 +1,17 @@
+{
+ "id": "E24",
+ "title": "one undo brings the selection back",
+ "spec": "editing.md §3 E24",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "type": "XY"
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld"
+ }
+}

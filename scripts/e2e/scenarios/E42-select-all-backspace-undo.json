@@ -1,0 +1,22 @@
+{
+ "id": "E42",
+ "title": "select all, backspace, undo",
+ "spec": "editing.md §5 E42",
+ "setup": "⟦ab ‖ cd▮⟧",
+ "steps": [
+  {
+   "key": "bs"
+  },
+  {
+   "assert": {
+    "doc": "▮"
+   }
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "⟦ab ‖ cd▮⟧"
+ }
+}

@@ -59,6 +59,18 @@ pub struct DocumentState {
     /// still under the caret): a restored session has it under the caret too (h8vsn).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub caret_tail: Option<String>,
+    /// The selection's other end while something is selected (read-only, like `dirty`): the
+    /// note id (empty: a line not saved yet) and the byte in its text. None: no selection.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub anchor: Option<SelectionEnd>,
+}
+
+/// One end of the document's selection, by note id and byte (`DocumentState::anchor`).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct SelectionEnd {
+    pub id: String,
+    pub byte: usize,
 }
 
 /// An empty, unsaved caret line (`DocumentState::caret_new`): after which note (None: first),

@@ -1,0 +1,22 @@
+{
+ "id": "C04",
+ "title": "home and end",
+ "spec": "editing.md §9 Home / End",
+ "setup": "one tw▮o three",
+ "steps": [
+  {
+   "key": "home"
+  },
+  {
+   "assert": {
+    "doc": "▮one two three"
+   }
+  },
+  {
+   "key": "end"
+  }
+ ],
+ "expect": {
+  "doc": "one two three▮"
+ }
+}

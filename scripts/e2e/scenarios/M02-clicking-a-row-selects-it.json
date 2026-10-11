@@ -1,0 +1,55 @@
+{
+ "id": "M02",
+ "title": "clicking a row selects it",
+ "spec": "mouse.md §5 rows",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "+3d",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "click": "Gamma task"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "selected": "cccccccccccc"
+   }
+  },
+  "thc-screen": {
+   "selected_row": {
+    "text": "Gamma task"
+   }
+  }
+ }
+}

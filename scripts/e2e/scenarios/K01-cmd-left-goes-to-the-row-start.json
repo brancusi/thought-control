@@ -1,0 +1,14 @@
+{
+ "id": "K01",
+ "title": "cmd left goes to the row start",
+ "spec": "editing.md §9 ⌘←",
+ "setup": "one tw▮o ‖ three",
+ "steps": [
+  {
+   "key": "d-left"
+  }
+ ],
+ "expect": {
+  "doc": "▮one two ‖ three"
+ }
+}

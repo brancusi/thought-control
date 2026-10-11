@@ -1,0 +1,22 @@
+{
+ "id": "P38",
+ "title": "pty cmd v is CSI 118;9u",
+ "spec": "editing.md §11 (E38)",
+ "targets": [
+  "thc-tui"
+ ],
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "bytes": "\u001b[118;9u"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ },
+ "clip_before": "X",
+ "known": {
+  "thc-screen/real": "terminal: thc_keys.lua sends ⌘V as CSI 118;9u to any process named thc (thc's TUI reads the clipboard itself); thc screen is thc, so fictty gets ⌘V and pastes caretline's own register, not the system clipboard"
+ },
+ "note": "thc's TUI only: in a fictty pane (thc screen) ⌘V is WezTerm's bracketed paste by design, so the raw kitty ⌘V isn't what it gets (E38 covers ⌘V there)"
+}

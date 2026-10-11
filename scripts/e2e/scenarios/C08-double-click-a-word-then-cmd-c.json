@@ -1,0 +1,18 @@
+{
+ "id": "C08",
+ "title": "double click a word, then cmd c",
+ "spec": "mouse.md §3 · editing.md §5 E33",
+ "setup": "▮The quick fox",
+ "steps": [
+  {
+   "dclick": "The qu|ick fox"
+  },
+  {
+   "key": "d-c"
+  }
+ ],
+ "expect": {
+  "doc": "The ⟦quick▮⟧ fox",
+  "clip": "quick"
+ }
+}

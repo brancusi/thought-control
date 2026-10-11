@@ -1,0 +1,68 @@
+{
+ "id": "N04",
+ "title": "enter opens a page, esc comes back",
+ "spec": "navigation.md §2 N1",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "key": "4"
+  },
+  {
+   "type": "Health"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "document": {
+       "target": {
+        "kind": "page",
+        "title": "Health"
+       }
+      }
+     }
+    },
+    "thc-screen": {
+     "fictty_state": {
+      "focus": "pages_doc"
+     }
+    }
+   }
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "view": "pages"
+   }
+  },
+  "thc-screen": {
+   "focus_not": "pages_doc",
+   "selected_row": {
+    "list": "pages",
+    "text": "Health"
+   }
+  }
+ },
+ "note": "checked in the state: Pages previews the selected page beside the list, so the screen shows its notes either way",
+ "known": {
+  "thc-screen/real": "thc-screen: Esc from a page opened through the finder (typed name, Enter) leaves the Pages selection on the list's `Pages` section row, not the page (N1); from the list (B02) it's right"
+ }
+}

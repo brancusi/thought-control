@@ -1,0 +1,17 @@
+{
+ "id": "P28",
+ "title": "pty opt delete is CSI 3;3~",
+ "spec": "editing.md §11 (E28)",
+ "setup": "one ▮two three",
+ "steps": [
+  {
+   "bytes": "\u001b[3;3~"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮ three"
+ },
+ "known": {
+  "thc-tui/real": "thc: CSI 3;3~ arrives but ⌥Delete isn't bound (editing_keys.rs ACTIONS lacks edit.delete_word_forward)"
+ }
+}

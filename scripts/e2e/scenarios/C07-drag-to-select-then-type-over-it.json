@@ -1,0 +1,20 @@
+{
+ "id": "C07",
+ "title": "drag to select, then type over it",
+ "spec": "mouse.md §3 drag · editing.md §3 E15",
+ "setup": "▮The quick brown fox",
+ "steps": [
+  {
+   "drag": [
+    "The q|uick brown fox",
+    "The quick br|own fox"
+   ]
+  },
+  {
+   "type": "X"
+  }
+ ],
+ "expect": {
+  "doc": "The qX▮own fox"
+ }
+}

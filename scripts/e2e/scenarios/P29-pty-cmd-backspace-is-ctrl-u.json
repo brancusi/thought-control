@@ -1,0 +1,14 @@
+{
+ "id": "P29",
+ "title": "pty cmd backspace is ctrl u",
+ "spec": "editing.md §11 (E29)",
+ "setup": "one two thr▮ee",
+ "steps": [
+  {
+   "bytes": "\u0015"
+  }
+ ],
+ "expect": {
+  "doc": "▮ee"
+ }
+}

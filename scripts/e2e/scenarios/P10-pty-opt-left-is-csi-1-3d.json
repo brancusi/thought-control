@@ -1,0 +1,14 @@
+{
+ "id": "P10",
+ "title": "pty opt left is CSI 1;3D",
+ "spec": "editing.md §11 (E10)",
+ "setup": "one two ⟦thr▮⟧ee",
+ "steps": [
+  {
+   "bytes": "\u001b[1;3D"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮two three"
+ }
+}

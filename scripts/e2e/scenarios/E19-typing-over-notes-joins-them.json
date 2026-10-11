@@ -1,0 +1,14 @@
+{
+ "id": "E19",
+ "title": "typing over notes joins them",
+ "spec": "editing.md §3 E19",
+ "setup": "One ⟦two ‖ three fo▮⟧ur",
+ "steps": [
+  {
+   "type": "X"
+  }
+ ],
+ "expect": {
+  "doc": "One X▮ur"
+ }
+}

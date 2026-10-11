@@ -1,0 +1,14 @@
+{
+ "id": "E04",
+ "title": "shift left shrinks from the caret",
+ "spec": "editing.md §2 E4",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "s-left"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wo▮⟧rld"
+ }
+}

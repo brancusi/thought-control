@@ -1,0 +1,17 @@
+{
+ "id": "P41",
+ "title": "pty cmd a is CSI 97;9u",
+ "spec": "editing.md §11 (E41)",
+ "setup": "ab ‖ cd▮",
+ "steps": [
+  {
+   "bytes": "\u001b[97;9u"
+  }
+ ],
+ "expect": {
+  "doc": "⟦ab ‖ cd▮⟧"
+ },
+ "known": {
+  "thc-tui/real": "thc: the fresh empty line a page opens with counts as document: ⌘A selects onto it"
+ }
+}

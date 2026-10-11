@@ -1,0 +1,25 @@
+{
+ "id": "E41",
+ "title": "cmd a selects everything, left goes to the start",
+ "spec": "editing.md §5 E41",
+ "setup": "ab ‖ cd▮",
+ "steps": [
+  {
+   "key": "d-a"
+  },
+  {
+   "assert": {
+    "doc": "⟦ab ‖ cd▮⟧"
+   }
+  },
+  {
+   "key": "left"
+  }
+ ],
+ "expect": {
+  "doc": "▮ab ‖ cd"
+ },
+ "known": {
+  "thc-tui": "thc: the fresh empty line a page opens with counts as document: ⌘A / ⌘↓ / ⇧⌘↓ go past the last note onto it"
+ }
+}

@@ -1,0 +1,23 @@
+{
+ "id": "E37",
+ "title": "cmd x cuts, cmd z puts it back",
+ "spec": "editing.md §5 E37",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "d-x"
+  },
+  {
+   "assert": {
+    "doc": "Hello ▮ld",
+    "clip": "wor"
+   }
+  },
+  {
+   "key": "d-z"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld"
+ }
+}

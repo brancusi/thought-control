@@ -1,0 +1,26 @@
+{
+ "id": "E12",
+ "title": "esc collapses and stays writing",
+ "spec": "editing.md §2 E12",
+ "setup": "ab ⟦cd▮⟧ ef",
+ "steps": [
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "doc": "ab cd▮ ef"
+ },
+ "expect_by_target": {
+  "fictty-notes": {
+   "fictty_state": {
+    "focus": "body"
+   }
+  },
+  "thc-tui": {
+   "thc_state": {
+    "doc_write": true
+   }
+  }
+ }
+}

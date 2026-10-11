@@ -1,0 +1,14 @@
+{
+ "id": "E11",
+ "title": "opt right goes a word from the end",
+ "spec": "editing.md §2 E11",
+ "setup": "one ⟦tw▮⟧o three",
+ "steps": [
+  {
+   "key": "a-right"
+  }
+ ],
+ "expect": {
+  "doc": "one two▮ three"
+ }
+}

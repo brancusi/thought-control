@@ -1,0 +1,14 @@
+{
+ "id": "K11",
+ "title": "cmd shift up selects to the start",
+ "spec": "editing.md §9 ⇧⌘↑",
+ "setup": "one ‖ tw▮o",
+ "steps": [
+  {
+   "key": "d-s-up"
+  }
+ ],
+ "expect": {
+  "doc": "⟦▮one ‖ tw⟧o"
+ }
+}

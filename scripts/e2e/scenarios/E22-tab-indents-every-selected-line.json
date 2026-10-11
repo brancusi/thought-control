@@ -1,0 +1,21 @@
+{
+ "id": "E22",
+ "title": "tab indents every selected line",
+ "spec": "editing.md §3 E22",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "- o⟦ne ‖ - tw▮⟧o",
+ "steps": [
+  {
+   "key": "tab"
+  }
+ ],
+ "expect": {
+  "doc": "- o⟦ne ‖   - tw▮⟧o"
+ },
+ "known": {
+  "thc-screen": "thc-screen: Tab indents the first selected item too, which has nothing above to nest under (`  - one`); the golden nests only the second"
+ }
+}

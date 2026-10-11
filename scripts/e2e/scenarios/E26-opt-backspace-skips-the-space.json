@@ -1,0 +1,14 @@
+{
+ "id": "E26",
+ "title": "opt backspace skips the space",
+ "spec": "editing.md §4 E26",
+ "setup": "one two ▮three",
+ "steps": [
+  {
+   "key": "a-bs"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮three"
+ }
+}

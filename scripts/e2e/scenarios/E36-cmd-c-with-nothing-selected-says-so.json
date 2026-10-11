@@ -1,0 +1,22 @@
+{
+ "id": "E36",
+ "title": "cmd c with nothing selected says so",
+ "spec": "editing.md §5 E36",
+ "setup": "Hello wor▮ld",
+ "steps": [
+  {
+   "key": "d-c"
+  }
+ ],
+ "expect": {
+  "doc": "Hello wor▮ld"
+ },
+ "expect_by_target": {
+  "thc-tui": {
+   "screen": "nothing selected"
+  },
+  "fictty-notes": {
+   "toast": "nothing selected"
+  }
+ }
+}

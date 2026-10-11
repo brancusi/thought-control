@@ -1,0 +1,17 @@
+{
+ "id": "P32",
+ "title": "pty cmd delete is CSI 3;9~",
+ "spec": "editing.md §11 (E32)",
+ "setup": "one ▮two",
+ "steps": [
+  {
+   "bytes": "\u001b[3;9~"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮"
+ },
+ "known": {
+  "thc-tui/real": "thc: CSI 3;9~ arrives but ⌘Delete isn't bound (editing_keys.rs ACTIONS lacks edit.delete_to_line_end)"
+ }
+}

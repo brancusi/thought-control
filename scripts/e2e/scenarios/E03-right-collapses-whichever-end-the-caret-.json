@@ -1,0 +1,14 @@
+{
+ "id": "E03",
+ "title": "right collapses whichever end the caret is",
+ "spec": "editing.md §2 E3",
+ "setup": "Hello ⟦▮wor⟧ld",
+ "steps": [
+  {
+   "key": "right"
+  }
+ ],
+ "expect": {
+  "doc": "Hello wor▮ld"
+ }
+}

@@ -1,0 +1,63 @@
+{
+ "id": "W15",
+ "title": "journal [ ] and T move days",
+ "spec": "keymap.md §12.3 journal [ ] T",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "5"
+  },
+  {
+   "key": "["
+  },
+  {
+   "assert": {
+    "screen": "· yesterday",
+    "store_date": {
+     "journal_date": -1
+    }
+   }
+  },
+  {
+   "key": "]"
+  },
+  {
+   "assert": {
+    "store_date": {
+     "journal_date": 0
+    }
+   }
+  },
+  {
+   "key": "["
+  },
+  {
+   "key": "["
+  },
+  {
+   "key": "T"
+  }
+ ],
+ "expect": {
+  "store_date": {
+   "journal_date": 0
+  },
+  "screen": "· today"
+ }
+}

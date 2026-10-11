@@ -1,0 +1,14 @@
+{
+ "id": "E07",
+ "title": "left never jumps a note",
+ "spec": "editing.md §2 E7",
+ "setup": "First note ‖ Sec⟦ond no▮⟧te",
+ "steps": [
+  {
+   "key": "left"
+  }
+ ],
+ "expect": {
+  "doc": "First note ‖ Sec▮ond note"
+ }
+}

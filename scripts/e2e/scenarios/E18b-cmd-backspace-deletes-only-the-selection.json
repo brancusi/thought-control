@@ -1,0 +1,14 @@
+{
+ "id": "E18b",
+ "title": "cmd backspace deletes only the selection",
+ "spec": "editing.md §3 (⌘⌫ with a selection)",
+ "setup": "one ⟦two thr▮⟧ee",
+ "steps": [
+  {
+   "key": "d-bs"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮ee"
+ }
+}

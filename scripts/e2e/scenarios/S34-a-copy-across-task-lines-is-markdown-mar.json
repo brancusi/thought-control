@@ -1,0 +1,18 @@
+{
+ "id": "S34",
+ "title": "a copy across task lines is markdown (markdown)",
+ "spec": "editing.md §5 E34, in thc screen's Markdown",
+ "targets": [
+  "thc-screen"
+ ],
+ "setup": "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam",
+ "steps": [
+  {
+   "key": "d-c"
+  }
+ ],
+ "expect": {
+  "doc": "- [ ] Buy ⟦milk ‖ - [ ] Call ▮⟧Sam",
+  "clip": "milk\n- [ ] Call "
+ }
+}

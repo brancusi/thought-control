@@ -1,0 +1,14 @@
+{
+ "id": "P15",
+ "title": "pty paste replaces the selection",
+ "spec": "editing.md §11 (E38, bracketed paste)",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "paste": "X"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ }
+}

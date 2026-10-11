@@ -1,0 +1,14 @@
+{
+ "id": "E29",
+ "title": "cmd backspace deletes to the row start",
+ "spec": "editing.md §4 E29",
+ "setup": "one two thr▮ee",
+ "steps": [
+  {
+   "key": "d-bs"
+  }
+ ],
+ "expect": {
+  "doc": "▮ee"
+ }
+}

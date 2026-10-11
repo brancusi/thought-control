@@ -1,0 +1,14 @@
+{
+ "id": "K07",
+ "title": "opt shift left selects a word",
+ "spec": "editing.md §9 ⇧⌥←",
+ "setup": "one tw▮o",
+ "steps": [
+  {
+   "key": "a-s-left"
+  }
+ ],
+ "expect": {
+  "doc": "one ⟦▮tw⟧o"
+ }
+}

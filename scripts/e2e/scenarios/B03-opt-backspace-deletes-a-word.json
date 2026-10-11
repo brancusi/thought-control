@@ -1,0 +1,76 @@
+{
+ "id": "B03",
+ "title": "opt backspace deletes a word",
+ "spec": "coordinator, thc screen live run on 1697cb4 (PR #95)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Garden note"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Health note"
+   ]
+  },
+  {
+   "page": "Q4 Planning",
+   "notes": [
+    {
+     "text": "Planning kickoff agenda",
+     "id": "kkkkkkkkkkkk"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "click": "Pages"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "enter"
+  },
+  {
+   "key": "d-down"
+  },
+  {
+   "key": "a-bs"
+  },
+  {
+   "key": "a-bs"
+  },
+  {
+   "assert": {
+    "screen": "Planning kickoff",
+    "no_screen": "kickoff agenda"
+   }
+  },
+  {
+   "key": "esc"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:kickoff",
+    "count": 1,
+    "text": "Planning kickoff"
+   }
+  ]
+ },
+ "note": "⌘↓ lands on the fresh empty line after the last note, so the first ⌥⌫ joins it back (E27) and the second deletes the word"
+}

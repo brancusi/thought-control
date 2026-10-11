@@ -1,0 +1,24 @@
+{
+ "id": "E40",
+ "title": "cut then paste in place is a move",
+ "spec": "editing.md §5 E40",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "One ⟦two ‖ th▮⟧ree",
+ "steps": [
+  {
+   "key": "d-x"
+  },
+  {
+   "key": "d-v"
+  }
+ ],
+ "expect": {
+  "doc": "One two ‖ th▮ree"
+ },
+ "known": {
+  "thc-tui": "thc: a cut across two notes, pasted back in place, comes back as one note with a soft break (not a move)"
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "id": "K03",
+ "title": "cmd up goes to the document start",
+ "spec": "editing.md §9 ⌘↑",
+ "setup": "one ‖ tw▮o",
+ "steps": [
+  {
+   "key": "d-up"
+  }
+ ],
+ "expect": {
+  "doc": "▮one ‖ two"
+ }
+}

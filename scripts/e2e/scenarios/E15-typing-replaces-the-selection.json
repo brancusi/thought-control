@@ -1,0 +1,14 @@
+{
+ "id": "E15",
+ "title": "typing replaces the selection",
+ "spec": "editing.md §3 E15",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "type": "X"
+  }
+ ],
+ "expect": {
+  "doc": "Hello X▮ld"
+ }
+}

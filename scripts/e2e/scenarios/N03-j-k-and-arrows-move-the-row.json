@@ -1,0 +1,89 @@
+{
+ "id": "N03",
+ "title": "j k and arrows move the row",
+ "spec": "keymap.md §12.2",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "+3d",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "key": "j"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "selected": "bbbbbbbbbbbb"
+     }
+    },
+    "thc-screen": {
+     "selected_row": {
+      "text": "Beta task"
+     }
+    }
+   }
+  },
+  {
+   "key": "k"
+  },
+  {
+   "assert": {
+    "thc-tui": {
+     "thc_state": {
+      "selected": "aaaaaaaaaaaa"
+     }
+    },
+    "thc-screen": {
+     "selected_row": {
+      "text": "Alpha task"
+     }
+    }
+   }
+  },
+  {
+   "key": "down"
+  }
+ ],
+ "expect": {
+  "thc-tui": {
+   "thc_state": {
+    "selected": "bbbbbbbbbbbb"
+   }
+  },
+  "thc-screen": {
+   "selected_row": {
+    "text": "Beta task"
+   }
+  }
+ }
+}

@@ -1,0 +1,14 @@
+{
+ "id": "E18",
+ "title": "opt backspace deletes only the selection",
+ "spec": "editing.md §3 E18",
+ "setup": "one ⟦two thr▮⟧ee",
+ "steps": [
+  {
+   "key": "a-bs"
+  }
+ ],
+ "expect": {
+  "doc": "one ▮ee"
+ }
+}

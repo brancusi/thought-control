@@ -1,0 +1,787 @@
+{
+ "id": "M03",
+ "title": "the wheel scrolls a long list",
+ "spec": "mouse.md §4",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "apply": [
+    {
+     "cmd": "todo",
+     "text": "Task 001",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 002",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 003",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 004",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 005",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 006",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 007",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 008",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 009",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 010",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 011",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 012",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 013",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 014",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 015",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 016",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 017",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 018",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 019",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 020",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 021",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 022",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 023",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 024",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 025",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 026",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 027",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 028",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 029",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 030",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 031",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 032",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 033",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 034",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 035",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 036",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 037",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 038",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 039",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 040",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 041",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 042",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 043",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 044",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 045",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 046",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 047",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 048",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 049",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 050",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 051",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 052",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 053",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 054",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 055",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 056",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 057",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 058",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 059",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 060",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 061",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 062",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 063",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 064",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 065",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 066",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 067",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 068",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 069",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 070",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 071",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 072",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 073",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 074",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 075",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 076",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 077",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 078",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 079",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 080",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 081",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 082",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 083",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 084",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 085",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 086",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 087",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 088",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 089",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 090",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 091",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 092",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 093",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 094",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 095",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 096",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 097",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 098",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 099",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 100",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 101",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 102",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 103",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 104",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 105",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 106",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 107",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 108",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 109",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 110",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 111",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 112",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 113",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 114",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 115",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 116",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 117",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 118",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 119",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 120",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 121",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 122",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 123",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 124",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 125",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 126",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 127",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 128",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 129",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 130",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 131",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 132",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 133",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 134",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 135",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 136",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 137",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 138",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 139",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 140",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 141",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 142",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 143",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 144",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 145",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 146",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 147",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 148",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 149",
+     "due": "today"
+    },
+    {
+     "cmd": "todo",
+     "text": "Task 150",
+     "due": "today"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "key": "3"
+  },
+  {
+   "assert": {
+    "screen": "Task 001"
+   }
+  },
+  {
+   "wheel": "down",
+   "n": 15,
+   "at": "Task 005"
+  }
+ ],
+ "expect": {
+  "no_screen": "Task 001 "
+ },
+ "known": {
+  "thc-tui/real": "thc: the wheel over a list moves the row cursor and never scrolls the list (mouse.md §4)"
+ },
+ "note": "150 tasks: more rows than any window here (they've come up as tall as 88 rows)"
+}

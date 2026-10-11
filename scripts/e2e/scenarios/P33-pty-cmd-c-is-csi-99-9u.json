@@ -1,0 +1,15 @@
+{
+ "id": "P33",
+ "title": "pty cmd c is CSI 99;9u",
+ "spec": "editing.md §11 (E33)",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "bytes": "\u001b[99;9u"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ⟦wor▮⟧ld",
+  "clip": "wor"
+ }
+}

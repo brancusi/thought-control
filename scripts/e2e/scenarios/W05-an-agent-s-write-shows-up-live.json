@@ -1,0 +1,53 @@
+{
+ "id": "W05",
+ "title": "an agent's write shows up live",
+ "spec": "coordinator, thc screen run 2026-10-11",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "today",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "wait": 300
+  },
+  {
+   "thc": [
+    "todo",
+    "Agent wrote this",
+    "--due",
+    "tomorrow"
+   ],
+   "actor": "claude"
+  }
+ ],
+ "expect": {
+  "screen": "Agent wrote this"
+ },
+ "within": 2000
+}

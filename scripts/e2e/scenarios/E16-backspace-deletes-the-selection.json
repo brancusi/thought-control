@@ -1,0 +1,14 @@
+{
+ "id": "E16",
+ "title": "backspace deletes the selection",
+ "spec": "editing.md §3 E16",
+ "setup": "Hello ⟦wor▮⟧ld",
+ "steps": [
+  {
+   "key": "bs"
+  }
+ ],
+ "expect": {
+  "doc": "Hello ▮ld"
+ }
+}

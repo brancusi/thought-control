@@ -1,0 +1,58 @@
+{
+ "id": "B01",
+ "title": "pages tab click then down down down enter opens the page",
+ "spec": "coordinator, thc screen live run on 1697cb4 (PR #95)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Garden note"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Health note"
+   ]
+  },
+  {
+   "page": "Q4 Planning",
+   "notes": [
+    {
+     "text": "Planning kickoff agenda",
+     "id": "kkkkkkkkkkkk"
+    }
+   ]
+  }
+ ],
+ "steps": [
+  {
+   "click": "Pages"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "down"
+  },
+  {
+   "key": "enter"
+  }
+ ],
+ "expect": {
+  "screen": [
+   "Q4 Planning",
+   "Planning kickoff agenda"
+  ],
+  "fictty_state": {
+   "focus": "pages_doc"
+  }
+ },
+ "note": "Pages: focus starts on the finder and ↓ moves into the list; the title is a heading row above the editor (from 18b2762)"
+}

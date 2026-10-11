@@ -1,0 +1,54 @@
+{
+ "id": "W01",
+ "title": "capture a task",
+ "spec": "keymap.md §12.2 a",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today",
+   "--id",
+   "aaaaaaaaaaaa"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "today",
+   "--id",
+   "bbbbbbbbbbbb"
+  ],
+  [
+   "todo",
+   "Gamma task",
+   "--due",
+   "tomorrow",
+   "--id",
+   "cccccccccccc"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "a"
+  },
+  {
+   "type": "Buy oat milk"
+  },
+  {
+   "key": "enter"
+  }
+ ],
+ "expect": {
+  "vault": [
+   {
+    "q": "text:oat",
+    "count": 1
+   }
+  ]
+ }
+}

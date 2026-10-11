@@ -1,0 +1,14 @@
+{
+ "id": "E25",
+ "title": "opt backspace deletes to the word start",
+ "spec": "editing.md §4 E25",
+ "setup": "one two thr▮ee",
+ "steps": [
+  {
+   "key": "a-bs"
+  }
+ ],
+ "expect": {
+  "doc": "one two ▮ee"
+ }
+}

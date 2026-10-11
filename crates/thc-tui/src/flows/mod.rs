@@ -27,6 +27,7 @@ mod emu;
 mod fixture;
 
 mod agents;
+mod e2e;
 mod editing;
 mod lists;
 mod logseq;
@@ -328,10 +329,16 @@ fn start_ms() -> (u64, i32) {
 
 impl Flow {
     pub fn new(name: &str, size: Size, screen: (u16, u16), checks: Checks) -> Flow {
+        Flow::new_seeded(name, size, screen, checks, |_| {})
+    }
+
+    /// A flow whose vault gets `seed` on top of the base fixture, before the TUI opens it.
+    pub fn new_seeded(name: &str, size: Size, screen: (u16, u16), checks: Checks, seed: impl FnOnce(&mut thc_core::vault::Vault)) -> Flow {
         crate::SNAPSHOT.with(|s| s.set(true));
         let tag: String = name.chars().filter(|c| c.is_ascii_alphanumeric()).take(24).collect();
         let (scratch, mut vault) = crate::fuzz::scratch(&format!("flow-{tag}"));
         fixture::seed(&mut vault, size);
+        seed(&mut vault);
         // The once-per-device drag hint is already seen (mouse::the_first_drag_hint tests it).
         let _ = std::fs::create_dir_all(&vault.paths.cache);
         let _ = std::fs::write(vault.paths.cache.join("mouse-hint-shown"), "");

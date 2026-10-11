@@ -1,0 +1,14 @@
+{
+ "id": "C06",
+ "title": "a click places the caret",
+ "spec": "mouse.md §3 click",
+ "setup": "▮The quick brown fox",
+ "steps": [
+  {
+   "click": "The quick br|own fox"
+  }
+ ],
+ "expect": {
+  "doc": "The quick br▮own fox"
+ }
+}

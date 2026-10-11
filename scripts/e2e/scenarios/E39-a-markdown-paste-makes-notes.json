@@ -1,0 +1,19 @@
+{
+ "id": "E39",
+ "title": "a markdown paste makes notes",
+ "spec": "editing.md §5 E39",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "▮",
+ "steps": [
+  {
+   "key": "d-v"
+  }
+ ],
+ "expect": {
+  "doc": "- a ‖ - b▮"
+ },
+ "clip_before": "- a\n- b"
+}

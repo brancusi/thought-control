@@ -1,0 +1,44 @@
+{
+ "id": "W12",
+ "title": "w toggles the agenda",
+ "spec": "keymap.md §12.3 today w",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "today"
+  ],
+  [
+   "todo",
+   "Beta task",
+   "--due",
+   "tomorrow"
+  ]
+ ],
+ "steps": [
+  {
+   "key": "w"
+  },
+  {
+   "assert": {
+    "screen": "Agenda",
+    "store_value": {
+     "today_mode": "agenda"
+    }
+   }
+  },
+  {
+   "key": "w"
+  }
+ ],
+ "expect": {
+  "store_value": {
+   "today_mode": ""
+  },
+  "screen": "Next 7 days"
+ }
+}

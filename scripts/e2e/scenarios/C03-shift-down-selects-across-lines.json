@@ -1,0 +1,17 @@
+{
+ "id": "C03",
+ "title": "shift down selects across lines",
+ "spec": "editing.md §2 ⇧↓",
+ "setup": "o▮ne ‖ two ‖ three",
+ "steps": [
+  {
+   "key": "s-down"
+  },
+  {
+   "key": "s-down"
+  }
+ ],
+ "expect": {
+  "doc": "o⟦ne ‖ two ‖ t▮⟧hree"
+ }
+}

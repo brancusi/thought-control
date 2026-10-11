@@ -1,0 +1,21 @@
+{
+ "id": "E27",
+ "title": "opt backspace at a note start joins",
+ "spec": "editing.md §4 E27",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "setup": "First ‖ ▮Second",
+ "steps": [
+  {
+   "key": "a-bs"
+  }
+ ],
+ "expect": {
+  "doc": "First⏎▮Second"
+ },
+ "known": {
+  "thc-screen": "thc-screen: a page is one Markdown text, so ⌥⌫ at a line's start just removes the line break; thc joins notes with a soft break (writing.md §1)"
+ }
+}

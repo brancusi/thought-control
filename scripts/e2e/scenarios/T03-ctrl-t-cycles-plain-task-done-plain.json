@@ -1,0 +1,141 @@
+{
+ "id": "T03",
+ "title": "ctrl t cycles plain, task, done, plain",
+ "spec": "writing.md §3 ⌃T, against the vault's status and id",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Cycle",
+   "notes": [
+    {
+     "text": "Rotate this",
+     "id": "dddd4444dddd"
+    }
+   ]
+  }
+ ],
+ "steps_by_target": {
+  "thc-tui": [
+   {
+    "key": "4"
+   },
+   {
+    "type": "Cycle"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "end"
+   },
+   {
+    "key": "c-t"
+   },
+   {
+    "assert": {
+     "vault": [
+      {
+       "q": "text:Rotate",
+       "count": 1,
+       "id": "dddd4444dddd",
+       "status": "todo"
+      }
+     ]
+    },
+    "within": 6000
+   },
+   {
+    "key": "c-t"
+   },
+   {
+    "assert": {
+     "vault": [
+      {
+       "q": "text:Rotate",
+       "count": 1,
+       "id": "dddd4444dddd",
+       "status": "done"
+      }
+     ]
+    },
+    "within": 6000
+   },
+   {
+    "key": "c-t"
+   }
+  ],
+  "thc-screen": [
+   {
+    "click": "Pages"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "end"
+   },
+   {
+    "key": "c-t"
+   },
+   {
+    "assert": {
+     "vault": [
+      {
+       "q": "text:Rotate",
+       "count": 1,
+       "id": "dddd4444dddd",
+       "status": "todo"
+      }
+     ]
+    },
+    "within": 6000
+   },
+   {
+    "key": "c-t"
+   },
+   {
+    "assert": {
+     "vault": [
+      {
+       "q": "text:Rotate",
+       "count": 1,
+       "id": "dddd4444dddd",
+       "status": "done"
+      }
+     ]
+    },
+    "within": 6000
+   },
+   {
+    "key": "c-t"
+   }
+  ]
+ },
+ "expect": {
+  "vault": [
+   {
+    "q": "text:Rotate",
+    "count": 1,
+    "id": "dddd4444dddd",
+    "status": null
+   }
+  ]
+ },
+ "within": 6000,
+ "note": "each step saved as you go (thc screen half a second after a change); the note keeps its id throughout",
+ "known": {
+  "thc-tui/real": "thc: a ⌃T change isn't saved while the caret stays on the line (nothing in the vault after 6 s); thc screen saves it within a second"
+ }
+}

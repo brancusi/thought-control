@@ -1,0 +1,17 @@
+{
+ "id": "S23",
+ "title": "ctrl t makes every selected line a task (markdown)",
+ "spec": "editing.md §3 E23, in thc screen's Markdown",
+ "targets": [
+  "thc-screen"
+ ],
+ "setup": "- o⟦ne ‖ - tw▮⟧o",
+ "steps": [
+  {
+   "key": "c-t"
+  }
+ ],
+ "expect": {
+  "doc": "- [ ] o⟦ne ‖ - [ ] tw▮⟧o"
+ }
+}
