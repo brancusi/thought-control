@@ -226,10 +226,55 @@ fn inbox_nodes(store: &Store) -> Result<Vec<Node>> {
 
 // ---- the frame ----------------------------------------------------------------------------------
 
-/// The header's data (§3.1): the inbox count for its tab title, and the date.
+/// The header's data (§3.1): the inbox count for its tab title, and the date; and the open
+/// conflicts (§7.4): how many, and the banner's line.
 pub fn frame(cx: &Cx) -> Result<Value> {
     let inbox = inbox_nodes(cx.store)?.len();
-    Ok(json!({"inbox": if inbox > 0 { inbox.to_string() } else { String::new() }, "date": cx.now.format("%a %b %-d").to_string()}))
+    let conflicts = cx.store.open_conflicts()?;
+    let mut v = json!({"inbox": if inbox > 0 { inbox.to_string() } else { String::new() }, "date": cx.now.format("%a %b %-d").to_string(), "conflicts": conflicts.len()});
+    if let Some((_, node, field, _)) = conflicts.iter().find(|c| c.2 != "rehomed").or(conflicts.first()) {
+        let short = cx.store.short(node);
+        let sentence = match field.as_str() {
+            "parent" => "a move was skipped (it would loop)",
+            "rehomed" => "its parent was deleted elsewhere",
+            _ => "text was edited on two devices",
+        };
+        let n = plural(conflicts.len(), "conflict", "conflicts");
+        v["banner_m"] = format!("{}{}", styled("conflict+b", &format!(" {} {n}", cx.g.conflict)), tok(Token::Conflict, &format!("  {short} {sentence}"))).into();
+    }
+    Ok(v)
+}
+
+/// What the host adds to a feed's rows from outside the store's rows: each node row's `gutter`
+/// (§4: `conflict` on an open conflict, else `live` while an agent's change is new), and the
+/// open conflicts at the end of the bar's counts (`· 1 conflict`, §7.4).
+pub fn decorate(v: &mut Value, live: &HashSet<String>, conflicted: &HashSet<String>) {
+    fn walk(v: &mut Value, live: &HashSet<String>, conflicted: &HashSet<String>) {
+        match v {
+            Value::Array(a) => a.iter_mut().for_each(|x| walk(x, live, conflicted)),
+            Value::Object(m) => {
+                if let (Some(id), true) = (m.get("id").and_then(Value::as_str).map(str::to_string), m.contains_key("short")) {
+                    if conflicted.contains(&id) {
+                        m.insert("gutter".into(), "conflict".into());
+                    } else if live.contains(&id) {
+                        m.insert("gutter".into(), "live".into());
+                    }
+                }
+                for (_, x) in m.iter_mut() {
+                    walk(x, live, conflicted);
+                }
+            }
+            _ => {}
+        }
+    }
+    walk(v, live, conflicted);
+    let n = conflicted.len();
+    if n > 0
+        && let Some(bar) = v.get_mut("bar_m")
+        && let Some(s) = bar.as_str()
+    {
+        *bar = format!("{s}{}{}", tok(Token::Muted, " · "), tok(Token::Conflict, &plural(n, "conflict", "conflicts"))).into();
+    }
 }
 
 // ---- Today --------------------------------------------------------------------------------------
@@ -604,8 +649,8 @@ pub fn search(cx: &Cx, query: &str) -> Result<Value> {
 
 /// The Log (§5.7): the last day's transactions, newest first. Each is a row (`time`, `who_m`,
 /// `tx`, `summary_m`) followed by a `detail` row (what it did, in words), and carries its
-/// detail-pane lines (`lines`).
-pub fn log(cx: &Cx) -> Result<Value> {
+/// detail-pane lines (`lines`). `agents_only` keeps agents' transactions (`L`, review).
+pub fn log(cx: &Cx, agents_only: bool) -> Result<Value> {
     let g = cx.g;
     let since = cx.now.and_utc().timestamp_millis() - 24 * 3600 * 1000;
     let h = cx.store.history_where("ms >= ?1 ORDER BY okey DESC LIMIT 400", &[&since])?;
@@ -621,6 +666,9 @@ pub fn log(cx: &Cx) -> Result<Value> {
     for (tx, entries) in &txs {
         let e = &entries[0];
         let agent = agent_name(&e.actor);
+        if agents_only && agent.is_none() {
+            continue;
+        }
         if let Some(a) = agent {
             *agents.entry(a.to_string()).or_insert(0) += 1;
         }
@@ -649,13 +697,16 @@ pub fn log(cx: &Cx) -> Result<Value> {
             "summary_m": summary, "detail": detail, "node": target.entity,
         }));
     }
-    if txs.is_empty() {
-        rows.extend(empty("No changes in the last 24h.", &[("", "thc log --since 7d")]));
+    let shown = rows.len();
+    if rows.is_empty() {
+        let first = if agents_only { "No agent has changed anything in the last 24h." } else { "No changes in the last 24h." };
+        rows.extend(empty(first, &[("", "thc log --since 7d")]));
     }
     let by = agents.iter().map(|(a, n)| format!("{n} by {a}")).collect::<Vec<_>>();
-    let mut counts = vec![(plural(txs.len(), "tx", "tx"), Token::Muted)];
+    let mut counts = vec![(plural(shown, "tx", "tx"), Token::Muted)];
     counts.extend(by.into_iter().map(|b| (b, Token::Muted)));
-    Ok(json!({"rows": rows, "bar_m": bar("log", &counts), "title_m": format!("{}{}", styled("text+b", "Log"), tok(Token::Muted, &counts.iter().map(|(c, _)| format!(" · {c}")).collect::<String>()))}))
+    let (who, other) = if agents_only { ("agents", "everyone") } else { ("everyone", "agents") };
+    Ok(json!({"rows": rows, "who": who, "other": other, "bar_m": bar("log", &counts), "title_m": format!("{}{}", styled("text+b", "Log"), tok(Token::Muted, &counts.iter().map(|(c, _)| format!(" · {c}")).collect::<String>()))}))
 }
 
 /// A transaction's detail pane (§5.7): its id, who, how, where and when, one op per line, and

@@ -41,7 +41,9 @@ struct Inner {
 impl ThcHost {
     /// A host on an open vault. Its writes are the vault's actor's: open it as the person
     /// (`Actor { kind: "human" }`) for a screen a person drives.
-    pub fn new(vault: Vault) -> ThcHost {
+    pub fn new(mut vault: Vault) -> ThcHost {
+        // What happened before the screen opened isn't news to it (no toast, no live marks).
+        let _ = vault.take_news();
         ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
     }
 
@@ -86,34 +88,47 @@ impl ThcHost {
     pub fn feed(&self, name: &str, args: &Value) -> anyhow::Result<Value> {
         let vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
         let cx = Cx { store: &vault.store, g: &UNICODE, now: self.now() };
+        let mut out = self.feed_rows(&cx, name, args)?;
+        if !matches!(name, "frame" | "doc" | "detail" | "tx") {
+            // The screen's `live` entry (the ids an agent just changed) and the open conflicts mark
+            // the rows' gutters.
+            let live: std::collections::HashSet<String> = args.get("live").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
+            let conflicted = vault.store.open_conflicts()?.into_iter().map(|c| c.1).collect();
+            feeds::decorate(&mut out, &live, &conflicted);
+        }
+        Ok(out)
+    }
+
+    /// A feed's own value, before the screen's marks.
+    fn feed_rows(&self, cx: &Cx, name: &str, args: &Value) -> anyhow::Result<Value> {
         let s = |k: &str| args.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
         Ok(match name {
             "frame" => {
-                let mut v = feeds::frame(&cx)?;
+                let mut v = feeds::frame(cx)?;
                 v["live"] = self.live().into();
                 v
             }
-            "today" => feeds::today(&cx)?,
-            "tx" => feeds::tx(&cx, s("id").unwrap_or(""))?,
-            "inbox" => feeds::inbox(&cx)?,
+            "today" => feeds::today(cx)?,
+            "tx" => feeds::tx(cx, s("id").unwrap_or(""))?,
+            "inbox" => feeds::inbox(cx)?,
             "tasks" => {
                 let keep: Vec<String> = args.get("keep").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
-                feeds::tasks(&cx, s("query").unwrap_or("status:open"), &keep)?
+                feeds::tasks(cx, s("query").unwrap_or("status:open"), &keep)?
             }
-            "pages" => feeds::pages(&cx)?,
+            "pages" => feeds::pages(cx)?,
             // Nothing open: an empty outline.
             "outline" => match s("id") {
-                Some(id) => feeds::outline(&cx, id)?,
+                Some(id) => feeds::outline(cx, id)?,
                 None => json!({"rows": [], "title_m": "", "meta_m": "", "bar_m": ""}),
             },
             "journal" => {
                 let date = s("date").and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(cx.today());
-                feeds::journal(&cx, date)?
+                feeds::journal(cx, date)?
             }
-            "search" => feeds::search(&cx, s("query").unwrap_or(""))?,
-            "log" => feeds::log(&cx)?,
-            "doc" => feeds::doc(&cx, s("key").unwrap_or(""))?,
-            "detail" => feeds::detail(&cx, s("id").unwrap_or(""))?,
+            "search" => feeds::search(cx, s("query").unwrap_or(""))?,
+            "log" => feeds::log(cx, s("by") == Some("agents"))?,
+            "doc" => feeds::doc(cx, s("key").unwrap_or(""))?,
+            "detail" => feeds::detail(cx, s("id").unwrap_or(""))?,
             other => anyhow::bail!("no feed {other:?}"),
         })
     }
@@ -223,8 +238,82 @@ impl ThcHost {
                     other => anyhow::bail!("nothing asked {other:?}"),
                 }
             }
+            // `{"tx": …}`: undo one transaction as a new one (thc undo --tx), the person's. The
+            // bar confirms it, and `U` (redo_tx) undoes the undo.
+            "undo" => {
+                let tx = s("tx").ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                let (who, nodes) = {
+                    let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+                    let entries = v.store.history_where("tx = ?1 ORDER BY okey", &[&tx])?;
+                    let who = entries.first().map(|e| who_said(&e.actor)).ok_or_else(|| anyhow::anyhow!("no transaction {tx}"))?;
+                    let nodes: std::collections::HashSet<&str> = entries.iter().filter(|e| e.entity.len() == 12).map(|e| e.entity.as_str()).collect();
+                    (who, nodes.len())
+                };
+                let r = self.write(|b| {
+                    let inverse = thc_core::review::undo_ops(b.store, &tx)?;
+                    if inverse.is_empty() {
+                        anyhow::bail!("that transaction has nothing to undo");
+                    }
+                    b.ops.extend(inverse);
+                    Ok(())
+                })?;
+                let new = r["tx"].as_str().unwrap_or_default().to_string();
+                self.put("redo_tx", new.into())?;
+                self.put("agent_tx", "".into())?;
+                let n = if nodes == 1 { "1 node".to_string() } else { format!("{nodes} nodes") };
+                self.toast(&format!("undone  tx {} · {who} · {n}   U redo", suffix(&tx)), "text")?;
+                Ok(r)
+            }
+            // The Log's `@`: agents' transactions only, or everyone's again.
+            "who" => {
+                let to = if s("by").as_deref() == Some("agents") { "" } else { "agents" };
+                self.put("log_by", to.into())?;
+                Ok(json!({"ok": true, "by": to}))
+            }
+            // `{"keys": "p h"}`: press a command's keys (the palette runs a command this way, so it
+            // does just what its key does).
+            "press" => {
+                let keys = s("keys").ok_or_else(|| anyhow::anyhow!("press needs keys"))?;
+                for key in keys.split(' ').filter(|k| !k.is_empty()) {
+                    self.send(fictty::state::Msg::Key { key: key.into() })?;
+                }
+                Ok(json!({"ok": true}))
+            }
             other => anyhow::bail!("no action {other:?}"),
         }
+    }
+
+    /// Write one of the screen's store entries, as the host.
+    fn put(&self, key: &str, value: Value) -> anyhow::Result<()> {
+        self.send(fictty::state::Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "host".into() })
+    }
+
+    /// A toast (§7.3), for 4 s on the screen's clock, in a theme token's tone.
+    fn toast(&self, text: &str, tone: &str) -> anyhow::Result<()> {
+        self.send(fictty::state::Msg::Toast { text: text.into(), tone: Some(tone.into()), ms: Some(4000) })
+    }
+
+    /// The daemon connected or went away: the bar's `● live` / `○ local` (§3.3), from
+    /// thc_core::live's messages.
+    pub fn connected(&self, up: bool) {
+        self.inner.live.store(up, Ordering::Relaxed);
+        if let Some(n) = self.inner.notifier.lock().ok().and_then(|n| n.clone()) {
+            n.changed("frame");
+        }
+    }
+}
+
+/// A transaction's short suffix, as the Log shows it.
+fn suffix(tx: &str) -> &str {
+    &tx[tx.len().saturating_sub(6)..]
+}
+
+/// Who wrote, as the bar says it: `◆ claude`, or `you`.
+fn who_said(actor: &str) -> String {
+    match actor.strip_prefix("agent:") {
+        Some(a) => format!("{}{}{a}", UNICODE.agent, UNICODE.agent_sep),
+        None if actor.starts_with("agent") => format!("{}{}agent", UNICODE.agent, UNICODE.agent_sep),
+        None => "you".into(),
     }
 }
 
@@ -376,6 +465,7 @@ impl ThcHost {
         let Some(notifier) = self.inner.notifier.lock().ok().and_then(|n| n.clone()) else { return false };
         let mut news = news;
         let mut moved = Vec::new();
+        let mut agent = None;
         if let Ok(mut v) = self.inner.vault.lock() {
             // Another process here (the CLI, an agent) applies its own events to the shared store
             // and moves the log cursors itself, so catch-up alone finds nothing: the vault's news
@@ -383,6 +473,7 @@ impl ThcHost {
             let _ = v.catch_up();
             let n = v.take_news();
             news |= n.overflow || !n.events.is_empty();
+            agent = agent_change(&v.store, &n);
             if news && let Ok(docs) = self.inner.docs.lock() {
                 for (key, st) in docs.iter() {
                     let Some(doc) = Doc::parse(key) else { continue };
@@ -396,6 +487,16 @@ impl ThcHost {
         for key in moved {
             notifier.reload(&key);
         }
+        // An agent's change (§7.3): the toast on the agent's tint, the rows it touched marked
+        // live, its transaction the one `u` undoes. The screen's clock times the toast.
+        // TODO(fictty): the `•` marks clear with the next agent change; 3 s on the screen's
+        // clock needs fictty to expire a store write (or let a row read the clock).
+        if let Some(c) = agent {
+            let live: serde_json::Map<String, Value> = c.nodes.iter().map(|id| (id.clone(), Value::Bool(true))).collect();
+            let _ = self.put("live", Value::Object(live));
+            let _ = self.put("agent_tx", c.tx.clone().into());
+            let _ = self.toast(&format!("{}   L review  u undo", c.words), "agent");
+        }
         if news {
             for f in FEEDS {
                 // False once the screen has gone.
@@ -406,6 +507,47 @@ impl ThcHost {
         }
         true
     }
+}
+
+/// What an agent just did, as the toast says it.
+struct AgentChange {
+    /// `◆ claude added h2kbq "Repot the basil"`, or `◆ claude changed 3 nodes`.
+    words: String,
+    /// The last of its transactions (what `u` undoes).
+    tx: String,
+    /// The nodes it touched (full ids).
+    nodes: Vec<String>,
+}
+
+/// The agents' part of what arrived (not this screen's own writes), if any: the TUI's toast
+/// (thc-tui app.rs, `poll`) in words.
+fn agent_change(store: &thc_core::store::Store, news: &thc_core::vault::News) -> Option<AgentChange> {
+    let eids: Vec<&str> = news.events.iter().filter(|(_, own)| !own).map(|(e, _)| e.as_str()).collect();
+    if eids.is_empty() {
+        return None;
+    }
+    let json = serde_json::to_string(&eids).ok()?;
+    let fresh = store.history_where("eid IN (SELECT value FROM json_each(?1)) ORDER BY okey", &[&json]).ok()?;
+    let agents: Vec<&thc_core::model::HistoryEntry> = fresh.iter().filter(|e| e.actor.starts_with("agent")).collect();
+    let first = agents.first()?;
+    let mut nodes: Vec<String> = Vec::new();
+    for e in &agents {
+        if e.entity.len() == 12 && !nodes.contains(&e.entity) {
+            nodes.push(e.entity.clone());
+        }
+    }
+    let created: Vec<&&thc_core::model::HistoryEntry> = agents.iter().filter(|e| e.op == "node.create").collect();
+    let g = &UNICODE;
+    let who = who_said(&first.actor);
+    let words = if created.len() == 1 {
+        let id = &created[0].entity;
+        let label = store.node(id).ok().flatten().map(|n| thc_core::present::truncate_str(&n.label(), 40, g.ellipsis)).unwrap_or_default();
+        format!("{who} added {} \"{label}\"", store.short(id))
+    } else {
+        let n = nodes.len().max(1);
+        format!("{who} changed {n} node{}", if n == 1 { "" } else { "s" })
+    };
+    Some(AgentChange { words, tx: agents.last()?.tx.clone(), nodes })
 }
 
 impl ThcHost {
@@ -420,11 +562,11 @@ impl ThcHost {
         loop {
             let news = match events.recv_timeout(Duration::from_secs(1)) {
                 Ok(thc_core::live::LiveMsg::Connected { .. }) => {
-                    self.inner.live.store(true, Ordering::Relaxed);
+                    self.connected(true);
                     true
                 }
                 Ok(thc_core::live::LiveMsg::Disconnected) => {
-                    self.inner.live.store(false, Ordering::Relaxed);
+                    self.connected(false);
                     true
                 }
                 Ok(thc_core::live::LiveMsg::Event { .. }) => true,

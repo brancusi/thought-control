@@ -67,6 +67,8 @@ pub fn theme(name: &str) -> Option<ThemeSpec> {
         ("input", style(Some(Token::Text), Some(Token::AccentTint))),
         // Floating panels (§7.2).
         ("overlay", style(Some(Token::Text), Some(Token::Raised))),
+        // The conflict banner (§7.4).
+        ("banner", style(Some(Token::Conflict), Some(Token::ConflictTint))),
     ]
     .into_iter()
     .map(|(k, s)| (k.to_string(), Variant { style: Some(s), ..Variant::default() }))

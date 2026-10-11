@@ -145,7 +145,7 @@ fn every_feed_answers_for_the_seeded_vault() {
     let tx = host.feed("tx", &json!({"id": agent["id"]})).unwrap();
     assert!(tx["lines"][0]["m"].as_str().unwrap().contains(agent["tx"].as_str().unwrap()), "{tx:#}");
     // The frame: what the tab titles and the date read.
-    assert_eq!(host.feed("frame", &json!({})).unwrap(), json!({"inbox": "1", "date": "Sun Oct 11", "live": false}));
+    assert_eq!(host.feed("frame", &json!({})).unwrap(), json!({"inbox": "1", "date": "Sun Oct 11", "live": false, "conflicts": 0}));
     assert!(host.feed("nope", &json!({})).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
@@ -736,5 +736,217 @@ fn ctrl_t_cycles_a_line_and_the_node_keeps_its_id() {
         assert_eq!((n.text.as_str(), n.status.as_deref()), ("Wifi password is on the fridge", status), "{shown}");
     }
     assert_eq!(kids(&root, &home).len(), 2, "no new nodes");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- watching an agent work: the toast, live rows, review and undo -----------------------------
+
+/// Whether a node is deleted (undone) in the vault.
+fn deleted(root: &Path, id: &str) -> bool {
+    !open(root, human()).store.nodes_where("n.id = ?1 AND n.deleted = 1", &[&id]).unwrap().is_empty()
+}
+
+/// The screen's toasts' texts.
+fn toasts(s: &mut fictty::Headless) -> Vec<String> {
+    s.state().toasts.iter().map(|t| t.text.clone()).collect()
+}
+
+/// An agent beside the screen adds a task: the toast says who and what on the agent's tint for
+/// 4 s of the screen's clock, the row's gutter carries `•`, and `u` is set to undo it.
+#[test]
+fn an_agents_change_toasts_and_marks_its_row_live() {
+    let (root, v) = seeded("agent");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    outside_add(&root, None, "[ ] Repot the basil due:2026-10-11");
+    let id = node_id(&root, "Repot the basil");
+    let short = open(&root, human()).store.short(&id);
+    assert!(host.poll(false));
+    let text = s.screen();
+    let said = format!("◆ claude added {short} \"Repot the basil\"   L review  u undo");
+    assert!(text.contains(&said), "{said}\n{text}");
+    assert_eq!(s.state().toasts[0].tone.as_deref(), Some("agent"));
+    let row = text.lines().find(|l| l.contains("Repot the basil") && !l.contains("added")).unwrap_or_else(|| panic!("{text}"));
+    assert!(row.find('•').is_some_and(|g| g < row.find(&short).unwrap()), "the gutter: {row:?}");
+    assert_eq!(s.state().store["live"].read()["value"], json!({id.clone(): true}));
+    // The toast goes on the screen's clock.
+    s.msg(fictty::state::Msg::Tick { now_ms: 5_000 });
+    assert!(!s.screen().contains("◆ claude added"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `u` undoes the agent's change from the toast, as a new transaction; `U` redoes it.
+#[test]
+fn u_undoes_the_agents_change_and_capital_u_redoes_it() {
+    let (root, v) = seeded("undo");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    outside_add(&root, None, "[ ] Repot the basil due:2026-10-11");
+    let id = node_id(&root, "Repot the basil");
+    host.poll(false);
+    s.keys(&["u"]);
+    assert!(deleted(&root, &id), "undone: {:?}", toasts(&mut s));
+    assert!(toasts(&mut s).iter().any(|t| t.starts_with("undone  tx ") && t.contains("◆ claude · 1 node") && t.ends_with("U redo")), "{:?}", toasts(&mut s));
+    assert!(!s.screen().contains("Repot the basil\t"), "the row went");
+    let check = open(&root, human());
+    let h = check.store.history(&id, 5).unwrap();
+    assert_eq!(h[0].actor, "human", "the undo is the person's own transaction");
+    s.keys(&["U"]);
+    assert!(!deleted(&root, &id), "redone");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The Log: `u` undoes the selected transaction; `L` anywhere is the Log of agents' changes, `@`
+/// everyone's again.
+#[test]
+fn the_log_undoes_a_transaction_and_l_reviews_the_agents() {
+    let (root, v) = seeded("log-undo");
+    let summarize = node_id(&root, "Summarize newsletters");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["L"]);
+    let text = s.screen();
+    assert!(text.contains("last 24h · agents") && text.contains("◆ claude") && !text.contains(" you "), "{text}");
+    assert_eq!(s.state().focus.as_deref(), Some("log"));
+    // The agent's transaction is the only row: u undoes it.
+    s.keys(&["u"]);
+    assert!(deleted(&root, &summarize), "{:?}", s.state().status);
+    assert!(toasts(&mut s).iter().any(|t| t.starts_with("undone  tx ")), "{:?}", toasts(&mut s));
+    s.keys(&["@"]);
+    let text = s.screen();
+    assert!(text.contains("last 24h · everyone") && text.contains(" you "), "{text}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The bar's daemon state (§3.3), as thc_core::live reports it.
+#[test]
+fn the_bar_says_live_or_local() {
+    let (root, v) = seeded("live");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    assert!(s.screen().contains("○ local"));
+    host.connected(true);
+    assert!(s.screen().contains("● live") && !s.screen().contains("○ local"), "{}", s.screen());
+    host.connected(false);
+    assert!(s.screen().contains("○ local"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- help, the palette, conflicts, the minimum size ---------------------------------------------
+
+/// `?`: the view's keys, from its bindings, by group; Esc closes it.
+#[test]
+fn question_mark_shows_the_views_keys() {
+    let (root, v) = seeded("help");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Journal, 120, 32);
+    s.keys(&["?"]);
+    let text = s.screen();
+    for want in ["help", "Journal", "[             the day before", "on a row", "x             done", "p h           priority high"] {
+        assert!(text.contains(want), "{want:?}\n{text}");
+    }
+    // The rest is further down the list: everywhere's keys.
+    let rows = s.state().store["keys_journal"].read()["value"].clone();
+    let words: Vec<String> = rows.as_array().unwrap().iter().map(|r| format!("{} {}", r["label"].as_str().or(r["title"].as_str()).unwrap_or(""), r["words"].as_str().unwrap_or(""))).collect();
+    for want in ["everywhere ", "a capture to today", "u undo the agent's change", "L review agents' changes", "? help", ": commands", "1 Today"] {
+        assert!(words.iter().any(|w| w == want), "{want:?} in {words:?}");
+    }
+    // Enter in the Journal writes in the day; the row's Enter (open) isn't listed there.
+    assert!(!text.contains("Enter         open"), "{text}");
+    s.keys(&["esc"]);
+    assert!(!s.screen().contains("the day before"));
+    assert_eq!(s.state().focus.as_deref(), Some("journal"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `:`: the view's commands, filtered by what's typed; Enter runs one as its key does.
+#[test]
+fn colon_runs_a_command_from_the_palette() {
+    let (root, v) = seeded("palette");
+    let bank = node_id(&root, "Call the bank");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&[":"]);
+    assert!(s.screen().contains("commands"), "{}", s.screen());
+    type_in(&mut s, "done");
+    let text = s.screen();
+    assert!(text.contains("done") && text.contains("on a row") && !text.contains("capture to today"), "{text}");
+    s.keys(&["enter"]);
+    assert!(!s.screen().contains(" commands "), "closed: {}", s.screen());
+    assert_eq!(open(&root, human()).store.node(&bank).unwrap().unwrap().status.as_deref(), Some("done"), "x on the selected row");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn copy_dir(from: &Path, to: &Path) {
+    std::fs::create_dir_all(to).unwrap();
+    for e in std::fs::read_dir(from).unwrap() {
+        let e = e.unwrap();
+        let p = to.join(e.file_name());
+        if e.file_type().unwrap().is_dir() {
+            copy_dir(&e.path(), &p);
+        } else {
+            std::fs::copy(e.path(), p).unwrap();
+        }
+    }
+}
+
+/// A text conflict on `Call the bank`, as scripts/fixture-conflict.sh makes one: another device
+/// (studio-mini, claude) edits it, this one edits the same text after, then studio-mini's log
+/// arrives.
+fn with_a_conflict(name: &str) -> (std::path::PathBuf, Vault, String) {
+    let (root, v) = seeded(name);
+    let bank = node_id(&root, "Call the bank");
+    copy_dir(&root.join("v"), &root.join("v2"));
+    std::fs::create_dir_all(root.join("c2")).unwrap();
+    std::fs::write(root.join("c2/device"), "studio-mini").unwrap();
+    let edit = |v: &mut Vault, text: &str| {
+        v.transact(|s| {
+            let mut b = TxBuilder::new(s, today());
+            b.set_text(&bank, text)?;
+            Ok((b.finish(), ()))
+        })
+        .unwrap();
+    };
+    let mut studio = Vault::open(Paths { vault: root.join("v2"), cache: root.join("c2") }, Actor { kind: "agent".into(), name: Some("claude".into()) }, "test").unwrap();
+    edit(&mut studio, "Call the bank about the card");
+    std::thread::sleep(std::time::Duration::from_millis(20));
+    let mut me = open(&root, human());
+    edit(&mut me, "Call the bank before noon");
+    copy_dir(&root.join("v2/log/studio-mini"), &root.join("v/log/studio-mini"));
+    (root, v, bank)
+}
+
+/// The conflict banner (§7.4) under the tabs, `· 1 conflict` in the bar, `≠` in the row's gutter.
+#[test]
+fn an_open_conflict_shows_its_banner_and_gutter() {
+    let (root, v, bank) = with_a_conflict("conflict");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    host.poll(true);
+    let short = open(&root, human()).store.short(&bank);
+    let text = s.screen();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[2].contains(&format!("≠ 1 conflict  {short} text was edited on two devices")), "row 2 is the banner:\n{text}");
+    assert!(lines[31].contains("· 1 conflict"), "the bar: {:?}", lines[31]);
+    let row = lines.iter().find(|l| l.contains(&short) && l.contains("[ ]")).unwrap();
+    assert!(row.trim_start().starts_with('≠'), "the gutter: {row:?}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Below 60×24 only the one centred line shows (§3).
+#[test]
+fn below_60_by_24_only_one_line_shows() {
+    let (root, v) = seeded("small");
+    let host = ThcHost::new(v).at(now());
+    for (w, h) in [(52, 20), (59, 30), (100, 23)] {
+        let mut s = screen(&host, View::Today, w, h);
+        let text = s.screen();
+        let shown: Vec<&str> = text.lines().filter(|l| !l.trim().is_empty()).collect();
+        assert_eq!(shown.len(), 1, "{w}x{h}:\n{text}");
+        assert_eq!(shown[0].trim(), format!("thc needs at least 60×24 · now {w}×{h}"));
+        assert_eq!(text.lines().position(|l| !l.trim().is_empty()), Some((h as usize - 1) / 2), "centred");
+    }
+    let mut s = screen(&host, View::Today, 60, 24);
+    assert!(s.screen().contains("Today"));
     let _ = std::fs::remove_dir_all(root);
 }

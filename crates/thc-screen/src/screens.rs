@@ -186,20 +186,139 @@ fn show(tab: usize) -> Action {
     Action::Do { steps: vec![Action::Put { put: "done_here".into(), value: json!([]) }, Action::ShowTab { tab, of: "views".into() }] }
 }
 
-/// Tab and ⇧Tab cycle the views from anywhere in tab `i` (navigation.md §6, N16): the keys go on
-/// every list, table, tree and prompt there, since a focused node's keys come first. Not on a
-/// document: there Tab is the editor's (indent, E22).
-fn cycling(mut n: Node, i: usize) -> Node {
+/// The keys every focusable node in tab `i` takes, since a focused node's keys come first:
+/// - Tab and ⇧Tab cycle the views (navigation.md §6, N16), but not in a document, where Tab is
+///   the editor's (indent, E22);
+/// - `?` and `:` open the view's help and palette, but not where they'd be typed (a document,
+///   an input).
+fn tab_keys(mut n: Node, i: usize) -> Node {
     let k = View::TABS.len();
-    if n.focusable() && !matches!(n.kind, Kind::Editor { .. }) {
+    let v = View::TABS[i];
+    let editor = matches!(n.kind, Kind::Editor { .. });
+    if n.focusable() && !editor {
         n.keys.entry("tab".into()).or_insert_with(|| show((i + 1) % k));
         n.keys.entry("s-tab".into()).or_insert_with(|| show((i + k - 1) % k));
+        if !matches!(n.kind, Kind::Input { .. }) {
+            for (key, a) in overlay_binds(v) {
+                n.keys.entry(key.clone()).or_insert(a);
+            }
+        }
     }
     if let Some(cs) = n.children_mut() {
         let taken = std::mem::take(cs);
-        *cs = taken.into_iter().map(|c| cycling(c, i)).collect();
+        *cs = taken.into_iter().map(|c| tab_keys(c, i)).collect();
     }
     n
+}
+
+/// `?` and `:` in a view: its help, its palette.
+fn overlay_binds(v: View) -> Vec<(String, Action)> {
+    let open = |flag: &str, focus: String| Action::Do { steps: vec![Action::Put { put: flag.into(), value: true.into() }, Action::Focus { focus }] };
+    vec![("?".into(), open("help", format!("{}_help", v.name()))), (":".into(), open("palette", "palette_q".into()))]
+}
+
+/// What a view's main list is: where the focus goes back to from its help and palette.
+fn main_id(v: View) -> String {
+    first_focus(&Route::to(v)).unwrap_or_else(|| v.name().into())
+}
+
+/// Close the help or the palette: the view's list has the focus again.
+fn close_overlay(v: View) -> Action {
+    Action::Do {
+        steps: vec![
+            Action::Put { put: "help".into(), value: false.into() },
+            Action::Put { put: "palette".into(), value: false.into() },
+            Action::Put { put: "palette_q".into(), value: "".into() },
+            Action::Focus { focus: main_id(v) },
+        ],
+    }
+}
+
+/// The help overlay (§7.2: 74 × 18, three rows down): the view's bindings by group, from the
+/// store entry `keys_<view>` the build writes from the same `Bind`s the keys come from.
+fn help_overlay(v: View) -> Node {
+    let r = Rows {
+        item: Some("<text>{label:14}</><muted>{words}</>".into()),
+        variant: Some("kind".into()),
+        variants: [("section".to_string(), "<text+b>{title}</>".to_string()), ("blank".to_string(), String::new())].into_iter().collect(),
+        skip: vec!["section".into(), "blank".into()],
+        mark: Some("<accent+b>▌</> ".into()),
+        lead: Some("  ".into()),
+        selected: Some("on-selection".into()),
+        ..Rows::default()
+    };
+    let mut l = list(&format!("{}_help", v.name()), &format!("keys_{}", v.name()), r);
+    l.keys.insert("esc".into(), close_overlay(v));
+    l.keys.insert("?".into(), close_overlay(v));
+    l.title = Some(" help ".into());
+    l.border = true;
+    l.pad = Some(Pad::X(1));
+    let mut l = variant(when(l, "help"), "overlay");
+    l.float = Some(Float { width: Some(cells(74)), height: Some(cells(18)), at: Some("top".into()), margin: Some(3) });
+    l.modal = true;
+    l
+}
+
+/// The command palette (§7.2: 74 × 9, four rows down): what's typed filters the view's commands
+/// (`cmds_<view>`, from the same `Bind`s); Enter runs the chosen one by pressing its keys, back in
+/// the view, so a command does exactly what its key does.
+fn palette_overlay(v: View) -> Node {
+    let lid = format!("{}_palette", v.name());
+    let r = Rows {
+        item: Some("{words:34}<muted>{group:16}</>\t<text>{label}</> ".into()),
+        mark: Some("<accent+b>▌</> ".into()),
+        lead: Some("  ".into()),
+        selected: Some("on-selection".into()),
+        filter: Some("palette_q".into()),
+        ..Rows::default()
+    };
+    let run = |from_list: bool| {
+        let mut steps = if from_list { vec![] } else { vec![Action::Focus { focus: lid.clone() }] };
+        steps.push(act("press", json!({"keys": "{key}"})));
+        steps.push(close_overlay(v));
+        Action::Do { steps }
+    };
+    let mut l = list(&lid, &format!("cmds_{}", v.name()), r);
+    l.keys.insert("enter".into(), run(true));
+    l.keys.insert("esc".into(), close_overlay(v));
+    let mut field = variant(input("palette_q", "", "a command"), "input");
+    field.keys.insert("enter".into(), run(false));
+    field.keys.insert("esc".into(), close_overlay(v));
+    for key in ["down", "up"] {
+        field.keys.insert(key.into(), Action::Do { steps: vec![Action::Focus { focus: lid.clone() }, Action::Named(key.into())] });
+    }
+    let line = sized(row(vec![sized(text("<accent+b>:</> "), cells(2)), field]), cells(1));
+    let mut c = col(vec![line, l]);
+    c.title = Some(" commands ".into());
+    c.border = true;
+    c.pad = Some(Pad::X(1));
+    let mut c = variant(when(c, "palette"), "overlay");
+    c.float = Some(Float { width: Some(cells(74)), height: Some(cells(9)), at: Some("top".into()), margin: Some(4) });
+    c.modal = true;
+    c
+}
+
+/// The store entries the help and the palette read: rows by group, and every command once.
+fn help_rows(groups: &Groups) -> (Value, Value) {
+    let mut help = Vec::new();
+    let mut cmds = Vec::new();
+    for (i, (group, binds)) in groups.iter().enumerate() {
+        if binds.is_empty() {
+            continue;
+        }
+        if i > 0 && !help.is_empty() {
+            help.push(json!({"kind": "blank", "id": format!("blank:{group}")}));
+        }
+        help.push(json!({"kind": "section", "id": format!("section:{group}"), "title": group}));
+        for x in binds {
+            let row = json!({"kind": "key", "id": format!("{group}:{}", x.key), "key": x.key, "label": key_label(&x.key), "words": x.words, "group": group});
+            help.push(row.clone());
+            if x.key != "?" && x.key != ":" {
+                cmds.push(row);
+            }
+        }
+    }
+    (Value::Array(help), Value::Array(cmds))
 }
 
 /// A finder's prompt row floated over the top of its view: drawn on top, but after the list in
@@ -250,6 +369,10 @@ const WIDE: &str = "$screen.width>=120";
 /// A status cell (§4): `[ ]` `[/]` `[w]` `[x]` `[-]`, a note's ` · `, and Search's ` ¶ ` / ` # `.
 const STATUS: &str = "{status|todo=<text>[ ]</> ;doing=<doing>[/]</> ;waiting=<waiting>[w]</> ;done=<done>[x]</> ;cancelled=<muted>[-]</> ;note=<muted> · </> ;page=<muted> ¶ </> ;tag=<muted> # </> }";
 
+/// The gutter of a row without the cursor, and with it (§4: conflict > cursor > live).
+const GUTTER: &str = "{gutter|conflict=<conflict+b>≠</> ;live=<agent>•</> ;*=  }";
+const GUTTER_CURSOR: &str = "{gutter|conflict=<conflict+b>≠</> ;*=<accent+b>▌</> }";
+
 /// A node row (§4): id, status cell, text, and the meta right-aligned a cell from the edge.
 fn node_item() -> String {
     format!("<muted>{{short}}</>  {STATUS}{{text_m|markup}}\t{{meta_m|markup}} ")
@@ -272,8 +395,10 @@ fn rows(item: String) -> Rows {
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect(),
         skip: ["section", "empty", "blank", "line"].map(String::from).to_vec(),
-        mark: Some("<accent+b>▌</> ".into()),
-        lead: Some("  ".into()),
+        // The gutter (§4): `≠` on a conflict, else the cursor, else `•` while an agent's change
+        // is live. The row's `gutter` says which (the host's `feeds::gutter`).
+        mark: Some(GUTTER_CURSOR.into()),
+        lead: Some(GUTTER.into()),
         selected: Some("on-selection".into()),
         key: Some("id".into()),
         keep: Some(37),
@@ -289,24 +414,59 @@ fn list(id_: &str, bind: &str, rows: Rows) -> Node {
     id(bound(node(Kind::List { items: vec![], rows }), bind), id_)
 }
 
+/// A key bound with its words. Every key the screen lists is bound through one of these, so the
+/// help overlay (`?`) and the command palette (`:`) are the bindings themselves, never a second
+/// table of what the keys do.
+#[derive(Clone, Debug)]
+pub struct Bind {
+    pub key: String,
+    pub words: String,
+    pub action: Action,
+}
+
+fn b(key: &str, words: &str, action: Action) -> Bind {
+    Bind { key: key.into(), words: words.into(), action }
+}
+
+/// The bindings as a node's (or the UI's) keys.
+fn key_map(binds: &[Bind]) -> BTreeMap<String, Action> {
+    binds.iter().map(|x| (x.key.clone(), x.action.clone())).collect()
+}
+
+/// A key as the help shows it: `Enter`, `⇧Tab`, `p h`.
+fn key_label(key: &str) -> String {
+    match key {
+        "enter" => "Enter".into(),
+        "esc" => "Esc".into(),
+        "tab" => "Tab".into(),
+        "s-tab" => "⇧Tab".into(),
+        k => k.into(),
+    }
+}
+
+/// A view's bindings in groups (the view's own, on a row, everywhere): what its help and its
+/// palette list.
+type Groups = Vec<(String, Vec<Bind>)>;
+
 /// The keys on rows of nodes:
 /// - x done, X reopen, Enter the detail;
 /// - p then h, m, l or - the priority (§6.2);
 /// - d a due date and m a place, asked in the bar (the prompt recipe, `prompt`).
-fn node_keys(v: View) -> BTreeMap<String, Action> {
-    let mut k = BTreeMap::from([
+fn node_binds(v: View) -> Vec<Bind> {
+    let mut k = vec![
         // Done stays on screen where it was until you leave (navigation.md §8): the id joins
         // `done_here`, which the lists' feeds keep.
-        ("x".to_string(), Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] }),
-        ("X".to_string(), act("reopen", json!({"id": "{id}"}))),
-        ("enter".to_string(), open_over(v, json!({"kind": "detail", "id": "{id}"}), &format!("{}_detail", v.name()))),
-    ]);
-    for (key, p) in [("h", "high"), ("m", "med"), ("l", "low"), ("-", "")] {
-        k.insert(format!("p {key}"), act("set", json!({"id": "{id}", "props": {"priority": p}})));
+        b("x", "done", Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] }),
+        b("X", "reopen", act("reopen", json!({"id": "{id}"}))),
+        b("enter", "open", open_over(v, json!({"kind": "detail", "id": "{id}"}), &format!("{}_detail", v.name()))),
+    ];
+    for (key, p, words) in [("h", "high", "priority high"), ("m", "med", "priority medium"), ("l", "low", "priority low"), ("-", "", "no priority")] {
+        k.push(b(&format!("p {key}"), words, act("set", json!({"id": "{id}", "props": {"priority": p}}))));
     }
-    for (key, ask) in [("d", "due"), ("m", "move")] {
-        k.insert(
-            key.into(),
+    for (key, ask, words) in [("d", "due", "due date"), ("m", "move", "move to a page")] {
+        k.push(b(
+            key,
+            words,
             Action::Do {
                 steps: vec![
                     Action::Put { put: "ask_id".into(), value: "{id}".into() },
@@ -314,8 +474,31 @@ fn node_keys(v: View) -> BTreeMap<String, Action> {
                     Action::Focus { focus: "prompt_in".into() },
                 ],
             },
-        );
+        ));
     }
+    k
+}
+
+fn node_keys(v: View) -> BTreeMap<String, Action> {
+    key_map(&node_binds(v))
+}
+
+/// The keys that work in every view (§6.1), but for `?` and `:`, which open the view's own help
+/// and palette (`tab_keys`).
+fn global_binds() -> Vec<Bind> {
+    let names = ["Today", "Inbox", "Tasks", "Pages", "Journal", "Search", "Log"];
+    let mut k: Vec<Bind> = (0..View::TABS.len()).map(|i| b(&(i + 1).to_string(), names[i], show(i))).collect();
+    k.push(b("/", "search", show(5)));
+    // `a` captures into today's journal, `A` into the inbox (tui-handoff §7.1), in capture syntax.
+    for (key, ask, words) in [("a", "capture", "capture to today"), ("A", "inbox", "capture to the inbox")] {
+        k.push(b(key, words, Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into() }, Action::Focus { focus: "prompt_in".into() }] }));
+    }
+    // The agent's last change, as its toast offers (§7.3): u undoes it, U redoes what u undid,
+    // L reviews what agents did (the Log, agents only).
+    k.push(b("u", "undo the agent's change", act("undo", json!({"tx": "{store.agent_tx}"}))));
+    k.push(b("U", "redo", act("undo", json!({"tx": "{store.redo_tx}"}))));
+    k.push(b("L", "review agents' changes", Action::Do { steps: vec![Action::Put { put: "log_by".into(), value: "agents".into() }, show(6)] }));
+    k.push(b("t", "next theme", Action::Theme { theme: "next".into() }));
     k
 }
 
@@ -398,9 +581,15 @@ fn bar(feed: &str, hints: &[(&str, &str)]) -> Node {
     )
 }
 
-/// One view's place in the tabs: its content above its bar.
+/// The conflict banner (§7.4): one row under the tabs while the vault has open conflicts.
+fn banner() -> Node {
+    when(variant(sized(bound(text("{banner_m|markup}"), "frame"), cells(1)), "banner"), "frame.conflicts")
+}
+
+/// One view's place in the tabs: the conflict banner (while there are conflicts), its content,
+/// its bar.
 fn view(content: Node, feed: &str, hints: &[(&str, &str)]) -> Node {
-    col(vec![content, bar(feed, hints)])
+    col(vec![banner(), content, bar(feed, hints)])
 }
 
 // ---- the views ------------------------------------------------------------------------------------
@@ -447,7 +636,7 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             let title = sized(bound(text(" {title_m|markup}\t{meta_m|markup} "), &heading), cells(1));
             out.push(when(col(vec![title, sized(text(""), cells(1)), doc]), &format!("{k}.key")));
             if v == View::Pages {
-                data.insert("pages_outline".into(), source("outline", json!({"id": format!("{{store.{k}.id}}")})));
+                data.insert("pages_outline".into(), source("outline", json!({"id": format!("{{store.{k}.id}}"), "live": "{store.live}"})));
                 let title = sized(bound(text("{title_m|markup}\t{meta_m|markup} "), "pages_outline"), cells(1));
                 let mut rows = keys(tree("pages_outline_rows", "pages_outline.rows"), node_keys(View::Pages));
                 rows.keys.remove("enter");
@@ -502,25 +691,36 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     let mut store = BTreeMap::new();
     store.insert("done_here".into(), json!([]));
     store.insert("journal_date".into(), journal_date(route, today).into());
+    // What agents just changed (`live`: id → true, the `•` gutter), the transaction `u` undoes
+    // and the one `U` redoes, and the Log's filter (`L`: agents).
+    store.insert("live".into(), json!({}));
+    store.insert("agent_tx".into(), "".into());
+    store.insert("redo_tx".into(), "".into());
+    store.insert("log_by".into(), "".into());
     if let Some((v, what)) = opened(route, today) {
         store.insert(open_key(v), what);
     }
+    let globals = global_binds();
     let children: Vec<Node> = View::TABS
         .iter()
         .enumerate()
         .map(|(i, v)| {
             let base = if i == tab && View::TABS.contains(&route.view) { route.clone() } else { Route::to(*v) };
-            let under = tab_view(&base, today, &mut data, &mut store);
+            let mut groups: Groups = Vec::new();
+            let under = tab_view(&base, today, &mut data, &mut store, &mut groups);
             let over = layers(*v, &mut data);
-            let content = if over.is_empty() {
-                under
-            } else {
-                // A modal layer clears what it covers.
-                let mut all = vec![under];
-                all.extend(over);
-                node(Kind::Stack { children: all })
-            };
-            cycling(content, i)
+            // A modal layer clears what it covers.
+            let mut all = vec![under];
+            all.extend(over);
+            let content = tab_keys(node(Kind::Stack { children: all }), i);
+            // The view's help and palette, over everything in its tab.
+            let mut everywhere: Vec<Bind> = overlay_binds(*v).into_iter().zip(["help", "commands"]).map(|((k, a), w)| b(&k, w, a)).collect();
+            everywhere.extend(globals.iter().cloned());
+            groups.push(("everywhere".into(), everywhere));
+            let (help, cmds) = help_rows(&groups);
+            store.insert(format!("keys_{}", v.name()), help);
+            store.insert(format!("cmds_{}", v.name()), cmds);
+            node(Kind::Stack { children: vec![content, help_overlay(*v), palette_overlay(*v)] })
         })
         .collect();
     let focus = first_focus(route);
@@ -538,25 +738,37 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         ),
         "views",
     );
-    let root = node(Kind::Stack { children: vec![views, prompt()] });
-    let mut keys: BTreeMap<String, Action> = (0..View::TABS.len()).map(|i| ((i + 1).to_string(), show(i))).collect();
-    keys.insert("/".into(), show(5));
-    // `a` captures into today's journal, `A` into the inbox (tui-handoff §7.1), in capture syntax.
-    for (key, ask) in [("a", "capture"), ("A", "inbox")] {
-        keys.insert(key.into(), Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into() }, Action::Focus { focus: "prompt_in".into() }] });
-    }
-    keys.insert("t".into(), Action::Theme { theme: "next".into() });
-    Ui { root, data, store, keys, focus, status_bar: Some(false), ..Ui::default() }
+    // Below 60×24 (§3) only one centred line shows: two of them, as `when` has no "or".
+    let small = |cond: &str| {
+        let mut t = bound(text("<muted>thc needs at least 60×24 · now {width}×{height}</>"), "$screen");
+        t.align = Some("center".into());
+        t.float = Some(Float { width: None, height: Some(cells(1)), at: Some("center".into()), margin: None });
+        when(t, cond)
+    };
+    let views = when(views, BIG);
+    let mut bar_prompt = prompt();
+    bar_prompt.when = Some(format!("prompt & {BIG}"));
+    let root = node(Kind::Stack { children: vec![views, bar_prompt, small("$screen.width<60"), small("$screen.width>=60 & $screen.height<24")] });
+    Ui { root, data, store, keys: key_map(&globals), focus, status_bar: Some(false), ..Ui::default() }
 }
 
-/// A tab's view (what layers open over), the sources it reads and the store it seeds.
-fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>) -> Node {
+/// Big enough to draw (§3: 60×24).
+const BIG: &str = "$screen.width>=60 & $screen.height>=24";
+
+/// A tab's view (what layers open over), the sources it reads, the store it seeds, and its
+/// bindings by group (for its help and palette).
+fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>, groups: &mut Groups) -> Node {
+    // A list's feed also reads `live`, so the rows an agent just changed carry their `•`.
     let mut feed = |name: &str, args: Value| {
+        let mut args = args;
+        args["live"] = "{store.live}".into();
         data.insert(name.to_string(), source(name, args));
     };
+    let v = route.view;
     match route.view {
         View::Inbox => {
             feed("inbox", json!({}));
+            groups.push(("on a row".into(), node_binds(v)));
             let l = keys(list("inbox", "inbox.rows", rows(node_item())), node_keys(View::Inbox));
             view(split(l, pane("inbox", "detail", data)), "inbox", &[("m", "move"), ("x", "done"), ("d", "date")])
         }
@@ -596,8 +808,11 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
                 node_keys(View::Tasks),
             );
             let mut narrow = keys(list("tasks-list", "tasks.rows", rows(format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "))), node_keys(View::Tasks));
-            table.keys.insert("f".into(), edit.clone());
-            narrow.keys.insert("f".into(), edit);
+            let own = vec![b("f", "edit the filter", edit)];
+            table.keys.extend(key_map(&own));
+            narrow.keys.extend(key_map(&own));
+            groups.push(("Tasks".into(), own));
+            groups.push(("on a row".into(), node_binds(v)));
             let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$screen.width<120")]);
             view(content, "tasks", &[("f", "filter"), ("x", "done"), ("enter", "open")])
         }
@@ -609,8 +824,10 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // Enter writes in the page or day, over the list (which keeps its selection and query).
             let open_row = open_over(View::Pages, json!({"kind": "{open}", "id": "{id}", "key": "{doc}"}), "pages_doc");
             let mut l = list("pages", "pages.rows", r);
-            l.keys.insert("enter".into(), open_row.clone());
+            let own = vec![b("enter", "write in it", open_row.clone())];
+            l.keys.extend(key_map(&own));
             let (l, prompt) = finder(l, variant(input("pages_q", "", "type to find a page, tag or day"), "input"), open_row);
+            groups.push(("Pages".into(), own));
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
@@ -631,10 +848,13 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             calendar.pad = Some(Pad::X(1));
             // Enter writes in the day shown; x and X still act on the row.
             let mut entries = keys(tree("journal", "journal.rows"), node_keys(View::Journal));
-            entries.keys.insert("enter".into(), open_over(View::Journal, json!({"kind": "day", "key": "day/{store.journal_date}"}), "journal_doc"));
-            for (key, by) in [("[", json!(-1)), ("]", json!(1)), ("T", json!("today"))] {
-                entries.keys.insert(key.into(), act("day", json!({"from": "{store.journal_date}", "by": by})));
+            let mut own = vec![b("enter", "write in the day", open_over(View::Journal, json!({"kind": "day", "key": "day/{store.journal_date}"}), "journal_doc"))];
+            for (key, by, words) in [("[", json!(-1), "the day before"), ("]", json!(1), "the day after"), ("T", json!("today"), "today")] {
+                own.push(b(key, words, act("day", json!({"from": "{store.journal_date}", "by": by}))));
             }
+            entries.keys.extend(key_map(&own));
+            groups.push(("Journal".into(), own));
+            groups.push(("on a row".into(), node_binds(v).into_iter().filter(|x| x.key != "enter").collect()));
             let _ = today;
             let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar)]);
             view(content, "journal", &[("enter", "write"), ("[", "prev"), ("]", "next")])
@@ -646,16 +866,19 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // A finder: letters find, so the rows have no single-letter commands (§6).
             let open_row = open_over(View::Search, json!({"kind": "detail", "id": "{id}"}), "search_detail");
             let mut results = tree("search", "search.rows");
-            results.keys.insert("enter".into(), open_row.clone());
+            let own = vec![b("enter", "open", open_row.clone())];
+            results.keys.extend(key_map(&own));
             let (results, field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
+            groups.push(("Search".into(), own));
             let bar_row = variant(sized(row(vec![sized(text(" <accent+b>/</> "), cells(3)), field, sized(bound(text("\t{count_m|markup} "), "search"), cells(32))]), cells(1)), "input");
             let hint = sized(text(" <muted>deleted nodes are searchable too: add is:deleted</>"), cells(1));
             let content = over_list(bar_row, col(vec![sized(text(""), cells(2)), split(results, pane("search", "detail", data)), hint]));
             view(content, "search", &[("type", "find"), ("enter", "open"), ("tab", "next view")])
         }
         View::Log => {
-            feed("log", json!({}));
-            let title = sized(bound(text("{title_m|markup}\t<muted>last 24h · everyone</> "), "log"), cells(1));
+            // `L` (anywhere) and `@` here filter it to agents' transactions and back.
+            feed("log", json!({"by": "{store.log_by}"}));
+            let title = sized(bound(text("{title_m|markup}\t<muted>last 24h · {who}</>   <text>@</> <muted>{other}</> "), "log"), cells(1));
             // Two lines a transaction (§5.7): time, who, tx and summary; then what it did.
             let line2 = "\n                          <muted>{detail}</>";
             let mut r = Rows {
@@ -664,13 +887,22 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
                 ..rows(String::new())
             };
             r.variants.insert("agent".into(), format!("<muted>{{time}}</>  <agent>{{who:8}}</>  <muted>{{tx}}</>   {{summary_m|markup}}{line2}"));
-            let l = list("log", "log.rows", r);
+            let mut l = list("log", "log.rows", r);
+            // u undoes the selected transaction (a new one, §5.7); U redoes what it undid.
+            let own = vec![
+                b("u", "undo this transaction", act("undo", json!({"tx": "{id}"}))),
+                b("U", "redo", act("undo", json!({"tx": "{store.redo_tx}"}))),
+                b("@", "agents / everyone", act("who", json!({"by": "{store.log_by}"}))),
+            ];
+            l.keys.extend(key_map(&own));
+            groups.push(("Log".into(), own));
             let content = col(vec![title, sized(text(""), cells(1)), split(l, pane("log", "tx", data))]);
-            view(content, "log", &[("u", "undo"), ("enter", "open")])
+            view(content, "log", &[("u", "undo"), ("@", "who")])
         }
         // Today, and anything that isn't a tab of its own.
         _ => {
             feed("today", json!({}));
+            groups.push(("on a row".into(), node_binds(View::Today)));
             let t = keys(tree("today", "today.rows"), node_keys(View::Today));
             view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("p", "priority"), ("d", "date")])
         }
