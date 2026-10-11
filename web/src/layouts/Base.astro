@@ -122,6 +122,15 @@ const canonical = new URL(Astro.url.pathname, Astro.site);
     };
     document.querySelector('[data-theme-toggle]')?.addEventListener('click', toggle);
 
+    // Copy buttons: any [data-copy] (the install line, demo links).
+    for (const b of document.querySelectorAll<HTMLButtonElement>('[data-copy]')) {
+      b.addEventListener('click', async () => {
+        try { await navigator.clipboard.writeText(b.dataset.copy ?? ''); b.textContent = 'copied ✓'; }
+        catch { const c = b.previousElementSibling; if (c) getSelection()?.selectAllChildren(c); b.textContent = 'select ⌘C'; }
+        setTimeout(() => (b.textContent = 'copy'), 1600);
+      });
+    }
+
     // Keys: the site is driven like thc. Never while typing in a field.
     const help = document.querySelector<HTMLElement>('[data-keys-help]');
     let g = 0;

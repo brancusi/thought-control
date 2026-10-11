@@ -3,6 +3,7 @@ import Base from '../layouts/Base.astro';
 import Typer from '../components/Typer.astro';
 import TuiFrame from '../components/TuiFrame.astro';
 import Install from '../components/Install.astro';
+import DemoLink from '../components/DemoLink.astro';
 import Icon from '../components/Icon.astro';
 import Loop from '../components/Loop.astro';
 import { getCollection } from 'astro:content';
@@ -37,6 +38,7 @@ const session = [
           your machine, in an <strong>append-only log</strong> you can read, sync and rewind.
         </p>
         <Install />
+        <DemoLink name="thc on made-up notes" script="try.sh" latest compact />
       </div>
       <div class="label" aria-hidden="true">
         <div class="label__top"><span>controlled</span><span>{version ? `v${version}` : 'for thoughts'}</span></div>

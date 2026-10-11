@@ -20,6 +20,9 @@ $ thc q 'status:open (due<=+7d or priority:high) -#someday sort:due' --json
 {"count":2,"items":[{"id":"yt2nrdwwrbpb","short":"yt2nr","kind":"task", …}]}
 ```
 
+**Try it in one line**, on made-up notes, without installing anything or touching your own:
+`curl -fsSL https://thoughtcontrol.app/try.sh | sh` (see [Try it](docs/guide/try.md)).
+
 **caretline**, the editor engine inside `thc`, also stands alone. Try it in one line:
 `curl -fsSL https://caretline.app/install.sh | sh && caretline demo` (see
 [caretline.app](https://caretline.app/docs/quickstart/)).
