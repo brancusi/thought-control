@@ -510,6 +510,26 @@ fn run(cli: &Cli, paths: &Paths, a: UiArgs) -> Result<()> {
             if_rev,
             target_tui,
         } => {
+            // No TUI on this vault, but `thc screen` runs: the same verb, as a store write on
+            // its socket (screen_cmd::aside).
+            if target_tui.session.is_none() && pick(paths, &target_tui).is_err() {
+                if !ls {
+                    may_control(cli)?;
+                }
+                let actor = crate::parse_actor(cli.actor.as_deref());
+                let name = (actor.kind == "agent").then(|| actor.name.clone().unwrap_or_else(|| "agent".into()));
+                if let Some(r) = crate::screen_cmd::aside(paths, name.as_deref(), target.as_deref(), pin, fold, close, ls)? {
+                    if ls {
+                        return print_aside(cli, &r["sidebar"]);
+                    }
+                    if cli.json {
+                        println!("{}", serde_json::to_string_pretty(&r)?);
+                    } else {
+                        println!("{} {} · thc screen", if close { "closed" } else { "beside:" }, r["panel"].as_str().unwrap_or(""));
+                    }
+                    return Ok(());
+                }
+            }
             if ls {
                 let r = request(paths, &target_tui, &json!({"op": "aside.ls"}))?;
                 return print_aside(cli, &r["sidebar"]);

@@ -451,6 +451,85 @@ pub fn tasks(cx: &Cx, query: &str, keep: &[String]) -> Result<Value> {
     }))
 }
 
+// ---- The sidebar ----------------------------------------------------------------------------------
+
+/// The sidebar's panel headers (sidebar.md §4.1), top to bottom, from the stack in the screen's
+/// store: fold glyph, kind glyph (`¶` `§` `≡`, `#` in `tag`), the title (bold for the newest),
+/// then on the right `◆ claude` for an agent's open, the folded count (`3 open`, `12 notes`, a
+/// list's row count), `pinned` and `×`. A row's `id` is the panel's key.
+pub fn sidebar(cx: &Cx, stack: &crate::sidebar::Stack) -> Result<Value> {
+    use crate::sidebar::Kind;
+    let g = cx.g;
+    let today = cx.today();
+    let newest = stack.open.iter().position(|p| !p.pinned);
+    let mut rows = Vec::new();
+    for (i, p) in stack.open.iter().enumerate() {
+        let (glyph, title, count) = match p.kind {
+            Kind::Page => match cx.store.node(&p.target)? {
+                Some(n) => {
+                    let open = open_under(cx.store, &n.id)?;
+                    let notes = cx.store.children(&n.id)?.len();
+                    (tok(Token::Muted, g.page), n.label(), if open > 0 { format!("{open} open") } else { plural(notes, "note", "notes") })
+                }
+                None => (tok(Token::Muted, g.page), format!("{} (deleted)", p.target), String::new()),
+            },
+            Kind::Day => {
+                let d = if p.target == "today" { Some(today) } else { NaiveDate::parse_from_str(&p.target, "%Y-%m-%d").ok() };
+                let d = d.unwrap_or(today);
+                let entries = cx.store.journal_entries(&d.format("%Y-%m-%d").to_string())?;
+                let open = entries.iter().filter(|n| n.is_open()).count();
+                let title = d.format("%a %d %b").to_string();
+                (tok(Token::Muted, g.journal), title, if open > 0 { format!("{open} open") } else { plural(entries.len(), "note", "notes") })
+            }
+            Kind::View => {
+                let n = match p.target.as_str() {
+                    "inbox" => inbox_nodes(cx.store)?.len(),
+                    "today" => {
+                        let s = thc_core::today::sections(cx.store, today)?;
+                        s.overdue.len() + s.today.len() + s.doing.len() + s.next.len()
+                    }
+                    "tasks" => tasks(cx, "status:open", &[])?["rows"].as_array().map_or(0, Vec::len),
+                    _ => 0,
+                };
+                let mut name = p.target.clone();
+                if let Some(c) = name.get_mut(0..1) {
+                    c.make_ascii_uppercase();
+                }
+                (tok(Token::Muted, g.query), name, n.to_string())
+            }
+            Kind::Query => {
+                let n = tasks(cx, &p.target, &[])?["rows"].as_array().map_or(0, Vec::len);
+                match p.target.strip_prefix('#') {
+                    Some(tag) => (tok(Token::Tag, "#"), tag.to_string(), n.to_string()),
+                    None => (tok(Token::Muted, g.query), p.target.clone(), n.to_string()),
+                }
+            }
+        };
+        let today_m = match p.kind {
+            Kind::Day if p.target == "today" || p.target == today.format("%Y-%m-%d").to_string() => tok(Token::Today, &format!(" {} today", g.sep)),
+            _ => String::new(),
+        };
+        let mut right = Vec::new();
+        if let Some(by) = &p.opened_by {
+            right.push(tok(Token::Agent, &format!("{}{}{}", g.agent, g.agent_sep, by.trim_start_matches("agent:"))));
+        }
+        if p.folded && !count.is_empty() {
+            right.push(tok(Token::Muted, &count));
+        }
+        if p.pinned {
+            right.push(tok(Token::Muted, "pinned"));
+        }
+        right.push(tok(Token::Muted, g.close));
+        let title_m = if Some(i) == newest { styled("text+b", &title) } else { tok(Token::Text, &title) };
+        rows.push(json!({
+            "id": p.key(), "kind": "panel", "panel": serde_json::to_value(p.kind)?, "ref": p.target,
+            "fold_m": tok(Token::Muted, if p.folded { g.fold_closed } else { g.fold_open }),
+            "glyph_m": glyph, "title_m": format!("{title_m}{today_m}"), "right_m": right.join("  "),
+        }));
+    }
+    Ok(json!({"rows": rows, "count": stack.open.len()}))
+}
+
 // ---- Pages and outlines ---------------------------------------------------------------------------
 
 /// Pages (§5.4): a section of pages (`¶ Title`, `N children · N open · ← N`), then the tags

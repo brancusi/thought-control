@@ -1235,3 +1235,162 @@ fn tilde_cycles_the_four_themes() {
     }
     let _ = std::fs::remove_dir_all(root);
 }
+
+// ---- the sidebar (sidebar.md §15) ----------------------------------------------------------------
+
+/// The sidebar's panel keys, top to bottom.
+fn panels(s: &mut fictty::Headless) -> Vec<String> {
+    let v = s.state().store["sidebar"].read()["value"].clone();
+    v["open"].as_array().unwrap().iter().map(|p| format!("{}:{}", p["kind"].as_str().unwrap(), p["ref"].as_str().unwrap())).collect()
+}
+
+/// The screen's column where the sidebar's `│` stands on a row, if it does.
+fn divider(s: &mut fictty::Headless, row: usize) -> Option<usize> {
+    let text = s.screen();
+    let line: Vec<char> = text.lines().nth(row)?.chars().collect();
+    line.iter().rposition(|c| *c == '│')
+}
+
+/// S1, S2: `o` on a row opens its page or day aside, on top; focus stays in the list; opening
+/// one already there moves it up, never twice. S19: the detail pane yields to it at 140, and
+/// comes back when `⌥\` hides it.
+#[test]
+fn s1_s2_s19_o_opens_a_rows_page_or_day_aside_newest_on_top() {
+    let (root, v) = seeded("aside");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    // Call the bank lives in today's journal; Water plants on ¶ Home.
+    s.keys(&["o"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"), "focus stays in main");
+    let text = s.screen();
+    assert!(text.contains("§ Sun 11 Oct · today"), "{text}");
+    assert!(!text.contains("status     todo"), "the detail pane yields (§6.2): {text}");
+    s.keys(&["down", "o"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}"), "day:2026-10-11".into()]);
+    s.keys(&["up", "o"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11".to_string(), format!("page:{home}")], "moved up, not twice");
+    s.keys(&["a-\\"]);
+    assert!(s.screen().contains("status     todo") && !s.screen().contains("§ Sun 11 Oct · today"), "{}", s.screen());
+    s.keys(&["a-\\"]);
+    assert!(s.screen().contains("§ Sun 11 Oct · today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S18: a third of the width, 40 to 64: 46 at 140, 40 at 120, 64 at 200.
+#[test]
+fn s18_the_column_is_a_third_between_40_and_64() {
+    let (root, v) = seeded("width");
+    let host = ThcHost::new(v).at(now());
+    for (w, side) in [(140u16, 46usize), (120, 40), (200, 64)] {
+        let mut s = screen(&host, View::Today, w, 40);
+        s.keys(&["o"]);
+        let at = divider(&mut s, 4).unwrap_or_else(|| panic!("{w}: {}", s.screen()));
+        assert_eq!(w as usize - at - 1, side, "{w} wide: the sidebar\n{}", s.screen());
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S3, S7, S8, S10, S12: ⌥S focuses the stack, Esc gives the focus back; ⌥C folds (the count
+/// shows), ⌥P pins, ⌥W closes, ⌥⇧T reopens, ⌥M opens it in the main view and closes it.
+#[test]
+fn s3_to_s12_the_sidebar_keys() {
+    let (root, v) = seeded("sidebar-keys");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o", "down", "o"]);
+    s.keys(&["a-s"]);
+    assert_eq!(s.state().focus.as_deref(), Some("sidebar_today"));
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"), "back to main");
+    // (The active panel is the one selected in the stack; ⌥K to ¶ Home on top.)
+    s.keys(&["a-s", "a-k", "a-c"]);
+    assert!(s.screen().contains("2 open"), "folded ¶ Home shows its count: {}", s.screen());
+    s.keys(&["a-c", "a-p"]);
+    assert!(s.screen().contains("pinned"));
+    // The day under it: close it, reopen it.
+    s.keys(&["a-j", "a-w"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}")]);
+    s.keys(&["a-s-t"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}"), "day:2026-10-11".into()], "reopened under the pinned one");
+    // ⌥M on Home: the main view is ¶ Home to write in, and the panel is gone.
+    s.keys(&["a-k", "a-m"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
+    assert!(s.screen().contains("¶ Home") && s.screen().contains("Water plants"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S16, S17: narrower, the same stack is a drawer (90–119: 60 wide on the right) or replaces
+/// the view (< 90, with a back row); Esc closes it and keeps the stack.
+#[test]
+fn s16_s17_the_drawer_and_replace() {
+    let (root, v) = seeded("drawer");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 100, 30);
+    s.keys(&["o"]);
+    let text = s.screen();
+    assert!(text.lines().nth(2).unwrap().contains("§ Sun 11 Oct · today"), "the drawer, over the right: {text}");
+    s.keys(&["a-s"]);
+    assert_eq!(s.state().focus.as_deref(), Some("drawer_today"));
+    s.keys(&["esc"]);
+    assert!(!s.screen().contains("§ Sun 11 Oct"), "closed");
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11"], "the stack stays");
+    let mut s = screen(&host, View::Today, 80, 24);
+    s.keys(&["o"]);
+    let text = s.screen();
+    assert!(text.contains("‹ main   beside it: 1 panels") && text.contains("§ Sun 11 Oct · today"), "{text}");
+    s.keys(&["a-s", "esc"]);
+    assert!(s.screen().contains("Call the bank") && !s.screen().contains("beside it"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S21's half that's the screen's: an agent writes the stack (as `thc ui aside` does over the
+/// socket); the panel is on top, says who opened it, and the focus doesn't move.
+#[test]
+fn s21_an_agents_aside_shows_who_and_leaves_the_focus() {
+    let (root, v) = seeded("agent-aside");
+    let health = node_id(&root, "Health");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    let mut stack = thc_screen::sidebar::Stack::default();
+    let mut p = thc_screen::sidebar::Panel::new(thc_screen::sidebar::Kind::Page, &health);
+    p.opened_by = Some("agent:claude".into());
+    stack.open(p);
+    for (key, value) in [("sidebar", stack.to_value()), ("sidebar_shown", json!(true))] {
+        s.msg(fictty::state::Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "agent:claude".into(), for_ms: None });
+    }
+    let text = s.screen();
+    assert!(text.contains("¶ Health") && text.contains("◆ claude"), "{text}");
+    assert_eq!(s.state().focus.as_deref(), Some("today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// sidebar.md §7.1, checked in fictty: two editors on one hosted entry (`page/<id>`) are one
+/// text. Typing in one shows in the other at once, the vault gets it, and an undo in the other
+/// takes it back.
+#[test]
+fn one_page_two_editors_one_text_one_undo() {
+    use fictty::model::{Kind, Node, Ui};
+    let (root, v) = seeded("two-views");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let editor = |id: &str| Node {
+        id: Some(id.into()),
+        kind: Kind::Editor { text: String::new(), doc: Some(format!("page/{home}")), placeholder: None, syntax: Some("markdown".into()), readonly: false, tab: None, tasks: None, caret: Some("end".into()) },
+        ..Node::default()
+    };
+    let ui = Ui { root: Node { kind: Kind::Col { children: vec![editor("main"), editor("panel")], gap: None }, ..Node::default() }, focus: Some("main".into()), status_bar: Some(false), ..Ui::default() };
+    let mut s = fictty::App::new(ui).themes(thc_screen::theme::themes()).theme("ember-dark").host(host.clone()).headless(100, 20).unwrap();
+    type_in(&mut s, "Repot the fern");
+    let text = s.screen();
+    assert_eq!(text.matches("Repot the fern").count(), 2, "both editors show it: {text}");
+    assert_eq!(kid_texts(&root, &home).last().map(String::as_str), Some("Repot the fern"));
+    s.msg(fictty::state::Msg::Click { id: "panel".into(), row: None, tab: None });
+    s.keys(&["d-z"]);
+    assert_eq!(s.screen().matches("Repot the fern").count(), 0, "one undo history: {}", s.screen());
+    assert!(!kid_texts(&root, &home).contains(&"Repot the fern".to_string()));
+    let _ = std::fs::remove_dir_all(root);
+}

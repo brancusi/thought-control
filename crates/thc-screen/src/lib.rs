@@ -13,6 +13,7 @@ pub mod feeds;
 pub mod host;
 pub mod markup;
 pub mod screens;
+pub mod sidebar;
 pub mod theme;
 
 pub use host::ThcHost;

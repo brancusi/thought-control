@@ -18,7 +18,7 @@ use thc_core::glyphs::UNICODE;
 use thc_core::vault::Vault;
 
 /// Every feed a screen can read; a vault change refetches the ones on screen.
-pub const FEEDS: [&str; 14] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc", "tx", "context", "dest"];
+pub const FEEDS: [&str; 15] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc", "tx", "context", "dest", "sidebar"];
 
 /// The vault behind a screen. Cloning shares it.
 #[derive(Clone)]
@@ -89,7 +89,7 @@ impl ThcHost {
         let vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
         let cx = Cx { store: &vault.store, g: &UNICODE, now: self.now() };
         let mut out = self.feed_rows(&cx, name, args)?;
-        if !matches!(name, "frame" | "doc" | "detail" | "tx" | "context" | "dest") {
+        if !matches!(name, "frame" | "doc" | "detail" | "tx" | "context" | "dest" | "sidebar") {
             // The screen's `live` entry (the ids an agent just changed) and the open conflicts mark
             // the rows' gutters.
             let live: std::collections::HashSet<String> = args.get("live").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
@@ -112,6 +112,7 @@ impl ThcHost {
             "today" if s("mode") == Some("agenda") => feeds::agenda(cx)?,
             "today" => feeds::today(cx)?,
             "context" => feeds::context(cx, s("id").unwrap_or(""), s("query").unwrap_or(""))?,
+            "sidebar" => feeds::sidebar(cx, &crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null)))?,
             "dest" => feeds::dest(cx, s("query").unwrap_or(""))?,
             "tx" => feeds::tx(cx, s("id").unwrap_or(""))?,
             "inbox" => feeds::inbox(cx)?,
@@ -307,6 +308,99 @@ impl ThcHost {
                 self.put(&key, to.clone().into())?;
                 Ok(json!({"ok": true, key: to}))
             }
+            // The sidebar (sidebar.md). Every act reads the stack it was pressed against
+            // (`{store.sidebar}`) and writes the next one; the rules are `sidebar::Stack`'s.
+            // `aside`: `{"id"}` a row's node (its page or day), or `{"kind", "ref"}`.
+            "aside" => {
+                let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
+                let panel = match (s("kind"), s("ref")) {
+                    (Some(k), Some(r)) => crate::sidebar::Panel::new(serde_json::from_value(json!(k))?, &r),
+                    _ => self.panel_for(&id()?)?,
+                };
+                let title = panel.key();
+                let opened = stack.open(panel);
+                // Opening shows it (the column, or the drawer below 120).
+                // TODO(fictty): the new panel should become the active one (§2 rule 1), the
+                // selected header; that needs a way to select a row by its key.
+                self.put_stack(&stack, true)?;
+                match opened {
+                    crate::sidebar::Opened::Evicted(p) => self.toast(&format!("{} closed to make room · ⌥⇧T reopen", p.key()), "text")?,
+                    crate::sidebar::Opened::Refused => self.toast("8 panels pinned · unpin one to open another", "neg")?,
+                    _ => {}
+                }
+                Ok(json!({"ok": true, "panel": title}))
+            }
+            // `{"op": close | pin | fold | up | down, "key"}` on a panel; `reopen` and `show` on
+            // the stack.
+            "panel" => {
+                let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
+                let key = s("key").unwrap_or_default();
+                let mut shown = match args.get("shown") {
+                    Some(Value::Bool(b)) => *b,
+                    Some(Value::String(v)) => !v.is_empty() && v != "false",
+                    _ => false,
+                };
+                match s("op").as_deref() {
+                    Some("close") => {
+                        stack.close(&key);
+                    }
+                    Some("pin") => {
+                        stack.toggle_pin(&key);
+                    }
+                    Some("fold") => {
+                        stack.toggle_fold(&key);
+                    }
+                    Some("up") => {
+                        stack.move_by(&key, true);
+                    }
+                    Some("down") => {
+                        stack.move_by(&key, false);
+                    }
+                    Some("reopen") => {
+                        if stack.reopen().is_none() {
+                            return Ok(json!({"ok": true, "reopened": null}));
+                        }
+                    }
+                    Some("close_all") => stack.close_unpinned(),
+                    // ⌥S showed it; ⌥\ hides or shows it.
+                    Some("show") => shown = true,
+                    Some("toggle") => shown = !shown,
+                    other => anyhow::bail!("no panel op {other:?}"),
+                }
+                self.put_stack(&stack, shown)?;
+                Ok(json!({"ok": true}))
+            }
+            // `⌥M` (§3.4): the main view goes to this panel's page or day, and the panel closes.
+            "to_main" => {
+                let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
+                let key = s("key").unwrap_or_default();
+                let Some(p) = stack.open.iter().find(|p| p.key() == key).cloned() else { return Ok(json!({"ok": true})) };
+                let (tab, view, open) = match p.kind {
+                    crate::sidebar::Kind::Page => (3, "pages", json!({"kind": "page", "id": p.target, "key": format!("page/{}", p.target)})),
+                    crate::sidebar::Kind::Day => {
+                        let d = if p.target == "today" { self.now().date().format("%Y-%m-%d").to_string() } else { p.target.clone() };
+                        self.put("journal_date", d.clone().into())?;
+                        (4, "journal", json!({"kind": "day", "key": format!("day/{d}")}))
+                    }
+                    // A list panel's view is its tab.
+                    crate::sidebar::Kind::View | crate::sidebar::Kind::Query => {
+                        let tab = screens::View::TABS.iter().position(|v| v.name() == p.target).unwrap_or(2);
+                        if p.kind == crate::sidebar::Kind::Query {
+                            self.put("tasks_q", p.target.clone().into())?;
+                        }
+                        stack.close(&key);
+                        self.put_stack(&stack, true)?;
+                        self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
+                        return Ok(json!({"ok": true}));
+                    }
+                };
+                stack.close(&key);
+                self.put_stack(&stack, true)?;
+                self.put(&format!("open_{view}"), open)?;
+                self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
+                self.send(fictty::state::Msg::Click { id: format!("{view}_doc"), row: None, tab: None })?;
+                Ok(json!({"ok": true}))
+            }
             // `{"keys": "p h"}`: press a command's keys (the palette runs a command this way, so it
             // does just what its key does).
             "press" => {
@@ -318,6 +412,37 @@ impl ThcHost {
             }
             other => anyhow::bail!("no action {other:?}"),
         }
+    }
+
+    /// The panel a row opens aside (sidebar.md §2): a page is itself, a day is its day, a tag is a
+    /// `#tag` list, anything else is the page or day it lives in.
+    pub fn panel_for(&self, id: &str) -> anyhow::Result<crate::sidebar::Panel> {
+        use crate::sidebar::{Kind, Panel};
+        let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+        let mut n = v.store.must_node(id)?;
+        if n.is_tag {
+            return Ok(Panel::new(Kind::Query, &format!("#{}", n.label().to_lowercase())));
+        }
+        loop {
+            if let Some(d) = n.journal.as_deref().and_then(thc_core::dates::DateVal::from_stored) {
+                return Ok(Panel::new(Kind::Day, &d.date().format("%Y-%m-%d").to_string()));
+            }
+            if n.title.is_some() && n.parent.is_none() {
+                return Ok(Panel::new(Kind::Page, &n.id));
+            }
+            match &n.parent {
+                Some(p) => n = v.store.must_node(p)?,
+                None => anyhow::bail!("{} is in the inbox: no page or day to open beside", v.store.short(id)),
+            }
+        }
+    }
+
+    /// Write the stack, whether it shows, and whether it's beside the view (both: the detail pane
+    /// and the Journal's calendar yield to it, §6.2).
+    fn put_stack(&self, stack: &crate::sidebar::Stack, shown: bool) -> anyhow::Result<()> {
+        self.put("sidebar", stack.to_value())?;
+        self.put("sidebar_shown", shown.into())?;
+        self.put("sidebar_beside", (shown && !stack.open.is_empty()).into())
     }
 
     /// Write one of the screen's store entries, as the host.

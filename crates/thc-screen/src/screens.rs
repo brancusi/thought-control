@@ -211,6 +211,21 @@ fn tab_keys(mut n: Node, i: usize) -> Node {
     n
 }
 
+/// Keys on every focusable node, editors and inputs too (they're `⌥` chords, which type
+/// nothing); a node's own binding of the key stays (the sidebar's `⌥S` goes back).
+fn with_keys_everywhere(mut n: Node, binds: &[Bind]) -> Node {
+    if n.focusable() {
+        for x in binds {
+            n.keys.entry(x.key.clone()).or_insert_with(|| x.action.clone());
+        }
+    }
+    if let Some(cs) = n.children_mut() {
+        let taken = std::mem::take(cs);
+        *cs = taken.into_iter().map(|c| with_keys_everywhere(c, binds)).collect();
+    }
+    n
+}
+
 /// `?` and `:` in a view: its help, its palette.
 fn overlay_binds(v: View) -> Vec<(String, Action)> {
     let open = |flag: &str, focus: String| Action::Do { steps: vec![Action::Put { put: flag.into(), value: true.into(), for_ms: None }, Action::Focus { focus }] };
@@ -561,6 +576,10 @@ fn node_binds(v: View) -> Vec<Bind> {
         }
     };
     k.push(b("m", "move to a page", ask("move", format!("{}_move_q", v.name()))));
+    // Its page or day beside the view (sidebar.md §2).
+    k.push(b("o", "open aside", aside_row()));
+    k.push(b("a-o", "open aside", aside_row()));
+    k.push(b("s-enter", "open aside", aside_row()));
     k.push(b("D", "delete", ask("confirm", format!("{}_confirm", v.name()))));
     k
 }
@@ -677,7 +696,7 @@ fn split(main: Node, side: Node) -> Node {
     main.max = Some(96);
     let rule = sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1));
     // `\` takes the pane away (and puts it back).
-    let shown = format!("{WIDE} & !no_detail");
+    let shown = format!("{WIDE} & !no_detail & !sidebar_beside");
     row(vec![main, when(rule, &shown), when(sized(side, spec("40%")), &shown)])
 }
 
@@ -780,9 +799,11 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             out.push(when(lines, &format!("{k}.id")));
         }
     }
+    // Each covers its view (a float over the whole of it) without holding the focus there, so
+    // the sidebar beside it can take the focus (⌥S) and give it back.
     out.into_iter()
         .map(|mut l| {
-            l.modal = true;
+            l.float = Some(Float { width: None, height: None, at: None, margin: None });
             l
         })
         .collect()
@@ -826,6 +847,11 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     // Today's sections or agenda (`w`), the detail pane on or off (`\`), and what the move
     // picker and the delete question are about.
     store.insert("today_mode".into(), "".into());
+    // The sidebar's stack (sidebar::Stack), whether it shows, and whether it's beside the view.
+    store.insert("sidebar".into(), crate::sidebar::Stack::default().to_value());
+    store.insert("sidebar_shown".into(), false.into());
+    store.insert("sidebar_beside".into(), false.into());
+    data.insert("sidebar_rows".into(), source("sidebar", json!({"stack": "{store.sidebar}"})));
     store.insert("no_detail".into(), "".into());
     for k in ["ask_id", "ask_text"] {
         store.insert(k.into(), "".into());
@@ -845,7 +871,16 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
             // A modal layer clears what it covers.
             let mut all = vec![under];
             all.extend(over);
-            let content = tab_keys(node(Kind::Stack { children: all }), i);
+            // The view (and what's open over it) with the sidebar beside it, or over it when narrow.
+            let (column, drawer, replace) = sidebar_places(*v);
+            let rule = when(sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1)), &format!("$screen.width>=120 & {BESIDE}"));
+            let main = sized(node(Kind::Stack { children: all }), spec("*"));
+            let beside = node(Kind::Stack { children: vec![row(vec![main, rule, column]), drawer, replace] });
+            let mut content = tab_keys(beside, i);
+            // ⌥S, ⌥⇧T, ⌥\ from anywhere in the tab, writing included.
+            let anywhere = everywhere_binds(*v);
+            content = with_keys_everywhere(content, &anywhere);
+            groups.push(("sidebar".into(), anywhere));
             // The view's help and palette, over everything in its tab.
             let mut everywhere: Vec<Bind> = overlay_binds(*v).into_iter().zip(["help", "commands"]).map(|((k, a), w)| b(&k, w, a)).collect();
             everywhere.extend(globals.iter().cloned());
@@ -883,6 +918,101 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     bar_prompt.when = Some(format!("prompt & {BIG}"));
     let root = node(Kind::Stack { children: vec![views, bar_prompt, small("$screen.width<60"), small("$screen.width>=60 & $screen.height<24")] });
     Ui { root, data, store, keys: key_map(&globals), focus, status_bar: Some(false), ..Ui::default() }
+}
+
+// ---- the sidebar (sidebar.md) ----------------------------------------------------------------------
+
+/// The sidebar has panels and shows.
+const BESIDE: &str = "sidebar.open & sidebar_shown";
+
+/// An act on the stack (sidebar.md §3): `op` on the selected panel, against the stack as it is.
+fn panel_op(op: &str) -> Action {
+    act("panel", json!({"op": op, "key": "{id}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))
+}
+
+/// Open a row's page or day aside (§2: `o`, `⌥O`, `⇧Enter`).
+fn aside_row() -> Action {
+    act("aside", json!({"id": "{id}", "stack": "{store.sidebar}"}))
+}
+
+/// The keys that work wherever the focus is in a tab, writing included (`⌥` chords type
+/// nothing): `⌥S` to the sidebar (showing it), `⌥⇧T` reopen, `⌥\` hide or show.
+fn everywhere_binds(v: View) -> Vec<Bind> {
+    let n = v.name();
+    vec![
+        b(
+            "a-s",
+            "sidebar",
+            // Only the one that shows takes the focus: the column, the drawer or replace.
+            Action::Do {
+                steps: vec![
+                    Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
+                    act("panel", json!({"op": "show", "stack": "{store.sidebar}", "shown": true})),
+                    Action::Focus { focus: format!("sidebar_{n}") },
+                    Action::Focus { focus: format!("drawer_{n}") },
+                    Action::Focus { focus: format!("replace_{n}") },
+                ],
+            },
+        ),
+        b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+        b("a-\\", "sidebar hide / show", act("panel", json!({"op": "toggle", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+    ]
+}
+
+/// The stack as a list of panel headers (§4.1), one instance per place it shows: the column at
+/// 120+, the drawer at 90–119, replace below. The places differ only in what Esc does: the
+/// column gives the focus back; the drawer and replace also close.
+///
+/// TODO(fictty): each panel's body (a page or day as an editor on its hosted entry, a list
+/// panel's rows) under its header needs a node that repeats a template per item of a bound
+/// list; until then the stack shows its headers.
+fn sidebar_list(v: View, place: &str) -> Node {
+    let r = Rows {
+        item: Some("{fold_m|markup} {glyph_m|markup} {title_m|markup}\t{right_m|markup} ".into()),
+        mark: Some("<accent+b>▌</>".into()),
+        lead: Some(" ".into()),
+        key: Some("id".into()),
+        empty: Some(" <muted>nothing beside you · o or ⌥O on a row</>".into()),
+        ..Rows::default()
+    };
+    let mut l = list(&format!("{place}_{}", v.name()), "sidebar_rows.rows", r);
+    let back = if place == "sidebar" {
+        Action::Focus { focus: "$prev".into() }
+    } else {
+        Action::Do { steps: vec![Action::Put { put: "sidebar_shown".into(), value: "".into(), for_ms: None }, Action::Focus { focus: main_id(v) }] }
+    };
+    let binds = [
+        b("a-j", "next panel", Action::Named("down".into())),
+        b("a-k", "previous panel", Action::Named("up".into())),
+        b("a-c", "fold", panel_op("fold")),
+        b("enter", "fold", panel_op("fold")),
+        b("a-w", "close", panel_op("close")),
+        b("a-p", "pin / unpin", panel_op("pin")),
+        b("a-s-k", "move up", panel_op("up")),
+        b("a-s-j", "move down", panel_op("down")),
+        b("a-m", "to main", act("to_main", json!({"key": "{id}", "stack": "{store.sidebar}"}))),
+        b("a-s", "back to main", back.clone()),
+        b("esc", "back to main", back),
+    ];
+    l.keys.extend(key_map(&binds));
+    l
+}
+
+/// The sidebar's three places in a tab (§6.1, §6.4): the column beside the view (a third of the
+/// width, 40–64), the drawer over its right 60 columns, replace over all of it.
+fn sidebar_places(v: View) -> (Node, Node, Node) {
+    let mut column = sized(sidebar_list(v, "sidebar"), spec("33%"));
+    column.min = Some(40);
+    column.max = Some(64);
+    let column = when(column, &format!("$screen.width>=120 & {BESIDE}"));
+    let mut drawer = variant(col(vec![sidebar_list(v, "drawer")]), "overlay");
+    drawer.float = Some(Float { width: Some(cells(60)), height: None, at: Some("right".into()), margin: None });
+    let drawer = when(drawer, &format!("$screen.width>=90 & $screen.width<120 & {BESIDE}"));
+    let back_row = sized(bound(text(" <accent>‹</> <muted+u>main</>   <muted>beside it: {count} panels</>"), "sidebar_rows"), cells(1));
+    let mut replace = col(vec![back_row, sidebar_list(v, "replace")]);
+    replace.float = Some(Float { width: None, height: None, at: None, margin: None });
+    let replace = when(replace, &format!("$screen.width<90 & {BESIDE}"));
+    (column, drawer, replace)
 }
 
 /// Big enough to draw (§3: 60×24).
@@ -978,7 +1108,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // Enter writes in the page or day, over the list (which keeps its selection and query).
             let open_row = open_over(View::Pages, json!({"kind": "{open}", "id": "{id}", "key": "{doc}"}), "pages_doc");
             let mut l = list("pages", "pages.rows", r);
-            let own = vec![b("enter", "write in it", open_row.clone())];
+            let own = vec![b("enter", "write in it", open_row.clone()), b("a-o", "open aside", aside_row()), b("s-enter", "open aside", aside_row())];
             l.keys.extend(key_map(&own));
             let (l, prompt) = finder(l, variant(input("pages_q", "", "type to find a page, tag or day"), "input"), open_row);
             groups.push(("Pages".into(), own));
@@ -1024,7 +1154,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let mut results = tree("search", "search.rows");
             // ⌃Q: the search as a Tasks filter (§5.6).
             let as_query = Action::Do { steps: vec![Action::Put { put: "tasks_q".into(), value: "text:{store.search_q}".into(), for_ms: None }, show(2)] };
-            let own = vec![b("enter", "open", open_row.clone()), b("c-q", "as a Tasks filter", as_query.clone())];
+            let own = vec![b("enter", "open", open_row.clone()), b("c-q", "as a Tasks filter", as_query.clone()), b("a-o", "open aside", aside_row()), b("s-enter", "open aside", aside_row())];
             results.keys.extend(key_map(&own));
             let (results, mut field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
             field.keys.insert("c-q".into(), as_query);
