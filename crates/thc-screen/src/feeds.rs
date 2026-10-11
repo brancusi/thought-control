@@ -758,13 +758,15 @@ pub fn doc(cx: &Cx, key: &str) -> Result<Value> {
         let d = date.format("%Y-%m-%d").to_string();
         (format!("{} {}", g.journal, date.format("%A, %B %-d %Y")), cx.store.journal_node(&d)?)
     } else {
-        return Ok(json!({"title_m": "", "meta_m": ""}));
+        return Ok(json!({"title_m": "", "meta_m": "", "bar_m": ""}));
     };
     let open = match &root {
         Some(r) => open_under(cx.store, r)?,
         None => 0,
     };
-    Ok(json!({"title_m": styled("text+b", &title), "meta_m": tok(Token::Muted, &format!("{open} open"))}))
+    // The bar while it's written in (§3.3): what it is, its open tasks, and that it's writing.
+    let bar_m = bar(&title, &[(format!("{open} open"), Token::Muted), ("writing".into(), Token::Muted)]);
+    Ok(json!({"title_m": styled("text+b", &title), "meta_m": tok(Token::Muted, &format!("{open} open")), "bar_m": bar_m}))
 }
 
 // ---- Journal ------------------------------------------------------------------------------------
