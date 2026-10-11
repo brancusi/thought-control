@@ -128,7 +128,7 @@ fn pushes_changes_made_by_the_cli_on_this_device() {
     let ev = ev.expect("no changed event");
     assert_eq!(ev["actor"], "agent:claude");
     eprintln!("push latency: {:?}", started.elapsed());
-    // SPEC §8: 250 ms. Shared CI runners get 750 ms, so runner jitter doesn't block a release while
+    // SPEC §8: 250 ms. Shared CI machines get 750 ms, so their jitter doesn't block a release while
     // a real regression (seconds, a missed push) still fails there.
     let budget = if std::env::var_os("CI").is_some() { 750 } else { 250 };
     assert!(started.elapsed() < Duration::from_millis(budget), "push took {:?} (budget {budget} ms)", started.elapsed());
