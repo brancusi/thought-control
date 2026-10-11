@@ -1,5 +1,6 @@
 //! Read-only Markdown export (Obsidian-readable) and a full JSON snapshot.
 
+use crate::list::{Level, ListStyle};
 use crate::model::Node;
 use crate::store::Store;
 use anyhow::Result;
@@ -27,14 +28,19 @@ pub fn slug(s: &str) -> String {
 }
 
 fn task_line(store: &Store, n: &Node) -> String {
+    item_line(store, n, "-")
+}
+
+/// A note as a Markdown list item behind `marker` (`-`, or `3.` in a numbered list).
+fn item_line(store: &Store, n: &Node, marker: &str) -> String {
     let cb = match n.status.as_deref() {
-        Some("done") => "- [x] ",
-        Some("cancelled") => "- [-] ",
-        Some("doing") => "- [/] ",
-        Some(_) => "- [ ] ",
-        None => "- ",
+        Some("done") => "[x] ",
+        Some("cancelled") => "[-] ",
+        Some("doing") => "[/] ",
+        Some(_) => "[ ] ",
+        None => "",
     };
-    let mut s = format!("{cb}{}", store.render_text(&n.text).replace('\n', " "));
+    let mut s = format!("{marker} {cb}{}", store.render_text(&n.text).replace('\n', " "));
     if let Some(p) = &n.priority {
         s.push_str(match p.as_str() {
             "high" => " ⏫",
@@ -60,13 +66,24 @@ fn task_line(store: &Store, n: &Node) -> String {
     s
 }
 
-fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Result<()> {
+/// Plain Markdown lists (list.rs): a numbered list keeps its numbers and its `.` or `)`; letters
+/// and roman numerals, which Markdown doesn't have, fall back to numbers. Paragraphs export as
+/// `-` lines (as before); one between items starts a new list, as in the editor.
+fn markdown_marker(item: Option<(ListStyle, usize)>) -> String {
+    match item {
+        Some((ListStyle::Ordered(_, delim), n)) => format!("{n}{delim}"),
+        Some((ListStyle::Bullet(c), _)) => c.to_string(),
+        None => "-".into(),
+    }
+}
+
+fn outline(store: &Store, parent: &str, enclosing: Level, depth: usize, out: &mut String) -> Result<()> {
     let mut prev_para: Option<bool> = None;
-    for c in store.children(parent)? {
+    for (c, place) in crate::list::places_under(store, parent, enclosing)? {
         // A blank line before a top-level note where it has one (`gap`, writing.md §1): its own
         // when set, else the default (a paragraph keeps a blank line on either side).
         if depth == 0 {
-            let para = crate::edit::has_para_style(store, &c.id) && c.status.is_none();
+            let para = place.item.is_none();
             if let Some(p) = prev_para {
                 if crate::edit::gap_of(store, &c.id).unwrap_or(p || para) {
                     out.push('\n');
@@ -74,11 +91,11 @@ fn outline(store: &Store, parent: &str, depth: usize, out: &mut String) -> Resul
             }
             prev_para = Some(para);
         }
-        let line = task_line(store, &c);
+        let line = item_line(store, &c, &markdown_marker(place.item));
         out.push_str(&"    ".repeat(depth));
         out.push_str(&line);
         out.push('\n');
-        outline(store, &c.id, depth + 1, out)?;
+        outline(store, &c.id, place.inner, depth + 1, out)?;
     }
     Ok(())
 }
@@ -104,7 +121,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
         if let Some(j) = &r.journal {
             let mut s = String::from(HEADER);
             s.push_str(&format!("# {j}\n\n"));
-            outline(store, &r.id, 0, &mut s)?;
+            outline(store, &r.id, Level::NONE, 0, &mut s)?;
             fs::write(tmp.join("journal").join(format!("{j}.md")), s)?;
             stats.journals += 1;
         } else if let Some(t) = &r.title {
@@ -117,7 +134,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
                 s.push_str(&store.render_text(&r.text));
                 s.push_str("\n\n");
             }
-            outline(store, &r.id, 0, &mut s)?;
+            outline(store, &r.id, Level::NONE, 0, &mut s)?;
             let mut name = slug(t);
             if tmp.join("pages").join(format!("{name}.md")).exists() {
                 name = format!("{name}-{}", &r.id[..5]);
@@ -127,7 +144,7 @@ pub fn markdown(store: &Store, dir: &Path, today: NaiveDate) -> Result<ExportSta
         } else {
             inbox.push_str(&task_line(store, r));
             inbox.push('\n');
-            outline(store, &r.id, 1, &mut inbox)?;
+            outline(store, &r.id, crate::list::enclosing(store, &r.id), 1, &mut inbox)?;
         }
     }
     fs::write(tmp.join("inbox.md"), inbox)?;
@@ -169,4 +186,16 @@ pub fn json_snapshot(store: &Store) -> Result<serde_json::Value> {
         out.push(v);
     }
     Ok(json!({ "format": crate::event::FORMAT_VERSION, "nodes": out }))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn letters_and_roman_export_as_numbers() {
+        let m = |s: &str, n: usize| markdown_marker(Some((ListStyle::parse(s).unwrap(), n)));
+        assert_eq!([m("a.", 2), m("I)", 3), m("1.", 4), m("*", 1)], ["2.", "3)", "4.", "*"]);
+        assert_eq!(markdown_marker(None), "-", "a paragraph stays a - line");
+    }
 }

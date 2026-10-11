@@ -70,12 +70,16 @@ pub struct Block {
     /// A blank line before it (`gap` prop, writing.md §1): None means the default for its kind.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gap: Option<bool>,
+    /// A list item's marker from its list's style and its place (`-`, `3.`, `b)`; list.rs);
+    /// absent for a paragraph, and read as `-` when absent on an item.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub marker: Option<String>,
 }
 
 fn kind_of(store: &Store, n: &Node) -> Kind {
     if n.status.is_some() {
         Kind::Task
-    } else if has_para_style(store, &n.id) {
+    } else if crate::edit::is_paragraph(store, n) {
         Kind::Para
     } else {
         Kind::Bullet
@@ -104,6 +108,7 @@ pub fn block(store: &Store, n: &Node, depth: usize) -> Block {
             .unwrap_or(false),
         done_at: n.done_at.clone(),
         gap: crate::edit::gap_of(store, &n.id),
+        marker: crate::list::place_of(store, &n.id).and_then(|p| p.marker()),
     }
 }
 
@@ -149,40 +154,25 @@ pub fn fields(scheduled: Option<&str>, due: Option<&str>, priority: Option<&str>
     s
 }
 
-/// Blocks as Markdown (editor.md §3.2 copy, the same lines `thc edit` writes without its ids):
-/// paragraphs separated by blank lines, bullets as `- ` nested by 2 spaces, tasks as `- [ ] `,
-/// fields re-attached. Depth is relative to the shallowest block given.
+/// Blocks as Markdown (editor.md §3.2 copy): exactly the lines `thc edit` writes, without its
+/// ids, through the same writer (`edit::Writer`). Depth is relative to the shallowest block given.
 pub fn markdown(blocks: &[Block]) -> String {
     let base = blocks.iter().map(|b| b.depth).min().unwrap_or(0);
-    let mut out = String::new();
-    let mut prev_para: Option<bool> = None;
+    let mut w = crate::edit::Writer::default();
     for b in blocks {
-        let para = b.kind == Kind::Para;
         let f = fields(b.scheduled.as_deref(), b.due.as_deref(), b.priority.as_deref(), b.repeat.as_deref());
-        // A blank line before it: its `gap` when it has one, else the default for its kind.
-        if prev_para.is_some() && b.gap.unwrap_or(para || prev_para == Some(true)) {
-            out.push('\n');
-        }
-        let pad = "  ".repeat(b.depth.saturating_sub(base));
-        if para {
-            // A nested paragraph (a paragraph's child, or under an item) is indented, its soft
-            // breaks too.
-            let mut lines = b.text.split('\n');
-            out.push_str(&format!("{pad}{}{f}", lines.next().unwrap_or("")));
-            for l in lines {
-                out.push_str(&format!("\n{pad}{l}"));
-            }
-        } else {
-            let mut lines = b.text.split('\n');
-            out.push_str(&format!("{pad}- {}{}{f}", checkbox(b.status.as_deref()), lines.next().unwrap_or("")));
-            for l in lines {
-                out.push_str(&format!("\n{pad}  {l}"));
-            }
-        }
-        out.push('\n');
-        prev_para = Some(para);
+        let marker = (b.kind != Kind::Para).then(|| b.marker.as_deref().unwrap_or("-"));
+        w.note(&crate::edit::Note {
+            depth: b.depth.saturating_sub(base),
+            marker,
+            status: b.status.as_deref(),
+            text: &b.text,
+            fields: &f,
+            gap: b.gap,
+            id: None,
+        });
     }
-    out
+    w.out
 }
 
 
@@ -256,9 +246,19 @@ fn render_with(store: &Store, root: &str, with_rev: bool) -> Result<Vec<Block>> 
     for n in &nodes {
         children.entry(parent_of(n).unwrap_or_default()).or_default().push(n);
     }
+    // Each item's marker (list.rs): a list's style is on its first item.
+    let lists: HashMap<String, crate::list::ListStyle> = pairs(&format!("SELECT node, value FROM props WHERE key='{}' AND node IN ({IN_SUB})", crate::list::LIST))?
+        .into_iter()
+        .filter_map(|(n, v)| Some((n, serde_json::from_str::<serde_json::Value>(&v).ok()?.as_str().and_then(crate::list::ListStyle::parse)?)))
+        .collect();
+    let placed = |parent: &str, enclosing: crate::list::Level| -> Vec<(&Node, crate::list::Place)> {
+        let kids = children.get(parent).map(Vec::as_slice).unwrap_or_default();
+        let places = crate::list::places(enclosing, kids.iter().map(|k| (k.status.is_none() && para.contains(&k.id), lists.get(&k.id).copied())));
+        kids.iter().copied().zip(places).collect()
+    };
     let mut out = Vec::with_capacity(nodes.len());
-    let mut stack: Vec<(&Node, usize)> = children.get(root).map(|c| c.iter().rev().map(|n| (*n, 0)).collect()).unwrap_or_default();
-    while let Some((n, depth)) = stack.pop() {
+    let mut stack: Vec<(&Node, usize, crate::list::Place)> = placed(root, crate::list::enclosing(store, root)).into_iter().rev().map(|(n, p)| (n, 0, p)).collect();
+    while let Some((n, depth, place)) = stack.pop() {
         out.push(Block {
             id: n.id.clone(),
             parent: parent_of(n),
@@ -276,11 +276,10 @@ fn render_with(store: &Store, root: &str, with_rev: bool) -> Result<Vec<Block>> 
             conflict: conflicted.contains(&n.id),
             done_at: n.done_at.clone(),
             gap: gaps.get(&n.id).copied(),
+            marker: place.marker(),
         });
-        if let Some(kids) = children.get(&n.id) {
-            for k in kids.iter().rev() {
-                stack.push((*k, depth + 1));
-            }
+        for (k, p) in placed(&n.id, place.inner).into_iter().rev() {
+            stack.push((k, depth + 1, p));
         }
     }
     Ok(out)

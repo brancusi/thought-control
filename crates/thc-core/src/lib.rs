@@ -20,6 +20,7 @@ pub mod group;
 pub mod hlc;
 pub mod id;
 pub mod ingest;
+pub mod list;
 pub mod live;
 pub mod log;
 pub mod model;

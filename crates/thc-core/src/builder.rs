@@ -484,6 +484,10 @@ impl<'a> TxBuilder<'a> {
                 "0" | "false" | "no" => json!("0"),
                 _ => return Err(invalid("gap is 1 (a blank line before the note) or 0")),
             },
+            // A list's style (list.rs): its first item's marker, never a typed custom prop.
+            "list" => json!(crate::list::ListStyle::parse(raw)
+                .ok_or_else(|| invalid("list is a first item's marker: - * + 1. 1) a. A. i. I. (or with ))"))?
+                .as_str()),
             "tag" => return Err(invalid("use `thc tag` to tag nodes")),
             _ => self.custom_value(key, raw)?,
         })

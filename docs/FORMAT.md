@@ -82,7 +82,7 @@ One JSON object per line:
 |---|---|---|
 | `node.create` | `id, parent, order, text, title?, props?` | `order` is a base-62 fractional index |
 | `node.text` | `id, text, base?` | `base` = the `eid` of the text this edit started from |
-| `node.set` | `id, props{key: value\|null}` | `null` unsets. Built-ins: `title status scheduled due priority repeat done_at journal tag style gap`; attachment nodes add `system kind path mime bytes w h` |
+| `node.set` | `id, props{key: value\|null}` | `null` unsets. Built-ins: `title status scheduled due priority repeat done_at journal tag style gap list`; attachment nodes add `system kind path mime bytes w h` |
 | `node.move` | `id, parent, order` | Rejected (and recorded as a conflict) if it would create a cycle |
 | `node.complete` | `id, at, occurrence?, next?` | With `next{scheduled?,due?}` the node repeats: dates advance, status stays `todo` |
 | `node.skip` | `id, occurrence, next` | Skip one occurrence of a repeating node |
@@ -128,9 +128,26 @@ them:
 | Task | `status` set (`todo`, `doing`, `waiting`, `done`, `cancelled`) |
 | Heading | a paragraph whose text starts `# `, `## ` or `### ` |
 | Quote | a paragraph whose text starts `> ` |
-| Numbered item | a bullet whose text starts `1. ` (any number, then `. ` or `) `) |
+| Numbered item | a bullet in a list whose style is ordered (`list`, below); the number is never stored |
 | Code block | a paragraph whose text starts with three backticks |
 | Rule | a paragraph whose text is `---` or `***` |
+
+Any note may have children, a paragraph too: nesting is only `parent`, whatever the kind.
+
+**`list`** is a list's style. A **list** is a run of consecutive sibling items (a paragraph
+between items ends one, so one level can hold a bulleted list, a paragraph and a numbered list).
+The prop sits on the run's **first item** and means "the style of the list that starts here";
+it is never an item's own numbering, and on an item that doesn't start a run it means nothing.
+Its value is the marker the first item shows: a bullet `"-"` `"*"` `"+"`, or an ordered count with
+`.` or `)`: `"1."` numbers, `"a."` / `"A."` letters, `"i."` / `"I."` roman numerals (so `"1)"`,
+`"A)"`, …). An item's number is its place in its run, so a move renumbers by itself. Absent means
+the default: bullets, except for a list nested under an item of an ordered list, which takes
+`1.` → `a.` → `i.` (then again) by its depth in that run of ordered lists; a bullet list breaks
+the run, and lists under a paragraph start afresh. Writers store only a style that differs from
+the default, and re-derive it from the text on every save: when a list's first item moves or is
+deleted, the new first item takes the prop and the old one loses it. It's an ordinary prop: no op
+type and no format version change, and a reader that doesn't know it shows bullets. Older vaults
+may hold bullets whose text starts `1. `: they stay text.
 
 **`gap`** says whether a blank line comes before a note (writing.md §1). It's the string `"1"`
 (a blank line) or `"0"` (none), and absent means the default for its kind: a blank line next to

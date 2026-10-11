@@ -682,24 +682,28 @@ fn enter_type_tab_writes_a_nested_child() {
 }
 
 /// A paragraph written over two lines is one node (Markdown: prose lines join), its id kept
-/// and out of its text. Tab on its later line indents that line inside the paragraph: thc's
-/// edit format has no child paragraph (an indented prose line continues the paragraph), so it
-/// stays one node and the line's words stay in its text.
+/// and out of its text. Tab on its later line makes that line a child paragraph (editing.md E22,
+/// owner decision 2026-10-11: an indented line is a child, whatever the kind): the paragraph
+/// keeps its id and its first line, the child is a new paragraph under it.
 #[test]
-fn a_two_line_paragraph_is_one_node_and_tab_keeps_it_one() {
+fn a_two_line_paragraph_is_one_node_and_tab_makes_its_later_line_a_child() {
     let (root, v) = seeded("para");
     let q4 = node_id(&root, "Q4 Planning");
     let host = ThcHost::new(v).at(now());
     let mut s = page(&host, &q4);
     s.keys(&["d-down"]);
-    type_in(&mut s, "A plain paragraph\nits later line");
+    type_in(&mut s, "A plain paragraph
+its later line");
     let before = kids(&root, &q4);
     assert_eq!(before[1].0, "A plain paragraph its later line", "the id stays out of the text: {before:?}");
     s.keys(&["tab"]);
     assert!(s.screen().contains("   its later line"), "{}", s.screen());
     let after = kids(&root, &q4);
-    assert_eq!(after, before, "one node, the same id and text");
-    assert!(kids(&root, &after[1].1).is_empty(), "no child paragraph");
+    assert_eq!(after[1], ("A plain paragraph".to_string(), before[1].1.clone()), "the paragraph keeps its id");
+    let child = kids(&root, &after[1].1);
+    assert_eq!(child.iter().map(|c| c.0.as_str()).collect::<Vec<_>>(), ["its later line"], "a child paragraph");
+    let store = open(&root, human()).store;
+    assert!(thc_core::edit::has_para_style(&store, &child[0].1));
     let _ = std::fs::remove_dir_all(root);
 }
 

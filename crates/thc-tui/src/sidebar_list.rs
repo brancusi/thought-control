@@ -253,6 +253,7 @@ pub fn rows_of(app: &App, pk: &PanelKey) -> Vec<(String, String, Option<String>,
                     conflict: false,
                     done_at: node.done_at.clone(),
                     gap: None,
+                    marker: None,
                 };
                 (s.render_text(&node.label()), crate::editor::meta_text(&block, app.today), node.status.clone(), false)
             }

@@ -406,21 +406,34 @@ value := ISO date | relative ("today", "+3d", "-1w", "fri", "eom") | literal
 Dr. Patel, 555-0100, office on 4th St. Parking behind the
 building.                                                   ^a1b2c
 
+  A note under the paragraph, indented                      ^c7d8e
+
 - [ ] Call to reschedule due:2026-10-06 !high               ^k3f9a
-    - [ ] Check insurance first                             ^q81zz
-- Notes from last visit:                                    ^m4n5p
-  multi-line text continues indented under its bullet
+  - [ ] Check insurance first                               ^q81zz
+- Notes from last visit: \
+  a second line of the same note                            ^m4n5p
+1. Steps, numbered by their order                           ^s1s2s
+2. The second                                               ^s3s4s
 ```
 
-**Prose and bullets** (on a page or a journal day, the `#` header form):
-- Lines without `- ` are **prose**. Consecutive prose lines form one paragraph, and so **one note**, with
-  its lines joined by spaces (Markdown's rule: a single newline doesn't break a paragraph). A blank line
-  ends the paragraph, so re-wrapping text in the editor never splits a note.
-- A paragraph's `^id` goes at the end of its last line. A line ending in `\` keeps a line break inside
-  the note (a Markdown hard break; the TUI's ⌃J).
-- Top-level plain notes (no status, dates, priority or repeat, no children) render back as paragraphs,
-  separated by blank lines. Everything else renders as `- ` bullets, as above, and bullets stay tight.
-- No new node kind and no format change: a paragraph is an ordinary note.
+**Prose, items and nesting** (`crates/thc-core/src/edit.rs`, `list.rs`):
+- Lines without a list marker are **prose**. Consecutive prose lines at the same indent form one
+  paragraph, and so **one note**, with its lines joined by spaces (Markdown's rule: a single newline
+  doesn't break a paragraph). A blank line ends the paragraph, so re-wrapping text never splits a note.
+- **An indented line is a child of the note above it**, whatever either kind: a paragraph, an item or
+  a task. Every level is 2 spaces (a tab reads as 4). A note's own later lines come after a line ending
+  in `\` (a Markdown hard break; the TUI's ⌃J), at the note's text column.
+- A note's `^id` goes at the end of its last line.
+- Plain notes written as paragraphs (`style = "para"`, no status, dates, priority or repeat) render back
+  as paragraphs, at any depth, with their children under them, and a blank line next to them unless
+  their `gap` says otherwise. Everything else renders as a list item, and items stay tight.
+- **List markers:** `- ` `* ` `+ `, or an ordered one: `1.` `a.` `A.` `i.` `I.`, each with `.` or `)`.
+  A list is a run of sibling items (a paragraph ends it). Its style is its first item's marker, stored
+  on that first item as `list` (FORMAT.md) when it isn't the default; render numbers the items from
+  their order, so the numbers typed are never kept (a list after a paragraph starts at 1). Copying
+  blocks as Markdown (`outline::markdown`) writes exactly these lines, without the ids. A paragraph whose first line would read as an item is escaped as
+  CommonMark does (`1\. `, `\- `).
+- No new node kind and no format change: a paragraph is an ordinary note and a list is a prop.
 
 When you save:
 1. The file is parsed (it's *our* format, not arbitrary Markdown).
