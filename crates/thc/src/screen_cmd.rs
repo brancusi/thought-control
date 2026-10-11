@@ -45,8 +45,8 @@ pub struct ScreenArgs {
     /// Print a view's data (a feed: today, inbox, tasks, …) as JSON instead of drawing it.
     #[arg(long, value_name = "NAME")]
     feed: Option<String>,
-    /// The control socket agents reach the live screen on (default: one per vault in the temp
-    /// dir).
+    /// The control socket agents reach the live screen on (default: `$FICTTY_SOCKET`, as for
+    /// any fictty screen, else one per vault in the temp dir).
     #[arg(long)]
     socket: Option<std::path::PathBuf>,
 }
@@ -80,7 +80,8 @@ fn run(cli: &Cli, paths: &Paths, a: ScreenArgs) -> Result<()> {
         return Ok(());
     }
     let host = ThcHost::new(vault).watching().persisting();
-    let socket = a.socket.unwrap_or_else(|| default_socket(paths));
+    // fictty's own convention first: a harness (fictty::sim) names the socket it will reach.
+    let socket = a.socket.or_else(|| std::env::var_os("FICTTY_SOCKET").filter(|s| !s.is_empty()).map(Into::into)).unwrap_or_else(|| default_socket(paths));
     advertise(paths, &socket);
     host.app(&route, &a.theme).socket(socket).run()
 }

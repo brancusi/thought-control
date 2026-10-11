@@ -44,6 +44,11 @@ struct Inner {
     /// The size the screen last read the sidebar's rows at (`width`, `height`): only to lay out
     /// the rows an act sends with its change (`activate`), which the screen's own read replaces.
     sidebar_size: Mutex<Value>,
+    /// Every time a save sent the editor back a text other than the one it saved
+    /// (`save_doc`): the key, what the editor held and what it was given. What a test reads
+    /// (`take_rewrites`) to tell a merge of an outside change from the vault rewriting what the
+    /// person typed.
+    rewrites: Mutex<Vec<(String, String, String)>>,
 }
 
 impl ThcHost {
@@ -52,7 +57,7 @@ impl ThcHost {
     pub fn new(mut vault: Vault) -> ThcHost {
         // What happened before the screen opened isn't news to it (no toast, no live marks).
         let _ = vault.take_news();
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), live: AtomicBool::new(false), notifier: Mutex::new(None), sidebar_size: Mutex::new(json!({})) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), live: AtomicBool::new(false), notifier: Mutex::new(None), sidebar_size: Mutex::new(json!({})), rewrites: Mutex::new(Vec::new()) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -743,6 +748,10 @@ struct DocState {
     last: Option<Rendered>,
     /// Every line it has shown, with its node: a line that comes back is that node.
     seen: HashMap<String, String>,
+    /// The text a save last sent the editor back to (`save_doc`): not sent twice in a row, so
+    /// an editor that keeps changing what it's given (renumbering a list the vault numbers
+    /// otherwise) and the vault don't trade reloads for ever.
+    sent: Option<String>,
 }
 
 impl ThcHost {
@@ -805,6 +814,10 @@ impl ThcHost {
             }
             (None, Doc::Page(id)) => self.render(&vault, &Doc::Page(id.clone()))?.ok_or_else(|| anyhow::anyhow!("no page {id}"))?,
         };
+        // The vault moved since the editor last took it in (an agent wrote while the person
+        // typed, before the poll that would reload it): this save merges the two, and the editor
+        // must be shown the merge, since the next poll compares with it and won't.
+        let outside = self.render(&vault, &doc)?.is_some_and(|r| r.text != last.text);
         let mut edited = docs::with_ids(&last.text, text);
         // A line that comes back (an undo after the save that deleted it) is the node it was:
         // restored, so it keeps its id, then lined up again with the render that shows it.
@@ -832,7 +845,31 @@ impl ThcHost {
         })?;
         let now = self.render(&vault, &doc)?;
         drop(vault);
-        self.remember(key, now)
+        // Only then: the person's own edits are never sent back rewritten mid-typing (the vault
+        // keeps some lines otherwise: see the fuzz's open round trips). Not for what the vault
+        // can't keep either: spaces at a line's end and blank lines at the end.
+        let bare = |t: &str| t.lines().map(str::trim_end).collect::<Vec<_>>().join("\n").trim_end().to_string();
+        let shown = now.as_ref().map(|r| docs::shown(&r.text)).filter(|t| outside && bare(t) != bare(text));
+        self.remember(key, now)?;
+        let send = {
+            let mut all = self.inner.docs.lock().map_err(|_| anyhow::anyhow!("poisoned"))?;
+            let st = all.entry(key.to_string()).or_default();
+            let send = shown.is_some() && st.sent != shown;
+            st.sent = shown.clone();
+            send
+        };
+        if send && let Some(n) = self.inner.notifier.lock().ok().and_then(|n| n.clone()) {
+            if let (Ok(mut w), Some(given)) = (self.inner.rewrites.lock(), shown) {
+                w.push((key.to_string(), text.to_string(), given));
+            }
+            n.reload(key);
+        }
+        Ok(())
+    }
+
+    /// The rewrites since the last call (see `Inner::rewrites`): (key, held, given).
+    pub fn take_rewrites(&self) -> Vec<(String, String, String)> {
+        self.inner.rewrites.lock().map(|mut w| std::mem::take(&mut *w)).unwrap_or_default()
     }
 
     /// One watch step: take in what changed in the vault (another process, another device, an
