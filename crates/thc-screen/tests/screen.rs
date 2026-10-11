@@ -764,14 +764,34 @@ fn an_agents_change_toasts_and_marks_its_row_live() {
     assert!(host.poll(false));
     let text = s.screen();
     let said = format!("◆ claude added {short} \"Repot the basil\"   L review  u undo");
-    assert!(text.contains(&said), "{said}\n{text}");
+    // The toast owns the bar row (§3.3), daemon state and all; the corner has none.
+    let bar = text.lines().nth(31).unwrap();
+    assert!(bar.starts_with(&format!(" {said}")) && !bar.contains("○ local"), "the bar: {bar:?}\n{text}");
+    assert_eq!(text.matches("◆ claude added").count(), 1, "only in the bar: {text}");
     assert_eq!(s.state().toasts[0].tone.as_deref(), Some("agent"));
-    let row = text.lines().find(|l| l.contains("Repot the basil") && !l.contains("added")).unwrap_or_else(|| panic!("{text}"));
-    assert!(row.find('•').is_some_and(|g| g < row.find(&short).unwrap()), "the gutter: {row:?}");
+    let gutter = |s: &mut fictty::Headless| {
+        let text = s.screen();
+        let row = text.lines().find(|l| l.contains("Repot the basil") && !l.contains("added")).unwrap_or_else(|| panic!("{text}")).to_string();
+        row.find('•').is_some_and(|g| g < row.find(&short).unwrap())
+    };
+    assert!(gutter(&mut s), "the gutter has the live mark");
     assert_eq!(s.state().store["live"].read()["value"], json!({id.clone(): true}));
-    // The toast goes on the screen's clock.
-    s.msg(fictty::state::Msg::Tick { now_ms: 5_000 });
-    assert!(!s.screen().contains("◆ claude added"), "{}", s.screen());
+    // 3 s on the screen's clock: the mark has gone, the toast is still there.
+    s.msg(fictty::state::Msg::Tick { now_ms: 3_001 });
+    assert_eq!(s.state().store["live"].read()["value"], json!({}), "the clock took the mark away");
+    // TODO(fictty): a Tick is a quiet message, so the sources reading `live` don't refetch until
+    // the next message that isn't; drop this nudge when an expiring Tick refills args.
+    s.msg(fictty::state::Msg::Changed { host: "frame".into() });
+    assert!(!gutter(&mut s), "the live mark went at 3 s");
+    assert!(s.screen().lines().nth(31).unwrap().contains("◆ claude added"));
+    // 4 s: the toast has gone, and the daemon state is back in the bar.
+    s.msg(fictty::state::Msg::Tick { now_ms: 4_001 });
+    let bar = s.screen().lines().nth(31).unwrap().to_string();
+    assert!(!bar.contains("◆ claude added") && bar.contains("○ local"), "{bar:?}");
+    // With it gone, u has nothing to undo.
+    s.keys(&["u"]);
+    assert!(!deleted(&root, &id), "u after the toast does nothing");
+    assert!(toasts(&mut s).is_empty() && s.state().status.is_none(), "{:?} {:?}", toasts(&mut s), s.state().status);
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -791,8 +811,17 @@ fn u_undoes_the_agents_change_and_capital_u_redoes_it() {
     let check = open(&root, human());
     let h = check.store.history(&id, 5).unwrap();
     assert_eq!(h[0].actor, "human", "the undo is the person's own transaction");
+    // U redoes it, and the bar says so, offering the undo again (§8.3); the tx it names is the
+    // agent's change each time.
+    let undone = toasts(&mut s).last().unwrap().clone();
+    let tx = undone.split_whitespace().nth(2).unwrap().to_string();
     s.keys(&["U"]);
     assert!(!deleted(&root, &id), "redone");
+    let redone = toasts(&mut s).last().unwrap().clone();
+    assert_eq!(redone, format!("redone  tx {tx} · ◆ claude · 1 node   U undo"));
+    s.keys(&["U"]);
+    assert!(deleted(&root, &id), "U again undoes it again");
+    assert_eq!(toasts(&mut s).last().unwrap(), &format!("undone  tx {tx} · ◆ claude · 1 node   U redo"));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -923,6 +952,8 @@ fn an_open_conflict_shows_its_banner_and_gutter() {
     let host = ThcHost::new(v).at(now());
     let mut s = screen(&host, View::Today, 120, 32);
     host.poll(true);
+    // studio-mini's edit was claude's: its toast owns the bar for 4 s first.
+    s.msg(fictty::state::Msg::Tick { now_ms: 4_001 });
     let short = open(&root, human()).store.short(&bank);
     let text = s.screen();
     let lines: Vec<&str> = text.lines().collect();

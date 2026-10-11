@@ -183,7 +183,7 @@ fn keys(mut n: Node, k: BTreeMap<String, Action>) -> Node {
 /// Show a view's tab. Leaving a view forgets what was done in it (`done_here`, §8), so the next
 /// arrival shows its lists in their own order again.
 fn show(tab: usize) -> Action {
-    Action::Do { steps: vec![Action::Put { put: "done_here".into(), value: json!([]) }, Action::ShowTab { tab, of: "views".into() }] }
+    Action::Do { steps: vec![Action::Put { put: "done_here".into(), value: json!([]), for_ms: None }, Action::ShowTab { tab, of: "views".into() }] }
 }
 
 /// The keys every focusable node in tab `i` takes, since a focused node's keys come first:
@@ -213,7 +213,7 @@ fn tab_keys(mut n: Node, i: usize) -> Node {
 
 /// `?` and `:` in a view: its help, its palette.
 fn overlay_binds(v: View) -> Vec<(String, Action)> {
-    let open = |flag: &str, focus: String| Action::Do { steps: vec![Action::Put { put: flag.into(), value: true.into() }, Action::Focus { focus }] };
+    let open = |flag: &str, focus: String| Action::Do { steps: vec![Action::Put { put: flag.into(), value: true.into(), for_ms: None }, Action::Focus { focus }] };
     vec![("?".into(), open("help", format!("{}_help", v.name()))), (":".into(), open("palette", "palette_q".into()))]
 }
 
@@ -226,9 +226,9 @@ fn main_id(v: View) -> String {
 fn close_overlay(v: View) -> Action {
     Action::Do {
         steps: vec![
-            Action::Put { put: "help".into(), value: false.into() },
-            Action::Put { put: "palette".into(), value: false.into() },
-            Action::Put { put: "palette_q".into(), value: "".into() },
+            Action::Put { put: "help".into(), value: false.into(), for_ms: None },
+            Action::Put { put: "palette".into(), value: false.into(), for_ms: None },
+            Action::Put { put: "palette_q".into(), value: "".into(), for_ms: None },
             Action::Focus { focus: main_id(v) },
         ],
     }
@@ -343,15 +343,15 @@ fn finder(list: Node, prompt: Node, open_selected: Action) -> (Node, Node) {
             c.to_string(),
             Action::Do {
                 // A person's `put` leaves the caret after what it put: the next key follows it.
-                steps: vec![Action::Put { put: q.clone(), value: format!("{{store.{q}}}{c}").into() }, Action::Focus { focus: q.clone() }],
+                steps: vec![Action::Put { put: q.clone(), value: format!("{{store.{q}}}{c}").into(), for_ms: None }, Action::Focus { focus: q.clone() }],
             },
         );
     }
-    list.keys.insert("/".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into() }, Action::Focus { focus: q.clone() }] });
+    list.keys.insert("/".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into(), for_ms: None }, Action::Focus { focus: q.clone() }] });
     // Esc with a query clears it; the list keeps its selection.
-    list.keys.insert("esc".into(), Action::Put { put: q.clone(), value: "".into() });
+    list.keys.insert("esc".into(), Action::Put { put: q.clone(), value: "".into(), for_ms: None });
     let mut prompt = prompt;
-    prompt.keys.insert("esc".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into() }, Action::Focus { focus: lid.clone() }] });
+    prompt.keys.insert("esc".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into(), for_ms: None }, Action::Focus { focus: lid.clone() }] });
     for key in ["down", "up"] {
         prompt.keys.insert(key.into(), Action::Do { steps: vec![Action::Focus { focus: lid.clone() }, Action::Named(key.into())] });
     }
@@ -469,8 +469,8 @@ fn node_binds(v: View) -> Vec<Bind> {
             words,
             Action::Do {
                 steps: vec![
-                    Action::Put { put: "ask_id".into(), value: "{id}".into() },
-                    Action::Put { put: "prompt".into(), value: ask.into() },
+                    Action::Put { put: "ask_id".into(), value: "{id}".into(), for_ms: None },
+                    Action::Put { put: "prompt".into(), value: ask.into(), for_ms: None },
                     Action::Focus { focus: "prompt_in".into() },
                 ],
             },
@@ -483,6 +483,11 @@ fn node_keys(v: View) -> BTreeMap<String, Action> {
     key_map(&node_binds(v))
 }
 
+/// `U`: undo the last undo (a redo), or the last redo, naming the change first undone.
+fn redo() -> Action {
+    act("undo", json!({"tx": "{store.redo_tx}", "of": "{store.redo_of}", "word": "{store.redo_word}"}))
+}
+
 /// The keys that work in every view (§6.1), but for `?` and `:`, which open the view's own help
 /// and palette (`tab_keys`).
 fn global_binds() -> Vec<Bind> {
@@ -491,13 +496,13 @@ fn global_binds() -> Vec<Bind> {
     k.push(b("/", "search", show(5)));
     // `a` captures into today's journal, `A` into the inbox (tui-handoff §7.1), in capture syntax.
     for (key, ask, words) in [("a", "capture", "capture to today"), ("A", "inbox", "capture to the inbox")] {
-        k.push(b(key, words, Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into() }, Action::Focus { focus: "prompt_in".into() }] }));
+        k.push(b(key, words, Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into(), for_ms: None }, Action::Focus { focus: "prompt_in".into() }] }));
     }
     // The agent's last change, as its toast offers (§7.3): u undoes it, U redoes what u undid,
     // L reviews what agents did (the Log, agents only).
     k.push(b("u", "undo the agent's change", act("undo", json!({"tx": "{store.agent_tx}"}))));
-    k.push(b("U", "redo", act("undo", json!({"tx": "{store.redo_tx}"}))));
-    k.push(b("L", "review agents' changes", Action::Do { steps: vec![Action::Put { put: "log_by".into(), value: "agents".into() }, show(6)] }));
+    k.push(b("U", "redo", redo()));
+    k.push(b("L", "review agents' changes", Action::Do { steps: vec![Action::Put { put: "log_by".into(), value: "agents".into(), for_ms: None }, show(6)] }));
     k.push(b("t", "next theme", Action::Theme { theme: "next".into() }));
     k
 }
@@ -508,8 +513,8 @@ fn global_binds() -> Vec<Bind> {
 fn prompt() -> Node {
     let clear = || {
         vec![
-            Action::Put { put: "prompt".into(), value: "".into() },
-            Action::Put { put: "prompt_in".into(), value: "".into() },
+            Action::Put { put: "prompt".into(), value: "".into(), for_ms: None },
+            Action::Put { put: "prompt_in".into(), value: "".into(), for_ms: None },
             Action::Focus { focus: "$prev".into() },
         ]
     };
@@ -570,15 +575,15 @@ fn split(main: Node, side: Node) -> Node {
 }
 
 /// The bar (§3.3): the view's name and counts on the left (`bar_m` of its feed), the daemon's
-/// dot and the view's hints on the right.
+/// dot and the view's hints on the right. A toast owns the bar while it shows (§3.3, §7.3): it
+/// draws over the whole row, daemon state included, on its tone's `toast.<tone>` part.
 fn bar(feed: &str, hints: &[(&str, &str)]) -> Node {
     let right = format!(" {{live|true=<done>●</> <muted>live</>;*=<muted>○ local</>}}   {} ", crate::feeds::hints(hints, "  "));
     let plain: String = hints.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join("  ");
     let width = unicode_width::UnicodeWidthStr::width(format!(" ○ local   {plain} ").as_str()) as u16;
-    sized(
-        row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]),
-        cells(1),
-    )
+    // While a toast shows (`toasting`, as long as it lasts), the view's line steps aside.
+    let view = when(variant(row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]), "bar"), "!toasting");
+    sized(node(Kind::Stack { children: vec![view, node(Kind::Toasts {})] }), cells(1))
 }
 
 /// The conflict banner (§7.4): one row under the tabs while the vault has open conflicts.
@@ -603,12 +608,12 @@ fn open_key(v: View) -> String {
 /// Open something over a view (a page or a day to write in, a node's detail, an outline): its
 /// store entry says what, its layer shows it, the focus goes in.
 fn open_over(v: View, what: Value, focus: &str) -> Action {
-    Action::Do { steps: vec![Action::Put { put: open_key(v), value: what }, Action::Focus { focus: focus.into() }] }
+    Action::Do { steps: vec![Action::Put { put: open_key(v), value: what, for_ms: None }, Action::Focus { focus: focus.into() }] }
 }
 
 /// Close what's open over a view: the view again, the focus where it was (navigation.md §2).
 fn close_over(v: View) -> Action {
-    Action::Do { steps: vec![Action::Put { put: open_key(v), value: Value::Null }, Action::Focus { focus: "$prev".into() }] }
+    Action::Do { steps: vec![Action::Put { put: open_key(v), value: Value::Null, for_ms: None }, Action::Focus { focus: "$prev".into() }] }
 }
 
 /// What opens over a view, as layers shown while its `open_` entry says so (each modal: the focus
@@ -696,6 +701,8 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     store.insert("live".into(), json!({}));
     store.insert("agent_tx".into(), "".into());
     store.insert("redo_tx".into(), "".into());
+    store.insert("redo_of".into(), "".into());
+    store.insert("redo_word".into(), "redo".into());
     store.insert("log_by".into(), "".into());
     if let Some((v, what)) = opened(route, today) {
         store.insert(open_key(v), what);
@@ -777,13 +784,13 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // `f` edits the filter (§6.3), Enter or Esc goes back to the rows.
             store.insert("tasks_q".into(), route.query.clone().unwrap_or_else(|| "status:open".into()).into());
             feed("tasks", json!({"query": "{store.tasks_q}", "keep": "{store.done_here}"}));
-            let done = || Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: "".into() }, Action::Focus { focus: "$prev".into() }] };
+            let done = || Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: "".into(), for_ms: None }, Action::Focus { focus: "$prev".into() }] };
             let mut field = when(input("tasks_q", "", "a thc query"), "tasks_edit");
             field.keys.insert("enter".into(), done());
             field.keys.insert("esc".into(), done());
             let shown = when(bound(text("{filter_m|markup}"), "tasks"), "!tasks_edit");
             let filter = variant(sized(row(vec![sized(text(" <accent+b>q›</> "), cells(4)), shown, field, sized(bound(text("\t<muted>{count}</> "), "tasks"), cells(12))]), cells(1)), "input");
-            let edit = Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: true.into() }, Action::Focus { focus: "tasks_q".into() }] };
+            let edit = Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: true.into(), for_ms: None }, Action::Focus { focus: "tasks_q".into() }] };
             let col_ = |title: &str, value: &str, size: Size| Column { title: title.into(), value: value.into(), size: Some(size), align: None, heat: None, total: None };
             let mut table = keys(
                 id(
@@ -891,7 +898,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // u undoes the selected transaction (a new one, §5.7); U redoes what it undid.
             let own = vec![
                 b("u", "undo this transaction", act("undo", json!({"tx": "{id}"}))),
-                b("U", "redo", act("undo", json!({"tx": "{store.redo_tx}"}))),
+                b("U", "redo", redo()),
                 b("@", "agents / everyone", act("who", json!({"by": "{store.log_by}"}))),
             ];
             l.keys.extend(key_map(&own));

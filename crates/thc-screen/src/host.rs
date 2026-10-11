@@ -211,7 +211,7 @@ impl ThcHost {
                     None => today,
                 };
                 let date = to.format("%Y-%m-%d").to_string();
-                self.send(fictty::state::Msg::Write { key: "journal_date".into(), write: fictty::store::Write::Put { value: date.clone().into() }, if_rev: None, by: "person".into() })?;
+                self.send(fictty::state::Msg::Write { key: "journal_date".into(), write: fictty::store::Write::Put { value: date.clone().into() }, if_rev: None, by: "person".into(), for_ms: None })?;
                 Ok(json!({"ok": true, "date": date}))
             }
             // The bar prompt's answer: `{"ask", "id", "text"}`. `capture` and `inbox` (a, A) add the
@@ -239,12 +239,17 @@ impl ThcHost {
                 }
             }
             // `{"tx": …}`: undo one transaction as a new one (thc undo --tx), the person's. The
-            // bar confirms it, and `U` (redo_tx) undoes the undo.
+            // bar confirms it (§8.3), and `U` undoes that undo: `{"tx": redo_tx, "of": the
+            // transaction first undone, "word": "redo" | "undo"}`, so U alternates redo and undo
+            // and the bar names the original change each time.
+            // No tx (the agent's toast has gone, so `agent_tx` has too): nothing to do.
             "undo" => {
-                let tx = s("tx").ok_or_else(|| anyhow::anyhow!("nothing to undo"))?;
+                let Some(tx) = s("tx") else { return Ok(json!({"ok": true, "undone": null})) };
+                let of = s("of").unwrap_or_else(|| tx.clone());
+                let redo = s("word").as_deref() == Some("redo");
                 let (who, nodes) = {
                     let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
-                    let entries = v.store.history_where("tx = ?1 ORDER BY okey", &[&tx])?;
+                    let entries = v.store.history_where("tx = ?1 ORDER BY okey", &[&of])?;
                     let who = entries.first().map(|e| who_said(&e.actor)).ok_or_else(|| anyhow::anyhow!("no transaction {tx}"))?;
                     let nodes: std::collections::HashSet<&str> = entries.iter().filter(|e| e.entity.len() == 12).map(|e| e.entity.as_str()).collect();
                     (who, nodes.len())
@@ -259,9 +264,13 @@ impl ThcHost {
                 })?;
                 let new = r["tx"].as_str().unwrap_or_default().to_string();
                 self.put("redo_tx", new.into())?;
-                self.put("agent_tx", "".into())?;
+                self.put("redo_of", of.clone().into())?;
+                // What U does next: redo what was just undone, or undo what was just redone.
+                self.put("redo_word", if redo { "undo" } else { "redo" }.into())?;
+                self.put("agent_tx", Value::Null)?;
                 let n = if nodes == 1 { "1 node".to_string() } else { format!("{nodes} nodes") };
-                self.toast(&format!("undone  tx {} · {who} · {n}   U redo", suffix(&tx)), "text")?;
+                let (verb, next) = if redo { ("redone", "U undo") } else { ("undone", "U redo") };
+                self.toast(&format!("{verb}  tx {} · {who} · {n}   {next}", suffix(&of)), "text")?;
                 Ok(r)
             }
             // The Log's `@`: agents' transactions only, or everyone's again.
@@ -285,12 +294,20 @@ impl ThcHost {
 
     /// Write one of the screen's store entries, as the host.
     fn put(&self, key: &str, value: Value) -> anyhow::Result<()> {
-        self.send(fictty::state::Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "host".into() })
+        self.write_store(key, fictty::store::Write::Put { value }, None)
     }
 
-    /// A toast (§7.3), for 4 s on the screen's clock, in a theme token's tone.
+    /// A store write, lasting `for_ms` on the screen's clock when given (fictty takes it away).
+    fn write_store(&self, key: &str, write: fictty::store::Write, for_ms: Option<u64>) -> anyhow::Result<()> {
+        self.send(fictty::state::Msg::Write { key: key.into(), write, if_rev: None, by: "host".into(), for_ms })
+    }
+
+    /// A toast (§7.3), for `TOAST_MS` on the screen's clock, in a theme token's tone.
     fn toast(&self, text: &str, tone: &str) -> anyhow::Result<()> {
-        self.send(fictty::state::Msg::Toast { text: text.into(), tone: Some(tone.into()), ms: Some(4000) })
+        // The bar hides its own line while `toasting` lasts (the toast's lifetime, on the same
+        // clock): fictty's toasts node draws a toast's text over the line, not a cleared line.
+        self.write_store("toasting", fictty::store::Write::Put { value: true.into() }, Some(TOAST_MS))?;
+        self.send(fictty::state::Msg::Toast { text: text.into(), tone: Some(tone.into()), ms: Some(TOAST_MS) })
     }
 
     /// The daemon connected or went away: the bar's `● live` / `○ local` (§3.3), from
@@ -302,6 +319,11 @@ impl ThcHost {
         }
     }
 }
+
+/// How long a toast shows, and so how long its `u` is on offer (§7.3).
+const TOAST_MS: u64 = 4000;
+/// How long a changed row's `•` shows (§4).
+const LIVE_MS: u64 = 3000;
 
 /// A transaction's short suffix, as the Log shows it.
 fn suffix(tx: &str) -> &str {
@@ -488,13 +510,12 @@ impl ThcHost {
             notifier.reload(&key);
         }
         // An agent's change (§7.3): the toast on the agent's tint, the rows it touched marked
-        // live, its transaction the one `u` undoes. The screen's clock times the toast.
-        // TODO(fictty): the `•` marks clear with the next agent change; 3 s on the screen's
-        // clock needs fictty to expire a store write (or let a row read the clock).
+        // live for 3 s, its transaction the one `u` undoes while the toast shows. The screen's
+        // clock times all three (fictty's expiring writes), so they replay.
         if let Some(c) = agent {
             let live: serde_json::Map<String, Value> = c.nodes.iter().map(|id| (id.clone(), Value::Bool(true))).collect();
-            let _ = self.put("live", Value::Object(live));
-            let _ = self.put("agent_tx", c.tx.clone().into());
+            let _ = self.write_store("live", fictty::store::Write::Merge { value: Value::Object(live) }, Some(LIVE_MS));
+            let _ = self.write_store("agent_tx", fictty::store::Write::Put { value: c.tx.clone().into() }, Some(TOAST_MS));
             let _ = self.toast(&format!("{}   L review  u undo", c.words), "agent");
         }
         if news {

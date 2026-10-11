@@ -54,7 +54,12 @@ pub fn theme(name: &str) -> Option<ThemeSpec> {
         ("md.code", "tag"),
         ("md.task", "text"),
         ("md.done", "muted+s"),
-        ("toast", "text+on-raised"),
+        // Toasts in the bar (§7.3): a confirmation on the bar's surface, an agent's change on
+        // the agent tint, an error on the overdue tint.
+        ("toast", "text+on-surface"),
+        ("toast.text", "text+on-surface"),
+        ("toast.agent", "text+on-agent-tint"),
+        ("toast.neg", "overdue+on-overdue-tint"),
     ]
     .into_iter()
     .map(|(k, v)| (k.to_string(), v.to_string()))
