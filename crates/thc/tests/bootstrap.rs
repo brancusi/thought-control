@@ -326,6 +326,9 @@ fn setup_wezterm_adds_one_block_and_undo_removes_it() {
         assert!(now.find("require('thc_keys').apply(config)").unwrap() < now.rfind("return config").unwrap(), "{case}: {now}");
         assert!(now.contains("config.font_size = 14"), "{case}: the rest is untouched");
         assert!(home.join(".config/wezterm/thc_keys.lua").exists());
+        // fictty's module too, for `thc screen` (written by fictty's own setup).
+        let fictty = std::fs::read_to_string(home.join(".config/wezterm/fictty.lua")).unwrap_or_else(|_| panic!("{case}: fictty.lua"));
+        assert_eq!(fictty, fictty::setup::wezterm_lua(), "{case}");
         let backups = std::fs::read_dir(file.parent().unwrap()).unwrap().filter(|e| e.as_ref().unwrap().file_name().to_string_lossy().contains(".bak-")).count();
         assert!(backups >= 1, "{case}: backed up");
         // --undo --yes: the file as it was, the module gone.
@@ -365,6 +368,7 @@ fn wezterm_keys_pass_through_outside_thc() {
         &cfg,
         format!(
             r#"local wezterm = require 'wezterm'
+package.path = '{}/?.lua;' .. package.path
 local M = dofile('{}')
 local function check(ok, what) if not ok then error('thc_keys: ' .. what) end end
 for _, k in ipairs({{ {{'LeftArrow','CMD'}}, {{'LeftArrow','OPT'}}, {{'Backspace','CMD'}}, {{'Backspace','OPT'}}, {{'v','CMD'}}, {{'UpArrow','CMD|SHIFT'}} }}) do
@@ -380,10 +384,26 @@ check(M.decide('x', 'CMD', 'thc').send == '\x1b[120;9u', 'cmd-x in thc')
 check(M.decide('z', 'CMD|SHIFT', 'thc').send == '\x1b[122;10u', 'shift-cmd-z in thc')
 check(M.decide('a', 'CMD', '/bin/zsh').pass, 'cmd-a passes through in zsh')
 check(M.decide('LeftArrow', 'OPT', '/Users/x/bin/thcx').pass, 'only thc itself')
+-- editing.md §11: ⌘Del deletes to the line end, ⌘O opens in the system app.
+check(M.decide('Delete', 'CMD', 'thc').send == '\x1b[3;9~', 'cmd-delete in thc')
+check(M.decide('o', 'CMD', 'thc').send == '\x1b[111;9u', 'cmd-o in thc')
+-- A pane showing a fictty screen (thc screen) gets fictty's own keys, not thc_keys'.
+check(M.decide('z', 'CMD', 'thc', true).fictty, 'cmd-z is fictty\'s in a fictty screen')
+check(M.decide('Delete', 'CMD', 'thc', true).fictty, 'cmd-delete is fictty\'s in a fictty screen')
+check(M.decide('LeftArrow', 'OPT', 'thc', true).send, 'a key fictty has none of stays thc\'s')
 local config = wezterm.config_builder()
 M.apply(config)
+-- One binding per key: fictty's keys that thc lacks are added once, the rest stay thc's.
+local seen = {{}}
+for _, k in ipairs(config.keys) do
+  local id = k.key .. '+' .. k.mods
+  check(not seen[id], 'one binding for ' .. id)
+  seen[id] = true
+end
+check(seen['UpArrow+CMD|SHIFT'] and seen['z+CMD'], 'the keys are bound')
 return config
 "#,
+            module.parent().unwrap().display(),
             module.display()
         ),
     )

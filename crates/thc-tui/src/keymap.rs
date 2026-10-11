@@ -707,6 +707,8 @@ pub fn defaults() -> Vec<Binding> {
         b!(Write, "A-:", "palette.open", Always, "commands", "View"),
         // Editing: caretline's keys are imported below (editing_keys.rs); these are thc's own.
         b!(Write, "C-d", "edit.delete_forward", Always, "", "Write"),
+        // ⌘Del (editing.md §11) needs a forward to arrive; ⌃⌥K is the key any terminal sends.
+        b!(Write, "C-A-k", "edit.delete_to_line_end", Always, "", "Write"),
         // ⌘V as the kitty protocol reports it (thc's WezTerm keys send it while thc runs): thc
         // reads the clipboard itself, so a screenshot attaches and text pastes.
         b!(Write, "Cmd-v", "clip.paste_system", Always, "paste (screenshots too)", "Clipboard"),

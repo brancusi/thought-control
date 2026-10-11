@@ -96,7 +96,10 @@ impl ThcHost {
             "today" => feeds::today(&cx)?,
             "tx" => feeds::tx(&cx, s("id").unwrap_or(""))?,
             "inbox" => feeds::inbox(&cx)?,
-            "tasks" => feeds::tasks(&cx, s("query").unwrap_or("status:open"))?,
+            "tasks" => {
+                let keep: Vec<String> = args.get("keep").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(String::from)).collect()).unwrap_or_default();
+                feeds::tasks(&cx, s("query").unwrap_or("status:open"), &keep)?
+            }
             "pages" => feeds::pages(&cx)?,
             "outline" => feeds::outline(&cx, s("id").ok_or_else(|| anyhow::anyhow!("outline needs an id"))?)?,
             "journal" => {
@@ -190,10 +193,25 @@ impl ThcHost {
                 self.send(fictty::state::Msg::Push { ui })?;
                 Ok(json!({"ok": true, "view": view.name()}))
             }
-            // The bar prompt's answer (`d` a date, `m` where to): `{"ask": "due"|"move", "id", "text"}`.
+            // Keys to the screen, as typed (`{"keys": ["end"]}`): the finder's caret after a `put`.
+            "keys" => {
+                let keys: Vec<String> = args.get("keys").and_then(Value::as_array).map(|a| a.iter().filter_map(|k| k.as_str().map(String::from)).collect()).unwrap_or_default();
+                for key in &keys {
+                    self.send(fictty::state::Msg::Key { key: key.clone() })?;
+                }
+                Ok(json!({"ok": true, "keys": keys}))
+            }
+            // The bar prompt's answer: `{"ask", "id", "text"}`. `capture` and `inbox` (a, A) add the
+            // text in capture syntax to today's journal or the inbox; `due` (d) and `move` (m) act
+            // on the row they were asked about.
             "answer" => {
-                let id = id()?;
                 let text = s("text").unwrap_or_default();
+                match s("ask").as_deref() {
+                    Some("capture") => return self.perform("add", &json!({"text": text})),
+                    Some("inbox") => return self.perform("add", &json!({"text": text, "inbox": true})),
+                    _ => {}
+                }
+                let id = id()?;
                 match s("ask").as_deref() {
                     Some("due") => self.write(|b| b.set_props(&id, &[("due".into(), text.clone())])),
                     Some("move") => {

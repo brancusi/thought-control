@@ -94,7 +94,7 @@ impl Route {
         View::TABS.iter().position(|t| *t == v).unwrap_or(0)
     }
 
-    /// Where Esc goes, if anywhere.
+    /// Where Esc goes, if anywhere: the view a document or a detail is open over.
     fn back(&self) -> Option<Route> {
         match self.view {
             View::Outline | View::Page => Some(Route::to(self.back.unwrap_or(View::Pages))),
@@ -127,15 +127,16 @@ pub fn open(route: &Route) -> Action {
     act("open", serde_json::to_value(route).unwrap_or_default())
 }
 
-/// What a view focuses first: its list, or its input where typing comes first (§6.3).
+/// What a view focuses first: its list. Arriving never takes the caret (navigation.md §6):
+/// a finder's prompt gets it when a letter is typed.
 pub fn first_focus(route: &Route) -> Option<&'static str> {
     Some(match route.view {
         View::Today => "today",
         View::Inbox => "inbox",
         View::Tasks => "tasks",
-        View::Pages => "pages_q",
+        View::Pages => "pages",
         View::Journal => "journal",
-        View::Search => "search_q",
+        View::Search => "search",
         View::Log => "log",
         View::Detail => return None,
         View::Outline => "outline",
@@ -207,6 +208,71 @@ fn keys(mut n: Node, k: BTreeMap<String, Action>) -> Node {
     n
 }
 
+/// Show a view's tab. Leaving a view forgets what was done in it (`done_here`, §8), so the next
+/// arrival shows its lists in their own order again.
+fn show(tab: usize) -> Action {
+    Action::Do { steps: vec![Action::Put { put: "done_here".into(), value: json!([]) }, Action::ShowTab { tab, of: "views".into() }] }
+}
+
+/// Tab and ⇧Tab cycle the views from anywhere in tab `i` (navigation.md §6, N16): the keys go on
+/// every node there that takes the focus, since a focused node's keys come first.
+fn cycling(mut n: Node, i: usize) -> Node {
+    let k = View::TABS.len();
+    if n.focusable() {
+        n.keys.entry("tab".into()).or_insert_with(|| show((i + 1) % k));
+        n.keys.entry("s-tab".into()).or_insert_with(|| show((i + k - 1) % k));
+    }
+    if let Some(cs) = n.children_mut() {
+        let taken = std::mem::take(cs);
+        *cs = taken.into_iter().map(|c| cycling(c, i)).collect();
+    }
+    n
+}
+
+/// A finder's prompt row floated over the top of its view: drawn on top, but after the list in
+/// the tree, so arriving (a digit, Tab, a click on the tab) focuses the list, never the prompt
+/// (navigation.md §6, N14). The view leaves its first row for it.
+fn over_list(prompt_row: Node, view: Node) -> Node {
+    let mut prompt_row = prompt_row;
+    prompt_row.size = None;
+    prompt_row.float = Some(Float { width: None, height: Some(cells(1)), at: Some("top".into()), margin: None });
+    node(Kind::Stack { children: vec![view, prompt_row] })
+}
+
+/// A finder (Pages, Search: navigation.md §6): the list has the focus, and a letter starts the
+/// find, the query's first character, with the caret in the prompt from then on. `/` starts an
+/// empty find. In the prompt every key types; Esc clears it and goes back to the list, ↑ ↓ move
+/// into the list, Enter opens the top match.
+fn finder(list: Node, prompt: Node, open_selected: Action) -> (Node, Node) {
+    let (lid, q) = (list.id.clone().unwrap_or_default(), prompt.id.clone().unwrap_or_default());
+    let mut list = list;
+    for c in ('a'..='z').chain('A'..='Z') {
+        list.keys.insert(
+            c.to_string(),
+            Action::Do {
+                steps: vec![
+                    Action::Put { put: q.clone(), value: format!("{{store.{q}}}{c}").into() },
+                    Action::Focus { focus: q.clone() },
+                    // TODO(fictty): a `put` leaves the caret before what it put; until it leaves it
+                    // after, the host sends End so the next key types after the letter.
+                    act("keys", json!({"keys": ["end"]})),
+                ],
+            },
+        );
+    }
+    list.keys.insert("/".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into() }, Action::Focus { focus: q.clone() }] });
+    // Esc with a query clears it; the list keeps its selection.
+    list.keys.insert("esc".into(), Action::Put { put: q.clone(), value: "".into() });
+    let mut prompt = prompt;
+    prompt.keys.insert("esc".into(), Action::Do { steps: vec![Action::Put { put: q.clone(), value: "".into() }, Action::Focus { focus: lid.clone() }] });
+    for key in ["down", "up"] {
+        prompt.keys.insert(key.into(), Action::Do { steps: vec![Action::Focus { focus: lid.clone() }, Action::Named(key.into())] });
+    }
+    // The open runs as the list, its selected row the top match.
+    prompt.keys.insert("enter".into(), Action::Do { steps: vec![Action::Focus { focus: lid.clone() }, open_selected] });
+    (list, prompt)
+}
+
 fn input(id_: &str, seed: &str, placeholder: &str) -> Node {
     id(node(Kind::Input { text: seed.into(), placeholder: Some(placeholder.into()), accept: None }), id_)
 }
@@ -261,7 +327,9 @@ fn list(id_: &str, bind: &str, rows: Rows) -> Node {
 /// - d a due date and m a place, asked in the bar (the prompt recipe, `prompt`).
 fn node_keys(back: View) -> BTreeMap<String, Action> {
     let mut k = BTreeMap::from([
-        ("x".to_string(), act("done", json!({"id": "{id}"}))),
+        // Done stays on screen where it was until you leave (navigation.md §8): the id joins
+        // `done_here`, which the lists' feeds keep.
+        ("x".to_string(), Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] }),
         ("X".to_string(), act("reopen", json!({"id": "{id}"}))),
         ("enter".to_string(), act("open", json!({"view": "detail", "id": "{id}", "back": back.name()}))),
     ]);
@@ -296,10 +364,10 @@ fn prompt() -> Node {
     };
     let mut answer = vec![act("answer", json!({"ask": "{store.prompt}", "id": "{store.ask_id}", "text": "{store.prompt_in}"}))];
     answer.extend(clear());
-    let mut field = variant(input("prompt_in", "", "fri, +3d, 2026-10-20 · a page title"), "input");
+    let mut field = variant(input("prompt_in", "", "a thought, [ ] a task due:fri #tag · a date · a page"), "input");
     field.keys.insert("enter".into(), Action::Do { steps: answer });
     field.keys.insert("esc".into(), Action::Do { steps: clear() });
-    let label = sized(bound(text(" {.|due=<accent+b>due ›</>;move=<accent+b>move to ›</>} "), "prompt"), cells(11));
+    let label = sized(bound(text(" {.|due=<accent+b>due ›</>;move=<accent+b>move to ›</>;capture=<accent+b>capture ›</>;inbox=<accent+b>inbox ›</>} "), "prompt"), cells(12));
     let mut line = variant(row(vec![variant(label, "input"), field]), "input");
     line.when = Some("prompt".into());
     line.float = Some(Float { width: None, height: Some(cells(1)), at: Some("bottom".into()), margin: Some(1) });
@@ -376,10 +444,28 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     data.insert("frame".to_string(), source("frame", json!({})));
     let tab = route.tab();
     let mut store = BTreeMap::new();
+    store.insert("done_here".into(), json!([]));
     let children: Vec<Node> = View::TABS
         .iter()
         .enumerate()
-        .map(|(i, v)| tab_view(&if i == tab { route.clone() } else { Route::to(*v) }, today, &mut data, &mut store))
+        .map(|(i, v)| {
+            let content = if i != tab {
+                tab_view(&Route::to(*v), today, &mut data, &mut store)
+            } else if let Some(base) = route.back() {
+                // A document or a detail opens over its view, which stays underneath: Esc goes
+                // back to it with its selection and query as they were (navigation.md §2).
+                let under = tab_view(&base, today, &mut data, &mut store);
+                let mut over = tab_view(route, today, &mut data, &mut store);
+                over.modal = true;
+                // A sheet of blanks between them, so nothing of the view shows through the layer's
+                // padding. TODO(fictty): a layer that clears what it covers.
+                let cover = node(Kind::Rule { glyph: Some(" ".into()) });
+                node(Kind::Stack { children: vec![under, cover, over] })
+            } else {
+                tab_view(route, today, &mut data, &mut store)
+            };
+            cycling(content, i)
+        })
         .collect();
     let focus = first_focus(route).map(String::from);
     let titles = ["Today", "Inbox{inbox|? <text>$</>}", "Tasks", "Pages", "Journal", "Search", "Log"].map(String::from).to_vec();
@@ -398,9 +484,12 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         "views",
     );
     let root = node(Kind::Stack { children: vec![views, prompt()] });
-    let show = |tab: usize| Action::ShowTab { tab, of: "views".into() };
     let mut keys: BTreeMap<String, Action> = (0..View::TABS.len()).map(|i| ((i + 1).to_string(), show(i))).collect();
     keys.insert("/".into(), show(5));
+    // `a` captures into today's journal, `A` into the inbox (tui-handoff §7.1), in capture syntax.
+    for (key, ask) in [("a", "capture"), ("A", "inbox")] {
+        keys.insert(key.into(), Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into() }, Action::Focus { focus: "prompt_in".into() }] });
+    }
     keys.insert("t".into(), Action::Theme { theme: "next".into() });
     if let Some(back) = route.back() {
         keys.insert("esc".into(), open(&back));
@@ -433,7 +522,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // The filter is the query: the table follows what's typed. The rows have the focus;
             // `f` edits the filter (§6.3), Enter or Esc goes back to the rows.
             store.insert("tasks_q".into(), route.query.clone().unwrap_or_else(|| "status:open".into()).into());
-            feed("tasks", json!({"query": "{store.tasks_q}"}));
+            feed("tasks", json!({"query": "{store.tasks_q}", "keep": "{store.done_here}"}));
             let done = || Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: "".into() }, Action::Focus { focus: "$prev".into() }] };
             let mut field = when(input("tasks_q", "", "a thc query"), "tasks_edit");
             field.keys.insert("enter".into(), done());
@@ -473,25 +562,22 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
         }
         View::Pages => {
             feed("pages", json!({}));
-            let mut finder = variant(input("pages_q", "", "type to find a page, tag or day"), "input");
-            finder.keys.insert("enter".into(), Action::Focus { focus: "pages".into() });
-            // ↓ moves into the list, a row at a time (§6.3: ↑ ↓ move from the finder).
-            finder.keys.insert("down".into(), Action::Do { steps: vec![Action::Focus { focus: "pages".into() }, Action::Named("down".into())] });
-            let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), finder]), cells(1)), "input");
             let mut r = rows("<muted>{short}</>  {title_m|markup}\t{meta_m|markup} ".into());
             r.variants.insert("day".into(), "{title_m|markup}\t{meta_m|markup} ".into());
             r.filter = Some("pages_q".into());
+            // Enter writes in the page or day.
+            let open_row = act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"}));
             let mut l = list("pages", "pages.rows", r);
-            // Enter writes in the page or day; `o` shows a page's outline as rows.
-            l.keys.insert("enter".into(), act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"})));
-            l.keys.insert("o".into(), act("open", json!({"view": "outline", "id": "{id}"})));
+            l.keys.insert("enter".into(), open_row.clone());
+            let (l, prompt) = finder(l, variant(input("pages_q", "", "type to find a page, tag or day"), "input"), open_row);
+            let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
             let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
             preview.id = Some("preview".into());
             preview.pad = Some(Pad::X(1));
-            let content = col(vec![finder_row, sized(text(""), cells(1)), split(l, preview)]);
-            view(content, "pages", &[("enter", "write"), ("o", "outline"), ("↓", "list")])
+            let content = over_list(finder_row, col(vec![sized(text(""), cells(2)), split(l, preview)]));
+            view(content, "pages", &[("type", "find"), ("enter", "write"), ("tab", "next view")])
         }
         View::Journal => {
             let date = route.date.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(today);
@@ -515,14 +601,15 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // The results follow what's typed.
             store.insert("search_q".into(), route.query.clone().unwrap_or_default().into());
             feed("search", json!({"query": "{store.search_q}"}));
-            let mut field = variant(input("search_q", "", "search every note"), "input");
-            field.keys.insert("enter".into(), Action::Focus { focus: "search".into() });
-            field.keys.insert("down".into(), Action::Focus { focus: "search".into() });
+            // A finder: letters find, so the rows have no single-letter commands (§6).
+            let open_row = act("open", json!({"view": "detail", "id": "{id}", "back": "search"}));
+            let mut results = tree("search", "search.rows");
+            results.keys.insert("enter".into(), open_row.clone());
+            let (results, field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
             let bar_row = variant(sized(row(vec![sized(text(" <accent+b>/</> "), cells(3)), field, sized(bound(text("\t{count_m|markup} "), "search"), cells(32))]), cells(1)), "input");
-            let results = keys(tree("search", "search.rows"), node_keys(View::Search));
             let hint = sized(text(" <muted>deleted nodes are searchable too: add is:deleted</>"), cells(1));
-            let content = col(vec![bar_row, sized(text(""), cells(1)), split(results, pane("search", "detail", data)), hint]);
-            view(content, "search", &[("enter", "results"), ("x", "done")])
+            let content = over_list(bar_row, col(vec![sized(text(""), cells(2)), split(results, pane("search", "detail", data)), hint]));
+            view(content, "search", &[("type", "find"), ("enter", "open"), ("tab", "next view")])
         }
         View::Log => {
             feed("log", json!({}));

@@ -291,12 +291,19 @@ pub fn inbox(cx: &Cx) -> Result<Value> {
 
 /// Tasks (§5.3): a `thc q` query's results as table rows (`id`, `task`, `due`, `sched`, `pri`,
 /// `where`, `by`, each a markup cell, `—` when empty), and the filter row's markup.
-pub fn tasks(cx: &Cx, query: &str) -> Result<Value> {
+pub fn tasks(cx: &Cx, query: &str, keep: &[String]) -> Result<Value> {
     let today = cx.today();
-    let (ns, error) = match cx.store.query(query, today, 500) {
+    let (mut ns, error) = match cx.store.query(query, today, 500) {
         Ok(ns) => (ns, None),
         Err(e) => (vec![], Some(format!("{e:#}"))),
     };
+    // Rows done here stay where they were until you leave (navigation.md §8): the same query
+    // with any status gives every row its place; the query's own rows and the kept ones show.
+    let missing = keep.iter().any(|k| !ns.iter().any(|n| &n.id == k));
+    if missing && error.is_none() && query.contains("status:open") {
+        let shown: HashSet<String> = ns.iter().map(|n| n.id.clone()).chain(keep.iter().cloned()).collect();
+        ns = cx.store.query(&query.replace("status:open", "status:any"), today, 500)?.into_iter().filter(|n| shown.contains(&n.id)).collect();
+    }
     let dash = || tok(Token::Muted, "—");
     let date = |raw: Option<&String>, due: bool, open: bool| match raw {
         Some(r) => {

@@ -14,4 +14,4 @@ thc-core = { path = "../thc-core" }
 unicode-width = "0.2"
 # fictty: the terminal UI runtime (a UI is one serializable value), embedded through its App and
 # Host API. Pinned to a commit of its main until it publishes.
-fictty = { git = "https://github.com/brancusi/fictty", rev = "da34390e837a42274b5e993bcaa8520e2a383bcf" }
+fictty = { git = "https://github.com/brancusi/fictty", rev = "8670f90044dce9ac6defb28cb119f91b9a9d8ed9" }

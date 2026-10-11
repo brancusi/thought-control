@@ -17,10 +17,29 @@ pub const MODULE: &str = r#"-- thc_keys.lua: macOS / VS Code editing keys for th
 -- `-- thc: begin` … `-- thc: end`); `thc setup wezterm --undo --yes` removes both.
 -- Rewritten by `thc setup wezterm --yes`; edit your own wezterm.lua instead of this file.
 -- Every key here acts only while thc is the pane's foreground process; elsewhere the key is
--- passed through as if this file weren't there.
+-- passed through as if this file weren't there. A pane showing a fictty screen (`thc screen`
+-- among them; it says so with the user var fictty=1) gets fictty's own keys, from fictty.lua
+-- beside this file: its bindings stay fictty's, and these are for the classic `thc tui`.
 local wezterm = require 'wezterm'
 local act = wezterm.action
 local M = {}
+
+-- fictty's keys (its module, written beside this one by `thc setup wezterm`), by key+mods.
+local fictty_keys, fictty_order = {}, {}
+pcall(function()
+  local c = { keys = {} }
+  require('fictty').apply(c)
+  for _, k in ipairs(c.keys) do
+    fictty_keys[k.key .. '+' .. k.mods] = k.action
+    table.insert(fictty_order, k)
+  end
+end)
+
+-- Whether the pane is showing a fictty screen right now.
+function M.is_fictty(pane)
+  local ok, vars = pcall(function() return pane:get_user_vars() end)
+  return ok and vars and vars.fictty == '1'
+end
 
 -- Whether a foreground process (its path, as WezTerm reports it) is thc.
 function M.is_thc(process)
@@ -30,9 +49,13 @@ end
 
 local seqs = {}
 
--- What a key does for a foreground process: { send = '<seq>' } in thc, else { pass = true }
--- (the key as typed, or ⌘V's normal paste).
-function M.decide(key, mods, process)
+-- What a key does for a foreground process: { fictty = true } in a fictty screen that has the
+-- key (fictty's action), { send = '<seq>' } in thc, else { pass = true } (the key as typed, or
+-- ⌘V's normal paste).
+function M.decide(key, mods, process, in_fictty)
+  if in_fictty and fictty_keys[key .. '+' .. mods] then
+    return { fictty = true }
+  end
   local seq = seqs[key .. '+' .. mods]
   if seq and M.is_thc(process) then
     return { send = seq }
@@ -46,8 +69,10 @@ local function thc_only(key, mods, seq, other)
   return {
     key = key, mods = mods,
     action = wezterm.action_callback(function(window, pane)
-      local d = M.decide(key, mods, pane:get_foreground_process_name())
-      if d.send then
+      local d = M.decide(key, mods, pane:get_foreground_process_name(), M.is_fictty(pane))
+      if d.fictty then
+        window:perform_action(fictty_keys[key .. '+' .. mods], pane)
+      elseif d.send then
         pane:send_text(d.send)
       else
         window:perform_action(other or act.SendKey { key = key, mods = mods }, pane)
@@ -70,6 +95,7 @@ M.keys = {
   thc_only('LeftArrow',  'OPT|SHIFT', '\x1b[1;4D'),  -- select word left
   thc_only('RightArrow', 'OPT|SHIFT', '\x1b[1;4C'),  -- select word right
   thc_only('Backspace',  'CMD',       '\x15'),       -- delete to line start (⌃U)
+  thc_only('Delete',     'CMD',       '\x1b[3;9~'),  -- delete to line end (editing.md §11)
   thc_only('Backspace',  'OPT',       '\x1b\x7f'),   -- delete word back
   -- ⌘V: in thc (on this Mac) thc reads the clipboard itself, so a copied screenshot is attached
   -- and text is pasted; anywhere else, WezTerm's own paste.
@@ -81,6 +107,7 @@ M.keys = {
   thc_only('z',          'CMD|SHIFT', '\x1b[122;10u'),
   -- ⌘[ ⌘]: back and forward through the places you've been (navigation.md §7).
   thc_only('[',          'CMD',       '\x1b[91;9u'),
+  thc_only('o',          'CMD',       '\x1b[111;9u'), -- open in the system app (editing.md §11)
   thc_only(']',          'CMD',       '\x1b[93;9u'),
   -- ⌘C: thc copies its own selection (as Markdown); a selection made in WezTerm itself
   -- (⌥-drag) is still copied the WezTerm way.
@@ -88,7 +115,9 @@ M.keys = {
     key = 'c', mods = 'CMD',
     action = wezterm.action_callback(function(window, pane)
       local wez = window:get_selection_text_for_pane(pane) or ''
-      if M.is_thc(pane:get_foreground_process_name()) and wez == '' then
+      if M.is_fictty(pane) and fictty_keys['c+CMD'] then
+        window:perform_action(fictty_keys['c+CMD'], pane)
+      elseif M.is_thc(pane:get_foreground_process_name()) and wez == '' then
         pane:send_text('\x1b[99;9u')
       else
         window:perform_action(act.CopyTo 'Clipboard', pane)
@@ -121,8 +150,16 @@ M.mouse_bindings = {
 
 function M.apply(config)
   config.keys = config.keys or {}
+  local mine = {}
   for _, k in ipairs(M.keys) do
     table.insert(config.keys, k)
+    mine[k.key .. '+' .. k.mods] = true
+  end
+  -- fictty's keys thc doesn't bind, as fictty.lua has them (one binding per key in all).
+  for _, k in ipairs(fictty_order) do
+    if not mine[k.key .. '+' .. k.mods] then
+      table.insert(config.keys, k)
+    end
   end
   config.mouse_bindings = config.mouse_bindings or {}
   for _, b in ipairs(M.mouse_bindings) do
@@ -248,6 +285,12 @@ pub fn setup(out: &mut Out, yes: bool, dry_run: bool, undo: bool) -> Result<()> 
         return Ok(());
     }
     std::fs::create_dir_all(&dir)?;
+    // fictty's module (its ⌘ keys for fictty screens, `thc screen` among them): fictty writes it,
+    // so its bindings live in one place; thc_keys.lua hands those panes to it.
+    let fictty_note = fictty::setup::wezterm()?;
+    if let Some(first) = fictty_note.lines().next() {
+        out.line(format!("{first} · fictty's ⌘ keys, for thc screen"));
+    }
     std::fs::write(&module, MODULE)?;
     out.line(format!("wrote {} · ⌘←→ ⌘↑↓ (⇧ selects), ⌥←→, ⌘⌫ ⌥⌫, ⌘C ⌘X ⌘V ⌘A ⌘Z ⇧⌘Z, ⇧Enter; ⌘V pastes screenshots", thc_core::vault::tilde(&module)));
     out.line(note.to_string());

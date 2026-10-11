@@ -457,7 +457,7 @@ fn a_click_on_pages_then_keys_write_a_task_into_a_page() {
     let mut s = screen(&host, View::Today, 120, 32);
     // The click on the tab title, as the runtime reports it; the focus goes into the view.
     s.msg(fictty::state::Msg::Click { id: "views".into(), row: Some(1003), tab: Some(3) });
-    assert_eq!(s.state().focus.as_deref(), Some("pages_q"), "the finder, not the tab bar");
+    assert_eq!(s.state().focus.as_deref(), Some("pages"), "the list: arriving never takes the caret (N14)");
     s.keys(&["down", "down", "down"]);
     assert!(s.screen().contains("▌ "), "{}", s.screen());
     s.keys(&["enter"]);
@@ -470,5 +470,153 @@ fn a_click_on_pages_then_keys_write_a_task_into_a_page() {
     let x = kids.iter().find(|n| n.text == "X").unwrap_or_else(|| panic!("no X under Q4 Planning: {kids:?}"));
     assert_eq!(x.status.as_deref(), Some("todo"));
     assert_eq!(check.store.history(&x.id, 5).unwrap()[0].actor, "human");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- the e2e harness's scenarios (scripts/e2e on e2e/keys-mouse-harness), headless -------------
+
+/// Whether the accent rule (row 2) is under `label` in the header (row 1), as the harness checks.
+fn rule_under(screen: &str, label: &str) -> bool {
+    let rows: Vec<Vec<char>> = screen.lines().take(2).map(|l| l.chars().collect()).collect();
+    let head: String = rows[0].iter().collect();
+    let Some(at) = head.find(label) else { return false };
+    let col = head[..at].chars().count();
+    (col..col + label.chars().count()).all(|c| rows[1].get(c) == Some(&'━'))
+}
+
+/// N01, N14: digits switch views from every view, Pages included (arriving never takes the
+/// caret); with a query typed on Pages, a digit types.
+#[test]
+fn n01_n14_digits_switch_views_and_type_in_a_query() {
+    let (root, v) = seeded("n01");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    for (key, label) in [("3", "Tasks"), ("2", "Inbox"), ("4", "Pages"), ("7", "Log"), ("4", "Pages"), ("1", "Today")] {
+        s.keys(&[key]);
+        assert!(rule_under(&s.screen(), label), "{key} → {label}: {}", s.screen());
+    }
+    // N14: a letter on Pages starts the find; then a digit types into it.
+    s.keys(&["4", "q", "3"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_q"));
+    assert!(s.screen().contains("› q3"), "{}", s.screen());
+    assert!(rule_under(&s.screen(), "Pages"));
+    // Esc clears the query and gives the keys back to the list: 3 switches again.
+    s.keys(&["esc", "3"]);
+    assert!(rule_under(&s.screen(), "Tasks"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// N01 on a vault with no pages (the harness's): Pages has no row to select, and its digits still
+/// switch views; the preview never takes the keys.
+#[test]
+fn n01_digits_switch_views_from_an_empty_pages() {
+    let root = thc_core::scratch::dir(&format!("thc-screen-n01e-{}", thc_core::id::new_id()));
+    vault::init(&root.join("v"), None, None).unwrap();
+    let mut v = open(&root, human());
+    v.transact(|s| {
+        let mut b = TxBuilder::new(s, today());
+        b.create_from_capture(None, &thc_core::capture::parse("[ ] Alpha task due:2026-10-11", today()).unwrap(), None)?;
+        Ok((b.finish(), ()))
+    })
+    .unwrap();
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["4"]);
+    let focus = s.state().focus.clone();
+    s.keys(&["7", "1"]);
+    assert!(rule_under(&s.screen(), "Today"), "focus on Pages was {focus:?}: {}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// N02, N16: Tab and ⇧Tab cycle the views from anywhere, Pages and Search included.
+#[test]
+fn n02_n16_tab_and_shift_tab_cycle_views() {
+    let (root, v) = seeded("n02");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    for label in ["Inbox", "Tasks", "Pages", "Journal", "Search", "Log", "Today"] {
+        s.keys(&["tab"]);
+        assert!(rule_under(&s.screen(), label), "tab → {label}: {}", s.screen());
+    }
+    for label in ["Log", "Search", "Journal"] {
+        s.keys(&["s-tab"]);
+        assert!(rule_under(&s.screen(), label), "s-tab → {label}: {}", s.screen());
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// N04, N11, B02: on Pages type a name (the find), Enter opens the top match; Esc comes back to
+/// the Pages list with that page selected, the query as it was.
+#[test]
+fn n04_b02_enter_opens_a_page_and_esc_comes_back_to_it() {
+    let (root, v) = seeded("n04");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 80, 24);
+    s.keys(&["4"]);
+    type_in(&mut s, "Health");
+    s.keys(&["enter"]);
+    assert!(s.screen().contains("# Health"), "Health to write in: {}", s.screen());
+    s.keys(&["esc"]);
+    let back = s.screen();
+    assert!(!back.contains("# Health") && back.contains("¶ Health"), "the Pages list again: {back}");
+    // The page you came from is selected (its row has the ▌).
+    assert!(back.lines().any(|l| l.starts_with('▌') && l.contains("¶ Health")), "{back}");
+    // Esc on the list clears the query; every page shows again.
+    s.keys(&["esc"]);
+    assert!(s.screen().contains("¶ Q4 Planning"), "{}", s.screen());
+    // B02, fresh: Pages, down to Q4 Planning, open, write at the end, Esc: Q4 Planning is selected.
+    let mut s = screen(&host, View::Today, 80, 24);
+    s.keys(&["4", "down", "down", "down"]);
+    s.keys(&["enter", "d-down", "enter"]);
+    type_in(&mut s, "[ ] shipped");
+    s.keys(&["esc"]);
+    let back = s.screen();
+    assert!(back.lines().any(|l| l.starts_with('▌') && l.contains("¶ Q4 Planning")), "{back}");
+    let check = open(&root, human());
+    let shipped = check.store.nodes_where("n.text = 'shipped'", &[]).unwrap();
+    assert_eq!(shipped.len(), 1);
+    assert_eq!(shipped[0].status.as_deref(), Some("todo"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// W01: `a` captures, in capture syntax, into today's journal.
+#[test]
+fn w01_a_captures_a_task() {
+    let (root, v) = seeded("w01");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["a"]);
+    assert!(s.screen().contains("capture ›"), "{}", s.screen());
+    type_in(&mut s, "Buy oat milk due:fri");
+    s.keys(&["enter"]);
+    let check = open(&root, human());
+    let n = check.store.nodes_where("n.text = 'Buy oat milk'", &[]).unwrap();
+    assert_eq!(n.len(), 1, "captured once");
+    assert_eq!(n[0].due.as_deref(), Some("2026-10-16"), "capture syntax read");
+    assert_eq!(check.store.node(n[0].parent.as_deref().unwrap()).unwrap().unwrap().journal.as_deref(), Some("2026-10-11"));
+    assert!(s.screen().contains("Buy oat milk"), "it shows: {}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// W02, N24: on Tasks, x marks the row done and it stays where it was, so X reopens it; leaving
+/// the view lets it go.
+#[test]
+fn w02_done_stays_until_you_leave_so_it_can_be_reopened() {
+    let (root, v) = seeded("w02");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Tasks, 120, 32);
+    let first = s.screen().lines().find(|l| l.starts_with('▸') || l.starts_with('▌')).unwrap_or_default().to_string();
+    s.keys(&["x"]);
+    let after = s.screen();
+    assert!(after.contains("[x]"), "the row stays, done: {after}");
+    let id = |text: &str| open(&root, human()).store.nodes_where("n.text LIKE ?1", &[&format!("{text}%")]).unwrap()[0].clone();
+    let done = after.lines().find(|l| l.contains("[x]")).unwrap().to_string();
+    let name = done.split("[x]").nth(1).unwrap().trim().split("  ").next().unwrap().to_string();
+    assert_eq!(id(&name).status.as_deref(), Some("done"), "{first} / {done}");
+    s.keys(&["X"]);
+    assert_eq!(id(&name).status.as_deref(), Some("todo"), "reopened");
+    // Done again, then leave and come back: the done row has gone.
+    s.keys(&["x", "1", "3"]);
+    assert!(!s.screen().contains("[x]"), "{}", s.screen());
     let _ = std::fs::remove_dir_all(root);
 }

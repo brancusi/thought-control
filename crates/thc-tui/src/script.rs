@@ -17,7 +17,9 @@ pub fn key_token(k: &KeyEvent) -> String {
         KeyCode::Char('<') => "lt".to_string(),
         KeyCode::Char(' ') => "space".to_string(),
         KeyCode::Char(c) => {
-            // ⇧ lives in a letter's case.
+            // ⇧ lives in a letter's case: a kitty-protocol ⇧⌘Z arrives as `z` with ⇧, and is `Z`
+            // (dropping the ⇧ alone made it ⌘Z, undo instead of redo).
+            let c = if mods.contains(KeyModifiers::SHIFT) && c.is_lowercase() { c.to_uppercase().next().unwrap_or(c) } else { c };
             if c.is_alphabetic() || !c.is_ascii() || c.is_ascii_punctuation() || c.is_ascii_digit() {
                 mods.remove(KeyModifiers::SHIFT);
             }
@@ -264,6 +266,17 @@ fn click_mods(name: &str) -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// ⇧⌘Z from the kitty protocol (`CSI 122;10u`: `z` with ⌘ and ⇧) is redo's key, `Cmd-Z`,
+    /// through the token the session replays; ⌘Z stays undo's.
+    #[test]
+    fn a_shifted_letter_keeps_its_shift_as_its_case() {
+        let ev = |c, m| KeyEvent::new_with_kind(KeyCode::Char(c), m, KeyEventKind::Press);
+        assert_eq!(key_token(&ev('z', KeyModifiers::SUPER | KeyModifiers::SHIFT)), "<d-Z>");
+        assert_eq!(key_token(&ev('z', KeyModifiers::SUPER)), "<d-z>");
+        let back = key_event("<d-Z>").unwrap();
+        assert_eq!(crate::keymap::Key::of(&back), crate::keymap::Key::parse("Cmd-Z").unwrap());
+    }
 
     #[test]
     fn every_key_token_round_trips() {
