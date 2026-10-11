@@ -19,7 +19,7 @@ fn app(tag: &str) -> (crate::fuzz::Scratch, App) {
             let mut b = TxBuilder::new(st, today);
             b.create_from_capture(None, &thc_core::capture::parse("[ ] Buy milk", today).unwrap(), None)?;
             b.create_page("Lisbon flat", &[])?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     crate::SNAPSHOT.with(|s| s.set(true));

@@ -19,7 +19,7 @@ fn write(v: &mut Vault, f: impl FnOnce(&mut TxBuilder) -> anyhow::Result<()>) {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, dates::today());
         f(&mut b)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
 }
@@ -109,7 +109,7 @@ fn cycles_are_rejected_and_builtins_have_titles() {
     let r = a.transact(|s| {
         let mut t = TxBuilder::new(s, dates::today());
         views::set(&mut t, "a", views::Update { query: Some("@b"), ..Default::default() })?;
-        Ok((t.finish(), ()))
+        Ok((t.finish()?, ()))
     });
     let err = r.unwrap_err().to_string();
     assert!(err.contains("@a would refer to itself through @b"), "{err}");

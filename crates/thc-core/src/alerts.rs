@@ -430,7 +430,7 @@ mod tests {
                 let id = b.create_from_capture(Some(j.clone()), &cap, Some(format!("n{i}aaaaaaaaaa"))).unwrap();
                 b.add_alert(&id, Trigger { at: Some(when.to_string()), offset: None, anchor: None }).unwrap();
             }
-            b.finish()
+            b.finish().unwrap()
         };
         let st = store_with(ops);
         drop(s);

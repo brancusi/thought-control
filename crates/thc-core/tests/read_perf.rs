@@ -70,7 +70,7 @@ fn large_local_batch_refreshes_statistics_without_prior_queries() {
         v.transact(|s| {
             let mut b = TxBuilder::new(s, today);
             for _ in 0..count { b.create_from_capture(None, &capture::parse("[ ] sample", today)?, None)?; }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         }).unwrap();
     };
     add(&mut v, 500);

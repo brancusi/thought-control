@@ -60,7 +60,7 @@ pub fn seed(vault: &mut Vault, size: Size) {
             // Tasks elsewhere: the inbox.
             b.create_from_capture(None, &cap("[ ] write the plan due:today #work"), None)?;
             b.create_from_capture(None, &cap("[ ] book flights due:+2d"), None)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     let lines = match size {
@@ -94,7 +94,7 @@ pub fn seed(vault: &mut Vault, size: Size) {
                     };
                     b.create_from_capture(Some(p.clone()), &cap(&t), None)?;
                 }
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
     }

@@ -337,7 +337,7 @@ fn dispatch(shared: &Arc<Shared>, client_id: u64, stream: &UnixStream, req: &Req
                             None => v.transact(|st| {
                                 let mut b = TxBuilder::new(st, today);
                                 let id = b.journal(date)?;
-                                Ok((b.finish(), id))
+                                Ok((b.finish()?, id))
                             })?.1,
                         }
                     }
@@ -371,7 +371,7 @@ fn write(shared: &Arc<Shared>, f: impl FnOnce(&mut TxBuilder) -> Result<Value>) 
     let (events, out) = v.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         let out = f(&mut b)?;
-        Ok((b.finish(), out))
+        Ok((b.finish()?, out))
     })?;
     drop(v);
     shared.dirty.store(true, Ordering::SeqCst);

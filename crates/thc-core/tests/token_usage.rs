@@ -21,7 +21,7 @@ fn props(v: &mut Vault, id: &str, kv: &[(&str, &str)]) {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, dates::today());
         b.set_props(id, &kv.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect::<Vec<_>>())?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
 }
@@ -36,7 +36,7 @@ fn minute_cache_hourly_checkpoint_final_reconciliation_and_stale_claim() {
         .transact(|s| {
             let mut b = TxBuilder::new(s, dates::today());
             let id = b.create_from_capture(None, &capture::parse("todo: tracked work", dates::today())?, None)?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         })
         .unwrap()
         .1;

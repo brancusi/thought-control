@@ -1213,7 +1213,7 @@ pub(crate) fn agent_write(app: &App, text: &str) -> Result<()> {
         let mut b = thc_core::builder::TxBuilder::new(s, today);
         let j = b.journal(today)?;
         b.create_from_capture(Some(j), &cap, None)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })?;
     Ok(())
 }
@@ -1230,7 +1230,7 @@ pub(crate) fn remote_write(app: &App, id_prefix: &str, text: &str) -> Result<()>
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         b.set_text(&id, text)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })?;
     Ok(())
 }

@@ -331,7 +331,7 @@ impl Ctx {
             // Dry runs are allowed for every tier (policy.md §2.1): they write nothing.
             let mut b = TxBuilder::new(&self.vault.store, today);
             f(&mut b)?;
-            let ops = b.finish();
+            let ops = b.finish()?;
             pre::check(&self.vault.store, &ops, &pre)?;
             self.out.json(&json!({ "dry_run": true, "ops": ops }));
             return Ok(None);
@@ -345,7 +345,7 @@ impl Ctx {
         let (events, t) = self.vault.transact(|s| {
             let mut b = TxBuilder::new(s, today);
             let t = f(&mut b)?;
-            let ops = b.finish();
+            let ops = b.finish()?;
             pre::check(s, &ops, &pre)?;
             guard.ops(&ops)?;
             Ok((ops, t))

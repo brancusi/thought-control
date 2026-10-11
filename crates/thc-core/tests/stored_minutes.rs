@@ -26,7 +26,7 @@ fn old_minutes_and_repeats_replay_unchanged() {
                 props: json!({ "repeat": { "rule": "FREQ=MONTHLY;INTERVAL=1", "mode": "fixed", "text": "every 1m" } }).as_object().unwrap().clone(),
             });
             b.add_alert(&id, Trigger { at: None, offset: Some("-15m".into()), anchor: Some("due".into()) })?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         })
         .unwrap();
     let check = |v: &Vault| {
@@ -42,7 +42,7 @@ fn old_minutes_and_repeats_replay_unchanged() {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         b.complete(&id)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     v.rebuild().unwrap();

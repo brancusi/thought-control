@@ -104,7 +104,7 @@ mod tests {
                 let mut b = TxBuilder::new(store, today);
                 let page = b.create_page("Project", &[])?;
                 let issue = b.create_from_capture(Some(page.clone()), &capture::parse("[ ] Ship it !high", today)?, None)?;
-                Ok((b.finish(), (page, issue)))
+                Ok((b.finish()?, (page, issue)))
             })
             .unwrap();
         crate::SNAPSHOT.with(|s| s.set(true));
@@ -120,7 +120,7 @@ mod tests {
             .transact(|store| {
                 let mut b = TxBuilder::new(store, today);
                 b.set_props(&page, &[("title".into(), "Renamed".into())])?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
         // Frozen render inputs remain usable independently of later database updates.

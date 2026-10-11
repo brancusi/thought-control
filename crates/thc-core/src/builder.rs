@@ -55,14 +55,12 @@ impl<'a> TxBuilder<'a> {
     }
 
     /// The transaction's ops. Every list keeps its style on its first item through them
-    /// (list::normalise): a move, delete or restore needs nothing of its own.
-    pub fn finish(mut self) -> Vec<Op> {
-        match crate::list::normalise(self.store, &self.ops, &self.lists_stated) {
-            Ok(extra) => self.ops.extend(extra),
-            // (Only a store error gets here, and the transaction's own ops still stand.)
-            Err(_) => {}
-        }
-        self.ops
+    /// (list::normalise): a move, delete or restore needs nothing of its own. A store error there
+    /// fails the write, rather than committing ops that leave a list in the wrong style.
+    pub fn finish(mut self) -> Result<Vec<Op>> {
+        let extra = crate::list::normalise(self.store, &self.ops, &self.lists_stated)?;
+        self.ops.extend(extra);
+        Ok(self.ops)
     }
 
     fn exists(&self, id: &str) -> Result<bool> {

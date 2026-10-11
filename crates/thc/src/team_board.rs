@@ -235,7 +235,7 @@ pub fn prepare(
                 None,
             )?;
         }
-        Ok((b.finish(), issues))
+        Ok((b.finish()?, issues))
     })?;
     let settings = entry.path.join(thc_core::settings::VAULT_FILE);
     table

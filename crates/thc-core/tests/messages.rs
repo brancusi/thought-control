@@ -21,7 +21,7 @@ fn receipt_writes_on_two_devices_converge_without_hiding_other_actors() {
         .transact(|s| {
             let mut tx = TxBuilder::new(s, today);
             let id = messages::send(&mut tx, "engineer", "claude-pm", "build", None, None)?;
-            Ok((tx.finish(), id))
+            Ok((tx.finish()?, id))
         })
         .unwrap();
     for e in &union {
@@ -34,7 +34,7 @@ fn receipt_writes_on_two_devices_converge_without_hiding_other_actors() {
             .transact(|s| {
                 let mut tx = TxBuilder::new(s, today);
                 messages::mark_read(&mut tx, std::slice::from_ref(&id), recipient)?;
-                Ok((tx.finish(), ()))
+                Ok((tx.finish()?, ()))
             })
             .unwrap();
         union.extend(events);

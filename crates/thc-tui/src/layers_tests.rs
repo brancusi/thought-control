@@ -58,7 +58,7 @@ fn fixture(tag: &str, extra: usize) -> (Scratch, Vault) {
             b.create_from_capture(None, &cap("[ ] Buy groceries due:2026-10-08"), Some(id("groceries")))?;
             b.create_from_capture(None, &cap("[ ] Book the dentist due:2026-10-13"), Some(id("dentist")))?;
             b.create_from_capture(None, &cap("[ ] Renew the passport"), Some(id("passport")))?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     (s, vault)

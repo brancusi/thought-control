@@ -102,7 +102,7 @@ pub fn commit(
     // Preconditions and op policy must also pass before files land in the vault.
     let mut preview = thc_core::builder::TxBuilder::new(ctx.store(), ctx.out.today);
     build(&mut preview)?;
-    let ops = preview.finish();
+    let ops = preview.finish()?;
     crate::pre::check(ctx.store(), &ops, &ctx.pre)?;
     ctx.guard()?.ops(&ops)?;
     for file in &prepared {

@@ -51,14 +51,14 @@ fn seeded(name: &str) -> (std::path::PathBuf, Vault) {
         b.create_from_capture(Some(j.clone()), &cap("Morning run, see [[Home]]"), None)?;
         let done = b.create_from_capture(Some(j), &cap("[ ] Renew passport"), None)?;
         b.create_from_capture(None, &cap("Look into a standing desk"), None)?;
-        Ok((b.finish(), done))
+        Ok((b.finish()?, done))
     })
     .map(|(_, done)| done)
     .and_then(|done| {
         v.transact(|s| {
             let mut b = TxBuilder::new(s, d);
             b.complete(&done)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
     })
     .unwrap();
@@ -68,7 +68,7 @@ fn seeded(name: &str) -> (std::path::PathBuf, Vault) {
             let mut b = TxBuilder::new(s, d);
             let j = b.journal(d)?;
             b.create_from_capture(Some(j), &thc_core::capture::parse("[ ] Summarize newsletters due:2026-10-12", d).unwrap(), None)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     v.catch_up().unwrap();
@@ -278,7 +278,7 @@ fn outside_add(root: &Path, parent: Option<String>, text: &str) {
                 None => Some(b.journal(d)?),
             };
             b.create_from_capture(parent, &thc_core::capture::parse(text, d).unwrap(), None)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
 }
@@ -516,7 +516,7 @@ fn n01_digits_switch_views_from_an_empty_pages() {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today());
         b.create_from_capture(None, &thc_core::capture::parse("[ ] Alpha task due:2026-10-11", today()).unwrap(), None)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let host = ThcHost::new(v).at(now());
@@ -950,7 +950,7 @@ fn with_a_conflict(name: &str) -> (std::path::PathBuf, Vault, String) {
         v.transact(|s| {
             let mut b = TxBuilder::new(s, today());
             b.set_text(&bank, text)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     };
@@ -1471,7 +1471,7 @@ fn s20_the_stack_comes_back_and_a_deleted_page_goes() {
         .transact(|st| {
             let mut b = TxBuilder::new(st, today());
             b.delete(&home)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     drop(other);
@@ -1529,7 +1529,7 @@ fn n04_harness_repro_esc_lands_on_the_page_found() {
         let mut b = TxBuilder::new(s, today());
         let health = b.create_page("Health", &[])?;
         b.create_from_capture(Some(health), &thc_core::capture::parse("Schedule annual physical", today()).unwrap(), None)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let host = ThcHost::new(v).at(now());
@@ -1751,7 +1751,7 @@ fn lists_page(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless, Str
         .transact(|s| {
             let mut b = TxBuilder::new(s, today());
             let id = b.create_page("Lists", &[])?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         })
         .unwrap()
         .1;

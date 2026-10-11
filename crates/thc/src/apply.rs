@@ -320,7 +320,11 @@ fn plan_inner(ctx: Option<&Ctx>, store: &Store, lines: &[(usize, Value)], today:
         let mut b = TxBuilder::new(store, today);
         let refs = Refs { store, names: &names };
         let built = if v.is_object() { build(&mut b, &refs, v) } else { Err(invalid("each line must be a JSON object")) };
-        let ops = b.finish();
+        // A line whose ops can't be finished (list::normalise's store error) fails like any other.
+        let (built, ops) = match (built, b.finish()) {
+            (Ok(nodes), Ok(ops)) => (Ok(nodes), ops),
+            (Err(e), _) | (Ok(_), Err(e)) => (Err(e), vec![]),
+        };
         match built {
             Ok(nodes) => {
                 let tx = format!("preview-line-{n}");

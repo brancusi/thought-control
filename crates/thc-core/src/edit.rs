@@ -643,7 +643,7 @@ mod tests {
             .transact(|s| {
                 let mut b = TxBuilder::new(s, today());
                 let p = b.create_page("Notes", &[])?;
-                Ok((b.finish(), p))
+                Ok((b.finish()?, p))
             })
             .unwrap();
         (v, page)
@@ -654,7 +654,7 @@ mod tests {
         v.transact(|s| {
             let mut b = TxBuilder::new(s, today());
             let sum = apply(&mut b, rendered, edited)?;
-            Ok((b.finish(), sum))
+            Ok((b.finish()?, sum))
         })
         .unwrap()
         .1
@@ -940,7 +940,7 @@ mod tests {
             v.transact(|s| {
                 let mut b = TxBuilder::new(s, today());
                 f(&mut b)?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
         };
@@ -950,6 +950,21 @@ mod tests {
         assert_eq!(body(&v, &page), "i) beta\nii) alpha\n\nprose\n\n1. two\n");
         assert_eq!([list_of(&v, &kids[1]), list_of(&v, &kids[0]), list_of(&v, &kids[4])], [Some("i)".into()), None, Some("1.".into())]);
         round_trips(&mut v, &page);
+    }
+
+    #[test]
+    fn a_list_fix_up_that_fails_fails_the_write() {
+        // The normaliser's store error comes back from finish (here: a store that refuses the
+        // provisional apply), so the move isn't committed without its list fix-up.
+        let (mut v, page) = setup();
+        save(&mut v, &page, "1. alpha\n2. beta\n");
+        let kids: Vec<String> = v.store.children(&page).unwrap().into_iter().map(|n| n.id).collect();
+        v.store.conn.execute_batch("PRAGMA query_only = ON").unwrap();
+        let mut b = TxBuilder::new(&v.store, today());
+        b.move_to(&kids[1], Some(page.clone()), None, Some(&kids[0])).unwrap();
+        assert!(b.finish().is_err(), "the write fails, and says why");
+        v.store.conn.execute_batch("PRAGMA query_only = OFF").unwrap();
+        assert_eq!(body(&v, &page), "1. alpha\n2. beta\n", "nothing written");
     }
 
     #[test]

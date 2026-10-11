@@ -20,7 +20,7 @@ fn setup() -> (Vault, String) {
         .transact(|s| {
             let mut b = TxBuilder::new(s, today());
             let p = b.create_page("Notes", &[])?;
-            Ok((b.finish(), p))
+            Ok((b.finish()?, p))
         })
         .unwrap();
     (v, page)
@@ -143,7 +143,7 @@ fn editor_and_dollar_editor_write_the_same_events_for_the_same_edit() {
     let edited = rendered.text.replace("Call the venue", "Call the venue back");
     let mut b = TxBuilder::new(&v.store, today());
     edit::apply(&mut b, &rendered, &edited).unwrap();
-    let editor_ops = b.finish();
+    let editor_ops = b.finish().unwrap();
     let strip = |ops: &[Op]| ops.iter().map(|o| serde_json::to_value(o).unwrap()).collect::<Vec<_>>();
     assert_eq!(strip(&block_ops), strip(&editor_ops), "one write path for both editors");
 }
@@ -220,7 +220,7 @@ fn markdown_copy_matches_edit() {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today());
         edit::apply(&mut b, &rendered, &edited)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let md = outline::markdown(&outline::render(&v.store, &page).unwrap());

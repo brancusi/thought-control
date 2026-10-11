@@ -29,7 +29,7 @@ fn write(v: &mut Vault, actor: Actor, f: impl FnOnce(&mut TxBuilder) -> anyhow::
         .transact(|s| {
             let mut b = TxBuilder::new(s, dates::today());
             f(&mut b)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     ev[0].tx.clone()

@@ -93,7 +93,7 @@ fn add(v: &mut Vault, text: &str) -> String {
             let mut b = TxBuilder::new(s, today);
             let j = b.journal(today)?;
             let id = b.create_from_capture(Some(j), &cap, None)?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         })
         .unwrap();
     id
@@ -109,7 +109,7 @@ fn add_alert_now(v: &mut Vault, text: &str) -> (String, String) {
             let j = b.journal(today)?;
             let id = b.create_from_capture(Some(j), &cap, None)?;
             let a = b.add_alert(&id, Trigger { at: Some(at.clone()), offset: None, anchor: None })?;
-            Ok((b.finish(), (id, a)))
+            Ok((b.finish()?, (id, a)))
         })
         .unwrap();
     ids
@@ -255,7 +255,7 @@ fn two_devices_sync_and_alerts_fire_once_per_device() {
         v.transact(|s| {
             let mut b = TxBuilder::new(s, thc_core::dates::today());
             b.set_text(&id, text)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     }

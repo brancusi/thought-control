@@ -28,7 +28,7 @@ fn vault(tag: &str) -> (crate::fuzz::Scratch, Vault) {
             for t in &lines {
                 b.create_from_capture(Some(plan.clone()), &thc_core::capture::parse(t, today)?, None)?;
             }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     (s, vault)
@@ -405,7 +405,7 @@ fn the_link_popup_ranks_by_how_the_title_matches() {
         for t in ["Ungarden", "Rose garden", "Gardening tips"] {
             b.create_page(t, &[])?;
         }
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let mut s = session(v, (120, 32));
