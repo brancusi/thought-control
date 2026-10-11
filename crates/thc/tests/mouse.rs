@@ -173,8 +173,9 @@ fn m7_m8_chrome_clicks() {
     // M8: a click outside the palette closes it and does nothing underneath.
     let (tx, ty) = pos(&v.tui(""), "Pages");
     let f = v.tui(&format!(":<click:{tx},{ty}>"));
-    // (The real clock: on a Friday the milk is due today, so check the view, not its sections.)
-    let still_today = f.lines().nth(2).is_some_and(|l| l.trim_start().starts_with("Today"));
+    // (The real clock: the milk's section is Today, Overdue or Next 7 days depending on the
+    // weekday, so check the view by the bar's name for it, not by its sections.)
+    let still_today = f.lines().any(|l| l.trim_start().starts_with("today ·"));
     assert!(!f.contains("Enter run") && still_today, "closed, still Today: {f}");
     // A list row's box toggles it.
     let (x, y) = pos(&v.tui("3"), "[ ] Buy milk");
