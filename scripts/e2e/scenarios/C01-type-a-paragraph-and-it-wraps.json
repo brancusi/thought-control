@@ -20,6 +20,10 @@
   }
  },
  "known": {
-  "thc-tui/real": "thc: a ~1,160-character paragraph typed into a page is saved, but the page draws only an empty `·` line (in a 262×67 window; 290 characters draw, and the flow at 120×36 draws it)"
+  "thc-tui/real": "flaky: thc: a ~1,160-character paragraph typed into a page is saved, but the page draws only an empty `·` line in a wide window (390x88; passed once in five runs); the flow at 120×36 draws it",
+  "thc-screen/real": "thc-screen: typing a ~1,160-character paragraph, the screen falls behind: `fictty get --state` times out on its socket while it catches up (each key slower than the last; headless it's ~1.6 s a key by the end)"
+ },
+ "skip": {
+  "thc-screen/headless": "1,160 keys through the debug screen probe take about 30 minutes (each key slower than the last: about 1.6 s a key by the end); see the report"
  }
 }

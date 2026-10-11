@@ -1,0 +1,52 @@
+{
+ "id": "S01",
+ "title": "o opens a row's page aside and the focus stays in main",
+ "spec": "sidebar.md (thc screen on main) §3 (140 columns: the column)",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "o"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "page"
+   ],
+   "shown": true
+  },
+  "fictty_state": {
+   "focus": "today"
+  },
+  "screen": "Schedule annual physical"
+ },
+ "size": "140x40"
+}

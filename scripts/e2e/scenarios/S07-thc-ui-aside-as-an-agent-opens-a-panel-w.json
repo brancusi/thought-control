@@ -1,0 +1,60 @@
+{
+ "id": "S07",
+ "title": "thc ui aside, as an agent, opens a panel without a key",
+ "spec": "sidebar.md (thc screen on main) · thc ui aside",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "wait": 300
+  },
+  {
+   "thc": [
+    "ui",
+    "aside",
+    "Health"
+   ],
+   "actor": "claude"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "page"
+   ]
+  },
+  "fictty_state": {
+   "focus": "today"
+  },
+  "screen": "Schedule annual physical"
+ },
+ "within": 3000,
+ "size": "140x40"
+}

@@ -413,6 +413,8 @@ fn the_e2e_scenarios_hold_headless() {
         let line = match (&r, &known) {
             (Err(e), _) if e.starts_with("skip:") => format!("skip  {id:6} {e}"),
             (Ok(()), None) => format!("PASS  {id}"),
+            // A known failure marked `flaky: …` may pass or fail.
+            (Ok(()), Some(k)) if k.starts_with("flaky") => format!("PASS  {id}  (flaky: may fail)"),
             (Ok(()), Some(k)) => {
                 bad.push(format!("{id}: passes now; drop its known failure ({k})"));
                 format!("XPASS {id}  ({k})")

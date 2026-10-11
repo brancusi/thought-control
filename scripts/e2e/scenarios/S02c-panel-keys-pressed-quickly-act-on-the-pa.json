@@ -1,0 +1,86 @@
+{
+ "id": "S02c",
+ "title": "panel keys pressed quickly act on the panel they reach",
+ "spec": "sidebar.md (thc screen on main) §5.3",
+ "targets": [
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Garden",
+   "notes": [
+    "Compost by the fence",
+    "See [[Health]] for the rest"
+   ]
+  },
+  {
+   "page": "Health",
+   "notes": [
+    "Schedule annual physical"
+   ]
+  },
+  [
+   "todo",
+   "Alpha task",
+   "--due",
+   "tomorrow"
+  ],
+  {
+   "todo_under": "Health",
+   "text": "Book the physical",
+   "due": "today"
+  }
+ ],
+ "steps": [
+  {
+   "key": "o"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "kinds": [
+      "page"
+     ]
+    }
+   }
+  },
+  {
+   "key": "j"
+  },
+  {
+   "key": "o"
+  },
+  {
+   "assert": {
+    "sidebar": {
+     "kinds": [
+      "day",
+      "page"
+     ]
+    }
+   }
+  },
+  {
+   "key": "a-s"
+  },
+  {
+   "key": "a-j"
+  },
+  {
+   "key": "a-w"
+  }
+ ],
+ "expect": {
+  "sidebar": {
+   "kinds": [
+    "day"
+   ],
+   "closed": 1
+  }
+ },
+ "size": "140x40",
+ "note": "⌥S, ⌥J, ⌥W as fast as a person types: ⌥W closes the panel ⌥J moved to (the page), not the one ⌥S landed on",
+ "known": {
+  "thc-screen/real": "thc-screen: panel keys pressed while an earlier one's act is in flight are lost: ⌥S ⌥J ⌥W quickly closes nothing (each act reads the stack and focus it was pressed against); with a pause between (S02) they work"
+ }
+}

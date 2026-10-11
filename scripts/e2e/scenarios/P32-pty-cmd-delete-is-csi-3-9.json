@@ -10,5 +10,8 @@
  ],
  "expect": {
   "doc": "one ▮"
+ },
+ "known": {
+  "thc-tui/real": "harness: thc's TUI read back from the vault after a save, and saving trims a note's trailing space (`one ` saves as `one`); headless, where the editor is read, it passes"
  }
 }

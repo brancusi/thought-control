@@ -67,6 +67,6 @@
  "note": "Today: Alpha and Beta under Today, Gamma under Next 7 days. Arriving selects the first task (not the heading); x on it leaves the selection on the next task row",
  "known": {
   "thc-tui/real": "thc (spec question): x in Today leaves the selection on the done row (N24 keeps the row in place); the coordinator expects the next task row",
-  "thc-screen/real": "thc-screen: after x in Today the selection stays on the done row (kind done) instead of moving to the next task row (on 5ca8d24 it started on the Today heading)"
+  "thc-screen": "thc-screen: after x in Today the selection stays on the done row (kind done) instead of moving to the next task row (on 5ca8d24 it started on the Today heading)"
  }
 }

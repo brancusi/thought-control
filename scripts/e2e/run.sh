@@ -2,8 +2,9 @@
 # Real-terminal (and headless) end-to-end runs of thc's editing, navigation and workflow goldens.
 #
 #   scripts/e2e/run.sh [target] [scenario…]       real WezTerm windows, one per target
-#   scripts/e2e/run.sh --headless [target] […]    no terminal: fictty's Headless, `thc screen --render`
+#   scripts/e2e/run.sh --headless [target] […]    no terminal: fictty's Headless (the probes)
 #   scripts/e2e/run.sh --keys [key…]              what WezTerm sends for each key, to thc and to others
+#   scripts/e2e/run.sh --latency                  thc screen's per-key latency, release and debug
 #   scripts/e2e/run.sh --keep thc-tui E33          leave the window open on the first failure
 #
 # Targets: thc-tui, fictty-notes, thc-screen (default: all three). Scenarios are
@@ -11,12 +12,13 @@
 # `cargo test -p thc-tui --lib flows::e2e`. Builds land in target/e2e. The details, and what
 # stays isolated, are in scripts/e2e/e2e.py.
 #
-# Environment: THC_BIN (default target/debug/thc), FICTTY_DIR (the fictty checkout, default
-# ~/Documents/projects/fictty), FICTTY_REV (default its local main), THC_SCREEN_BIN or
-# THC_SCREEN_REV / THC_SCREEN_FICTTY_REV (thc screen, default 75521e9 (PR #95) on fictty ec2fb64),
-# WEZTERM (default /Applications/WezTerm.app/Contents/MacOS/wezterm), E2E_SETTLE (s between
-# inputs, 0.12), E2E_GRACE (ms a check may take to come true, 600), E2E_FICTTY_KEYS (1: also install
-# `fictty setup wezterm`'s module after thc's, the default for fictty-notes and thc-screen; 0: thc's only).
+# Environment: THC_BIN (default target/debug/thc; thc screen is the same binary), FICTTY_DIR (the
+# fictty checkout, default ~/Documents/projects/fictty), FICTTY_REV (fictty-notes, default its
+# local main), THC_SCREEN_BIN, or THC_SCREEN_REV / THC_SCREEN_FICTTY_REV for an older screens
+# commit, WEZTERM (default /Applications/WezTerm.app/Contents/MacOS/wezterm), E2E_SETTLE (s between
+# inputs, 0.12), E2E_GRACE (ms a check may take to come true, 2000), E2E_SCREEN_SIZE (thc screen's
+# size where the window is bigger, 140x40), E2E_SETUP_THC (whose `thc setup wezterm` writes the
+# keys), E2E_FICTTY_KEYS (1: also install `fictty setup wezterm`'s module for an older thc).
 set -euo pipefail
 cd "$(dirname "$0")/../.."
 if [[ ! -x ${THC_BIN:-target/debug/thc} ]]; then

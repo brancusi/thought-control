@@ -61,8 +61,5 @@
    }
   }
  },
- "note": "checked in the state: Pages previews the selected page beside the list, so the screen shows its notes either way",
- "known": {
-  "thc-screen/real": "thc-screen: Esc from a page opened through the finder (typed name, Enter) leaves the Pages selection on the list's `Pages` section row, not the page (N1); from the list (B02) it's right"
- }
+ "note": "checked in the state: Pages previews the selected page beside the list, so the screen shows its notes either way"
 }
