@@ -240,14 +240,14 @@ impl Stack {
     }
 }
 
-/// Where the sidebar shows at a screen width (§6.1): the column, the drawer, or replace.
-pub fn place(width: u64) -> &'static str {
-    match width {
-        120.. => "sidebar",
-        90..=119 => "drawer",
-        _ => "replace",
-    }
-}
+/// The places the sidebar shows in (§6.1): the column (120 and up), the drawer (90–119), and
+/// replace (below 90). Which one shows is the screen's `when` on its width; each has its own
+/// instance of every panel (`<place>_<tab>_<target>`).
+pub const PLACES: &[&str] = &["sidebar", "drawer", "replace"];
+
+/// The places over the view, narrow: an open there takes the focus (§2 rule 1, §6.4); beside,
+/// in the column, it doesn't.
+pub const OVER: &[&str] = &["drawer", "replace"];
 
 /// What `thc ui aside <target>` opens (sidebar.md §10.3): `today` or a date is a day, `@today`
 /// (`inbox`, `tasks`, `log`) a view, `#tag` or any other query a list, a page id or title a page.

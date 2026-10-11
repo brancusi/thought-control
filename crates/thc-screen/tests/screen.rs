@@ -1000,6 +1000,27 @@ fn below_60_by_24_only_one_line_shows() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// A real screen gets its UI before the terminal says its size (fictty's `App::run` pushes, then
+/// sends `Screen`; Headless does the opposite). The route's focus survives that order:
+/// `thc screen --view page --id X` starts in the page's editor, not the Pages list, at any width.
+#[test]
+fn the_routes_focus_survives_the_ui_arriving_before_the_size() {
+    use fictty::state::{Msg, State, update};
+    let (root, v) = seeded("route-focus");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let page = Route { view: View::Page, id: Some(home), ..Route::default() };
+    for (route, want) in [(page, "pages_doc"), (Route::to(View::Today), "today"), (Route::to(View::Tasks), "tasks")] {
+        for (w, h) in [(200, 60), (140, 40), (100, 30)] {
+            let mut st = State::default();
+            update(&mut st, Msg::Push { ui: host.screen(&route) });
+            update(&mut st, Msg::Screen { width: w, height: h });
+            assert_eq!(st.focus.as_deref(), Some(want), "{route:?} at {w}x{h}");
+        }
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
 // ---- harness round 3 -------------------------------------------------------------------------
 
 /// E12: Esc with a selection in a page drops the selection and keeps writing; Esc again closes
@@ -1425,6 +1446,120 @@ fn narrow_an_open_focuses_the_drawer_which_has_its_edge() {
     let mut s = screen(&host, View::Today, 140, 40);
     s.keys(&["o"]);
     assert_eq!(s.state().focus.as_deref(), Some("today"), "beside, the focus stays");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// thc's host as a real screen's timing can leave it, which a headless screen (that does every
+/// fetch and act inline) never does: `in_flight`, the `panel` acts that move the focus haven't
+/// come back yet when the next key arrives; `no_size`, the sidebar's rows haven't been read at
+/// the screen's size yet.
+#[derive(Clone)]
+struct Timing {
+    host: ThcHost,
+    in_flight: bool,
+    no_size: bool,
+}
+
+impl Timing {
+    fn new(host: ThcHost, in_flight: bool, no_size: bool) -> Timing {
+        Timing { host, in_flight, no_size }
+    }
+}
+
+impl fictty::Host for Timing {
+    fn start(&self, n: fictty::Notifier) {
+        fictty::Host::start(&self.host, n)
+    }
+    fn fetch(&self, name: &str, args: &Value) -> Result<Value, String> {
+        let mut args = args.clone();
+        if let (true, "sidebar", Some(a)) = (self.no_size, name, args.as_object_mut()) {
+            a.retain(|k, _| k != "width" && k != "height");
+        }
+        fictty::Host::fetch(&self.host, name, &args)
+    }
+    fn act(&self, name: &str, args: &Value) -> Result<Value, String> {
+        if self.in_flight && name == "panel" && args["op"] == "focus" {
+            return Ok(json!({"ok": true}));
+        }
+        fictty::Host::act(&self.host, name, args)
+    }
+    fn keys(&self) -> Vec<String> {
+        fictty::Host::keys(&self.host)
+    }
+    fn load(&self, key: &str) -> Result<Value, String> {
+        fictty::Host::load(&self.host, key)
+    }
+    fn save(&self, key: &str, value: &Value) -> Result<(), String> {
+        fictty::Host::save(&self.host, key, value)
+    }
+}
+
+fn timed(t: Timing, view: View, w: u16, h: u16) -> fictty::Headless {
+    let ui = t.host.screen(&Route::to(view));
+    fictty::App::new(ui).themes(thc_screen::theme::themes()).theme("ember-dark").host(t).headless(w, h).unwrap()
+}
+
+/// S08: the first `o` at 100 opens the drawer and focuses its new panel, at 80 replace, and at
+/// 140 the focus stays in the list. Whether an open takes the focus is the screen's own width
+/// (the places' `when`), never what the host has heard about a width (`no_size`: the sidebar's
+/// rows were never read at the screen's size).
+#[test]
+fn s08_the_first_narrow_open_focuses_the_drawer() {
+    let (root, v) = seeded("s08");
+    let host = ThcHost::new(v).at(now());
+    for (w, h, want) in [(100, 30, "drawer_today_panel-day-2026-10-11"), (80, 24, "replace_today_panel-day-2026-10-11"), (140, 40, "today")] {
+        let mut s = timed(Timing::new(host.clone(), false, true), View::Today, w, h);
+        s.keys(&["o"]);
+        assert_eq!(s.state().focus.as_deref(), Some(want), "{w} wide");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S08, in a real screen's order: the stack changes, the screen starts reading the sidebar's
+/// rows again on its own thread, and the host's focus arrives before that read is back. The
+/// host sends the rows with the focus, so the new panel is there to take it: the drawer's at
+/// 100, replace's at 80; at 140 neither shows, and the focus stays in the list.
+#[test]
+fn s08_an_opens_focus_finds_its_panel_before_the_screen_has_read_it() {
+    use fictty::state::{Msg, State, update};
+    use thc_screen::sidebar::{Kind, OVER, Panel, Stack};
+    let (root, v) = seeded("s08-order");
+    let host = ThcHost::new(v).at(now());
+    let mut stack = Stack::default();
+    stack.open(Panel::new(Kind::Day, "2026-10-11"));
+    let id = stack.open[0].id();
+    let put = |key: &str, value: Value| Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "host".into(), for_ms: None };
+    for (w, h, want) in [(100, 30, "drawer_today_panel-day-2026-10-11"), (80, 24, "replace_today_panel-day-2026-10-11"), (140, 40, "today")] {
+        // `update` alone: no source the screen asks for ever comes back.
+        let mut st = State::default();
+        update(&mut st, Msg::Screen { width: w, height: h });
+        update(&mut st, Msg::Push { ui: host.screen(&Route::to(View::Today)) });
+        update(&mut st, put("sidebar", stack.to_value()));
+        update(&mut st, put("sidebar_shown", true.into()));
+        for m in host.panel_focus(&stack, &id, "today", OVER) {
+            update(&mut st, m);
+        }
+        assert_eq!(st.focus.as_deref(), Some(want), "{w} wide");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S02c: ⌥S ⌥J ⌥W as fast as a person types. The focus moves in the UI at once, so ⌥J acts in
+/// the panel ⌥S reached and ⌥W closes the one ⌥J reached, even with neither act back yet.
+#[test]
+fn s02c_panel_keys_pressed_quickly_act_on_the_panel_they_reach() {
+    let (root, v) = seeded("s02c");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = timed(Timing::new(host, true, false), View::Today, 140, 40);
+    s.keys(&["o", "down", "o"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}"), "day:2026-10-11".into()]);
+    s.keys(&["a-s"]);
+    assert_eq!(s.state().focus.as_deref(), Some(format!("sidebar_today_panel-page-{home}").as_str()), "⌥S: the active panel");
+    s.keys(&["a-j"]);
+    assert_eq!(s.state().focus.as_deref(), Some("sidebar_today_panel-day-2026-10-11"), "⌥J: the next one");
+    s.keys(&["a-k", "a-j", "a-w"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}")], "⌥W closed the day, where ⌥J went");
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -1913,4 +2048,122 @@ fn the_bar_is_the_documents_while_writing() {
     let line = bar(&mut s);
     assert!(line.starts_with(" § Sunday, October 11 2026 · ") && line.contains(" open · writing"), "{line:?}");
     let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- typing cost (C01) ---------------------------------------------------------------------------
+
+/// The least time `f` takes over `n` runs, so a busy machine's pauses don't count.
+fn least(n: usize, mut f: impl FnMut()) -> std::time::Duration {
+    (0..n)
+        .map(|_| {
+            let t = std::time::Instant::now();
+            f();
+            t.elapsed()
+        })
+        .min()
+        .unwrap()
+}
+
+/// ¶ Long, whose one paragraph is `n` chars of words, open to write at its end.
+fn long_paragraph(name: &str, n: usize) -> (std::path::PathBuf, ThcHost, fictty::Headless, String) {
+    let (root, host, id) = long_page(name, n);
+    let mut s = page(&host, &id);
+    s.keys(&["ctrl+end"]);
+    (root, host, s, id)
+}
+
+/// ¶ Long, whose one paragraph is `n` chars of words.
+fn long_page(name: &str, n: usize) -> (std::path::PathBuf, ThcHost, String) {
+    let (root, mut v) = seeded(name);
+    let id = v
+        .transact(|s| {
+            let mut b = TxBuilder::new(s, today());
+            let id = b.create_page("Long", &[])?;
+            Ok((b.finish()?, id))
+        })
+        .unwrap()
+        .1;
+    let host = ThcHost::new(v).at(now());
+    let para: String = "lorem ipsum dolor sit amet ".chars().cycle().take(n).collect();
+    if n > 0 {
+        host.save_doc(&format!("page/{id}"), &para).unwrap();
+    }
+    (root, host, id)
+}
+
+/// C01, thc's half: what thc does for a key in a page (the save: id alignment, `edit::apply`, the
+/// list normaliser; then every feed the save notifies) costs the same at 1,000 chars as at 100.
+#[test]
+fn c01_a_keys_save_costs_the_same_in_a_long_paragraph() {
+    let cost = |n: usize| {
+        let (root, host, id) = long_page(&format!("c01-save-{n}"), n);
+        let base: String = "lorem ipsum dolor sit amet ".chars().cycle().take(n).collect();
+        let mut i = 0;
+        let t = least(15, || {
+            i += 1;
+            fictty::Host::save(&host, &format!("page/{id}"), &json!(format!("{base}{}", i % 10))).unwrap();
+            for f in thc_screen::host::FEEDS {
+                let _ = host.feed(f, &json!({}));
+            }
+        });
+        let _ = std::fs::remove_dir_all(root);
+        t
+    };
+    let (short, long) = (cost(100), cost(1000));
+    assert!(long < short * 3 + std::time::Duration::from_millis(5), "a save at 100 chars {short:?}, at 1000 {long:?}");
+}
+
+/// C01: typing 1,000 chars into one paragraph, the last 100 keys cost no more than three times
+/// the first 100. Ignored until fictty draws an editor's line without asking `links_in` about
+/// the whole line once per cell (`view::md_style`, cubic in the line's length: 0.57 s a key at
+/// 1,200 chars in release, 8 s in debug).
+#[test]
+#[ignore = "C01: fictty's md_style is cubic in a line's length; un-ignore with that fix"]
+fn c01_typing_cost_stays_flat_as_a_paragraph_grows() {
+    let (root, _host, mut s, _id) = long_paragraph("c01-flat", 0);
+    let keys = typed(&"lorem ipsum dolor sit amet ".chars().cycle().take(1000).collect::<String>());
+    let mut each = Vec::new();
+    for k in &keys {
+        let t = std::time::Instant::now();
+        s.keys(&[k.as_str()]);
+        each.push(t.elapsed());
+    }
+    let (first, last): (std::time::Duration, std::time::Duration) = (each[..100].iter().sum(), each[900..].iter().sum());
+    assert!(last < first * 3, "the first 100 keys {first:?}, the last 100 {last:?}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// C01 profiling: what one key costs once a paragraph is long, split into its parts (run by hand,
+/// debug and `--release`, with `--ignored --nocapture`).
+#[test]
+#[ignore = "profiling; run by hand with --nocapture"]
+fn prof_c01_typing_cost() {
+    let ms = |t: std::time::Instant, n: usize| t.elapsed().as_secs_f64() * 1000.0 / n as f64;
+    for n in [200usize, 600, 1200] {
+        let (root, host, mut s, id) = long_paragraph(&format!("prof{n}"), n);
+        let t = std::time::Instant::now();
+        for k in typed("abcdefghij") {
+            s.keys(&[k.as_str()]);
+        }
+        let key_ms = ms(t, 10);
+        let para: String = "lorem ipsum dolor sit amet ".chars().cycle().take(n).collect();
+        let t = std::time::Instant::now();
+        for i in 0..10 {
+            host.save_doc(&format!("page/{id}"), &format!("{para}{i}")).unwrap();
+        }
+        let save_ms = ms(t, 10);
+        let t = std::time::Instant::now();
+        for f in thc_screen::host::FEEDS {
+            let _ = host.feed(f, &json!({}));
+        }
+        let feeds_ms = ms(t, 1);
+        // fictty's md_style asks links_in about the whole line once per cell it draws.
+        let t = std::time::Instant::now();
+        for _ in 0..n {
+            let _ = fictty::model::links_in(&para, &["wiki", "url", "tag"]);
+        }
+        let links_ms = ms(t, 1);
+        eprintln!("{n:>5} chars: a key {key_ms:>9.2} ms | save_doc {save_ms:>7.2} ms | every feed {feeds_ms:>7.2} ms | links_in x{n} {links_ms:>9.2} ms");
+        let _ = std::fs::remove_dir_all(root);
+    }
 }

@@ -938,16 +938,22 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         ),
         "views",
     );
-    // Below 60×24 (§3) only one centred line shows: two of them, as `when` has no "or".
+    // Below 60×24 (§3) only one centred line shows: two of them, as `when` has no "or". Each
+    // is a modal layer over the views, so it clears them and keys don't reach them. It shows
+    // only once the terminal has said its size (`>0`): a real screen gets its UI before its
+    // size, and views hidden until then would drop the route's focus (a page's editor) for the
+    // first list.
     let small = |cond: &str| {
         let mut t = bound(text("<muted>thc needs at least 60×24 · now {width}×{height}</>"), "$screen");
         t.align = Some("center".into());
         t.float = Some(Float { width: None, height: Some(cells(1)), at: Some("center".into()), margin: None });
-        when(t, cond)
+        let mut layer = node(Kind::Stack { children: vec![text(""), t] });
+        layer.float = Some(Float { width: None, height: None, at: None, margin: None });
+        layer.modal = true;
+        when(layer, &format!("$screen.width>0 & {cond}"))
     };
-    let views = when(views, BIG);
     let mut bar_prompt = prompt();
-    bar_prompt.when = Some(format!("prompt & {BIG}"));
+    bar_prompt.when = Some("prompt".into());
     let root = node(Kind::Stack { children: vec![views, bar_prompt, small("$screen.width<60"), small("$screen.width>=60 & $screen.height<24")] });
     Ui { root, data, store, keys: key_map(&globals), focus, status_bar: Some(false), ..Ui::default() }
 }
@@ -968,9 +974,28 @@ fn day_op(v: View, by: Value) -> Action {
     act("panel", json!({"op": "day", "by": by, "key": "{$item.key}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
 }
 
-/// The focus to a panel: `by` 0 the active one, 1 and -1 the next and previous.
-fn focus_op(v: View, by: i64, from: &str) -> Action {
-    act("panel", json!({"op": "focus", "by": by, "key": from, "id": "{store.sidebar_active}", "stack": "{store.sidebar}", "shown": true, "view": v.name()}))
+/// `⌥S`: the sidebar shows and its active panel has the focus, both at once, here in the UI
+/// (`sidebar_target` ends its node ids; of the three places only the one showing takes it), so a
+/// key pressed right after lands in the panel (S02c). The act records the active panel, or with
+/// none it knows, makes the top one active and focuses it.
+fn to_sidebar(v: View) -> Action {
+    let mut steps = vec![Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None }];
+    for place in crate::sidebar::PLACES {
+        steps.push(Action::Focus { focus: format!("{place}_{}_{{store.sidebar_target}}", v.name()) });
+    }
+    steps.push(act("panel", json!({"op": "focus", "id": "{store.sidebar_active}", "stack": "{store.sidebar}", "view": v.name()})));
+    Action::Do { steps }
+}
+
+/// `⌥J` `⌥K` in a panel at `place`: the focus to the next or previous panel (`to`: `next` or
+/// `prev`, from the sidebar's rows), at once; the act makes it the active one.
+fn step_panel(v: View, place: &str, to: &str) -> Action {
+    Action::Do {
+        steps: vec![
+            Action::Focus { focus: format!("{place}_{}_{{$item.{to}}}", v.name()) },
+            act("panel", json!({"op": "focus", "key": format!("{{$item.{to}_key}}"), "stack": "{store.sidebar}", "view": v.name()})),
+        ],
+    }
 }
 
 /// Open a row's page or day aside (§2: `o`, `⌥O`, `⇧Enter`). Narrow, the drawer (or replace)
@@ -988,7 +1013,7 @@ fn aside_row(v: View) -> Action {
 /// nothing): `⌥S` to the sidebar (showing it), `⌥⇧T` reopen, `⌥\` hide or show.
 fn everywhere_binds(v: View) -> Vec<Bind> {
     vec![
-        b("a-s", "sidebar", Action::Do { steps: vec![Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None }, focus_op(v, 0, "")] }),
+        b("a-s", "sidebar", to_sidebar(v)),
         b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
         b("a-\\", "sidebar hide / show", act("panel", json!({"op": "toggle", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
     ]
@@ -1014,8 +1039,8 @@ fn sidebar_back(v: View, place: &str) -> Action {
 fn panel_binds(v: View, place: &str) -> Vec<Bind> {
     let back = sidebar_back(v, place);
     vec![
-        b("a-j", "next panel", focus_op(v, 1, "{$item.key}")),
-        b("a-k", "previous panel", focus_op(v, -1, "{$item.key}")),
+        b("a-j", "next panel", step_panel(v, place, "next")),
+        b("a-k", "previous panel", step_panel(v, place, "prev")),
         b("a-c", "fold", panel_op(v, "fold")),
         b("a-w", "close", panel_op(v, "close")),
         b("a-p", "pin / unpin", panel_op(v, "pin")),
@@ -1148,9 +1173,6 @@ fn aside_title(v: View, kind: &str, title: &str) -> Action {
         ],
     }
 }
-
-/// Big enough to draw (§3: 60×24).
-const BIG: &str = "$screen.width>=60 & $screen.height>=24";
 
 /// A tab's view (what layers open over), the sources it reads, the store it seeds, and its
 /// bindings by group (for its help and palette).
