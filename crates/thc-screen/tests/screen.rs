@@ -37,6 +37,11 @@ fn seeded(name: &str) -> (std::path::PathBuf, Vault) {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, d);
         let cap = |t: &str| thc_core::capture::parse(t, d).unwrap();
+        // The sample vault's pages, in its order: Atomic Habits, Health, Home, Q4 Planning.
+        b.create_page("Atomic Habits", &[])?;
+        b.create_page("Health", &[])?;
+        let q4 = b.create_page("Q4 Planning", &[])?;
+        b.create_from_capture(Some(q4), &cap("Theme for the quarter: fewer, deeper bets"), None)?;
         let home = b.create_page("Home", &[])?;
         let water = b.create_from_capture(Some(home.clone()), &cap("[ ] Water plants due:2026-10-11 #garden"), None)?;
         b.create_from_capture(Some(water), &cap("[ ] Buy a watering can"), None)?;
@@ -191,6 +196,16 @@ fn keys_switch_views_and_the_split_follows_the_width() {
     // A click on a tab title (what the runtime makes of the mouse there) switches too.
     s.msg(fictty::state::Msg::Click { id: "views".into(), row: Some(1002), tab: Some(2) });
     assert!(s.screen().contains("q› "), "tasks by click: {}", s.screen());
+    // In Tasks the rows have the focus, so 1 goes back to Today (it isn't typed in the filter).
+    s.keys(&["1"]);
+    assert!(s.screen().lines().nth(1).unwrap().starts_with(&format!("{}{}─", "─".repeat(10), "━".repeat(7))), "{}", s.screen());
+    // `f` edits the filter; the rows follow what's typed; Enter goes back to them.
+    s.keys(&["3", "f", "d-right"]);
+    type_in(&mut s, " #garden");
+    s.keys(&["enter"]);
+    let tasks = s.screen();
+    assert!(tasks.contains("Water plants") && !tasks.contains("Call the bank") && tasks.contains("1 task"), "{tasks}");
+    assert_eq!(s.state().focus.as_deref(), Some("tasks-list"), "back on the rows");
     let mut wide = screen(&host, View::Inbox, 120, 32);
     let frame = wide.screen();
     assert!(frame.contains("│  ·  Look into a standing desk"), "the detail pane: {frame}");
@@ -429,5 +444,31 @@ fn the_mac_editing_keys_work_in_a_page() {
     // ⇧⌘← selects to the start of the row; ⌘C copies it.
     s.keys(&["d-s-left", "d-c"]);
     assert_eq!(s.copied().last().map(String::as_str), Some("- Wifi password is on the "));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// The person's path, as driven live: a click on the Pages tab, ↓ ↓ ↓ to Q4 Planning, Enter, ⌘↓
+/// to the end of the page, a new task typed: it's in the vault under the page.
+#[test]
+fn a_click_on_pages_then_keys_write_a_task_into_a_page() {
+    let (root, v) = seeded("click-write");
+    let q4 = node_id(&root, "Q4 Planning");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    // The click on the tab title, as the runtime reports it; the focus goes into the view.
+    s.msg(fictty::state::Msg::Click { id: "views".into(), row: Some(1003), tab: Some(3) });
+    assert_eq!(s.state().focus.as_deref(), Some("pages_q"), "the finder, not the tab bar");
+    s.keys(&["down", "down", "down"]);
+    assert!(s.screen().contains("▌ "), "{}", s.screen());
+    s.keys(&["enter"]);
+    let text = s.screen();
+    assert!(text.contains("# Q4 Planning") && text.contains("- Theme for the quarter"), "Q4 Planning to write in: {text}");
+    s.keys(&["d-down"]);
+    type_in(&mut s, "- [ ] X");
+    let check = open(&root, human());
+    let kids = check.store.children(&q4).unwrap();
+    let x = kids.iter().find(|n| n.text == "X").unwrap_or_else(|| panic!("no X under Q4 Planning: {kids:?}"));
+    assert_eq!(x.status.as_deref(), Some("todo"));
+    assert_eq!(check.store.history(&x.id, 5).unwrap()[0].actor, "human");
     let _ = std::fs::remove_dir_all(root);
 }

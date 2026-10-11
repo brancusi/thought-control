@@ -116,7 +116,7 @@ pub fn source(name: &str, args: Value) -> Source {
     Source { cmd: None, shell: None, stream: None, value: None, path: None, every: None, host: Some(name.into()), args }
 }
 
-/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `open`, `tab`, `answer`): args are
+/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `open`, `answer`): args are
 /// templates over the selected row (`{id}`), the store (`{store.key}`) and `$id`.
 pub fn act(name: &str, args: Value) -> Action {
     Action::Host { host: name.into(), args }
@@ -125,18 +125,6 @@ pub fn act(name: &str, args: Value) -> Action {
 /// Open a screen.
 pub fn open(route: &Route) -> Action {
     act("open", serde_json::to_value(route).unwrap_or_default())
-}
-
-/// Show a route's tab, and put the focus in its view: messages to the screen.
-/// TODO(fictty): the tabs node is focusable and first in focus order, so when a tab changes the
-/// focus lands on the tab bar instead of in the view; until a tab switch moves the focus into the
-/// shown child, the focus moves by a click on the view's first node (a click focuses).
-pub fn show_tab(route: &Route) -> Vec<fictty::state::Msg> {
-    let mut m = vec![fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(route.tab()) }];
-    if let Some(id) = first_focus(route) {
-        m.push(fictty::state::Msg::Click { id: id.into(), row: None, tab: None });
-    }
-    m
 }
 
 /// What a view focuses first: its list, or its input where typing comes first (§6.3).
@@ -286,8 +274,6 @@ fn node_keys(back: View) -> BTreeMap<String, Action> {
             Action::Do {
                 steps: vec![
                     Action::Put { put: "ask_id".into(), value: "{id}".into() },
-                    // The view's list (its id is the view's name), to go back to.
-                    Action::Put { put: "ask_from".into(), value: back.name().into() },
                     Action::Put { put: "prompt".into(), value: ask.into() },
                     Action::Focus { focus: "prompt_in".into() },
                 ],
@@ -299,15 +285,13 @@ fn node_keys(back: View) -> BTreeMap<String, Action> {
 
 /// The bar prompt (a recipe, §3.3's "bar prompts"): a line floated over the bar while the store's
 /// `prompt` is set, its input's Enter answering the host with what was typed and the row it was
-/// asked about, Esc closing it. Closing puts the focus back on the list that asked.
-/// TODO(fictty): `focus` takes no template, and hiding the focused input moves the focus to the
-/// tab bar, so the host moves it back (`focus` with `{store.ask_from}`).
+/// asked about, Esc closing it. Closing puts the focus back where it was (`$prev`).
 fn prompt() -> Node {
     let clear = || {
         vec![
             Action::Put { put: "prompt".into(), value: "".into() },
             Action::Put { put: "prompt_in".into(), value: "".into() },
-            act("focus", json!({"id": "{store.ask_from}"})),
+            Action::Focus { focus: "$prev".into() },
         ]
     };
     let mut answer = vec![act("answer", json!({"ask": "{store.prompt}", "id": "{store.ask_id}", "text": "{store.prompt_in}"}))];
@@ -398,12 +382,14 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         .map(|(i, v)| tab_view(&if i == tab { route.clone() } else { Route::to(*v) }, today, &mut data, &mut store))
         .collect();
     let focus = first_focus(route).map(String::from);
-    let titles = ["Today", "Inbox{inbox|? $}", "Tasks", "Pages", "Journal", "Search", "Log"].map(String::from).to_vec();
+    let titles = ["Today", "Inbox{inbox|? <text>$</>}", "Tasks", "Pages", "Journal", "Search", "Log"].map(String::from).to_vec();
     let views = id(
         bound(
             node(Kind::Tabs {
                 tabs: titles,
                 children,
+                // The route's tab first; an `open` lands in the tab it came from, so a push keeps it.
+                tab: Some(tab),
                 lead: Some(" <muted>[</><accent+b>•</><muted>]</> <muted>thc</> ".into()),
                 trail: Some("<muted>{date}</> ".into()),
             }),
@@ -412,8 +398,9 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         "views",
     );
     let root = node(Kind::Stack { children: vec![views, prompt()] });
-    let mut keys: BTreeMap<String, Action> = (0..View::TABS.len()).map(|i| ((i + 1).to_string(), act("tab", json!({"n": i})))).collect();
-    keys.insert("/".into(), act("tab", json!({"n": 5})));
+    let show = |tab: usize| Action::ShowTab { tab, of: "views".into() };
+    let mut keys: BTreeMap<String, Action> = (0..View::TABS.len()).map(|i| ((i + 1).to_string(), show(i))).collect();
+    keys.insert("/".into(), show(5));
     keys.insert("t".into(), Action::Theme { theme: "next".into() });
     if let Some(back) = route.back() {
         keys.insert("esc".into(), open(&back));
@@ -443,10 +430,17 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             view(split(l, pane("inbox", "detail", data)), "inbox", &[("m", "move"), ("x", "done"), ("d", "date")])
         }
         View::Tasks => {
-            // The filter is the query: the table follows what's typed (Tab to the rows).
+            // The filter is the query: the table follows what's typed. The rows have the focus;
+            // `f` edits the filter (§6.3), Enter or Esc goes back to the rows.
             store.insert("tasks_q".into(), route.query.clone().unwrap_or_else(|| "status:open".into()).into());
             feed("tasks", json!({"query": "{store.tasks_q}"}));
-            let filter = variant(sized(row(vec![sized(text(" <accent+b>q›</> "), cells(4)), input("tasks_q", "", "a thc query"), sized(bound(text("\t<muted>{count}</> "), "tasks"), cells(12))]), cells(1)), "input");
+            let done = || Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: "".into() }, Action::Focus { focus: "$prev".into() }] };
+            let mut field = when(input("tasks_q", "", "a thc query"), "tasks_edit");
+            field.keys.insert("enter".into(), done());
+            field.keys.insert("esc".into(), done());
+            let shown = when(bound(text("{filter_m|markup}"), "tasks"), "!tasks_edit");
+            let filter = variant(sized(row(vec![sized(text(" <accent+b>q›</> "), cells(4)), shown, field, sized(bound(text("\t<muted>{count}</> "), "tasks"), cells(12))]), cells(1)), "input");
+            let edit = Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: true.into() }, Action::Focus { focus: "tasks_q".into() }] };
             let col_ = |title: &str, value: &str, size: Size| Column { title: title.into(), value: value.into(), size: Some(size), align: None, heat: None, total: None };
             let table = keys(
                 id(
@@ -471,14 +465,18 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
                 node_keys(View::Tasks),
             );
             let narrow = keys(list("tasks-list", "tasks.rows", rows(format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "))), node_keys(View::Tasks));
+            let (mut table, mut narrow) = (table, narrow);
+            table.keys.insert("f".into(), edit.clone());
+            narrow.keys.insert("f".into(), edit);
             let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$screen.width<120")]);
-            view(content, "tasks", &[("tab", "rows"), ("x", "done"), ("enter", "open")])
+            view(content, "tasks", &[("f", "filter"), ("x", "done"), ("enter", "open")])
         }
         View::Pages => {
             feed("pages", json!({}));
             let mut finder = variant(input("pages_q", "", "type to find a page, tag or day"), "input");
             finder.keys.insert("enter".into(), Action::Focus { focus: "pages".into() });
-            finder.keys.insert("down".into(), Action::Focus { focus: "pages".into() });
+            // ↓ moves into the list, a row at a time (§6.3: ↑ ↓ move from the finder).
+            finder.keys.insert("down".into(), Action::Do { steps: vec![Action::Focus { focus: "pages".into() }, Action::Named("down".into())] });
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), finder]), cells(1)), "input");
             let mut r = rows("<muted>{short}</>  {title_m|markup}\t{meta_m|markup} ".into());
             r.variants.insert("day".into(), "{title_m|markup}\t{meta_m|markup} ".into());

@@ -36,15 +36,13 @@ struct Inner {
     watch: bool,
     live: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
-    /// The route the screen starts on: its tab is shown when it starts (see `app`).
-    first: Mutex<Option<Route>>,
 }
 
 impl ThcHost {
     /// A host on an open vault. Its writes are the vault's actor's: open it as the person
     /// (`Actor { kind: "human" }`) for a screen a person drives.
     pub fn new(vault: Vault) -> ThcHost {
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None), first: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -79,12 +77,8 @@ impl ThcHost {
     }
 
     /// A fictty app on this vault, showing `route` in `theme`: run it (`run`) or draw it
-    /// (`headless`). Its first message shows the route's tab.
-    /// TODO(fictty): a tabs node's starting tab, so the UI says it and no message is needed.
+    /// (`headless`).
     pub fn app(&self, route: &Route, theme: &str) -> fictty::App {
-        if let Ok(mut f) = self.inner.first.lock() {
-            *f = Some(route.clone());
-        }
         fictty::App::new(self.screen(route)).themes(crate::theme::themes()).theme(theme).host(self.clone())
     }
 
@@ -194,26 +188,7 @@ impl ThcHost {
                 }
                 let ui = self.screen(&route);
                 self.send(fictty::state::Msg::Push { ui })?;
-                for m in screens::show_tab(&route) {
-                    self.send(m)?;
-                }
                 Ok(json!({"ok": true, "view": view.name()}))
-            }
-            // Show a view's tab (keys 1–7): the views are already on screen, so nothing is pushed.
-            // TODO(fictty): an action that shows tab N would make this the screen's own.
-            "tab" => {
-                let n = args.get("n").and_then(Value::as_u64).ok_or_else(|| anyhow::anyhow!("tab needs n"))? as usize;
-                let view = *View::TABS.get(n).ok_or_else(|| anyhow::anyhow!("no tab {n}"))?;
-                for m in screens::show_tab(&Route::to(view)) {
-                    self.send(m)?;
-                }
-                Ok(json!({"ok": true, "tab": n}))
-            }
-            // Focus a node (a click focuses): the prompt going back to the list that asked.
-            "focus" => {
-                let id = id()?;
-                self.send(fictty::state::Msg::Click { id: id.clone(), row: None, tab: None })?;
-                Ok(json!({"ok": true, "focus": id}))
             }
             // The bar prompt's answer (`d` a date, `m` where to): `{"ask": "due"|"move", "id", "text"}`.
             "answer" => {
@@ -241,11 +216,6 @@ impl Host for ThcHost {
     fn start(&self, notifier: Notifier) {
         if let Ok(mut n) = self.inner.notifier.lock() {
             *n = Some(notifier.clone());
-        }
-        if let Some(r) = self.inner.first.lock().ok().and_then(|mut f| f.take()) {
-            for m in screens::show_tab(&r) {
-                notifier.msg(m);
-            }
         }
         if self.inner.watch {
             let host = self.clone();
