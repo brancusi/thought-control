@@ -244,7 +244,10 @@ fn close_overlay(v: View) -> Action {
             Action::Put { put: "help".into(), value: false.into(), for_ms: None },
             Action::Put { put: "palette".into(), value: false.into(), for_ms: None },
             Action::Put { put: format!("{}_palette_q", v.name()), value: "".into(), for_ms: None },
+            // Back to the view's list, or to the page or day open over it (the last that's there
+            // wins), so a palette command for writing (⌥L) runs in the text.
             Action::Focus { focus: main_id(v) },
+            Action::Focus { focus: format!("{}_doc", v.name()) },
         ],
     }
 }
@@ -771,7 +774,7 @@ fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
             // view-cycling binding here: in a document it's the editor's (indent, E22).
             // Tab nests and un-nests the lines (the outliner Tab, E22); ⌃T cycles a line through
             // task, done and text (E75).
-            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: Some("end".into()), links: doc_links(v) };
+            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: Some("end".into()), links: doc_links(v), ordered: ordered() };
             let mut doc = id(bound(node(editor), &k), &format!("{}_doc", v.name()));
             doc.pad = Some(Pad::X(1));
             // ⌃O follows the link at the caret, ⌥O opens it aside (E66).
@@ -894,6 +897,8 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
             let anywhere = everywhere_binds(*v);
             content = with_keys_everywhere(content, &anywhere);
             groups.push(("sidebar".into(), anywhere));
+            // In a page or a day (here, or in a panel): its links and its lists.
+            groups.push(("writing".into(), link_binds(*v)));
             // The view's help and palette, over everything in its tab.
             let mut everywhere: Vec<Bind> = overlay_binds(*v).into_iter().zip(["help", "commands"]).map(|((k, a), w)| b(&k, w, a)).collect();
             everywhere.extend(globals.iter().cloned());
@@ -1037,7 +1042,7 @@ fn panel_template(v: View, place: &str) -> Node {
     head.click = Some(panel_op(v, "fold"));
     let head = sized(head, cells(1));
     // A page or a day: the editor (Tab nests, ⌃T cycles a line, links as in the main view).
-    let editor = Kind::Editor { text: String::new(), doc: Some("{$item.doc}".into()), placeholder: Some("Type to start.".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: None, links: doc_links(v) };
+    let editor = Kind::Editor { text: String::new(), doc: Some("{$item.doc}".into()), placeholder: Some("Type to start.".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: None, links: doc_links(v), ordered: ordered() };
     let mut doc = id(node(editor), &format!("{pre}_panel-{{$item.id}}"));
     doc.keys.extend(key_map(&binds));
     doc.keys.extend(key_map(&link_binds(v)));
@@ -1097,10 +1102,22 @@ fn doc_links(v: View) -> Vec<fictty::model::LinkSpec> {
     ]
 }
 
-/// The keys for the link at the caret (E66): ⌃O follows it, ⌥O opens it aside.
+/// The keys of a page or day being written in (main view or a panel): ⌃O follows the link at the
+/// caret and ⌥O opens it aside (E66); ⌥L cycles the caret's list through number, letter, roman
+/// and bullet.
 fn link_binds(v: View) -> Vec<Bind> {
     let from = View::TABS.iter().position(|t| *t == v).unwrap_or(0);
-    vec![b("c-o", "follow the link", follow(v, from, "{$link}")), b("a-o", "the link aside", aside_title(v, "link", "{$link}"))]
+    vec![
+        b("c-o", "follow the link", follow(v, from, "{$link}")),
+        b("a-o", "the link aside", aside_title(v, "link", "{$link}")),
+        b("a-l", "list style: 1. a. i. -", Action::ListStyle { list_style: "next".into() }),
+    ]
+}
+
+/// Ordered lists in pages and days, by depth (thc_core::list's depth sequence, so what the
+/// editor numbers is what the vault renders): `1.`, then `a.`, then `i.`.
+fn ordered() -> Vec<String> {
+    (1..=3).map(|d| thc_core::list::ListStyle::for_depth(d).as_str()).collect()
 }
 
 /// Follow a link in the main view: the page, open to write in, and Esc back to where it was.
@@ -1218,7 +1235,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
-            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None, caret: None, links: vec![] }), "@pages");
+            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None, caret: None, links: vec![], ordered: vec![] }), "@pages");
             preview.id = Some("preview".into());
             preview.pad = Some(Pad::X(1));
             let content = over_list(finder_row, col(vec![sized(text(""), cells(2)), split(l, preview)]));

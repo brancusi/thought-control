@@ -1394,7 +1394,7 @@ fn one_page_two_editors_one_text_one_undo() {
     let host = ThcHost::new(v).at(now());
     let editor = |id: &str| Node {
         id: Some(id.into()),
-        kind: Kind::Editor { text: String::new(), doc: Some(format!("page/{home}")), placeholder: None, syntax: Some("markdown".into()), readonly: false, tab: None, tasks: None, caret: Some("end".into()), links: vec![] },
+        kind: Kind::Editor { text: String::new(), doc: Some(format!("page/{home}")), placeholder: None, syntax: Some("markdown".into()), readonly: false, tab: None, tasks: None, caret: Some("end".into()), links: vec![], ordered: vec![] },
         ..Node::default()
     };
     let ui = Ui { root: Node { kind: Kind::Col { children: vec![editor("main"), editor("panel")], gap: None }, ..Node::default() }, focus: Some("main".into()), status_bar: Some(false), ..Ui::default() };
@@ -1739,5 +1739,113 @@ fn a_click_on_a_panels_header_folds_it() {
     assert!(s.screen().contains("▸ ¶ Home") && s.screen().contains("2 open"), "{}", s.screen());
     s.msg(fictty::state::Msg::Click { id: head, row: Some(0), tab: None });
     assert!(s.screen().contains("▾ ¶ Home"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- numbered lists (thc_core::list; fictty's `ordered`) -----------------------------------------
+
+/// An empty page, ¶ Lists, open to write in.
+fn lists_page(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless, String) {
+    let (root, mut v) = seeded(name);
+    let id = v
+        .transact(|s| {
+            let mut b = TxBuilder::new(s, today());
+            let id = b.create_page("Lists", &[])?;
+            Ok((b.finish(), id))
+        })
+        .unwrap()
+        .1;
+    let host = ThcHost::new(v).at(now());
+    let s = page(&host, &id);
+    (root, host, s, id)
+}
+
+/// The text the page's editor holds.
+fn doc_text(s: &mut fictty::Headless, id: &str) -> String {
+    s.state().store[&format!("page/{id}")].read()["text"].as_str().unwrap_or("").to_string()
+}
+
+/// A node's `list` prop: its list's style, when it starts one that isn't the default.
+fn list_prop(root: &Path, id: &str) -> Option<String> {
+    open(root, human()).store.props_of(id).ok().and_then(|p| p.get("list").and_then(|v| v.as_str()).map(String::from))
+}
+
+/// `1. one` Enter starts `2. `; Tab makes it `a.` under one, ⇧Tab brings it back; the vault has
+/// the list's style on its first item, the nesting, and the same nodes throughout.
+#[test]
+fn numbered_items_continue_nest_and_come_back() {
+    let (root, _host, mut s, page_id) = lists_page("numbered");
+    type_in(&mut s, "1. one\n");
+    assert!(doc_text(&mut s, &page_id).ends_with("1. one\n2. "), "Enter continues the numbers: {:?}", doc_text(&mut s, &page_id));
+    type_in(&mut s, "two");
+    let kids = kids(&root, &page_id);
+    assert_eq!(kids.iter().map(|k| k.0.as_str()).collect::<Vec<_>>(), vec!["one", "two"]);
+    let (one, two) = (kids[0].1.clone(), kids[1].1.clone());
+    assert_eq!(list_prop(&root, &one).as_deref(), Some("1."), "the run's style on its first item");
+    s.keys(&["tab"]);
+    let text = doc_text(&mut s, &page_id);
+    assert!(text.contains("1. one\n") && text.contains("a. two"), "Tab: a lettered item under one: {text:?}");
+    assert_eq!(kids_of(&root, &one), vec![two.clone()], "two is one's child");
+    assert_eq!(list_prop(&root, &two), None, "inside a numbered item, letters are the default");
+    s.keys(&["s-tab"]);
+    let text = doc_text(&mut s, &page_id);
+    assert!(text.ends_with("1. one\n2. two") || text.ends_with("1. one\n2. two\n"), "⇧Tab back: {text:?}");
+    assert_eq!(kids_of(&root, &page_id), vec![one, two], "the same nodes, siblings again");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn kids_of(root: &Path, parent: &str) -> Vec<String> {
+    kids(root, parent).into_iter().map(|k| k.1).collect()
+}
+
+/// ⌥L cycles the caret's list: numbers → letters → roman → bullets, each saved as the run's
+/// `list` prop (none for bullets, the default at the top), the nodes kept.
+#[test]
+fn alt_l_cycles_a_lists_style_and_the_vault_follows() {
+    let (root, _host, mut s, page_id) = lists_page("cycle-style");
+    type_in(&mut s, "1. one\ntwo");
+    let ids = kids_of(&root, &page_id);
+    for (marks, prop) in [(["a. one", "b. two"], Some("a.")), (["i. one", "ii. two"], Some("i.")), (["- one", "- two"], None), (["1. one", "2. two"], Some("1."))] {
+        s.keys(&["a-l"]);
+        let text = doc_text(&mut s, &page_id);
+        assert!(marks.iter().all(|m| text.contains(m)), "{marks:?} in {text:?}");
+        assert_eq!(list_prop(&root, &ids[0]).as_deref(), prop, "{marks:?}");
+        assert_eq!(kids_of(&root, &page_id), ids, "the same nodes");
+    }
+    // It's in `?` and `:`, under writing.
+    let cmds = s.state().store["cmds_pages"].read()["value"].clone();
+    assert!(cmds.as_array().unwrap().iter().any(|c| c["key"] == "a-l" && c["group"] == "writing"), "{cmds}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Reordering in the editor (the first item cut and pasted under the second) renumbers the list,
+/// and the vault has the new order, the style moved to the new first item, the same nodes.
+#[test]
+fn a_reorder_renumbers() {
+    let (root, _host, mut s, page_id) = lists_page("renumber");
+    type_in(&mut s, "1. one\ntwo\nthree");
+    let ids = kids_of(&root, &page_id);
+    // `1. one` and its line break, cut; pasted at the start of what's now the second line.
+    s.keys(&["d-up", "s-down", "d-x", "down", "d-v"]);
+    let text = doc_text(&mut s, &page_id);
+    assert!(text.starts_with("1. two\n2. one\n3. three"), "renumbered: {text:?}");
+    assert_eq!(kids_of(&root, &page_id), vec![ids[1].clone(), ids[0].clone(), ids[2].clone()], "the new order, the same nodes");
+    assert_eq!(list_prop(&root, &ids[1]).as_deref(), Some("1."), "the style on the new first item");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// What the editor holds is what thc-core renders: a page with a bulleted list, a paragraph and
+/// a numbered list (with a lettered level) reads back exactly, and so does a fresh open of it.
+#[test]
+fn a_page_of_lists_round_trips_through_the_editor() {
+    let (root, host, mut s, page_id) = lists_page("round-trip");
+    type_in(&mut s, "- milk\neggs\n\nA plain paragraph between them.\n\n1. first\nsecond");
+    s.keys(&["enter", "tab"]);
+    type_in(&mut s, "a nested one");
+    let written = doc_text(&mut s, &page_id);
+    let rendered = host.load_doc(&format!("page/{page_id}")).unwrap();
+    assert_eq!(written.trim_end(), rendered.trim_end(), "the editor's text is thc-core's render");
+    let again = page(&host, &page_id).state().store[&format!("page/{page_id}")].read()["text"].as_str().unwrap_or("").to_string();
+    assert_eq!(again, rendered, "reopening gives the same text");
     let _ = std::fs::remove_dir_all(root);
 }

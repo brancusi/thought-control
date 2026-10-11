@@ -64,9 +64,19 @@ pub fn shown(rendered: &str) -> String {
     all[heading_len(&all)..].iter().map(|(l, _)| format!("{l}\n")).collect()
 }
 
+/// What a line says, for lining lines up: its text without its indentation or its list marker.
+/// A renumbered item (`2. one` that was `1. one`), a restyled list (`a.` for `1.`) and an item
+/// moved in or out a level are still that line.
+fn content(line: &str) -> &str {
+    let t = line.trim();
+    thc_core::list::marker(t).map_or(t, |(_, rest)| rest)
+}
+
 /// The edited text with ids put back for `edit::apply`: a line that's still there keeps its id
-/// (the longest common run of lines), and between those, changed lines take the ids of the
-/// lines they replaced, in order. Extra new lines are new nodes; old lines left over are gone.
+/// (the longest common run of lines, by `content`); a line that moved (the same content
+/// elsewhere, its own line gone from where it was) keeps its id too; between those, changed lines
+/// take the ids of the lines they replaced, in order. Extra new lines are new nodes; old lines
+/// left over are gone.
 pub fn with_ids(rendered: &str, edited: &str) -> String {
     let old = lines(rendered);
     // The heading the editor never showed goes back in front, as it was.
@@ -74,39 +84,56 @@ pub fn with_ids(rendered: &str, edited: &str) -> String {
     let edited = format!("{heading}{edited}");
     let new: Vec<&str> = edited.lines().collect();
     let (n, m) = (old.len(), new.len());
-    // Longest common subsequence of lines, by their shown text.
+    let same = |i: usize, j: usize| content(&old[i].0) == content(new[j]) && (old[i].0.trim().is_empty() == new[j].trim().is_empty());
+    // Longest common subsequence of lines, by what they say.
     let mut lcs = vec![vec![0u32; m + 1]; n + 1];
     for i in (0..n).rev() {
         for j in (0..m).rev() {
-            lcs[i][j] = if old[i].0 == new[j].trim_end() { lcs[i + 1][j + 1] + 1 } else { lcs[i + 1][j].max(lcs[i][j + 1]) };
+            lcs[i][j] = if same(i, j) { lcs[i + 1][j + 1] + 1 } else { lcs[i + 1][j].max(lcs[i][j + 1]) };
         }
     }
     let mut ids: Vec<Option<String>> = vec![None; m];
     let (mut i, mut j) = (0, 0);
-    let (mut hunk_old, mut hunk_new): (Vec<usize>, Vec<usize>) = (vec![], vec![]);
-    let flush = |ho: &mut Vec<usize>, hn: &mut Vec<usize>, ids: &mut Vec<Option<String>>| {
-        // Changed lines take the replaced lines' ids, in order (blank lines carry none).
-        let olds = ho.drain(..).filter_map(|k| old[k].1.clone());
-        let news = hn.drain(..).filter(|&k| !new[k].trim().is_empty()).collect::<Vec<_>>();
-        for (id, k) in olds.zip(news) {
-            ids[k] = Some(id);
-        }
-    };
+    let mut hunks: Vec<(Vec<usize>, Vec<usize>)> = vec![(vec![], vec![])];
     while i < n || j < m {
-        if i < n && j < m && old[i].0 == new[j].trim_end() {
-            flush(&mut hunk_old, &mut hunk_new, &mut ids);
+        if i < n && j < m && same(i, j) {
             ids[j] = old[i].1.clone();
+            hunks.push((vec![], vec![]));
             i += 1;
             j += 1;
         } else if j < m && (i == n || lcs[i][j + 1] >= lcs[i + 1][j]) {
-            hunk_new.push(j);
+            hunks.last_mut().unwrap().1.push(j);
             j += 1;
         } else {
-            hunk_old.push(i);
+            hunks.last_mut().unwrap().0.push(i);
             i += 1;
         }
     }
-    flush(&mut hunk_old, &mut hunk_new, &mut ids);
+    // Moved lines: an unmatched new line saying what an unmatched old line said is that line.
+    let mut unmatched_old: Vec<usize> = hunks.iter().flat_map(|h| h.0.clone()).filter(|&k| old[k].1.is_some() && !content(&old[k].0).is_empty()).collect();
+    for h in hunks.iter_mut() {
+        h.1.retain(|&k| {
+            if content(new[k]).is_empty() {
+                return true;
+            }
+            match unmatched_old.iter().position(|&o| content(&old[o].0) == content(new[k])) {
+                Some(p) => {
+                    ids[k] = old[unmatched_old.remove(p)].1.clone();
+                    false
+                }
+                None => true,
+            }
+        });
+    }
+    // Changed lines take the replaced lines' ids, in order, within their stretch (blank lines
+    // carry none; a moved line's id is spent).
+    for (ho, hn) in hunks {
+        let olds = ho.into_iter().filter(|k| unmatched_old.contains(k)).filter_map(|k| old[k].1.clone());
+        let news = hn.into_iter().filter(|&k| !new[k].trim().is_empty());
+        for (id, k) in olds.zip(news) {
+            ids[k] = Some(id);
+        }
+    }
     paragraph_ids_last(&new, &mut ids);
     new.iter()
         .zip(ids)
@@ -138,14 +165,14 @@ pub fn seen(rendered: &thc_core::edit::Rendered) -> Vec<(String, String)> {
         .filter_map(|(l, id)| {
             let id = id?;
             let full = rendered.ids.get(&id).cloned().or_else(|| rendered.ids.values().find(|f| f.starts_with(&id)).cloned())?;
-            Some((l.trim().to_string(), full))
+            Some((content(&l).to_string(), full))
         })
         .collect()
 }
 
 /// The lines of an edited text (with ids put back) that have no id: new to the last render.
 pub fn new_lines(edited: &str) -> Vec<String> {
-    edited.lines().filter(|l| !l.trim().is_empty() && split_id(l).1.is_none()).map(|l| l.trim().to_string()).collect()
+    edited.lines().filter(|l| !l.trim().is_empty() && split_id(l).1.is_none()).map(|l| content(l).to_string()).collect()
 }
 
 #[cfg(test)]
@@ -177,5 +204,9 @@ mod tests {
         let r = "# Home ^aaaa1\n\nPara ^bbbb2\n  child ^cccc3\n1. first \\\n   more ^dddd4\n";
         assert_eq!(with_ids(r, "Para\n  child\n1. first \\\n   more\n"), r);
         assert!(Doc::parse("day/2026-10-11").is_some() && Doc::parse("page/").is_none() && Doc::parse("x/1").is_none());
+        // A renumbered, reordered and restyled list keeps every item's id.
+        let r = "# L ^aaaa1\n\n1. one ^bbbb2\n2. two ^cccc3\n3. three ^dddd4\n";
+        assert_eq!(with_ids(r, "1. two\n2. one\n3. three\n"), "# L ^aaaa1\n\n1. two ^cccc3\n2. one ^bbbb2\n3. three ^dddd4\n");
+        assert_eq!(with_ids(r, "a. one\nb. two\n   a. three\n"), "# L ^aaaa1\n\na. one ^bbbb2\nb. two ^cccc3\n   a. three ^dddd4\n");
     }
 }
