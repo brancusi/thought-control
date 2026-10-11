@@ -10,8 +10,5 @@
  ],
  "expect": {
   "doc": "one ▮"
- },
- "known": {
-  "thc-tui/real": "thc: CSI 3;9~ arrives but ⌘Delete isn't bound (editing_keys.rs ACTIONS lacks edit.delete_to_line_end)"
  }
 }
