@@ -368,15 +368,13 @@ pub struct EditSummary {
 }
 
 /// A list as written, against the `list` its first item has: the level it ends up at, and the
-/// value to write (empty clears it) when the text shows a style other than the one it has. Only
-/// a style that differs from the default is stored.
-fn decide(enclosing: Level, have: Option<ListStyle>, written: Option<ListStyle>) -> (Level, Option<String>) {
-    let default = enclosing.default_inside();
-    let now = have.unwrap_or(default);
-    match written {
-        Some(w) if w != now => (enclosing.inside(w), Some(if w == default { String::new() } else { w.as_str() })),
-        _ => (enclosing.inside(now), None),
-    }
+/// value to write (empty clears it) when the text shows a style other than the one it reads as.
+/// `baseline`: what its first item reads as with no prop (the list before it, which it would
+/// continue, else the default). Only a style that differs from that is stored.
+fn decide(enclosing: Level, baseline: ListStyle, have: Option<ListStyle>, written: ListStyle) -> (Level, Option<String>) {
+    let now = have.unwrap_or(baseline);
+    let write = (written != now).then(|| if written == baseline { String::new() } else { written.as_str() });
+    (enclosing.inside(written), write)
 }
 
 /// Diff the edited text against the store and append ops to `b`.
@@ -470,10 +468,13 @@ pub fn apply(b: &mut TxBuilder, rendered: &Rendered, edited: &str) -> Result<Edi
         } else if it.para() {
             open_list.remove(&it.parent);
             (Level::NONE, have_list.map(|_| String::new()))
-        } else if let Some(&level) = open_list.get(&it.parent) {
+        } else if let Some(&level) = open_list.get(&it.parent).filter(|l| it.marker.is_some_and(|m| l.style.admits(m))) {
             (level, have_list.map(|_| String::new()))
         } else {
-            let (level, write) = decide(enclosing[&it.parent], have_list, it.marker);
+            // A list starts here: first, after a paragraph, or at a change of list type.
+            let e = enclosing[&it.parent];
+            let baseline = open_list.get(&it.parent).map_or(e.default_inside(), |l| l.style);
+            let (level, write) = decide(e, baseline, have_list, it.marker.expect("an item has a marker"));
             open_list.insert(it.parent, level);
             (level, write)
         };
@@ -541,6 +542,9 @@ pub fn apply(b: &mut TxBuilder, rendered: &Rendered, edited: &str) -> Result<Edi
         }
         parent_of.push(parent_id);
     }
+
+    // The text states every list under these notes (written above): nothing to carry over.
+    b.lists_stated.extend(final_ids.iter().cloned().chain(header.then(|| root.id.clone())));
 
     // Order: per parent group, keep the longest run of already-ordered siblings, re-key the rest.
     let mut groups: Vec<(Option<String>, Vec<usize>)> = Vec::new();
@@ -824,11 +828,51 @@ mod tests {
     }
 
     #[test]
-    fn a_list_with_mixed_markers_takes_its_first_item_s_style() {
+    fn a_change_of_list_type_starts_a_new_list() {
+        // CommonMark and the editor: bullet <-> ordered, another bullet character, another count
+        // or delimiter each start a list. Each new list's first item carries its style.
+        for (text, want) in [
+            ("- a\n- b\n1. c\n2. d\n", "- a\n- b\n1. c\n2. d\n"),
+            ("* a\n- b\n", "* a\n- b\n"),
+            ("b) one\n1. two\n- three\nvii. four\n", "a) one\n1. two\n- three\ni. four\n"),
+            ("1. one\n1) two\n", "1. one\n1) two\n"),
+        ] {
+            let (mut v, page) = setup();
+            save(&mut v, &page, text);
+            assert_eq!(body(&v, &page), want, "{text:?}");
+            round_trips(&mut v, &page);
+        }
+        let styles = |v: &Vault, page: &str| -> Vec<Option<String>> { v.store.children(page).unwrap().iter().map(|k| list_of(v, &k.id)).collect() };
         let (mut v, page) = setup();
-        save(&mut v, &page, "b) one\n1. two\n- three\nvii. four\n");
-        assert_eq!(list_of(&v, &kid(&v, &page, 0).id).as_deref(), Some("a)"));
-        assert_eq!(body(&v, &page), "a) one\nb) two\nc) three\nd) four\n");
+        save(&mut v, &page, "- a\n- b\n1. c\n2. d\n");
+        assert_eq!(styles(&v, &page), [None, None, Some("1.".into()), None]);
+        // `* a` / `- b`: the second list's first item needs `-` written, though it's the default.
+        let (mut v, page) = setup();
+        save(&mut v, &page, "* a\n- b\n");
+        assert_eq!(styles(&v, &page), [Some("*".into()), Some("-".into())]);
+    }
+
+    #[test]
+    fn letters_take_roman_looking_counts_and_a_blank_line_doesn_t_split() {
+        // `i.` after `h.` is the ninth letter; a blank line between items of one kind is a loose
+        // list (CommonMark), kept as the item's gap.
+        let (mut v, page) = setup();
+        let text = "a. a\nb. b\nc. c\nd. d\ne. e\nf. f\ng. g\nh. h\ni. i\n\nj. j\n";
+        save(&mut v, &page, text);
+        assert_eq!(body(&v, &page), text);
+        let kids = v.store.children(&page).unwrap();
+        assert!(kids[1..].iter().all(|k| list_of(&v, &k.id).is_none()), "one list");
+        round_trips(&mut v, &page);
+    }
+
+    #[test]
+    fn a_numbered_list_right_after_bullets_keeps_its_style() {
+        // The live repro (Q4 Planning): a numbered list typed under a bullet, with a roman list
+        // under its second item.
+        let (mut v, page) = setup();
+        let text = "- Theme for the quarter: fewer, deeper bets\n1. Pack the tent\n2. Buy fuel\n  i. Check the forecast\n";
+        save(&mut v, &page, text);
+        assert_eq!(body(&v, &page), text);
         round_trips(&mut v, &page);
     }
 
@@ -843,7 +887,7 @@ mod tests {
         round_trips(&mut v, &page);
         // Cycled back to the default: the prop goes.
         let r = render(&v.store, &page).unwrap();
-        let edited = r.text.replacen("  - sub ", "  a. sub ", 1);
+        let edited = r.text.replacen("  - sub ", "  a. sub ", 1).replacen("  - sub two ", "  b. sub two ", 1);
         apply_text(&mut v, &r, &edited);
         assert_eq!(list_of(&v, &kid(&v, &one.id, 0).id), None);
         assert_eq!(body(&v, &page), "1. one\n  a. sub\n  b. sub two\n2. two\n  * starred\n");
@@ -884,6 +928,28 @@ mod tests {
         assert_eq!(list_of(&v, &kid(&v, &two.id, 0).id).as_deref(), Some("i."));
         assert!(is_paragraph(&v.store, &kid(&v, &two.id, 2)));
         assert_eq!(body(&v, &page), "1. one\n2. two\n  i. first\n  ii. second\n  A paragraph under it\n");
+    }
+
+    #[test]
+    fn builder_moves_and_deletes_keep_a_list_s_style() {
+        // Not only the editor's save: any builder write keeps the style on the list's first item.
+        let (mut v, page) = setup();
+        save(&mut v, &page, "i) alpha\nii) beta\n\nprose\n\n1. one\n2. two\n");
+        let kids: Vec<String> = v.store.children(&page).unwrap().into_iter().map(|n| n.id).collect();
+        let write = |v: &mut Vault, f: &dyn Fn(&mut TxBuilder) -> Result<()>| {
+            v.transact(|s| {
+                let mut b = TxBuilder::new(s, today());
+                f(&mut b)?;
+                Ok((b.finish(), ()))
+            })
+            .unwrap();
+        };
+        // beta to the top of its list, then the second list's first item deleted.
+        write(&mut v, &|b| b.move_to(&kids[1], Some(page.clone()), None, Some(&kids[0])));
+        write(&mut v, &|b| b.delete(&kids[3]).map(|_| ()));
+        assert_eq!(body(&v, &page), "i) beta\nii) alpha\n\nprose\n\n1. two\n");
+        assert_eq!([list_of(&v, &kids[1]), list_of(&v, &kids[0]), list_of(&v, &kids[4])], [Some("i)".into()), None, Some("1.".into())]);
+        round_trips(&mut v, &page);
     }
 
     #[test]

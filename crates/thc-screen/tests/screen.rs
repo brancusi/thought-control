@@ -1856,9 +1856,30 @@ fn a_page_of_lists_round_trips_through_the_editor() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// The live repro: on Q4 Planning, under `- Theme for the quarter…`, a numbered list with a
+/// lettered item under its second, cycled to roman (⌥L). A change of list type starts a new list
+/// (CommonMark), so the vault keeps `1.` and `i.`, and a fresh screen reads back what was written.
+#[test]
+fn a_numbered_list_typed_under_a_bullet_reopens_as_written() {
+    let (root, v) = seeded("q4-lists");
+    let q4 = node_id(&root, "Q4 Planning");
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &q4);
+    s.keys(&["d-down"]);
+    type_in(&mut s, "1. Pack the tent\nBuy fuel\n");
+    s.keys(&["tab"]);
+    type_in(&mut s, "Check the forecast");
+    s.keys(&["a-l"]);
+    let written = doc_text(&mut s, &q4);
+    assert!(written.contains("- Theme for the quarter: fewer, deeper bets\n1. Pack the tent\n2. Buy fuel\n") && written.contains("i. Check the forecast"), "{written:?}");
+    drop(s);
+    drop(host);
+    assert_eq!(reopened(&root, &q4).trim_end(), written.trim_end(), "a fresh open gives back what was written");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// A numbered list right after a bulleted one (no paragraph between) stays numbered once saved.
 #[test]
-#[ignore = "thc-core: a `1.` item right after `- ` items joins their run and is saved as a bullet (the core fix is in progress)"]
 fn a_numbered_list_right_after_bullets_round_trips() {
     let (root, _host, mut s, page_id) = lists_page("adjacent");
     type_in(&mut s, "- milk\neggs\n");

@@ -12,7 +12,7 @@ use crate::store::Store;
 use anyhow::Result;
 use chrono::NaiveDate;
 use serde_json::{Map, Value, json};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 pub struct TxBuilder<'a> {
     pub store: &'a Store,
@@ -30,6 +30,9 @@ pub struct TxBuilder<'a> {
     journals: HashMap<String, String>,
     defined: HashMap<String, String>,
     pending: HashMap<String, Map<String, Value>>,
+    /// Parents whose lists this transaction states outright (`thc edit`'s text): `finish`
+    /// leaves their `list` props as written.
+    pub lists_stated: HashSet<String>,
 }
 
 impl<'a> TxBuilder<'a> {
@@ -47,10 +50,18 @@ impl<'a> TxBuilder<'a> {
             journals: HashMap::new(),
             defined: HashMap::new(),
             pending: HashMap::new(),
+            lists_stated: HashSet::new(),
         }
     }
 
-    pub fn finish(self) -> Vec<Op> {
+    /// The transaction's ops. Every list keeps its style on its first item through them
+    /// (list::normalise): a move, delete or restore needs nothing of its own.
+    pub fn finish(mut self) -> Vec<Op> {
+        match crate::list::normalise(self.store, &self.ops, &self.lists_stated) {
+            Ok(extra) => self.ops.extend(extra),
+            // (Only a store error gets here, and the transaction's own ops still stand.)
+            Err(_) => {}
+        }
         self.ops
     }
 

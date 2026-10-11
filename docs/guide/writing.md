@@ -28,8 +28,10 @@ they are: a paragraph can have notes under it, just like a list item or a task.
 
 **Numbered lists number themselves.** A list's style (numbers, letters, roman numerals or
 bullets) belongs to the list, and its first item decides it. The numbers come from the order,
-so moving an item renumbers the list. A paragraph ends a list: the next one starts again at 1,
-in its own style, so a page can hold a bulleted list, then some prose, then a numbered one. A list
+so moving an item renumbers the list. A paragraph ends a list, and so does a change of kind (a
+`1.` line right after `-` lines starts a numbered list), so a page can hold a bulleted list, then
+a numbered one, then some prose, each in its own style. A blank line between items of one kind
+keeps them one list. A list
 nested in a numbered one goes `1.` → `a.` → `i.` by itself; anything else you choose is kept.
 In a Markdown export, letters and roman numerals become numbers.
 
