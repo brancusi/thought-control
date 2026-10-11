@@ -33,6 +33,8 @@ pub struct TxBuilder<'a> {
     /// Parents whose lists this transaction states outright (`thc edit`'s text): `finish`
     /// leaves their `list` props as written.
     pub lists_stated: HashSet<String>,
+    /// Ids this transaction has minted under THC_FIXTURE_IDS (`fresh_id`).
+    minted: u32,
 }
 
 impl<'a> TxBuilder<'a> {
@@ -51,7 +53,25 @@ impl<'a> TxBuilder<'a> {
             defined: HashMap::new(),
             pending: HashMap::new(),
             lists_stated: HashSet::new(),
+            minted: 0,
         }
+    }
+
+    /// A new node or alert id: random, or under THC_FIXTURE_IDS=1 (fixtures and tests only, as
+    /// for the log ids: vault.rs `fixture_clock`) derived from the store's clock and how many this
+    /// transaction has made, so the same writes on a copy of a vault make the same ids.
+    fn fresh_id(&mut self) -> String {
+        if std::env::var("THC_FIXTURE_IDS").ok().as_deref() == Some("1") {
+            let h = self.store.max_hlc().unwrap_or_default();
+            loop {
+                self.minted += 1;
+                let id = id::from_key(&format!("fixture:{}:{}:{}", h.0, h.1, self.minted));
+                if !self.created.contains(&id) && self.store.node(&id).ok().flatten().is_none() {
+                    return id;
+                }
+            }
+        }
+        id::new_id()
     }
 
     /// The transaction's ops. Every list keeps its style on its first item through them
@@ -382,7 +402,10 @@ impl<'a> TxBuilder<'a> {
                 return Err(not_found(format!("parent {p}")));
             }
         }
-        let id = id.unwrap_or_else(id::new_id);
+        let id = match id {
+            Some(id) => id,
+            None => self.fresh_id(),
+        };
         if id.len() != ID_LEN || !id::looks_like_id(&id) {
             return Err(invalid(format!("--id must be a {ID_LEN}-char base32 id")));
         }
@@ -783,7 +806,7 @@ impl<'a> TxBuilder<'a> {
                 return Err(invalid(format!("node has no {anchor} date to anchor a relative alert")));
             }
         }
-        let id = id::new_id();
+        let id = self.fresh_id();
         self.ops.push(Op::AlertAdd { id: id.clone(), node: node.into(), trigger });
         Ok(id)
     }

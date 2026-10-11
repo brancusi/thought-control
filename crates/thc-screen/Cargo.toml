@@ -15,3 +15,7 @@ unicode-width = "0.2"
 # fictty: the terminal UI runtime (a UI is one serializable value), embedded through its App and
 # Host API. Pinned to a commit of its main until it publishes.
 fictty = { git = "https://github.com/brancusi/fictty", rev = "b44f9f63fe7030d324109b82c6f190c3601abcc7" }
+
+[dev-dependencies]
+# The fuzz test (tests/fuzz.rs) runs on fictty's fuzz driver.
+fictty = { git = "https://github.com/brancusi/fictty", rev = "b44f9f63fe7030d324109b82c6f190c3601abcc7", features = ["fuzz"] }
