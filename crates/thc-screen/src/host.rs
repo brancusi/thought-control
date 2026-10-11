@@ -6,7 +6,7 @@ use crate::docs::{self, Doc};
 use crate::feeds::{self, Cx};
 use std::collections::HashMap;
 use thc_core::edit::Rendered;
-use crate::screens::{self, Route, View};
+use crate::screens::{self, Route};
 use chrono::{NaiveDate, NaiveDateTime};
 use fictty::{Host, Notifier};
 use serde_json::{Value, json};
@@ -101,7 +101,11 @@ impl ThcHost {
                 feeds::tasks(&cx, s("query").unwrap_or("status:open"), &keep)?
             }
             "pages" => feeds::pages(&cx)?,
-            "outline" => feeds::outline(&cx, s("id").ok_or_else(|| anyhow::anyhow!("outline needs an id"))?)?,
+            // Nothing open: an empty outline.
+            "outline" => match s("id") {
+                Some(id) => feeds::outline(&cx, id)?,
+                None => json!({"rows": [], "title_m": "", "meta_m": "", "bar_m": ""}),
+            },
             "journal" => {
                 let date = s("date").and_then(|d| NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(cx.today());
                 feeds::journal(&cx, date)?
@@ -182,24 +186,18 @@ impl ThcHost {
                 let under = s("under");
                 self.write(|b| b.move_to(&id, under, None, None))
             }
-            // Show another screen: the route's fields, as the keys wrote them.
-            "open" => {
-                let view = s("view").and_then(|v| View::parse(&v)).ok_or_else(|| anyhow::anyhow!("open: which view?"))?;
-                let route = Route { view, id: s("id"), query: s("query"), date: s("date"), back: s("back").and_then(|b| View::parse(&b)) };
-                if matches!(view, View::Detail | View::Outline | View::Page) && route.id.is_none() {
-                    anyhow::bail!("open {}: nothing selected", view.name());
-                }
-                let ui = self.screen(&route);
-                self.send(fictty::state::Msg::Push { ui })?;
-                Ok(json!({"ok": true, "view": view.name()}))
-            }
-            // Keys to the screen, as typed (`{"keys": ["end"]}`): the finder's caret after a `put`.
-            "keys" => {
-                let keys: Vec<String> = args.get("keys").and_then(Value::as_array).map(|a| a.iter().filter_map(|k| k.as_str().map(String::from)).collect()).unwrap_or_default();
-                for key in &keys {
-                    self.send(fictty::state::Msg::Key { key: key.clone() })?;
-                }
-                Ok(json!({"ok": true, "keys": keys}))
+            // The Journal's day moves (`[` `]` `T`): `{"from": "2026-10-11", "by": -1 | 1 | "today"}`.
+            // The day is the screen's store entry `journal_date`; dates are the host's to work out.
+            "day" => {
+                let today = self.now().date();
+                let from = s("from").and_then(|d| NaiveDate::parse_from_str(&d, "%Y-%m-%d").ok()).unwrap_or(today);
+                let to = match args.get("by").and_then(Value::as_i64) {
+                    Some(by) => from + chrono::Duration::days(by),
+                    None => today,
+                };
+                let date = to.format("%Y-%m-%d").to_string();
+                self.send(fictty::state::Msg::Write { key: "journal_date".into(), write: fictty::store::Write::Put { value: date.clone().into() }, if_rev: None, by: "person".into() })?;
+                Ok(json!({"ok": true, "date": date}))
             }
             // The bar prompt's answer: `{"ask", "id", "text"}`. `capture` and `inbox` (a, A) add the
             // text in capture syntax to today's journal or the inbox; `due` (d) and `move` (m) act
@@ -298,7 +296,7 @@ impl ThcHost {
         let text = match (&rendered, &doc) {
             (Some(r), _) => docs::shown(&r.text),
             // A day not written yet: its heading, as the render will write it.
-            (None, Doc::Day(d)) => format!("# {} (journal)\n\n", d.format("%Y-%m-%d")),
+            (None, Doc::Day(_)) => String::new(),
             (None, Doc::Page(id)) => anyhow::bail!("no page {id}"),
         };
         self.remember(key, rendered)?;

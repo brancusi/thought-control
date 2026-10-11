@@ -49,12 +49,15 @@ end
 
 local seqs = {}
 
--- What a key does for a foreground process: { fictty = true } in a fictty screen that has the
--- key (fictty's action), { send = '<seq>' } in thc, else { pass = true } (the key as typed, or
--- ⌘V's normal paste).
+-- What a key does for a foreground process: in a fictty screen, { fictty = true } where fictty
+-- binds the key and { pass = true } where it doesn't (WezTerm's own: ⌘V pastes the system
+-- clipboard as a bracketed paste); in thc, { send = '<seq>' }; anywhere else { pass = true }.
 function M.decide(key, mods, process, in_fictty)
-  if in_fictty and fictty_keys[key .. '+' .. mods] then
-    return { fictty = true }
+  if in_fictty then
+    if fictty_keys[key .. '+' .. mods] then
+      return { fictty = true }
+    end
+    return { pass = true }
   end
   local seq = seqs[key .. '+' .. mods]
   if seq and M.is_thc(process) then

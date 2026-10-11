@@ -48,13 +48,20 @@ fn lines(rendered: &str) -> Vec<(String, Option<String>)> {
     out
 }
 
-/// What the editor shows: the render without ids or the help comment.
-pub fn shown(rendered: &str) -> String {
-    let mut s: String = lines(rendered).into_iter().map(|(l, _)| l + "\n").collect();
-    if s.is_empty() {
-        s.push('\n');
+/// How many of the render's first lines are its heading (`# Title ^id` and the blank lines
+/// after it): the title is the screen's heading row, not the document's text (writing.md; the
+/// TUI keeps it out of the document too).
+fn heading_len(lines: &[(String, Option<String>)]) -> usize {
+    if !lines.first().is_some_and(|(l, _)| l.starts_with("# ")) {
+        return 0;
     }
-    s
+    1 + lines[1..].iter().take_while(|(l, _)| l.trim().is_empty()).count()
+}
+
+/// What the editor shows: the render's body, without its heading, ids or help comment.
+pub fn shown(rendered: &str) -> String {
+    let all = lines(rendered);
+    all[heading_len(&all)..].iter().map(|(l, _)| format!("{l}\n")).collect()
 }
 
 /// The edited text with ids put back for `edit::apply`: a line that's still there keeps its id
@@ -62,6 +69,9 @@ pub fn shown(rendered: &str) -> String {
 /// lines they replaced, in order. Extra new lines are new nodes; old lines left over are gone.
 pub fn with_ids(rendered: &str, edited: &str) -> String {
     let old = lines(rendered);
+    // The heading the editor never showed goes back in front, as it was.
+    let heading: String = old[..heading_len(&old)].iter().map(|(l, _)| format!("{l}\n")).collect();
+    let edited = format!("{heading}{edited}");
     let new: Vec<&str> = edited.lines().collect();
     let (n, m) = (old.len(), new.len());
     // Longest common subsequence of lines, by their shown text.
@@ -97,6 +107,7 @@ pub fn with_ids(rendered: &str, edited: &str) -> String {
         }
     }
     flush(&mut hunk_old, &mut hunk_new, &mut ids);
+    paragraph_ids_last(&new, &mut ids);
     new.iter()
         .zip(ids)
         .map(|(l, id)| match id {
@@ -104,6 +115,35 @@ pub fn with_ids(rendered: &str, edited: &str) -> String {
             None => format!("{l}\n"),
         })
         .collect()
+}
+
+/// A paragraph's id ends its last line (edit.rs: prose lines join until a blank line or a
+/// bullet, and only a trailing `^id` is an id). Lines that became one paragraph keep the first
+/// id they carried, moved to the paragraph's last line; any other id in the run was joined away.
+fn paragraph_ids_last(lines: &[&str], ids: &mut [Option<String>]) {
+    let is_bullet = |t: &str| t.starts_with("- ") || t.starts_with("* ") || t == "-";
+    let mut run: Vec<usize> = Vec::new();
+    let close = |run: &mut Vec<usize>, ids: &mut [Option<String>]| {
+        let id = run.iter().find_map(|&k| ids[k].clone());
+        for &k in run.iter() {
+            ids[k] = None;
+        }
+        if let Some(&last) = run.last() {
+            ids[last] = id;
+        }
+        run.clear();
+    };
+    for (k, l) in lines.iter().enumerate() {
+        let t = l.trim();
+        let indent = l.len() - l.trim_start().len();
+        let heading = k == 0 && t.starts_with("# ");
+        if !t.is_empty() && !heading && !is_bullet(t) && (indent == 0 || !run.is_empty()) {
+            run.push(k);
+        } else {
+            close(&mut run, ids);
+        }
+    }
+    close(&mut run, ids);
 }
 
 /// Every line of a render with the node it shows (full ids): what a document has shown, so a
@@ -131,8 +171,8 @@ mod tests {
     const R: &str = "# Home ^aaaa1\n\n- [ ] Water plants ^bbbb2\n  - [ ] Buy a can ^cccc3\n- Wifi is on the fridge ^dddd4\n\n<!-- thc edit: help\n     more -->\n";
 
     #[test]
-    fn shown_drops_ids_and_help() {
-        assert_eq!(shown(R), "# Home\n\n- [ ] Water plants\n  - [ ] Buy a can\n- Wifi is on the fridge\n");
+    fn shown_drops_the_heading_ids_and_help() {
+        assert_eq!(shown(R), "- [ ] Water plants\n  - [ ] Buy a can\n- Wifi is on the fridge\n");
     }
 
     #[test]
@@ -140,11 +180,14 @@ mod tests {
         // Unchanged: every id back.
         assert_eq!(with_ids(R, &shown(R)), "# Home ^aaaa1\n\n- [ ] Water plants ^bbbb2\n  - [ ] Buy a can ^cccc3\n- Wifi is on the fridge ^dddd4\n");
         // A ticked box and a new line: the changed line keeps its id, the new one has none.
-        let e = "# Home\n\n- [x] Water plants\n  - [ ] Buy a can\n- Call the plumber\n- Wifi is on the fridge\n";
+        let e = "- [x] Water plants\n  - [ ] Buy a can\n- Call the plumber\n- Wifi is on the fridge\n";
         assert_eq!(with_ids(R, e), "# Home ^aaaa1\n\n- [x] Water plants ^bbbb2\n  - [ ] Buy a can ^cccc3\n- Call the plumber\n- Wifi is on the fridge ^dddd4\n");
         // A deleted line: the others keep theirs.
-        let e = "# Home\n\n- [ ] Water plants\n- Wifi is on the fridge\n";
+        let e = "- [ ] Water plants\n- Wifi is on the fridge\n";
         assert_eq!(with_ids(R, e), "# Home ^aaaa1\n\n- [ ] Water plants ^bbbb2\n- Wifi is on the fridge ^dddd4\n");
+        // A paragraph that grew a line: its id moves to the paragraph's last line.
+        let r = "# Home ^aaaa1\n\nA plain paragraph ^bbbb2\n- Wifi ^dddd4\n";
+        assert_eq!(with_ids(r, "A plain paragraph\nits later line\n- Wifi\n"), "# Home ^aaaa1\n\nA plain paragraph\nits later line ^bbbb2\n- Wifi ^dddd4\n");
         assert!(Doc::parse("day/2026-10-11").is_some() && Doc::parse("page/").is_none() && Doc::parse("x/1").is_none());
     }
 }

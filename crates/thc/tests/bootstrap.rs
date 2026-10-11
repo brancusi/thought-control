@@ -390,7 +390,10 @@ check(M.decide('o', 'CMD', 'thc').send == '\x1b[111;9u', 'cmd-o in thc')
 -- A pane showing a fictty screen (thc screen) gets fictty's own keys, not thc_keys'.
 check(M.decide('z', 'CMD', 'thc', true).fictty, 'cmd-z is fictty\'s in a fictty screen')
 check(M.decide('Delete', 'CMD', 'thc', true).fictty, 'cmd-delete is fictty\'s in a fictty screen')
-check(M.decide('LeftArrow', 'OPT', 'thc', true).send, 'a key fictty has none of stays thc\'s')
+-- A key fictty doesn't bind is WezTerm's own there: ⌘V pastes the system clipboard (bracketed
+-- paste), not thc's ⌘V bytes (E38, E39, P38).
+check(M.decide('v', 'CMD', 'thc', true).pass, 'cmd-v is WezTerm\'s paste in a fictty screen')
+check(M.decide('LeftArrow', 'OPT', 'thc', true).pass, 'a key fictty has none of is WezTerm\'s')
 local config = wezterm.config_builder()
 M.apply(config)
 -- One binding per key: fictty's keys that thc lacks are added once, the rest stay thc's.

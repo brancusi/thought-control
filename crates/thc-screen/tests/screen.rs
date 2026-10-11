@@ -339,7 +339,7 @@ fn type_in(s: &mut fictty::Headless, text: &str) {
 /// The caret (the page editor's selection), as JSON.
 fn caret(s: &mut fictty::Headless) -> Value {
     let st = s.state();
-    serde_json::to_value(&fictty::state::field_view(st, "doc").expect("the page editor").1.selection).unwrap()
+    serde_json::to_value(&fictty::state::field_view(st, "pages_doc").expect("the page editor").1.selection).unwrap()
 }
 
 #[test]
@@ -349,7 +349,7 @@ fn typing_into_a_page_writes_the_vault_and_keeps_ids() {
     let host = ThcHost::new(v).at(now());
     let mut s = page(&host, &home);
     let text = s.screen();
-    assert!(text.contains("# Home") && text.contains("- [ ] Water plants #garden due:2026-10-11") && text.contains("  - [ ] Buy a watering can"), "{text}");
+    assert!(text.contains("¶ Home") && text.contains("- [ ] Water plants #garden due:2026-10-11") && text.contains("  - [ ] Buy a watering can"), "{text}");
     assert!(!text.contains('^'), "no ids on show: {text}");
     // To the end of the last line, and type: an edit to that line, then a new one.
     s.keys(&["d-down", "bs"]);
@@ -373,7 +373,7 @@ fn an_outside_add_shows_in_the_page_without_moving_the_caret() {
     let host = ThcHost::new(v).at(now());
     let mut s = page(&host, &home);
     // The caret at the end of the Water plants line.
-    s.keys(&["d-up", "down", "down", "d-right"]);
+    s.keys(&["d-up", "d-right"]);
     let before = caret(&mut s);
     outside_add(&root, Some(home.clone()), "Fix the garden gate");
     assert!(!s.screen().contains("Fix the garden gate"));
@@ -391,7 +391,7 @@ fn ticking_a_task_box_marks_the_node_done() {
     let (home, water) = (node_id(&root, "Home"), node_id(&root, "Water plants #garden"));
     let host = ThcHost::new(v).at(now());
     let mut s = page(&host, &home);
-    s.keys(&["d-up", "down", "down", "c-t"]);
+    s.keys(&["d-up", "c-t"]);
     assert!(s.screen().contains("- [x] Water plants"), "{}", s.screen());
     let check = open(&root, human());
     assert_eq!(check.store.node(&water).unwrap().unwrap().status.as_deref(), Some("done"));
@@ -407,7 +407,7 @@ fn a_journal_day_opens_as_text_and_a_new_line_lands_in_the_day() {
     s.keys(&["enter"]);
     let text = s.screen();
     let st = s.state();
-    assert!(text.contains("# 2026-10-11 (journal)") && text.contains("- [ ] Call the bank due:2026-10-08 !high"), "focus {focus:?} → {:?}, status {:?}\n{text}", st.focus, st.status);
+    assert!(text.contains("§ Sunday, October 11 2026") && text.contains("- [ ] Call the bank due:2026-10-08 !high"), "focus {focus:?} → {:?}, status {:?}\n{text}", st.focus, st.status);
     s.keys(&["d-down", "bs"]);
     type_in(&mut s, "\n- Lunch with Sam");
     let check = open(&root, human());
@@ -462,7 +462,7 @@ fn a_click_on_pages_then_keys_write_a_task_into_a_page() {
     assert!(s.screen().contains("▌ "), "{}", s.screen());
     s.keys(&["enter"]);
     let text = s.screen();
-    assert!(text.contains("# Q4 Planning") && text.contains("- Theme for the quarter"), "Q4 Planning to write in: {text}");
+    assert!(text.contains("¶ Q4 Planning") && text.contains("- Theme for the quarter"), "Q4 Planning to write in: {text}");
     s.keys(&["d-down"]);
     type_in(&mut s, "- [ ] X");
     let check = open(&root, human());
@@ -555,10 +555,10 @@ fn n04_b02_enter_opens_a_page_and_esc_comes_back_to_it() {
     s.keys(&["4"]);
     type_in(&mut s, "Health");
     s.keys(&["enter"]);
-    assert!(s.screen().contains("# Health"), "Health to write in: {}", s.screen());
+    assert!(s.screen().contains("¶ Health") && s.screen().contains("write here"), "Health to write in: {}", s.screen());
     s.keys(&["esc"]);
     let back = s.screen();
-    assert!(!back.contains("# Health") && back.contains("¶ Health"), "the Pages list again: {back}");
+    assert!(!back.contains("write here") && back.contains("¶ Health"), "the Pages list again: {back}");
     // The page you came from is selected (its row has the ▌).
     assert!(back.lines().any(|l| l.starts_with('▌') && l.contains("¶ Health")), "{back}");
     // Esc on the list clears the query; every page shows again.
@@ -618,5 +618,123 @@ fn w02_done_stays_until_you_leave_so_it_can_be_reopened() {
     // Done again, then leave and come back: the done row has gone.
     s.keys(&["x", "1", "3"]);
     assert!(!s.screen().contains("[x]"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- outline keys in a page: Tab indents lines, ⌃T cycles a line's task state (fictty) ------
+
+/// The texts and ids of a node's children, in order.
+fn kids(root: &Path, parent: &str) -> Vec<(String, String)> {
+    open(root, human()).store.children(parent).unwrap().into_iter().map(|n| (n.text, n.id)).collect()
+}
+
+fn kid_texts(root: &Path, parent: &str) -> Vec<String> {
+    kids(root, parent).into_iter().map(|k| k.0).collect()
+}
+
+/// Q4 Planning with two more items typed at its end, the caret at the end of the last:
+/// `- Theme…`, `- one`, `- two▮`.
+fn q4_with_two(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless, String) {
+    let (root, v) = seeded(name);
+    let q4 = node_id(&root, "Q4 Planning");
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &q4);
+    s.keys(&["d-down"]);
+    type_in(&mut s, "- one\n- two");
+    (root, host, s, q4)
+}
+
+/// E22: a selection over two list items, `- o⟦ne ‖ - tw▮⟧o`, Tab: both nest under the item
+/// before them, the selection stays, and the vault has them as children with their ids.
+#[test]
+fn e22_tab_nests_the_selected_lines_and_keeps_the_selection() {
+    let (root, _host, mut s, q4) = q4_with_two("e22");
+    let before = kids(&root, &q4);
+    assert_eq!(kid_texts(&root, &q4), vec!["Theme for the quarter: fewer, deeper bets", "one", "two"], "{}", s.screen());
+    let (one, two) = (before[1].1.clone(), before[2].1.clone());
+    // The caret inside `two` (tw▮o), the anchor inside `one` (o⟦ne).
+    s.keys(&["left", "s-up", "s-left"]);
+    let sel = caret(&mut s);
+    s.keys(&["tab"]);
+    let text = s.screen();
+    assert!(text.contains("  - one") && text.contains("  - two"), "both nested: {text}");
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"), "Tab stayed in the editor");
+    let after = caret(&mut s);
+    assert_ne!(after, sel, "the selection moved with the text");
+    assert_eq!(after.to_string().replace(|c: char| c.is_ascii_digit(), ""), sel.to_string().replace(|c: char| c.is_ascii_digit(), ""), "still a selection: {sel} → {after}");
+    let top = kids(&root, &q4);
+    assert_eq!(top.len(), 1, "one top item left: {top:?}");
+    assert_eq!(kids(&root, &top[0].1), vec![("one".to_string(), one), ("two".to_string(), two)], "nested, the same nodes");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Writing a child: Enter for a new item, type it, Tab: it's a child of the item above.
+#[test]
+fn enter_type_tab_writes_a_nested_child() {
+    let (root, _host, mut s, q4) = q4_with_two("child");
+    type_in(&mut s, "\n- three");
+    s.keys(&["tab"]);
+    assert!(s.screen().contains("  - three"), "{}", s.screen());
+    let top = kids(&root, &q4);
+    assert_eq!(kid_texts(&root, &q4), vec!["Theme for the quarter: fewer, deeper bets", "one", "two"]);
+    assert_eq!(kid_texts(&root, &top[2].1), vec!["three"], "a child of two");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// A paragraph written over two lines is one node (Markdown: prose lines join), its id kept
+/// and out of its text. Tab on its later line indents that line inside the paragraph: thc's
+/// edit format has no child paragraph (an indented prose line continues the paragraph), so it
+/// stays one node and the line's words stay in its text.
+#[test]
+fn a_two_line_paragraph_is_one_node_and_tab_keeps_it_one() {
+    let (root, v) = seeded("para");
+    let q4 = node_id(&root, "Q4 Planning");
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &q4);
+    s.keys(&["d-down"]);
+    type_in(&mut s, "A plain paragraph\nits later line");
+    let before = kids(&root, &q4);
+    assert_eq!(before[1].0, "A plain paragraph its later line", "the id stays out of the text: {before:?}");
+    s.keys(&["tab"]);
+    assert!(s.screen().contains("   its later line"), "{}", s.screen());
+    let after = kids(&root, &q4);
+    assert_eq!(after, before, "one node, the same id and text");
+    assert!(kids(&root, &after[1].1).is_empty(), "no child paragraph");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Open a page and type at once: the keys land in the page's text and the vault.
+#[test]
+fn typed_ahead_keys_land_in_the_page() {
+    let (root, v) = seeded("ahead");
+    let health = node_id(&root, "Health");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Pages, 120, 32);
+    let mut keys = vec!["down".to_string(), "enter".to_string()];
+    keys.extend(typed("- Stretch"));
+    let refs: Vec<&str> = keys.iter().map(String::as_str).collect();
+    s.keys(&refs);
+    assert!(s.screen().contains("- Stretch"), "{}", s.screen());
+    assert_eq!(kid_texts(&root, &health), vec!["Stretch"]);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// ⌃T cycles a line plain → task → done → plain; each time the vault's node changes kind (a
+/// task is a node with a status) and keeps its id.
+#[test]
+fn ctrl_t_cycles_a_line_and_the_node_keeps_its_id() {
+    let (root, v) = seeded("cycle");
+    let (home, wifi) = (node_id(&root, "Home"), node_id(&root, "Wifi password is on the fridge"));
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &home);
+    s.keys(&["d-down", "up"]);
+    // (fictty's cycle ends on a plain line without its list marker: `- [x] Wifi` → `Wifi`.)
+    for (shown, status) in [("- [ ] Wifi", Some("todo")), ("- [x] Wifi", Some("done")), ("\n Wifi password", None)] {
+        s.keys(&["c-t"]);
+        assert!(s.screen().contains(shown), "{shown}: {}", s.screen());
+        let n = open(&root, human()).store.node(&wifi).unwrap().expect("the same node");
+        assert_eq!((n.text.as_str(), n.status.as_deref()), ("Wifi password is on the fridge", status), "{shown}");
+    }
+    assert_eq!(kids(&root, &home).len(), 2, "no new nodes");
     let _ = std::fs::remove_dir_all(root);
 }

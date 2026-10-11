@@ -1,7 +1,9 @@
 //! Screens: thc's views as one fictty `Ui`, built from Rust types. The seven views are the tabs
 //! of one tabs node (its titles over the `frame` feed, the mark as its lead and the date as its
 //! trail), so a click on a tab or a key switches views without a new UI. A Detail, an Outline, or a
-//! page or day being written in takes the place of its tab's view. Every source is a host source
+//! page or day being written in opens over its tab's view as a layer, shown while the store says
+//! so (`open_<view>`): opening and closing are store writes, so nothing is pushed and no source
+//! refetches but the layer's own. Every source is a host source
 //! the feeds answer (`source`), every action a host action ThcHost does (`act`), so the UI value
 //! never holds data: the same value renders a snapshot (`App::headless`) and runs live (`App::run`).
 //!
@@ -13,8 +15,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
 
-/// Which screen, and what it shows. Serializable: it travels as the `open` action's args, so a
-/// key that opens a view is data like any other.
+/// Which screen a UI starts on, and what it shows (`thc screen --view …`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Route {
     pub view: View,
@@ -27,7 +28,7 @@ pub struct Route {
     /// The Journal day (`2026-10-11`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
-    /// Where Esc goes from a Detail, an Outline, a Page or a Day.
+    /// The view a Detail or a Day opens over (default Today, the Journal).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub back: Option<View>,
 }
@@ -94,18 +95,6 @@ impl Route {
         View::TABS.iter().position(|t| *t == v).unwrap_or(0)
     }
 
-    /// Where Esc goes, if anywhere: the view a document or a detail is open over.
-    fn back(&self) -> Option<Route> {
-        match self.view {
-            View::Outline | View::Page => Some(Route::to(self.back.unwrap_or(View::Pages))),
-            View::Day => Some(match self.back {
-                Some(View::Pages) => Route::to(View::Pages),
-                _ => Route { view: View::Journal, date: self.date.clone(), ..Route::default() },
-            }),
-            View::Detail => Some(Route::to(self.back.unwrap_or(View::Today))),
-            _ => None,
-        }
-    }
 }
 
 // ---- the one place sources and actions are named -------------------------------------------------
@@ -116,40 +105,23 @@ pub fn source(name: &str, args: Value) -> Source {
     Source { cmd: None, shell: None, stream: None, value: None, path: None, every: None, host: Some(name.into()), args }
 }
 
-/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `open`, `answer`): args are
+/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `answer`, `day`, `keys`): args are
 /// templates over the selected row (`{id}`), the store (`{store.key}`) and `$id`.
 pub fn act(name: &str, args: Value) -> Action {
     Action::Host { host: name.into(), args }
 }
 
-/// Open a screen.
-pub fn open(route: &Route) -> Action {
-    act("open", serde_json::to_value(route).unwrap_or_default())
-}
-
-/// What a view focuses first: its list. Arriving never takes the caret (navigation.md §6):
-/// a finder's prompt gets it when a letter is typed.
-pub fn first_focus(route: &Route) -> Option<&'static str> {
+/// What a route focuses first: its list (arriving never takes the caret, navigation.md §6: a
+/// finder's prompt gets it when a letter is typed), or what it opens.
+pub fn first_focus(route: &Route) -> Option<String> {
+    let tab = View::TABS[route.tab()].name();
     Some(match route.view {
-        View::Today => "today",
-        View::Inbox => "inbox",
-        View::Tasks => "tasks",
-        View::Pages => "pages",
-        View::Journal => "journal",
-        View::Search => "search",
-        View::Log => "log",
-        View::Detail => return None,
-        View::Outline => "outline",
-        View::Page | View::Day => "doc",
+        View::Detail => format!("{tab}_detail"),
+        View::Outline => "pages_outline_rows".into(),
+        View::Page | View::Day => format!("{tab}_doc"),
+        View::Today => "today".into(),
+        v => v.name().into(),
     })
-}
-
-/// A page's or a day's store key (`page/<id>`, `day/<date>`): the host keeps those entries.
-pub fn doc_key(route: &Route, today: chrono::NaiveDate) -> String {
-    match route.view {
-        View::Day => format!("day/{}", route.date.clone().unwrap_or_else(|| today.format("%Y-%m-%d").to_string())),
-        _ => format!("page/{}", route.id.clone().unwrap_or_default()),
-    }
 }
 
 // ---- node helpers ---------------------------------------------------------------------------------
@@ -215,10 +187,11 @@ fn show(tab: usize) -> Action {
 }
 
 /// Tab and ⇧Tab cycle the views from anywhere in tab `i` (navigation.md §6, N16): the keys go on
-/// every node there that takes the focus, since a focused node's keys come first.
+/// every list, table, tree and prompt there, since a focused node's keys come first. Not on a
+/// document: there Tab is the editor's (indent, E22).
 fn cycling(mut n: Node, i: usize) -> Node {
     let k = View::TABS.len();
-    if n.focusable() {
+    if n.focusable() && !matches!(n.kind, Kind::Editor { .. }) {
         n.keys.entry("tab".into()).or_insert_with(|| show((i + 1) % k));
         n.keys.entry("s-tab".into()).or_insert_with(|| show((i + k - 1) % k));
     }
@@ -250,13 +223,8 @@ fn finder(list: Node, prompt: Node, open_selected: Action) -> (Node, Node) {
         list.keys.insert(
             c.to_string(),
             Action::Do {
-                steps: vec![
-                    Action::Put { put: q.clone(), value: format!("{{store.{q}}}{c}").into() },
-                    Action::Focus { focus: q.clone() },
-                    // TODO(fictty): a `put` leaves the caret before what it put; until it leaves it
-                    // after, the host sends End so the next key types after the letter.
-                    act("keys", json!({"keys": ["end"]})),
-                ],
+                // A person's `put` leaves the caret after what it put: the next key follows it.
+                steps: vec![Action::Put { put: q.clone(), value: format!("{{store.{q}}}{c}").into() }, Action::Focus { focus: q.clone() }],
             },
         );
     }
@@ -325,13 +293,13 @@ fn list(id_: &str, bind: &str, rows: Rows) -> Node {
 /// - x done, X reopen, Enter the detail;
 /// - p then h, m, l or - the priority (§6.2);
 /// - d a due date and m a place, asked in the bar (the prompt recipe, `prompt`).
-fn node_keys(back: View) -> BTreeMap<String, Action> {
+fn node_keys(v: View) -> BTreeMap<String, Action> {
     let mut k = BTreeMap::from([
         // Done stays on screen where it was until you leave (navigation.md §8): the id joins
         // `done_here`, which the lists' feeds keep.
         ("x".to_string(), Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] }),
         ("X".to_string(), act("reopen", json!({"id": "{id}"}))),
-        ("enter".to_string(), act("open", json!({"view": "detail", "id": "{id}", "back": back.name()}))),
+        ("enter".to_string(), open_over(v, json!({"kind": "detail", "id": "{id}"}), &format!("{}_detail", v.name()))),
     ]);
     for (key, p) in [("h", "high"), ("m", "med"), ("l", "low"), ("-", "")] {
         k.insert(format!("p {key}"), act("set", json!({"id": "{id}", "props": {"priority": p}})));
@@ -437,44 +405,131 @@ fn view(content: Node, feed: &str, hints: &[(&str, &str)]) -> Node {
 
 // ---- the views ------------------------------------------------------------------------------------
 
-/// The `Ui` for a route: every view in its tab, the route's own content in its tab, the keys.
-/// `today` resolves a Journal or a Day without a date.
+/// The store entry saying what's open over a view (`open_pages`: `{"kind": "page", "id", "key"}`),
+/// null when nothing is. Opening and closing are writes to it: the UI stays, no source refetches.
+fn open_key(v: View) -> String {
+    format!("open_{}", v.name())
+}
+
+/// Open something over a view (a page or a day to write in, a node's detail, an outline): its
+/// store entry says what, its layer shows it, the focus goes in.
+fn open_over(v: View, what: Value, focus: &str) -> Action {
+    Action::Do { steps: vec![Action::Put { put: open_key(v), value: what }, Action::Focus { focus: focus.into() }] }
+}
+
+/// Close what's open over a view: the view again, the focus where it was (navigation.md §2).
+fn close_over(v: View) -> Action {
+    Action::Do { steps: vec![Action::Put { put: open_key(v), value: Value::Null }, Action::Focus { focus: "$prev".into() }] }
+}
+
+/// What opens over a view, as layers shown while its `open_` entry says so (each modal: the focus
+/// stays in it). Pages and the Journal open pages and days to write in, Pages an outline too;
+/// the lists open a node's detail. Their sources read the entry, so they fetch when it changes.
+fn layers(v: View, data: &mut BTreeMap<String, Source>) -> Vec<Node> {
+    let k = open_key(v);
+    let mut out = Vec::new();
+    match v {
+        View::Pages | View::Journal => {
+            // A page or a day as Markdown to write in (tui-editor.md): the host's entry for it,
+            // loaded when shown, saved half a second after the last change, reloaded when the
+            // vault changes. `- [ ]` items tick with Ctrl-T or a click on the box. Tab keeps no
+            // view-cycling binding here: in a document it's the editor's (indent, E22).
+            // Tab nests and un-nests the lines (the outliner Tab, E22); ⌃T cycles a line through
+            // task, done and text (E75).
+            let editor = Kind::Editor { text: String::new(), doc: Some("{key}".into()), placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()) };
+            let mut doc = id(bound(node(editor), &k), &format!("{}_doc", v.name()));
+            doc.pad = Some(Pad::X(1));
+            doc.keys.insert("esc".into(), close_over(v));
+            // The title is a heading row above the text, not a line of it (writing.md): ⌘A, ⌘↑
+            // and ⇧⌘↑ stay in the content. (Renaming a page is its own action.)
+            let heading = format!("{}_heading", v.name());
+            data.insert(heading.clone(), source("doc", json!({"key": format!("{{store.{k}.key}}")})));
+            let title = sized(bound(text(" {title_m|markup}\t{meta_m|markup} "), &heading), cells(1));
+            out.push(when(col(vec![title, sized(text(""), cells(1)), doc]), &format!("{k}.key")));
+            if v == View::Pages {
+                data.insert("pages_outline".into(), source("outline", json!({"id": format!("{{store.{k}.id}}")})));
+                let title = sized(bound(text("{title_m|markup}\t{meta_m|markup} "), "pages_outline"), cells(1));
+                let mut rows = keys(tree("pages_outline_rows", "pages_outline.rows"), node_keys(View::Pages));
+                rows.keys.remove("enter");
+                rows.keys.insert("esc".into(), close_over(v));
+                out.push(when(col(vec![title, sized(text(""), cells(1)), rows]), &format!("{k}.kind=outline")));
+            }
+        }
+        View::Log => {}
+        _ => {
+            let name = format!("{}_open", v.name());
+            data.insert(name.clone(), source("detail", json!({"id": format!("{{store.{k}.id}}")})));
+            let mut lines = list(&format!("{}_detail", v.name()), &format!("{name}.lines"), lines_rows());
+            lines.pad = Some(Pad::X(1));
+            lines.keys.insert("esc".into(), close_over(v));
+            lines.keys.insert("x".into(), act("done", json!({"id": format!("{{store.{k}.id}}")})));
+            lines.keys.insert("X".into(), act("reopen", json!({"id": format!("{{store.{k}.id}}")})));
+            out.push(when(lines, &format!("{k}.id")));
+        }
+    }
+    out.into_iter()
+        .map(|mut l| {
+            l.modal = true;
+            l
+        })
+        .collect()
+}
+
+/// What a route opens at the start: the `open_` entry it seeds, if any.
+fn opened(route: &Route, today: chrono::NaiveDate) -> Option<(View, Value)> {
+    let id_ = route.id.clone().unwrap_or_default();
+    let tab = View::TABS[route.tab()];
+    Some(match route.view {
+        View::Detail => (tab, json!({"kind": "detail", "id": id_})),
+        View::Page => (tab, json!({"kind": "page", "id": id_, "key": format!("page/{id_}")})),
+        View::Outline => (tab, json!({"kind": "outline", "id": id_})),
+        View::Day => (tab, json!({"kind": "day", "key": format!("day/{}", journal_date(route, today))})),
+        _ => return None,
+    })
+}
+
+/// The Journal's day: the route's, else today.
+fn journal_date(route: &Route, today: chrono::NaiveDate) -> String {
+    route.date.clone().unwrap_or_else(|| today.format("%Y-%m-%d").to_string())
+}
+
+/// The `Ui` for a route: every view in its tab, what the route opens open over its view, the
+/// keys. `today` resolves a Journal or a Day without a date.
 pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     let mut data = BTreeMap::new();
     data.insert("frame".to_string(), source("frame", json!({})));
     let tab = route.tab();
     let mut store = BTreeMap::new();
     store.insert("done_here".into(), json!([]));
+    store.insert("journal_date".into(), journal_date(route, today).into());
+    if let Some((v, what)) = opened(route, today) {
+        store.insert(open_key(v), what);
+    }
     let children: Vec<Node> = View::TABS
         .iter()
         .enumerate()
         .map(|(i, v)| {
-            let content = if i != tab {
-                tab_view(&Route::to(*v), today, &mut data, &mut store)
-            } else if let Some(base) = route.back() {
-                // A document or a detail opens over its view, which stays underneath: Esc goes
-                // back to it with its selection and query as they were (navigation.md §2).
-                let under = tab_view(&base, today, &mut data, &mut store);
-                let mut over = tab_view(route, today, &mut data, &mut store);
-                over.modal = true;
-                // A sheet of blanks between them, so nothing of the view shows through the layer's
-                // padding. TODO(fictty): a layer that clears what it covers.
-                let cover = node(Kind::Rule { glyph: Some(" ".into()) });
-                node(Kind::Stack { children: vec![under, cover, over] })
+            let base = if i == tab && View::TABS.contains(&route.view) { route.clone() } else { Route::to(*v) };
+            let under = tab_view(&base, today, &mut data, &mut store);
+            let over = layers(*v, &mut data);
+            let content = if over.is_empty() {
+                under
             } else {
-                tab_view(route, today, &mut data, &mut store)
+                // A modal layer clears what it covers.
+                let mut all = vec![under];
+                all.extend(over);
+                node(Kind::Stack { children: all })
             };
             cycling(content, i)
         })
         .collect();
-    let focus = first_focus(route).map(String::from);
+    let focus = first_focus(route);
     let titles = ["Today", "Inbox{inbox|? <text>$</>}", "Tasks", "Pages", "Journal", "Search", "Log"].map(String::from).to_vec();
     let views = id(
         bound(
             node(Kind::Tabs {
                 tabs: titles,
                 children,
-                // The route's tab first; an `open` lands in the tab it came from, so a push keeps it.
                 tab: Some(tab),
                 lead: Some(" <muted>[</><accent+b>•</><muted>]</> <muted>thc</> ".into()),
                 trail: Some("<muted>{date}</> ".into()),
@@ -491,28 +546,15 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
         keys.insert(key.into(), Action::Do { steps: vec![Action::Put { put: "prompt".into(), value: ask.into() }, Action::Focus { focus: "prompt_in".into() }] });
     }
     keys.insert("t".into(), Action::Theme { theme: "next".into() });
-    if let Some(back) = route.back() {
-        keys.insert("esc".into(), open(&back));
-    }
-    // A Detail acts on its node from anywhere it has no row under the cursor.
-    if let (View::Detail, Some(id_)) = (route.view, &route.id) {
-        keys.insert("x".into(), act("done", json!({"id": id_})));
-        keys.insert("X".into(), act("reopen", json!({"id": id_})));
-    }
     Ui { root, data, store, keys, focus, status_bar: Some(false), ..Ui::default() }
 }
 
-/// A tab's content for a route, the sources it reads and the store it seeds.
+/// A tab's view (what layers open over), the sources it reads and the store it seeds.
 fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>) -> Node {
     let mut feed = |name: &str, args: Value| {
         data.insert(name.to_string(), source(name, args));
     };
     match route.view {
-        View::Today => {
-            feed("today", json!({}));
-            let t = keys(tree("today", "today.rows"), node_keys(View::Today));
-            view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("p", "priority"), ("d", "date")])
-        }
         View::Inbox => {
             feed("inbox", json!({}));
             let l = keys(list("inbox", "inbox.rows", rows(node_item())), node_keys(View::Inbox));
@@ -531,7 +573,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let filter = variant(sized(row(vec![sized(text(" <accent+b>q›</> "), cells(4)), shown, field, sized(bound(text("\t<muted>{count}</> "), "tasks"), cells(12))]), cells(1)), "input");
             let edit = Action::Do { steps: vec![Action::Put { put: "tasks_edit".into(), value: true.into() }, Action::Focus { focus: "tasks_q".into() }] };
             let col_ = |title: &str, value: &str, size: Size| Column { title: title.into(), value: value.into(), size: Some(size), align: None, heat: None, total: None };
-            let table = keys(
+            let mut table = keys(
                 id(
                     bound(
                         node(Kind::Table {
@@ -553,8 +595,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
                 ),
                 node_keys(View::Tasks),
             );
-            let narrow = keys(list("tasks-list", "tasks.rows", rows(format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "))), node_keys(View::Tasks));
-            let (mut table, mut narrow) = (table, narrow);
+            let mut narrow = keys(list("tasks-list", "tasks.rows", rows(format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "))), node_keys(View::Tasks));
             table.keys.insert("f".into(), edit.clone());
             narrow.keys.insert("f".into(), edit);
             let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$screen.width<120")]);
@@ -565,35 +606,36 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let mut r = rows("<muted>{short}</>  {title_m|markup}\t{meta_m|markup} ".into());
             r.variants.insert("day".into(), "{title_m|markup}\t{meta_m|markup} ".into());
             r.filter = Some("pages_q".into());
-            // Enter writes in the page or day.
-            let open_row = act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"}));
+            // Enter writes in the page or day, over the list (which keeps its selection and query).
+            let open_row = open_over(View::Pages, json!({"kind": "{open}", "id": "{id}", "key": "{doc}"}), "pages_doc");
             let mut l = list("pages", "pages.rows", r);
             l.keys.insert("enter".into(), open_row.clone());
             let (l, prompt) = finder(l, variant(input("pages_q", "", "type to find a page, tag or day"), "input"), open_row);
             let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), prompt]), cells(1)), "input");
             // The preview: the highlighted page or day, read-only, from the same host entry its
             // editor writes (`doc`), reloaded when the vault changes.
-            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
+            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true, tab: None, tasks: None }), "@pages");
             preview.id = Some("preview".into());
             preview.pad = Some(Pad::X(1));
             let content = over_list(finder_row, col(vec![sized(text(""), cells(2)), split(l, preview)]));
             view(content, "pages", &[("type", "find"), ("enter", "write"), ("tab", "next view")])
         }
         View::Journal => {
-            let date = route.date.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(today);
-            let day = |d: chrono::NaiveDate| open(&Route { view: View::Journal, date: Some(d.format("%Y-%m-%d").to_string()), ..Route::default() });
-            feed("journal", json!({"date": date.format("%Y-%m-%d").to_string()}));
+            // The day is the store's `journal_date`: [ ] T move it (the host works out the date),
+            // the feed follows; no new UI.
+            feed("journal", json!({"date": "{store.journal_date}"}));
             let title = sized(bound(text("{title_m|markup}\t<text>[</> <muted>prev</>  <text>]</> <muted>next</>  <text>T</> <muted>today</> "), "journal"), cells(1));
             let strip = sized(bound(text("  {strip_m|markup}"), "journal"), cells(1));
             let mut calendar = list("", "journal.calendar", Rows { item: Some("{m|markup}".into()), mark: Some(String::new()), lead: Some(String::new()), ..Rows::default() });
             calendar.id = None;
             calendar.pad = Some(Pad::X(1));
-            // Enter writes in the day shown; x and X still act on the row; [ ] and T move the day.
+            // Enter writes in the day shown; x and X still act on the row.
             let mut entries = keys(tree("journal", "journal.rows"), node_keys(View::Journal));
-            entries.keys.insert("enter".into(), open(&Route { view: View::Day, date: Some(date.format("%Y-%m-%d").to_string()), ..Route::default() }));
-            entries.keys.insert("[".into(), day(date - chrono::Duration::days(1)));
-            entries.keys.insert("]".into(), day(date + chrono::Duration::days(1)));
-            entries.keys.insert("T".into(), day(today));
+            entries.keys.insert("enter".into(), open_over(View::Journal, json!({"kind": "day", "key": "day/{store.journal_date}"}), "journal_doc"));
+            for (key, by) in [("[", json!(-1)), ("]", json!(1)), ("T", json!("today"))] {
+                entries.keys.insert(key.into(), act("day", json!({"from": "{store.journal_date}", "by": by})));
+            }
+            let _ = today;
             let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar)]);
             view(content, "journal", &[("enter", "write"), ("[", "prev"), ("]", "next")])
         }
@@ -602,7 +644,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             store.insert("search_q".into(), route.query.clone().unwrap_or_default().into());
             feed("search", json!({"query": "{store.search_q}"}));
             // A finder: letters find, so the rows have no single-letter commands (§6).
-            let open_row = act("open", json!({"view": "detail", "id": "{id}", "back": "search"}));
+            let open_row = open_over(View::Search, json!({"kind": "detail", "id": "{id}"}), "search_detail");
             let mut results = tree("search", "search.rows");
             results.keys.insert("enter".into(), open_row.clone());
             let (results, field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
@@ -626,33 +668,11 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let content = col(vec![title, sized(text(""), cells(1)), split(l, pane("log", "tx", data))]);
             view(content, "log", &[("u", "undo"), ("enter", "open")])
         }
-        View::Detail => {
-            let id_ = route.id.clone().unwrap_or_default();
-            feed("detail", json!({"id": id_}));
-            let mut lines = list("", "detail.lines", lines_rows());
-            lines.id = None;
-            lines.pad = Some(Pad::X(1));
-            // Its x and X are the screen's keys (`route_keys`): the detail takes no cursor.
-            let back = route.back.unwrap_or(View::Today).name();
-            view(lines, "detail", &[("x", "done"), ("X", "reopen"), ("esc", back)])
-        }
-        View::Outline => {
-            let id_ = route.id.clone().unwrap_or_default();
-            feed("outline", json!({"id": id_}));
-            let title = sized(bound(text("{title_m|markup}\t{meta_m|markup} "), "outline"), cells(1));
-            let t = keys(tree("outline", "outline.rows"), node_keys(View::Outline));
-            view(col(vec![title, sized(text(""), cells(1)), t]), "outline", &[("x", "done"), ("space", "fold"), ("esc", "pages")])
-        }
-        // A page or a day as Markdown to write in (tui-editor.md): the host's entry for it,
-        // loaded when shown, saved half a second after the last change, reloaded when the vault
-        // changes. `- [ ]` items tick with Ctrl-T or a click on the box; the keys are the Mac's.
-        View::Page | View::Day => {
-            let key = doc_key(route, today);
-            feed("doc", json!({"key": key}));
-            let mut doc = id(bound(node(Kind::Editor { text: String::new(), doc: None, placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false }), &key), "doc");
-            doc.pad = Some(Pad::X(1));
-            let back = if route.view == View::Day && route.back != Some(View::Pages) { "journal" } else { "pages" };
-            view(doc, "doc", &[("esc", back), ("c-t", "tick"), ("⌘z", "undo")])
+        // Today, and anything that isn't a tab of its own.
+        _ => {
+            feed("today", json!({}));
+            let t = keys(tree("today", "today.rows"), node_keys(View::Today));
+            view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("p", "priority"), ("d", "date")])
         }
     }
 }

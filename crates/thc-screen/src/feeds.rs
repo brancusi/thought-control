@@ -458,22 +458,25 @@ pub fn outline(cx: &Cx, id: &str) -> Result<Value> {
     }))
 }
 
-/// The bar of a page or day being written in: what it is and how much is open in it.
+/// The heading row over a page or a day being written in (the title is the screen's, not the
+/// document's text): `¶ Title` or `§ Sunday, October 11 2026`, and how much is open in it. Nothing
+/// open (an empty key): an empty heading.
 pub fn doc(cx: &Cx, key: &str) -> Result<Value> {
     let g = cx.g;
-    let (name, root) = if let Some(id) = key.strip_prefix("page/") {
+    let (title, root) = if let Some(id) = key.strip_prefix("page/").filter(|i| !i.is_empty()) {
         let n = cx.store.node(&cx.store.resolve(id)?)?;
         (format!("{} {}", g.page, n.as_ref().map(|n| n.label()).unwrap_or_default()), n.map(|n| n.id))
+    } else if let Some(date) = key.strip_prefix("day/").and_then(|d| DateVal::from_stored(d)).map(|v| v.date()) {
+        let d = date.format("%Y-%m-%d").to_string();
+        (format!("{} {}", g.journal, date.format("%A, %B %-d %Y")), cx.store.journal_node(&d)?)
     } else {
-        let d = key.strip_prefix("day/").unwrap_or("");
-        let date = DateVal::from_stored(d).map(|v| v.date()).unwrap_or(cx.today());
-        (format!("{} {}", g.journal, date.format("%a %b %-d")), cx.store.journal_node(d)?)
+        return Ok(json!({"title_m": "", "meta_m": ""}));
     };
     let open = match &root {
         Some(r) => open_under(cx.store, r)?,
         None => 0,
     };
-    Ok(json!({"bar_m": bar(&name, &[(format!("{open} open"), Token::Muted), ("writing".into(), Token::Muted)])}))
+    Ok(json!({"title_m": styled("text+b", &title), "meta_m": tok(Token::Muted, &format!("{open} open"))}))
 }
 
 // ---- Journal ------------------------------------------------------------------------------------
