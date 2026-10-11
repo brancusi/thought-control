@@ -507,11 +507,11 @@ impl ThcHost {
                 match open {
                     Some(o) => {
                         self.put(&format!("open_{}", view.name()), o)?;
-                        self.send(fictty::state::Msg::Click { id: format!("{}_doc", view.name()), row: None, tab: None })?;
+                        self.send(fictty::state::Msg::Focus { id: format!("{}_doc", view.name()) })?;
                     }
                     None => {
                         if let Some(list) = screens::first_focus(&screens::Route::to(view)) {
-                            self.send(fictty::state::Msg::Click { id: list, row: None, tab: None })?;
+                            self.send(fictty::state::Msg::Focus { id: list })?;
                         }
                     }
                 }
@@ -579,7 +579,7 @@ impl ThcHost {
         self.put("sidebar_target", target.clone().into())?;
         if let (Some(view), false) = (focus, target.is_empty()) {
             let place = crate::sidebar::place(self.inner.width.load(Ordering::Relaxed));
-            self.send(fictty::state::Msg::Click { id: format!("{place}_{view}_{target}"), row: None, tab: None })?;
+            self.send(fictty::state::Msg::Focus { id: format!("{place}_{view}_{target}") })?;
         }
         Ok(())
     }
@@ -611,7 +611,7 @@ impl ThcHost {
         }
         self.put(&format!("open_{view}"), open)?;
         self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, key: None, tab: Some(tab) })?;
-        self.send(fictty::state::Msg::Click { id: format!("{view}_doc"), row: None, tab: None })?;
+        self.send(fictty::state::Msg::Focus { id: format!("{view}_doc") })?;
         Ok(())
     }
 
