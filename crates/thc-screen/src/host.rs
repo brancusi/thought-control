@@ -219,7 +219,7 @@ impl ThcHost {
         let (events, ()) = vault.transact(|s| {
             let mut b = TxBuilder::new(s, today);
             f(&mut b)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })?;
         Ok(json!({"ok": true, "events": events.len(), "tx": events.first().map(|e| e.tx.clone())}))
     }
@@ -779,7 +779,7 @@ impl ThcHost {
                 vault.transact(|s| {
                     let mut b = TxBuilder::new(s, today);
                     b.journal(d)?;
-                    Ok((b.finish(), ()))
+                    Ok((b.finish()?, ()))
                 })?;
                 self.render(&vault, &doc)?.ok_or_else(|| anyhow::anyhow!("{key}: the day wasn't made"))?
             }
@@ -800,7 +800,7 @@ impl ThcHost {
                 for id in &back {
                     b.restore(id)?;
                 }
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })?;
             last = self.render(&vault, &doc)?.ok_or_else(|| anyhow::anyhow!("{key}: gone"))?;
             edited = docs::with_ids(&last.text, text);
@@ -808,7 +808,7 @@ impl ThcHost {
         vault.transact(|s| {
             let mut b = TxBuilder::new(s, today);
             thc_core::edit::apply(&mut b, &last, &edited)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })?;
         let now = self.render(&vault, &doc)?;
         drop(vault);

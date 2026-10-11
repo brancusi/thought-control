@@ -279,7 +279,7 @@ fn run(s: &Value) -> Result<(), String> {
                 let nid = b.create(Some(parent), &n.text, None, props, &[], None)?;
                 parents.push(nid);
             }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .expect("seeding the golden's page");
     });

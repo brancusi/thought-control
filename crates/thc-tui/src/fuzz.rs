@@ -459,7 +459,7 @@ fn saved_after(ops: &[Op], plain: &[&str]) -> (Vec<Note>, Vec<Note>) {
             for text in plain {
                 b.create_from_capture(Some(journal.clone()), &thc_core::capture::parse(text, today)?, None)?;
             }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         }).unwrap();
     }
     crate::SNAPSHOT.with(|s| s.set(true));

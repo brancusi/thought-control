@@ -24,7 +24,7 @@ fn badge_counts_each_node_once() {
                 if alert {
                     b.add_alert(&id, Trigger { at: Some("2020-01-01T09:00".into()), offset: None, anchor: None })?;
                 }
-                Ok((b.finish(), id))
+                Ok((b.finish()?, id))
             })
             .unwrap();
         id
@@ -45,7 +45,7 @@ fn badge_counts_each_node_once() {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         b.add_alert(&tomorrow, Trigger { at: Some(at.clone()), offset: None, anchor: None })?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let p = thc_daemon::today_panel(&v.store).unwrap();

@@ -121,7 +121,7 @@ fn a_child_of_a_concurrently_deleted_note_is_rehomed_and_flagged() {
                 let mut b = TxBuilder::new(s, today);
                 let cap = capture::parse(text, today)?;
                 let id = b.create_from_capture(parent.clone(), &cap, None)?;
-                Ok((b.finish(), id))
+                Ok((b.finish()?, id))
             })
             .unwrap()
             .1
@@ -129,7 +129,7 @@ fn a_child_of_a_concurrently_deleted_note_is_rehomed_and_flagged() {
     let page = devs[0].vault.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         let id = b.create_page("Offsite notes", &[])?;
-        Ok((b.finish(), id))
+        Ok((b.finish()?, id))
     }).unwrap().1;
     let plan = mk(&mut devs[0], Some(page.clone()), "Plan the offsite");
     let _known = mk(&mut devs[0], Some(plan.clone()), "known child");
@@ -139,7 +139,7 @@ fn a_child_of_a_concurrently_deleted_note_is_rehomed_and_flagged() {
     devs[0].vault.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         b.delete(&plan)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     }).unwrap();
     let venue = mk(&mut devs[1], Some(plan.clone()), "Book the venue");
     sync(&root, n);
@@ -162,7 +162,7 @@ fn a_child_of_a_concurrently_deleted_note_is_rehomed_and_flagged() {
     devs[0].vault.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         b.restore(&plan)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     }).unwrap();
     sync(&root, n);
     for d in devs.iter_mut() {
@@ -255,7 +255,7 @@ fn random_op(dev: &mut Dev, rng: &mut StdRng, step: usize) {
                 }
                 (_, Some(t)) => b.add_tags(&t, &[format!("x{}", step % 4)], &[])?,
             }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
 }
@@ -309,7 +309,7 @@ fn client_made_ids_from_editors_converge() {
             .transact(|s| {
                 let mut b = TxBuilder::new(s, today);
                 let p = b.create_page("Shared", &[])?;
-                Ok((b.finish(), p))
+                Ok((b.finish()?, p))
             })
             .unwrap();
         sync(&root, n);
@@ -375,7 +375,7 @@ fn tied_sibling_keys_converge_and_never_panic() {
         .transact(|s| {
             let mut b = TxBuilder::new(s, today);
             let p = b.create_page("Ties", &[])?;
-            Ok((b.finish(), p))
+            Ok((b.finish()?, p))
         })
         .unwrap();
     sync(&root, n);
@@ -390,7 +390,7 @@ fn tied_sibling_keys_converge_and_never_panic() {
                 let mut b = TxBuilder::new(s, today);
                 let cap = capture::parse(&format!("twin {i}"), today)?;
                 let id = b.create_from_capture(Some(p), &cap, None)?;
-                Ok((b.finish(), id))
+                Ok((b.finish()?, id))
             })
             .unwrap();
         kids.push(id);
@@ -410,14 +410,14 @@ fn tied_sibling_keys_converge_and_never_panic() {
             let mut b = TxBuilder::new(s, today);
             let cap = capture::parse("between", today)?;
             let id = b.create_from_capture(Some(p.clone()), &cap, None)?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         })
         .map(|(_, id)| {
             let p = page.clone();
             devs[0].vault.transact(move |s| {
                 let mut b = TxBuilder::new(s, today);
                 b.move_to(&id, Some(p), Some(&first), None)?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
         })
         .unwrap()
@@ -445,7 +445,7 @@ fn offline_days_tags_and_pages_are_one_node_after_sync() {
                 let day = b.journal(today)?;
                 let cap = capture::parse(&format!("from dev{i} #lisbon [[Offsite]]"), today)?;
                 b.create_from_capture(Some(day), &cap, None)?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
     }
@@ -470,11 +470,11 @@ fn a_renamed_page_keeps_its_id() {
     let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 4).unwrap();
     let root = tmpdir("rename");
     let mut d = open(&root, 0);
-    let (_, p) = d.vault.transact(|s| { let mut b = TxBuilder::new(s, today); let p = b.create_page("Q4 Planning", &[])?; Ok((b.finish(), p)) }).unwrap();
+    let (_, p) = d.vault.transact(|s| { let mut b = TxBuilder::new(s, today); let p = b.create_page("Q4 Planning", &[])?; Ok((b.finish()?, p)) }).unwrap();
     assert_eq!(p, thc_core::id::from_key("page:q4 planning"), "a page made by title has the keyed id");
     let p2 = p.clone();
-    d.vault.transact(move |s| { let mut b = TxBuilder::new(s, today); b.set_props(&p2, &[("title".into(), "Q1 Planning".into())])?; Ok((b.finish(), ())) }).unwrap();
-    let (_, again) = d.vault.transact(|s| { let mut b = TxBuilder::new(s, today); let p = b.create_page("Q4 Planning", &[])?; Ok((b.finish(), p)) }).unwrap();
+    d.vault.transact(move |s| { let mut b = TxBuilder::new(s, today); b.set_props(&p2, &[("title".into(), "Q1 Planning".into())])?; Ok((b.finish()?, ())) }).unwrap();
+    let (_, again) = d.vault.transact(|s| { let mut b = TxBuilder::new(s, today); let p = b.create_page("Q4 Planning", &[])?; Ok((b.finish()?, p)) }).unwrap();
     assert_ne!(again, p, "the old title makes a new page");
     let renamed = d.vault.store.node(&p).unwrap().unwrap();
     assert_eq!(renamed.title.as_deref(), Some("Q1 Planning"), "the renamed page is untouched");
@@ -495,7 +495,7 @@ fn two_vaults_never_cross_and_merge_in_order() {
                 let mut bl = TxBuilder::new(s, today);
                 let cap = capture::parse(&format!("[ ] {text}"), today)?;
                 bl.create_from_capture(None, &cap, None)?;
-                Ok((bl.finish(), ()))
+                Ok((bl.finish()?, ()))
             })
             .unwrap();
     }

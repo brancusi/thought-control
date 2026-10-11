@@ -17,7 +17,7 @@ fn setup() -> (Vault, String, std::path::PathBuf) {
         .transact(|s| {
             let mut b = TxBuilder::new(s, today);
             let p = b.create_page("Notes", &[])?;
-            Ok((b.finish(), p))
+            Ok((b.finish()?, p))
         })
         .unwrap();
     (v, page, root)
@@ -29,7 +29,7 @@ fn save(v: &mut Vault, page: &str, text: &str) {
     v.transact(|s| {
         let mut b = TxBuilder::new(s, today);
         edit::apply(&mut b, &rendered, text)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
 }
@@ -96,7 +96,7 @@ fn an_unchanged_edit_writes_nothing() {
         b.create_from_capture(Some(page.clone()), &cap, None)?;
         let cap = thc_core::capture::parse("Another bullet", today)?;
         b.create_from_capture(Some(page.clone()), &cap, None)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let r0 = edit::render(&v.store, &page).unwrap();

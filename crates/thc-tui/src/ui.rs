@@ -4543,7 +4543,7 @@ mod render_tests {
                 let cap = thc_core::capture::parse(&text, today)?;
                 b.create_from_capture((i % 2 == 0).then(|| page.clone()), &cap, None)?;
             }
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         }).unwrap();
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();
@@ -4597,7 +4597,7 @@ mod render_tests {
                 let page = b.create_page(name, &[])?;
                 let cap = thc_core::capture::Capture { text: format!("task in {name}"), status: Some("todo".into()), ..Default::default() };
                 b.create_from_capture(Some(page), &cap, Some(id.clone()))?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             }).unwrap();
         }
         let first = one.store.node(&id).unwrap().unwrap();
@@ -4641,7 +4641,7 @@ mod render_tests {
             let mut b = thc_core::builder::TxBuilder::new(store, today);
             let page = b.create_page("Destination", &[])?;
             let id = b.create_from_capture(Some(page.clone()), &thc_core::capture::parse("original", today)?, None)?;
-            Ok((b.finish(), id))
+            Ok((b.finish()?, id))
         }).unwrap();
         crate::SNAPSHOT.with(|s| s.set(true));
         let mut app = App::new(vault).unwrap();

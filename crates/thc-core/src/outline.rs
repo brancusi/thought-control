@@ -452,7 +452,7 @@ fn plan_inner(store: &Store, root: &str, ops: &[BlockOp], today: NaiveDate, resu
         let mut b = TxBuilder::new(store, today);
         match build(&mut b, store, root, op) {
             Ok(()) => {
-                let built = b.finish();
+                let built = b.finish()?;
                 provisional(store, &built, &format!("outline-{i}"))?;
                 let blk = store.node(op.id())?.filter(|n| !n.deleted).map(|n| {
                     let (bl, _) = render_ids(store, root, std::slice::from_ref(&n.id)).unwrap_or_default();

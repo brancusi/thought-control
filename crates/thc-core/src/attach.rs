@@ -397,7 +397,7 @@ pub fn upgrade(vault: &mut crate::vault::Vault, force: bool) -> Result<usize> {
         let r = vault.transact(|s| {
             let mut b = crate::builder::TxBuilder::new(s, today);
             let k = backfill(&mut b, &dir, &d.notes)?;
-            Ok((b.finish(), k))
+            Ok((b.finish()?, k))
         });
         vault.actor = who;
         n = r?.1;

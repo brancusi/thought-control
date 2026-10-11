@@ -155,7 +155,7 @@ fn audit(vault: &mut Vault, member: &Member, verb: &str, tasks: &[String]) -> Re
                 )?;
             }
         }
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })?;
     Ok(())
 }

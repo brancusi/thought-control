@@ -1,9 +1,16 @@
-//! Lists (owner decision, 2026-10-11): a **list** is a run of consecutive sibling items (a
-//! paragraph between them ends it). Its style is the `list` prop on the run's **first item**,
+//! Lists (owner decision, 2026-10-11): a **list** is a run of consecutive sibling items of one
+//! kind. A paragraph ends it, and so does a change of list type, as in CommonMark and the editor:
+//! bullet ↔ ordered, another bullet character, another count or delimiter (`- a` `- b` `1. c`
+//! is two lists). A blank line between two items of one kind doesn't (CommonMark's loose list;
+//! the blank line is the item's `gap`). Its style is the `list` prop on the run's **first item**,
 //! meaning "the style of the list that starts here"; it's never an item's own numbering. Numbers
-//! come from order, so a reorder renumbers by itself and no number is ever stored. When the first
-//! item moves or goes, the run's new first item takes the prop (writers re-derive it from the
-//! text), and a prop left on an item that no longer starts a run means nothing.
+//! come from order, so a reorder renumbers by itself and no number is ever stored.
+//!
+//! **Reading:** an item with no prop continues the list before it (or, first or after a
+//! paragraph, starts one in the default style); an item whose prop differs from that list's
+//! style starts a new list. So the prop is stored exactly where an item would otherwise read
+//! wrong: a list's first item, when its style isn't what it would continue or default to.
+//! Every write keeps it there (`normalise`, run by `TxBuilder::finish`).
 //!
 //! **Styles** are the first item's marker, as the editor (fictty `lists.rs`) writes it: a bullet
 //! `-` `*` `+`, or an ordered count (`1` numbers, `a`/`A` letters, `i`/`I` roman) with `.` or `)`.
@@ -17,7 +24,10 @@
 //! numbered list started anywhere is depth 1. Only a style that differs from the default is
 //! written. A plain property: no op type and no format change.
 
+use crate::event::Op;
+use crate::model::Node;
 use crate::store::Store;
+use std::collections::{HashMap, HashSet};
 
 /// The property on a list's first item that holds the list's style.
 pub const LIST: &str = "list";
@@ -50,6 +60,18 @@ impl ListStyle {
 
     pub fn is_ordered(self) -> bool {
         matches!(self, ListStyle::Ordered(..))
+    }
+
+    /// Whether an item written with `marker` continues a list in this style, or starts another
+    /// (a change of list type). Letters take roman-looking counts too: `i.` after `h.` is the
+    /// ninth letter.
+    pub fn admits(self, marker: ListStyle) -> bool {
+        use Count::*;
+        match (self, marker) {
+            (ListStyle::Bullet(a), ListStyle::Bullet(b)) => a == b,
+            (ListStyle::Ordered(c, d), ListStyle::Ordered(m, e)) => d == e && (c == m || matches!((c, m), (Lower, Roman) | (Upper, RomanUpper))),
+            _ => false,
+        }
     }
 
     /// A stored style: the template a first item would show (`"1."`, `"A)"`, `"-"`).
@@ -218,8 +240,10 @@ impl Place {
 }
 
 /// Each sibling's place, given whether it's a paragraph and its own `list` prop, and the level
-/// the siblings' lists sit in. A run of items is one list: its style is its first item's prop,
-/// else the default; a paragraph ends it, and its children start afresh (it isn't an item).
+/// the siblings' lists sit in. An item with no prop (or its list's own style) continues the
+/// list before it; one with another style starts a new list; the first item, or one after a
+/// paragraph, starts a list in its prop's style or the default. A paragraph's children start
+/// afresh (it isn't an item).
 pub fn places(enclosing: Level, kids: impl IntoIterator<Item = (bool, Option<ListStyle>)>) -> Vec<Place> {
     let mut run: Option<(Level, usize)> = None;
     kids.into_iter()
@@ -228,9 +252,9 @@ pub fn places(enclosing: Level, kids: impl IntoIterator<Item = (bool, Option<Lis
                 run = None;
                 return Place { item: None, inner: Level::NONE };
             }
-            let (level, n) = match run {
-                Some((level, n)) => (level, n + 1),
-                None => (enclosing.child(explicit), 1),
+            let (level, n) = match (run, explicit) {
+                (Some((level, n)), e) if e.is_none_or(|s| s == level.style) => (level, n + 1),
+                (_, e) => (enclosing.child(e), 1),
             };
             run = Some((level, n));
             Place { item: Some((level.style, n)), inner: level }
@@ -256,6 +280,149 @@ pub fn place_of(store: &Store, id: &str) -> Option<Place> {
 /// start afresh, and so do a paragraph's.
 pub fn enclosing(store: &Store, id: &str) -> Level {
     place_of(store, id).map_or(Level::NONE, |p| p.inner)
+}
+
+/// Keep every list's style on its first item through a transaction's changes (the one place:
+/// `TxBuilder::finish`). `ops` are the transaction's, not applied yet. For each parent whose
+/// children they change (a create, move, delete or restore, a note turned paragraph or item, a
+/// `list` set), each item afterwards **claims** the style of the list it was in before (its
+/// membership, under the same parent), or the style this transaction set on any item of that
+/// list (`thc set <any item> list=a.` restyles the list; an empty value, the default). A restored
+/// note claims its own prop; a note moved in from elsewhere, or new, claims nothing and joins the
+/// list it lands in (the one before it, else the one after). Consecutive items claiming one style
+/// are one list, so a move to the top, or the first item's delete or restore, keeps the style, and
+/// a list moved next to another of a different kind stays its own. The prop then sits on each
+/// list's first item exactly where reading needs it. `decided`: parents whose lists the transaction
+/// states outright (`thc edit`'s text), left as written. Returns the `node.set`s to add.
+pub fn normalise(store: &Store, ops: &[Op], decided: &HashSet<String>) -> anyhow::Result<Vec<Op>> {
+    let created: HashMap<&str, Option<&String>> =
+        ops.iter().filter_map(|op| if let Op::NodeCreate { id, parent, .. } = op { Some((id.as_str(), parent.as_ref())) } else { None }).collect();
+    let parent_now = |id: &str| -> Option<String> {
+        match created.get(id) {
+            Some(p) => p.cloned(),
+            None => store.node(id).ok().flatten().and_then(|n| n.parent),
+        }
+    };
+    let mut parents: Vec<String> = Vec::new();
+    let mut add = |p: Option<String>| {
+        if let Some(p) = p.filter(|p| !decided.contains(p) && !parents.contains(p)) {
+            parents.push(p);
+        }
+    };
+    // The values set on `list` in this transaction (None: cleared), and the notes restored.
+    let mut written: HashMap<String, Option<ListStyle>> = HashMap::new();
+    let mut restored: HashSet<&str> = HashSet::new();
+    for op in ops {
+        match op {
+            Op::NodeCreate { id, parent, props, .. } => {
+                add(parent.clone());
+                if let Some(v) = props.get(LIST) {
+                    written.insert(id.clone(), v.as_str().and_then(ListStyle::parse));
+                }
+            }
+            Op::NodeMove { id, parent, .. } => {
+                add(parent_now(id));
+                add(parent.clone());
+            }
+            Op::NodeDelete { id } => add(parent_now(id)),
+            Op::NodeRestore { id } => {
+                add(parent_now(id));
+                restored.insert(id);
+            }
+            Op::NodeSet { id, props } if ["status", crate::edit::STYLE, LIST].iter().any(|k| props.contains_key(*k)) => {
+                add(parent_now(id));
+                if let Some(v) = props.get(LIST) {
+                    written.insert(id.clone(), v.as_str().and_then(ListStyle::parse));
+                }
+            }
+            _ => {}
+        }
+    }
+    if parents.is_empty() {
+        return Ok(vec![]);
+    }
+    // Before: each item's list (its parent, the list's place among the parent's lists, its style).
+    let mut member: HashMap<String, (String, usize, ListStyle)> = HashMap::new();
+    for p in &parents {
+        let mut list = 0;
+        for (n, place) in places_under(store, p, enclosing(store, p))? {
+            if let Some((style, k)) = place.item {
+                list += usize::from(k == 1);
+                member.insert(n.id, (p.clone(), list, style));
+            }
+        }
+    }
+    // Restyles set in this transaction: a list (or, for a note in none, the note) and its style.
+    let mut restyle: HashMap<(String, usize), Option<ListStyle>> = HashMap::new();
+    for (id, v) in &written {
+        if let Some((p, list, _)) = member.get(id) {
+            restyle.insert((p.clone(), *list), *v);
+        }
+    }
+    // After: the transaction applied provisionally, then rolled back.
+    store.conn.execute_batch("SAVEPOINT thc_lists")?;
+    let after = (|| -> anyhow::Result<Vec<Op>> {
+        crate::outline::provisional(store, ops, "lists")?;
+        let mut out = Vec::new();
+        let mut set = |id: &str, want: Option<ListStyle>| {
+            if explicit(store, id) != want {
+                let mut props = serde_json::Map::new();
+                props.insert(LIST.into(), want.map_or(serde_json::Value::Null, |s| serde_json::json!(s.as_str())));
+                out.push(Op::NodeSet { id: id.into(), props });
+            }
+        };
+        for p in &parents {
+            let default = enclosing(store, p).default_inside();
+            let claim = |n: &Node| -> Option<ListStyle> {
+                let own = |v: Option<ListStyle>| v.unwrap_or(default);
+                match member.get(&n.id).filter(|(bp, ..)| bp == p) {
+                    Some((bp, list, style)) => Some(restyle.get(&(bp.clone(), *list)).map_or(*style, |v| own(*v))),
+                    None if written.contains_key(&n.id) => Some(own(written[&n.id])),
+                    None if restored.contains(n.id.as_str()) => explicit(store, &n.id),
+                    None => None,
+                }
+            };
+            // The lists after, each (its style, its items); None: items that claim nothing yet.
+            let mut lists: Vec<(Option<ListStyle>, Vec<Node>)> = Vec::new();
+            let mut heads: Vec<(String, Option<ListStyle>)> = Vec::new();
+            let close = |lists: &mut Vec<(Option<ListStyle>, Vec<Node>)>, heads: &mut Vec<(String, Option<ListStyle>)>| {
+                let mut before: Option<ListStyle> = None;
+                for (style, items) in lists.drain(..) {
+                    let style = style.unwrap_or(default);
+                    // What its first item would read as without a prop: the list before it, else the default.
+                    let baseline = before.unwrap_or(default);
+                    heads.push((items[0].id.clone(), (style != baseline).then_some(style)));
+                    heads.extend(items[1..].iter().map(|n| (n.id.clone(), None)));
+                    before = Some(style);
+                }
+            };
+            for n in store.children(p)? {
+                if crate::edit::is_paragraph(store, &n) {
+                    close(&mut lists, &mut heads);
+                    heads.push((n.id.clone(), None));
+                    continue;
+                }
+                let c = claim(&n);
+                match (lists.last_mut(), c) {
+                    // Unclaimed: the list it's in. Before any: it waits for the next one.
+                    (Some(last), None) => last.1.push(n),
+                    (None, None) => lists.push((None, vec![n])),
+                    (Some(last), Some(s)) if last.0.is_none_or(|l| l == s) => {
+                        last.0 = Some(s);
+                        last.1.push(n);
+                    }
+                    (_, Some(s)) => lists.push((Some(s), vec![n])),
+                }
+            }
+            close(&mut lists, &mut heads);
+            for (id, want) in heads {
+                set(&id, want);
+            }
+        }
+        Ok(out)
+    })();
+    store.conn.execute_batch("ROLLBACK TO thc_lists; RELEASE thc_lists")?;
+    after
 }
 
 #[cfg(test)]

@@ -699,7 +699,7 @@ fn ingest_drop(shared: &Arc<Shared>, paths: &Paths) -> Result<()> {
                 let got = thc_core::ingest::ingest_file(&mut b, &path)?;
                 count = got.ids.len();
                 kept = got.kept;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })?;
             ((), count)
         };

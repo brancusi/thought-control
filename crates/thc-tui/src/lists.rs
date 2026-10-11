@@ -26,7 +26,7 @@ fn app(tag: &str) -> (crate::fuzz::Scratch, App) {
                     _ => format!("a note {i} about [[Page {}]]", i % 3),
                 };
                 b.create_from_capture(None, &thc_core::capture::parse(&text, today).unwrap(), None)?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
     }

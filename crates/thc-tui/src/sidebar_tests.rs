@@ -172,7 +172,7 @@ fn page_vault(tag: &str) -> (crate::fuzz::Scratch, thc_core::vault::Vault, Strin
         b.create_from_capture(Some(health.clone()), &thc_core::capture::parse("Dr. Patel, 555-0100", today).unwrap(), None)?;
         b.create_from_capture(Some(lisbon.clone()), &thc_core::capture::parse("the deposit", today).unwrap(), None)?;
         ids = (health, lisbon);
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     (s, v, ids.0, ids.1)
@@ -219,7 +219,7 @@ fn s20_the_stack_comes_back_after_a_relaunch() {
     w.transact(|st| {
         let mut b = TxBuilder::new(st, today);
         b.delete(&lisbon)?;
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })
     .unwrap();
     let third = App::new(reopen(&v)).unwrap();

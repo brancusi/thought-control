@@ -44,7 +44,7 @@ pub fn seed(vault: &mut Vault) -> anyhow::Result<()> {
                 None,
             )?;
         }
-        Ok((b.finish(), ()))
+        Ok((b.finish()?, ()))
     })?;
     Ok(())
 }

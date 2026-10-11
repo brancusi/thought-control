@@ -27,7 +27,7 @@ fn seeded(tag: &str) -> (crate::fuzz::Scratch, Vault) {
                 let mut b = TxBuilder::new(st, today);
                 let parent = if i % 2 == 0 { None } else { Some(b.journal(today)?) };
                 b.create_from_capture(parent, &thc_core::capture::parse(text, today).unwrap(), None)?;
-                Ok((b.finish(), ()))
+                Ok((b.finish()?, ()))
             })
             .unwrap();
     }
@@ -306,7 +306,7 @@ fn a_trace_pins_its_vault_and_others_writes_land_once() {
             let mut b = TxBuilder::new(st, today);
             let j = b.journal(today)?;
             b.create_from_capture(Some(j), &thc_core::capture::parse("from the agent", today).unwrap(), None)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         })
         .unwrap();
     live.runtime(Msg::Poll);

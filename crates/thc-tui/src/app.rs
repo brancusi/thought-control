@@ -2695,7 +2695,7 @@ impl App {
         let r = self.vault.transact(|s| {
             let mut b = TxBuilder::new(s, today);
             f(&mut b)?;
-            Ok((b.finish(), ()))
+            Ok((b.finish()?, ()))
         });
         if let Some(i) = target {
             std::mem::swap(&mut self.vault, &mut self.others[i].vault);

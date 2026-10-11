@@ -134,18 +134,30 @@ them:
 
 Any note may have children, a paragraph too: nesting is only `parent`, whatever the kind.
 
-**`list`** is a list's style. A **list** is a run of consecutive sibling items (a paragraph
-between items ends one, so one level can hold a bulleted list, a paragraph and a numbered list).
-The prop sits on the run's **first item** and means "the style of the list that starts here";
-it is never an item's own numbering, and on an item that doesn't start a run it means nothing.
-Its value is the marker the first item shows: a bullet `"-"` `"*"` `"+"`, or an ordered count with
-`.` or `)`: `"1."` numbers, `"a."` / `"A."` letters, `"i."` / `"I."` roman numerals (so `"1)"`,
-`"A)"`, …). An item's number is its place in its run, so a move renumbers by itself. Absent means
-the default: bullets, except for a list nested under an item of an ordered list, which takes
-`1.` → `a.` → `i.` (then again) by its depth in that run of ordered lists; a bullet list breaks
-the run, and lists under a paragraph start afresh. Writers store only a style that differs from
-the default, and re-derive it from the text on every save: when a list's first item moves or is
-deleted, the new first item takes the prop and the old one loses it. It's an ordinary prop: no op
+**`list`** is a list's style. A **list** is a run of consecutive sibling items of one kind. A
+paragraph between items ends it, and so does a change of list type, as in CommonMark: bullet ↔
+ordered, another bullet character, another count or delimiter (`- a`, `- b`, `1. c` is two lists).
+A blank line between two items of one kind doesn't end it (a loose list; the blank line is the
+second item's `gap`). Letters take roman-looking counts: `i.` after `h.` is the ninth letter.
+The prop's value is the marker a list's first item shows: a bullet `"-"` `"*"` `"+"`, or an
+ordered count with `.` or `)`: `"1."` numbers, `"a."` / `"A."` letters, `"i."` / `"I."` roman
+numerals (so `"1)"`, `"A)"`, …). It's never an item's own numbering: an item's number is its place
+in its list, so a move renumbers by itself.
+
+**Reading.** An item with no `list` (or its list's own style) continues the list before it; one
+whose `list` differs starts a new list in that style; the first item, or one after a paragraph,
+starts a list in its `list` or the default. The default is bullets, except for a list nested under
+an item of an ordered list, which takes `1.` → `a.` → `i.` (then again) by its depth in that run of
+ordered lists; a bullet list breaks the run, and lists under a paragraph start afresh.
+
+**Writing.** The prop is stored exactly where reading needs it: on a list's first item, when its
+style isn't the one that item would otherwise read as (the default, or the list before it, which
+it would continue: `* a` then `- b` stores `-` on `b`). Writers keep it there through every change
+(thc-core: `list::normalise`, run by `TxBuilder::finish`). Each item keeps the style of the list it
+was in, so when a list's first item moves, is deleted or restored, or another item moves to the
+top, the list's new first item takes the prop in the same transaction and the old one loses it; a
+note moved in from elsewhere, or new, joins the list it lands in. `thc edit` states every list from
+its text instead. A `list` set on any item restyles that item's list. It's an ordinary prop: no op
 type and no format version change, and a reader that doesn't know it shows bullets. Older vaults
 may hold bullets whose text starts `1. `: they stay text.
 

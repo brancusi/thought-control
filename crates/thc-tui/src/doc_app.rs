@@ -17,7 +17,7 @@ fn save_inline(vault: &mut thc_core::vault::Vault, root: Option<String>, journal
             .transact(|st| {
                 let mut b = TxBuilder::new(st, today);
                 let id = b.journal(date)?;
-                Ok((b.finish(), id))
+                Ok((b.finish()?, id))
             })
             .map(|(_, id)| id)
             .map_err(|e| format!("{e:#}"))?,
@@ -757,7 +757,7 @@ impl App {
                 let _ = self.vault.transact(|st| {
                     let mut b = TxBuilder::new(st, today);
                     b.delete(&stub)?;
-                    Ok((b.finish(), ()))
+                    Ok((b.finish()?, ()))
                 });
             }
         }

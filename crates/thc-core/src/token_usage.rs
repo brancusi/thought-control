@@ -157,7 +157,7 @@ pub fn apply(vault: &mut Vault, i: &Input, tokens: &Tokens, now: i64) -> Result<
         let changed = previous.is_none_or(|s| s.tokens != *tokens);
         store.conn.execute("INSERT INTO local_tokens(node,signature,tokens,collected_ms) VALUES(?1,?2,?3,?4) ON CONFLICT(node) DO UPDATE SET signature=excluded.signature,tokens=excluded.tokens,collected_ms=excluded.collected_ms",
             rusqlite::params![i.id, i.signature(), serde_json::to_string(tokens)?, now])?;
-        Ok((b.finish(), changed))
+        Ok((b.finish()?, changed))
     });
     vault.actor = me;
     result.map(|(_, changed)| changed)
