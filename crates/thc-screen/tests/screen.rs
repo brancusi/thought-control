@@ -1563,6 +1563,37 @@ fn s02c_panel_keys_pressed_quickly_act_on_the_panel_they_reach() {
     let _ = std::fs::remove_dir_all(root);
 }
 
+/// ⌥W typed again while the first close is still in flight: the second key waits for it (fictty's
+/// `wait` on the acts that change the stack) instead of acting on the panel being closed, and
+/// goes in once the close and its rows have landed. `update` alone, so nothing ever answers.
+#[test]
+fn a_key_typed_while_a_close_is_in_flight_waits_for_it() {
+    use fictty::state::{Msg, State, update};
+    use thc_screen::sidebar::{Kind, Panel, Stack};
+    let (root, v) = seeded("held");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut stack = Stack::default();
+    stack.open(Panel::new(Kind::Day, "2026-10-11"));
+    stack.open(Panel::new(Kind::Page, &home));
+    let put = |key: &str, value: Value| Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "host".into(), for_ms: None };
+    let mut st = State::default();
+    update(&mut st, Msg::Screen { width: 140, height: 40 });
+    update(&mut st, Msg::Push { ui: host.screen(&Route::to(View::Today)) });
+    update(&mut st, put("sidebar", stack.to_value()));
+    update(&mut st, put("sidebar_shown", true.into()));
+    let rows = host.feed("sidebar", &json!({"stack": stack.to_value(), "width": 140, "height": 40})).unwrap();
+    update(&mut st, Msg::Data { name: "sidebar_rows".into(), result: Ok(rows) });
+    let top = format!("sidebar_today_panel-page-{home}");
+    update(&mut st, Msg::Focus { id: top.clone() });
+    assert_eq!(st.focus.as_deref(), Some(top.as_str()));
+    update(&mut st, Msg::Key { key: "a-w".into() });
+    assert!(!st.waiting.is_empty(), "the close waits");
+    update(&mut st, Msg::Key { key: "a-w".into() });
+    assert_eq!(st.held, vec!["a-w".to_string()], "the second ⌥W is held, not dropped or sent to the closing panel");
+    let _ = std::fs::remove_dir_all(root);
+}
+
 /// S14: a day panel changes day with `[` `]`, and `T` makes it the relative today.
 #[test]
 fn s14_a_day_panel_changes_day() {
@@ -2113,24 +2144,40 @@ fn c01_a_keys_save_costs_the_same_in_a_long_paragraph() {
     assert!(long < short * 3 + std::time::Duration::from_millis(5), "a save at 100 chars {short:?}, at 1000 {long:?}");
 }
 
-/// C01: typing 1,000 chars into one paragraph, the last 100 keys cost no more than three times
-/// the first 100. Ignored until fictty draws an editor's line without asking `links_in` about
-/// the whole line once per cell (`view::md_style`, cubic in the line's length: 0.57 s a key at
-/// 1,200 chars in release, 8 s in debug).
-#[test]
-#[ignore = "C01: fictty's md_style is cubic in a line's length; un-ignore with that fix"]
-fn c01_typing_cost_stays_flat_as_a_paragraph_grows() {
-    let (root, _host, mut s, _id) = long_paragraph("c01-flat", 0);
-    let keys = typed(&"lorem ipsum dolor sit amet ".chars().cycle().take(1000).collect::<String>());
+/// Type `n` chars into one paragraph of an empty page; the last `k` keys must cost no more than
+/// three times the first `k`. (Before fictty ae2f7c6 an editor scanned the whole line for links
+/// once per cell, cubic in the line's length: 0.57 s a key at 1,200 chars in release, 8 s in
+/// debug.)
+fn typing_stays_flat(name: &str, n: usize, k: usize) {
+    // The smallest screen thc draws (60×24), so a debug build's frames stay cheap.
+    let (root, host, id) = long_page(name, 0);
+    let route = Route { view: View::Page, id: Some(id), ..Route::default() };
+    let mut s = host.app(&route, "ember-dark").headless(60, 24).unwrap();
+    let keys = typed(&"lorem ipsum dolor sit amet ".chars().cycle().take(n).collect::<String>());
     let mut each = Vec::new();
-    for k in &keys {
+    for key in &keys {
         let t = std::time::Instant::now();
-        s.keys(&[k.as_str()]);
+        s.keys(&[key.as_str()]);
         each.push(t.elapsed());
     }
-    let (first, last): (std::time::Duration, std::time::Duration) = (each[..100].iter().sum(), each[900..].iter().sum());
-    assert!(last < first * 3, "the first 100 keys {first:?}, the last 100 {last:?}");
+    let (first, last): (std::time::Duration, std::time::Duration) = (each[..k].iter().sum(), each[n - k..].iter().sum());
+    assert!(last < first * 3, "{n} chars: the first {k} keys {first:?}, the last {k} {last:?}");
     let _ = std::fs::remove_dir_all(root);
+}
+
+/// C01: typing 400 chars into one paragraph, the last 50 keys cost under three times the first
+/// 50. Cubic growth would be about 64× here, so anything worse than linear fails.
+#[test]
+fn c01_typing_cost_stays_flat_as_a_paragraph_grows() {
+    typing_stays_flat("c01-flat", 400, 50);
+}
+
+/// C01 at full length: 1,000 chars, the last 100 keys against the first 100 (about a minute in
+/// a debug build; run by hand).
+#[test]
+#[ignore = "profiling; run by hand"]
+fn prof_c01_typing_cost_flat_at_1000_chars() {
+    typing_stays_flat("c01-flat-1000", 1000, 100);
 }
 
 /// C01 profiling: what one key costs once a paragraph is long, split into its parts (run by hand,
