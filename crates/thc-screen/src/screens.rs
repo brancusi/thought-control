@@ -43,8 +43,12 @@ pub enum View {
     Log,
     /// One node, full width (Enter below 120 columns).
     Detail,
-    /// One page's outline (Enter on a page).
+    /// One page's outline, as rows (`o` on a page).
     Outline,
+    /// One page as text to write in (Enter on a page): `page/<id>`.
+    Page,
+    /// One journal day as text to write in (Enter on a day): `day/<date>`.
+    Day,
 }
 
 impl View {
@@ -65,6 +69,8 @@ impl View {
             View::Log => "log",
             View::Detail => "detail",
             View::Outline => "outline",
+            View::Page => "page",
+            View::Day => "day",
         }
     }
 
@@ -73,7 +79,8 @@ impl View {
     fn tab(self, back: Option<View>) -> usize {
         let v = match self {
             View::Detail => back.unwrap_or(View::Today),
-            View::Outline => View::Pages,
+            View::Outline | View::Page => View::Pages,
+            View::Day => back.unwrap_or(View::Journal),
             v => v,
         };
         View::TABS.iter().position(|t| *t == v).unwrap_or(0)
@@ -119,10 +126,38 @@ fn global_keys(route: &Route) -> BTreeMap<String, Action> {
     let mut keys: BTreeMap<String, Action> = View::TABS.iter().enumerate().map(|(i, v)| ((i + 1).to_string(), open(&Route::to(*v)))).collect();
     keys.insert("/".into(), open(&Route::to(View::Search)));
     keys.insert("t".into(), Action::Theme { theme: "next".into() });
-    if let Some(back) = route.back.or(matches!(route.view, View::Outline).then_some(View::Pages)) {
-        keys.insert("esc".into(), open(&Route::to(back)));
+    let back = match route.view {
+        View::Outline | View::Page => Some(Route::to(route.back.unwrap_or(View::Pages))),
+        // Back to the Journal on the same day (or to Pages, where the day was picked).
+        View::Day => Some(match route.back {
+            Some(View::Pages) => Route::to(View::Pages),
+            _ => Route { view: View::Journal, date: route.date.clone(), ..Route::default() },
+        }),
+        _ => route.back.map(Route::to),
+    };
+    if let Some(back) = back {
+        keys.insert("esc".into(), open(&back));
     }
     keys
+}
+
+/// A page's or a day's store key (`page/<id>`, `day/<date>`): the host keeps those entries.
+pub fn doc_key(route: &Route, today: chrono::NaiveDate) -> String {
+    match route.view {
+        View::Day => format!("day/{}", route.date.clone().unwrap_or_else(|| today.format("%Y-%m-%d").to_string())),
+        _ => format!("page/{}", route.id.clone().unwrap_or_default()),
+    }
+}
+
+/// A page or a day as Markdown to write in (tui-editor.md): the host's entry for it, loaded
+/// when shown, saved half a second after the last change, reloaded when the vault changes.
+/// `- [ ]` items tick with Ctrl-T or a click on the box; the editing keys are the Mac's.
+fn editor_screen(route: &Route, today: chrono::NaiveDate) -> Ui {
+    let key = doc_key(route, today);
+    let mut doc = id(bound(node(Kind::Editor { text: String::new(), doc: None, placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false }), &key), "doc");
+    doc.pad = Some(Pad::X(1));
+    let back = if route.view == View::Day && route.back != Some(View::Pages) { "journal" } else { "pages" };
+    screen(route, ("doc", json!({"key": key})), doc, &[("esc", back), ("c-t", "tick"), ("⌘z", "undo")])
 }
 
 /// Keys on a list of nodes: x done, X reopen, Enter the node's detail (or what the row opens).
@@ -361,6 +396,7 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
             screen(route, ("outline", json!({"id": id_})), content, &[("x", "done"), ("space", "fold"), ("esc", "pages")])
         }
         View::Journal => journal(route, today),
+        View::Page | View::Day => editor_screen(route, today),
         View::Search => search(route),
         View::Log => {
             let title = sized(bound(text(" {title_m|markup}\t<muted>last 24h · everyone</> "), "log"), cells(1));
@@ -442,11 +478,12 @@ fn pages(route: &Route) -> Ui {
     if let Kind::List { filter, .. } = &mut l.kind {
         *filter = Some("pages_q".into());
     }
-    l.keys.insert("enter".into(), act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}"})));
-    // The preview: the page as Markdown in a readonly editor (headings, bullets, `- [ ]` tasks).
-    // TODO(fictty): an editor's text follows its seed only while the entry is new; a page that
-    // changes after it was first shown keeps the old preview until the store entry is rewritten.
-    let mut preview = bound(node(Kind::Editor { text: "{md}".into(), doc: Some("page/{id}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
+    // Enter writes in the page or day; `o` shows a page's outline as rows.
+    l.keys.insert("enter".into(), act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"})));
+    l.keys.insert("o".into(), act("open", json!({"view": "outline", "id": "{id}"})));
+    // The preview: the highlighted page or day, read-only, from the same host entry its editor
+    // writes (`doc`), so it's never stale: the host reloads it when the vault changes.
+    let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
     preview.id = Some("preview".into());
     preview.pad = Some(Pad::X(1));
     let content = col(vec![finder_row, sized(text(""), cells(1)), split(l, preview, spec("70%"))]);
@@ -473,7 +510,10 @@ fn journal(route: &Route, today: chrono::NaiveDate) -> Ui {
     });
     let mut calendar = bound(calendar, "journal.calendar");
     calendar.pad = Some(Pad::X(1));
-    let content = col(vec![title, strip, sized(text(""), cells(1)), split(tree("journal", "journal.rows", View::Journal), calendar, cells(36))]);
+    // Enter writes in the day shown (its lines as Markdown); x and X still act on the row.
+    let mut entries = tree("journal", "journal.rows", View::Journal);
+    entries.keys.insert("enter".into(), open(&Route { view: View::Day, date: Some(date.format("%Y-%m-%d").to_string()), ..Route::default() }));
+    let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar, cells(36))]);
     let mut ui = screen(route, ("journal", json!({"date": date.format("%Y-%m-%d").to_string()})), content, &[("[", "prev"), ("]", "next"), ("T", "today")]);
     ui.keys.insert("[".into(), day(date - chrono::Duration::days(1)));
     ui.keys.insert("]".into(), day(date + chrono::Duration::days(1)));
@@ -506,13 +546,10 @@ mod tests {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 11).unwrap();
         for v in [View::Today, View::Inbox, View::Tasks, View::Pages, View::Journal, View::Search, View::Log, View::Detail, View::Outline] {
             let ui = build(&Route::to(v), today);
-            let json = serde_json::to_value(&ui).unwrap();
-            let back: Ui = serde_json::from_value(json.clone()).unwrap();
-            // The JSON survives; the structs needn't. TODO(fictty): a list's `variant` (the row
-            // field naming its template) and a node's `variant` (a theme look) share one JSON key,
-            // and the node's takes it when read back, so a list read from JSON loses its row
-            // variants. Reported; until it's fixed, compare the JSON.
-            assert_eq!(json, serde_json::to_value(&back).unwrap(), "{v:?}");
+            // A UI pushed over the socket or restored is the same UI (a list's row field is
+            // `row_variant`, apart from the node's theme `variant`).
+            let back: Ui = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
+            assert_eq!(ui, back, "{v:?}");
             assert!(ui.data.values().all(|s| s.host.is_some()), "{v:?}: every source is the host's");
         }
         assert_eq!(View::parse("Journal"), Some(View::Journal));

@@ -2,7 +2,10 @@
 //! `act` writes through thc-core's writer as the person, and a watcher (the daemon's `changed`
 //! events, else the vault's log) tells the screen when the vault moved under it.
 
+use crate::docs::{self, Doc};
 use crate::feeds::{self, Cx};
+use std::collections::HashMap;
+use thc_core::edit::Rendered;
 use crate::screens::{self, Route, View};
 use chrono::{NaiveDate, NaiveDateTime};
 use fictty::{Host, Notifier};
@@ -15,7 +18,7 @@ use thc_core::glyphs::UNICODE;
 use thc_core::vault::Vault;
 
 /// Every feed a screen can read; a vault change refetches the ones on screen.
-pub const FEEDS: [&str; 10] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail"];
+pub const FEEDS: [&str; 11] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc"];
 
 /// The vault behind a screen. Cloning shares it.
 #[derive(Clone)]
@@ -25,6 +28,9 @@ pub struct ThcHost {
 
 struct Inner {
     vault: Mutex<Vault>,
+    /// The documents the screen has loaded (`page/<id>`, `day/<date>`), each as last rendered:
+    /// what its next save is lined up against, and what a vault change is compared with.
+    docs: Mutex<HashMap<String, DocState>>,
     /// A pinned "now" (tests, renders); else thc's clock (THC_NOW, or the real one).
     at: Option<NaiveDateTime>,
     watch: bool,
@@ -36,7 +42,7 @@ impl ThcHost {
     /// A host on an open vault. Its writes are the vault's actor's: open it as the person
     /// (`Actor { kind: "human" }`) for a screen a person drives.
     pub fn new(vault: Vault) -> ThcHost {
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -92,6 +98,7 @@ impl ThcHost {
             }
             "search" => feeds::search(&cx, s("query").unwrap_or(""))?,
             "log" => feeds::log(&cx)?,
+            "doc" => feeds::doc(&cx, s("key").unwrap_or(""))?,
             "detail" => feeds::detail(&cx, s("id").ok_or_else(|| anyhow::anyhow!("detail needs an id"))?)?,
             other => anyhow::bail!("no feed {other:?}"),
         })
@@ -160,7 +167,7 @@ impl ThcHost {
             "open" => {
                 let view = s("view").and_then(|v| View::parse(&v)).ok_or_else(|| anyhow::anyhow!("open: which view?"))?;
                 let route = Route { view, id: s("id"), query: s("query"), date: s("date"), back: s("back").and_then(|b| View::parse(&b)) };
-                if matches!(view, View::Detail | View::Outline) && route.id.is_none() {
+                if matches!(view, View::Detail | View::Outline | View::Page) && route.id.is_none() {
                     anyhow::bail!("open {}: nothing selected", view.name());
                 }
                 let ui = self.screen(&route);
@@ -182,7 +189,7 @@ impl Host for ThcHost {
         }
         if self.inner.watch {
             let host = self.clone();
-            std::thread::spawn(move || host.watch(notifier));
+            std::thread::spawn(move || host.watch());
         }
     }
 
@@ -193,19 +200,179 @@ impl Host for ThcHost {
     fn act(&self, name: &str, args: &Value) -> Result<Value, String> {
         self.perform(name, args).map_err(|e| format!("{e:#}"))
     }
+
+    fn keys(&self) -> Vec<String> {
+        vec!["page/".into(), "day/".into()]
+    }
+
+    fn load(&self, key: &str) -> Result<Value, String> {
+        self.load_doc(key).map(Value::String).map_err(|e| format!("{e:#}"))
+    }
+
+    fn save(&self, key: &str, value: &Value) -> Result<(), String> {
+        let text = value.as_str().ok_or_else(|| format!("{key}: a document is text"))?;
+        self.save_doc(key, text).map_err(|e| format!("{e:#}"))?;
+        // What else shows the page (Today's rows, the pages list) reads it again.
+        if let Some(n) = self.inner.notifier.lock().ok().and_then(|n| n.clone()) {
+            for f in FEEDS {
+                n.changed(f);
+            }
+        }
+        Ok(())
+    }
+}
+
+/// What the host knows of a document the screen has loaded.
+#[derive(Default)]
+struct DocState {
+    /// Its last render: what the next save lines up against, and what a vault change is
+    /// compared with. None for a day not written in yet.
+    last: Option<Rendered>,
+    /// Every line it has shown, with its node: a line that comes back is that node.
+    seen: HashMap<String, String>,
+}
+
+impl ThcHost {
+    /// A document's render (`edit::render`), or None for a day nobody has written in yet.
+    fn render(&self, vault: &Vault, doc: &Doc) -> anyhow::Result<Option<Rendered>> {
+        let root = match doc {
+            Doc::Page(id) => Some(vault.store.resolve(id)?),
+            Doc::Day(d) => vault.store.journal_node(&d.format("%Y-%m-%d").to_string())?,
+        };
+        root.map(|r| thc_core::edit::render(&vault.store, &r)).transpose()
+    }
+
+    /// The text a document's editor shows: its render, ids and help left out.
+    pub fn load_doc(&self, key: &str) -> anyhow::Result<String> {
+        let doc = Doc::parse(key).ok_or_else(|| anyhow::anyhow!("{key}: not a page or a day"))?;
+        let vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+        let rendered = self.render(&vault, &doc)?;
+        let text = match (&rendered, &doc) {
+            (Some(r), _) => docs::shown(&r.text),
+            // A day not written yet: its heading, as the render will write it.
+            (None, Doc::Day(d)) => format!("# {} (journal)\n\n", d.format("%Y-%m-%d")),
+            (None, Doc::Page(id)) => anyhow::bail!("no page {id}"),
+        };
+        self.remember(key, rendered)?;
+        Ok(text)
+    }
+
+    /// A document's latest render, and its lines among those it has shown.
+    fn remember(&self, key: &str, rendered: Option<Rendered>) -> anyhow::Result<()> {
+        let mut all = self.inner.docs.lock().map_err(|_| anyhow::anyhow!("poisoned"))?;
+        let st = all.entry(key.to_string()).or_default();
+        if let Some(r) = &rendered {
+            st.seen.extend(docs::seen(r));
+        }
+        st.last = rendered;
+        Ok(())
+    }
+
+    /// Write an edited document back: its lines get their ids again (lined up with the last
+    /// render) and `edit::apply` turns the difference into one transaction, as the person.
+    pub fn save_doc(&self, key: &str, text: &str) -> anyhow::Result<()> {
+        let doc = Doc::parse(key).ok_or_else(|| anyhow::anyhow!("{key}: not a page or a day"))?;
+        let mut vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+        let today = self.now().date();
+        let (last, seen) = {
+            let all = self.inner.docs.lock().map_err(|_| anyhow::anyhow!("poisoned"))?;
+            all.get(key).map(|d| (d.last.clone(), d.seen.clone())).unwrap_or_default()
+        };
+        let mut last = match (last, &doc) {
+            (Some(r), _) => r,
+            // The first line written on a day: the day comes first, then its lines.
+            (None, Doc::Day(d)) => {
+                let d = *d;
+                vault.transact(|s| {
+                    let mut b = TxBuilder::new(s, today);
+                    b.journal(d)?;
+                    Ok((b.finish(), ()))
+                })?;
+                self.render(&vault, &doc)?.ok_or_else(|| anyhow::anyhow!("{key}: the day wasn't made"))?
+            }
+            (None, Doc::Page(id)) => self.render(&vault, &Doc::Page(id.clone()))?.ok_or_else(|| anyhow::anyhow!("no page {id}"))?,
+        };
+        let mut edited = docs::with_ids(&last.text, text);
+        // A line that comes back (an undo after the save that deleted it) is the node it was:
+        // restored, so it keeps its id, then lined up again with the render that shows it.
+        let back: Vec<String> = docs::new_lines(&edited)
+            .iter()
+            .filter_map(|l| seen.get(l))
+            .filter(|id| vault.store.nodes_where("n.id = ?1 AND n.deleted = 1", &[id]).is_ok_and(|n| !n.is_empty()))
+            .cloned()
+            .collect();
+        if !back.is_empty() {
+            vault.transact(|s| {
+                let mut b = TxBuilder::new(s, today);
+                for id in &back {
+                    b.restore(id)?;
+                }
+                Ok((b.finish(), ()))
+            })?;
+            last = self.render(&vault, &doc)?.ok_or_else(|| anyhow::anyhow!("{key}: gone"))?;
+            edited = docs::with_ids(&last.text, text);
+        }
+        vault.transact(|s| {
+            let mut b = TxBuilder::new(s, today);
+            thc_core::edit::apply(&mut b, &last, &edited)?;
+            Ok((b.finish(), ()))
+        })?;
+        let now = self.render(&vault, &doc)?;
+        drop(vault);
+        self.remember(key, now)
+    }
+
+    /// One watch step: take in what changed in the vault (another process, another device, an
+    /// agent), refetch what's on screen, and reload every open document whose text moved, as an
+    /// edit, so carets and undo carry on. The watcher calls this every second; tests call it.
+    /// True when the screen is still there.
+    pub fn poll(&self, news: bool) -> bool {
+        let Some(notifier) = self.inner.notifier.lock().ok().and_then(|n| n.clone()) else { return false };
+        let mut news = news;
+        let mut moved = Vec::new();
+        if let Ok(mut v) = self.inner.vault.lock() {
+            // Another process here (the CLI, an agent) applies its own events to the shared store
+            // and moves the log cursors itself, so catch-up alone finds nothing: the vault's news
+            // counts every event applied since the last look, whoever applied it.
+            let _ = v.catch_up();
+            let n = v.take_news();
+            news |= n.overflow || !n.events.is_empty();
+            if news && let Ok(docs) = self.inner.docs.lock() {
+                for (key, st) in docs.iter() {
+                    let Some(doc) = Doc::parse(key) else { continue };
+                    let now = self.render(&v, &doc).ok().flatten();
+                    if now.as_ref().map(|r| &r.text) != st.last.as_ref().map(|r| &r.text) {
+                        moved.push(key.clone());
+                    }
+                }
+            }
+        }
+        for key in moved {
+            notifier.reload(&key);
+        }
+        if news {
+            for f in FEEDS {
+                // False once the screen has gone.
+                if !notifier.msg(fictty::state::Msg::Changed { host: f.into() }) {
+                    return false;
+                }
+            }
+        }
+        true
+    }
 }
 
 impl ThcHost {
     /// The daemon's `changed` events when it runs (live), else the vault's own log, every
     /// second: whatever moved the store refetches the feeds on screen.
-    fn watch(&self, notifier: Notifier) {
+    fn watch(&self) {
         let paths = match self.inner.vault.lock() {
             Ok(v) => v.paths.clone(),
             Err(_) => return,
         };
         let events = thc_core::live::spawn(paths);
         loop {
-            let mut news = match events.recv_timeout(Duration::from_secs(1)) {
+            let news = match events.recv_timeout(Duration::from_secs(1)) {
                 Ok(thc_core::live::LiveMsg::Connected { .. }) => {
                     self.inner.live.store(true, Ordering::Relaxed);
                     true
@@ -217,18 +384,8 @@ impl ThcHost {
                 Ok(thc_core::live::LiveMsg::Event { .. }) => true,
                 Err(_) => false,
             };
-            if let Ok(mut v) = self.inner.vault.lock() {
-                let before = v.store.max_okey().ok().flatten();
-                let caught = v.catch_up().unwrap_or(0);
-                news |= caught > 0 || v.store.max_okey().ok().flatten() != before;
-            }
-            if news {
-                for f in FEEDS {
-                    // False once the screen has gone: stop watching.
-                    if !notifier.msg(fictty::state::Msg::Changed { host: f.into() }) {
-                        return;
-                    }
-                }
+            if !self.poll(news) {
+                return;
             }
         }
     }

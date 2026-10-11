@@ -8,6 +8,7 @@
 //! - `theme`: thc's palettes (thc_core::palette) as fictty themes.
 //! - `markup`: thc's words as fictty template markup.
 
+pub mod docs;
 pub mod feeds;
 pub mod host;
 pub mod markup;

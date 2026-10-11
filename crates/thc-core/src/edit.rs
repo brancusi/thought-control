@@ -17,6 +17,7 @@ const HELP: &str = "<!-- thc edit: write paragraphs, or \"- \" bullets for items
     Indent bullets 4 spaces to nest. Lines without an id become new nodes; removed lines are deleted.\n     \
     Fields: [ ] [x] [/] [w] [-]  due:fri  sched:mon  !high  repeat:\"every week\"  #tag  [[Page]] -->";
 
+#[derive(Clone, Debug)]
 pub struct Rendered {
     pub text: String,
     /// short id -> full id, for every rendered node (root included)
@@ -184,7 +185,8 @@ struct Item {
     blank: bool,
 }
 
-fn split_id(line: &str) -> (String, Option<String>) {
+/// A line and its trailing `^id`, if it has one (the id normalized).
+pub fn split_id(line: &str) -> (String, Option<String>) {
     let t = line.trim_end();
     if let Some(i) = t.rfind(" ^") {
         let cand = &t[i + 2..];

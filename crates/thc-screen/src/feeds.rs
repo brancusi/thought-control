@@ -396,8 +396,8 @@ pub fn tasks(cx: &Cx, query: &str) -> Result<Value> {
 // ---- Pages and outlines ---------------------------------------------------------------------------
 
 /// Pages (§5.4): a section of pages (`¶ Title`, `N children · N open · ← N`), then the tags
-/// (inline, with counts) and the recent journal days. Each page row carries its outline as
-/// Markdown (`md`), for the preview (a readonly editor with task lists).
+/// (inline, with counts) and the recent journal days. Each page and day row names its document
+/// (`doc`: `page/<id>`, `day/<date>`), the host entry its preview and its editor show.
 pub fn pages(cx: &Cx) -> Result<Value> {
     let g = cx.g;
     let pages = thc_core::outline::pages(cx.store)?;
@@ -417,12 +417,10 @@ pub fn pages(cx: &Cx) -> Result<Value> {
         if back > 0 {
             meta.push(format!("{} {back}", g.backlink));
         }
-        let blocks = thc_core::outline::render(cx.store, &p.id)?;
         rows.push(json!({
-            "kind": "page", "open": "outline", "id": p.id, "short": cx.store.short(&p.id), "text": p.title,
+            "kind": "page", "open": "page", "doc": format!("page/{}", p.id), "id": p.id, "short": cx.store.short(&p.id), "text": p.title,
             "title_m": styled("text+b", &format!("{} {}", g.page, p.title)),
             "meta_m": tok(Token::Muted, &meta.join(&format!(" {} ", g.sep))),
-            "md": format!("# {}\n\n{}", p.title, thc_core::outline::markdown(&blocks)),
         }));
     }
     if pages.is_empty() {
@@ -453,7 +451,7 @@ pub fn pages(cx: &Cx) -> Result<Value> {
             let Some(date) = DateVal::from_stored(&d).map(|v| v.date()) else { continue };
             let rel = thc_core::dates::relative(date, cx.today());
             rows.push(json!({
-                "kind": "day", "open": "journal", "date": d,
+                "kind": "day", "open": "day", "doc": format!("day/{d}"), "date": d,
                 "title_m": format!("{} {}", tok(Token::Muted, g.journal), tok(Token::Text, &date.format("%a %b %-d").to_string())),
                 "meta_m": tok(Token::Muted, &format!("{} {} {rel}", plural(n as usize, "entry", "entries"), g.sep)),
             }));
@@ -504,6 +502,24 @@ pub fn outline(cx: &Cx, id: &str) -> Result<Value> {
         "meta_m": tok(Token::Muted, &format!("{} {} {open} open {} {} {}", cx.store.short(id), g.sep, g.sep, g.backlink, back.len())),
         "bar_m": bar(&label, &[(format!("{open} open"), Token::Muted)]),
     }))
+}
+
+/// The bar of a page or day being written in: what it is and how much is open in it.
+pub fn doc(cx: &Cx, key: &str) -> Result<Value> {
+    let g = cx.g;
+    let (name, root) = if let Some(id) = key.strip_prefix("page/") {
+        let n = cx.store.node(&cx.store.resolve(id)?)?;
+        (format!("{} {}", g.page, n.as_ref().map(|n| n.label()).unwrap_or_default()), n.map(|n| n.id))
+    } else {
+        let d = key.strip_prefix("day/").unwrap_or("");
+        let date = DateVal::from_stored(d).map(|v| v.date()).unwrap_or(cx.today());
+        (format!("{} {}", g.journal, date.format("%a %b %-d")), cx.store.journal_node(d)?)
+    };
+    let open = match &root {
+        Some(r) => open_under(cx.store, r)?,
+        None => 0,
+    };
+    Ok(json!({"bar_m": bar(&name, &[(format!("{open} open"), Token::Muted), ("writing".into(), Token::Muted)])}))
 }
 
 // ---- Journal ------------------------------------------------------------------------------------
