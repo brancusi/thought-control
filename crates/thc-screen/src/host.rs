@@ -34,6 +34,13 @@ struct Inner {
     /// A pinned "now" (tests, renders); else thc's clock (THC_NOW, or the real one).
     at: Option<NaiveDateTime>,
     watch: bool,
+    /// Keep the sidebar's stack in the vault's cache (live screens; never snapshots).
+    persist: bool,
+    /// Panels dropped on load because their page is gone: said once, at the start.
+    dropped: Mutex<Vec<String>>,
+    /// The screen's width as the sidebar's source last read it (`$screen.width`): which place
+    /// the sidebar shows in (column, drawer, replace), for the acts that move the focus there.
+    width: std::sync::atomic::AtomicU64,
     live: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
 }
@@ -44,7 +51,7 @@ impl ThcHost {
     pub fn new(mut vault: Vault) -> ThcHost {
         // What happened before the screen opened isn't news to it (no toast, no live marks).
         let _ = vault.take_news();
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), width: std::sync::atomic::AtomicU64::new(120), live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -75,7 +82,58 @@ impl ThcHost {
 
     /// The screen for a route, as of now.
     pub fn screen(&self, route: &Route) -> fictty::model::Ui {
-        screens::build(route, self.now().date())
+        let mut ui = screens::build(route, self.now().date());
+        // The stack this device kept for this vault (sidebar.md §11), starting where it was.
+        if let Some(stack) = self.load_stack() {
+            let beside = !stack.open.is_empty();
+            ui.store.insert("sidebar".into(), stack.to_value());
+            ui.store.insert("sidebar_shown".into(), beside.into());
+            ui.store.insert("sidebar_beside".into(), beside.into());
+        }
+        ui
+    }
+
+    /// Keep the stack across runs: `.persisting()` on a live screen.
+    pub fn persisting(self) -> ThcHost {
+        self.rebuild(|i| i.persist = true)
+    }
+
+    /// Where the stack is kept: the vault's cache, per vault and per device (§11).
+    fn stack_file(&self) -> Option<std::path::PathBuf> {
+        let v = self.inner.vault.lock().ok()?;
+        Some(crate::sidebar::file(&v.paths.cache))
+    }
+
+    /// The kept stack, without panels whose page was deleted (named in `dropped`, for the bar).
+    fn load_stack(&self) -> Option<crate::sidebar::Stack> {
+        if !self.inner.persist {
+            return None;
+        }
+        let raw = std::fs::read(self.stack_file()?).ok()?;
+        let mut stack = crate::sidebar::Stack::from_value(&serde_json::from_slice(&raw).ok()?);
+        let v = self.inner.vault.lock().ok()?;
+        let mut gone = Vec::new();
+        stack.open.retain(|p| {
+            let here = p.kind != crate::sidebar::Kind::Page || v.store.node(&p.target).ok().flatten().is_some_and(|n| !n.deleted);
+            if !here {
+                gone.push(p.target.clone());
+            }
+            here
+        });
+        if let Ok(mut d) = self.inner.dropped.lock() {
+            *d = gone;
+        }
+        Some(stack)
+    }
+
+    /// Write the stack to the cache (atomically: a temp file, then a rename).
+    fn save_stack(&self, stack: &crate::sidebar::Stack) {
+        if !self.inner.persist {
+            return;
+        }
+        if let Ok(v) = self.inner.vault.lock() {
+            crate::sidebar::save(&v.paths.cache, stack);
+        }
     }
 
     /// A fictty app on this vault, showing `route` in `theme`: run it (`run`) or draw it
@@ -112,7 +170,14 @@ impl ThcHost {
             "today" if s("mode") == Some("agenda") => feeds::agenda(cx)?,
             "today" => feeds::today(cx)?,
             "context" => feeds::context(cx, s("id").unwrap_or(""), s("query").unwrap_or(""))?,
-            "sidebar" => feeds::sidebar(cx, &crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null)))?,
+            "sidebar" => {
+                let stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
+                let height = args.get("height").and_then(Value::as_u64).unwrap_or(40) as usize;
+                if let Some(w) = args.get("width").and_then(Value::as_u64) {
+                    self.inner.width.store(w, Ordering::Relaxed);
+                }
+                feeds::sidebar(cx, &stack, s("active").unwrap_or(""), height, self.inner.width.load(Ordering::Relaxed) as usize)?
+            }
             "dest" => feeds::dest(cx, s("query").unwrap_or(""))?,
             "tx" => feeds::tx(cx, s("id").unwrap_or(""))?,
             "inbox" => feeds::inbox(cx)?,
@@ -313,16 +378,22 @@ impl ThcHost {
             // `aside`: `{"id"}` a row's node (its page or day), or `{"kind", "ref"}`.
             "aside" => {
                 let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
-                let panel = match (s("kind"), s("ref")) {
-                    (Some(k), Some(r)) => crate::sidebar::Panel::new(serde_json::from_value(json!(k))?, &r),
+                let panel = match (s("kind"), s("ref"), s("title")) {
+                    (Some(k), Some(r), _) => crate::sidebar::Panel::new(serde_json::from_value(json!(k))?, &r),
+                    // A link's page or tag (`as`: page, tag, or link: whichever it names).
+                    (_, _, Some(t)) => self.panel_for_link(&t, s("as").as_deref().unwrap_or("link"))?,
+                    (_, _, None) if s("as").is_some() => return Ok(json!({"ok": true, "panel": null})),
                     _ => self.panel_for(&id()?)?,
                 };
                 let title = panel.key();
                 let opened = stack.open(panel);
-                // Opening shows it (the column, or the drawer below 120).
-                // TODO(fictty): the new panel should become the active one (§2 rule 1), the
-                // selected header; that needs a way to select a row by its key.
+                // Opening shows it (the column, or the drawer below 120), and it's the active
+                // panel (§2 rule 1). Narrow, the drawer (or replace) takes the focus too; beside,
+                // the focus stays where it was.
                 self.put_stack(&stack, true)?;
+                let narrow = self.inner.width.load(Ordering::Relaxed) < 120;
+                let view = s("view");
+                self.activate(&stack, Some(&title), if narrow { view.as_deref() } else { None })?;
                 match opened {
                     crate::sidebar::Opened::Evicted(p) => self.toast(&format!("{} closed to make room · ⌥⇧T reopen", p.key()), "text")?,
                     crate::sidebar::Opened::Refused => self.toast("8 panels pinned · unpin one to open another", "neg")?,
@@ -334,7 +405,8 @@ impl ThcHost {
             // the stack.
             "panel" => {
                 let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
-                let key = s("key").unwrap_or_default();
+                // The panel: its key, or its id (the active one's, `sidebar_active`).
+                let mut key = s("key").or_else(|| s("id").and_then(|id| stack.open.iter().find(|p| p.id() == id).map(|p| p.key()))).unwrap_or_default();
                 let mut shown = match args.get("shown") {
                     Some(Value::Bool(b)) => *b,
                     Some(Value::String(v)) => !v.is_empty() && v != "false",
@@ -362,12 +434,34 @@ impl ThcHost {
                         }
                     }
                     Some("close_all") => stack.close_unpinned(),
+                    // A day panel's `[` `]` `T` (§8.1).
+                    Some("day") => {
+                        let by = args.get("by").and_then(Value::as_i64);
+                        stack.retarget_day(&key, by, self.now().date());
+                    }
+                    // ⌥S (by 0: the active panel, else the top one), ⌥J / ⌥K (by 1, -1).
+                    Some("focus") => {
+                        shown = true;
+                        let by = args.get("by").and_then(Value::as_i64).unwrap_or(0);
+                        let n = stack.open.len() as i64;
+                        if n > 0 {
+                            let i = stack.position(&key).map_or(0, |i| i as i64);
+                            key = stack.open[(i + by).clamp(0, n - 1) as usize].key();
+                        }
+                    }
                     // ⌥S showed it; ⌥\ hides or shows it.
                     Some("show") => shown = true,
                     Some("toggle") => shown = !shown,
                     other => anyhow::bail!("no panel op {other:?}"),
                 }
                 self.put_stack(&stack, shown)?;
+                // The active panel after the op: the one it was on (where it went), else the one
+                // that took its place; the focus with it, where the keys were pressed.
+                let view = s("view");
+                let at = s("at").and_then(|a| a.parse::<usize>().ok());
+                let keep = if stack.position(&key).is_some() { Some(key.clone()) } else { at.and_then(|i| stack.open.get(i.min(stack.open.len().saturating_sub(1)))).map(|p| p.key()) };
+                let refocus = s("op").is_some_and(|o| o != "toggle" && o != "reopen");
+                self.activate(&stack, keep.as_deref(), if refocus && !stack.open.is_empty() { view.as_deref() } else { None })?;
                 Ok(json!({"ok": true}))
             }
             // `⌥M` (§3.4): the main view goes to this panel's page or day, and the panel closes.
@@ -375,31 +469,53 @@ impl ThcHost {
                 let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
                 let key = s("key").unwrap_or_default();
                 let Some(p) = stack.open.iter().find(|p| p.key() == key).cloned() else { return Ok(json!({"ok": true})) };
-                let (tab, view, open) = match p.kind {
-                    crate::sidebar::Kind::Page => (3, "pages", json!({"kind": "page", "id": p.target, "key": format!("page/{}", p.target)})),
-                    crate::sidebar::Kind::Day => {
-                        let d = if p.target == "today" { self.now().date().format("%Y-%m-%d").to_string() } else { p.target.clone() };
-                        self.put("journal_date", d.clone().into())?;
-                        (4, "journal", json!({"kind": "day", "key": format!("day/{d}")}))
-                    }
-                    // A list panel's view is its tab.
-                    crate::sidebar::Kind::View | crate::sidebar::Kind::Query => {
-                        let tab = screens::View::TABS.iter().position(|v| v.name() == p.target).unwrap_or(2);
-                        if p.kind == crate::sidebar::Kind::Query {
-                            self.put("tasks_q", p.target.clone().into())?;
-                        }
-                        stack.close(&key);
-                        self.put_stack(&stack, true)?;
-                        self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
-                        return Ok(json!({"ok": true}));
-                    }
-                };
                 stack.close(&key);
                 self.put_stack(&stack, true)?;
-                self.put(&format!("open_{view}"), open)?;
-                self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(tab) })?;
-                self.send(fictty::state::Msg::Click { id: format!("{view}_doc"), row: None, tab: None })?;
+                self.activate(&stack, None, None)?;
+                self.open_in_main(&p, args.get("from").and_then(Value::as_u64), &Value::Null)?;
                 Ok(json!({"ok": true}))
+            }
+            // Enter on a list panel's row (§8.2): its page or day in the main view.
+            "to_main_node" => {
+                let p = self.panel_for(&id()?)?;
+                self.open_in_main(&p, args.get("from").and_then(Value::as_u64), &Value::Null)?;
+                Ok(json!({"ok": true}))
+            }
+            // A click on `[[Page]]` (or ⌃O on it): the page in the main view, and Esc comes back
+            // to what was open where the link was (`back`).
+            "follow" => {
+                let Some(title) = s("title") else { return Ok(json!({"ok": true, "followed": null})) };
+                let id = {
+                    let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+                    v.store.find_root_by_title(&title, false)?.ok_or_else(|| anyhow::anyhow!("no page {title:?}"))?
+                };
+                let p = crate::sidebar::Panel::new(crate::sidebar::Kind::Page, &id);
+                self.open_in_main(&p, args.get("from").and_then(Value::as_u64), args.get("back").unwrap_or(&Value::Null))?;
+                Ok(json!({"ok": true, "followed": id}))
+            }
+            // Esc from a page or day opened from elsewhere (⌥M, a link): back to the view it came
+            // from, and to what was open there, if anything.
+            "return" => {
+                let Some(tab) = args.get("tab").and_then(Value::as_u64).map(|t| t as usize).filter(|t| *t < screens::View::TABS.len()) else {
+                    return Ok(json!({"ok": true, "returned": null}));
+                };
+                let view = screens::View::TABS[tab];
+                self.put("return_tab", Value::Null)?;
+                self.put("return_open", Value::Null)?;
+                self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, key: None, tab: Some(tab) })?;
+                let open = args.get("open").filter(|o| o.is_object()).cloned();
+                match open {
+                    Some(o) => {
+                        self.put(&format!("open_{}", view.name()), o)?;
+                        self.send(fictty::state::Msg::Click { id: format!("{}_doc", view.name()), row: None, tab: None })?;
+                    }
+                    None => {
+                        if let Some(list) = screens::first_focus(&screens::Route::to(view)) {
+                            self.send(fictty::state::Msg::Click { id: list, row: None, tab: None })?;
+                        }
+                    }
+                }
+                Ok(json!({"ok": true, "returned": tab}))
             }
             // `{"keys": "p h"}`: press a command's keys (the palette runs a command this way, so it
             // does just what its key does).
@@ -411,6 +527,22 @@ impl ThcHost {
                 Ok(json!({"ok": true}))
             }
             other => anyhow::bail!("no action {other:?}"),
+        }
+    }
+
+    /// A link's panel (§2): `page` a page by its title, `tag` the tag's list, `link` whichever the
+    /// name is (a page first).
+    fn panel_for_link(&self, name: &str, kind: &str) -> anyhow::Result<crate::sidebar::Panel> {
+        use crate::sidebar::{Kind, Panel};
+        let tag = || Panel::new(Kind::Query, &format!("#{}", name.trim_start_matches('#').to_lowercase()));
+        if kind == "tag" {
+            return Ok(tag());
+        }
+        let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+        match v.store.find_root_by_title(name, false)? {
+            Some(id) => Ok(Panel::new(Kind::Page, &id)),
+            None if kind == "link" && v.store.find_root_by_title(name, true)?.is_some() => Ok(tag()),
+            None => anyhow::bail!("no page {name:?}"),
         }
     }
 
@@ -437,9 +569,56 @@ impl ThcHost {
         }
     }
 
+    /// Make a panel the active one (`sidebar_active`, its id; `sidebar_target`, what in it takes
+    /// the focus): `key`, else the top panel. With `focus` (the tab whose instance has the keys),
+    /// the focus goes to it, wherever the sidebar shows at the screen's width.
+    fn activate(&self, stack: &crate::sidebar::Stack, key: Option<&str>, focus: Option<&str>) -> anyhow::Result<()> {
+        let p = key.and_then(|k| stack.open.iter().find(|p| p.key() == k)).or(stack.open.first());
+        let (id, target) = p.map(|p| (p.id(), p.target())).unwrap_or_default();
+        self.put("sidebar_active", id.into())?;
+        self.put("sidebar_target", target.clone().into())?;
+        if let (Some(view), false) = (focus, target.is_empty()) {
+            let place = crate::sidebar::place(self.inner.width.load(Ordering::Relaxed));
+            self.send(fictty::state::Msg::Click { id: format!("{place}_{view}_{target}"), row: None, tab: None })?;
+        }
+        Ok(())
+    }
+
+    /// A page or day in the main view (§3.4, §12): its tab, its layer open to write in, the focus
+    /// in it. A list panel's view or query goes to its tab. With `from` (another tab) or `back`
+    /// (what was open), Esc comes back there (`return`).
+    fn open_in_main(&self, p: &crate::sidebar::Panel, from: Option<u64>, back: &Value) -> anyhow::Result<()> {
+        use crate::sidebar::Kind;
+        let (tab, view, open) = match p.kind {
+            Kind::Page => (3, "pages", json!({"kind": "page", "id": p.target, "key": format!("page/{}", p.target)})),
+            Kind::Day => {
+                let d = if p.target == "today" { self.now().date().format("%Y-%m-%d").to_string() } else { p.target.clone() };
+                self.put("journal_date", d.clone().into())?;
+                (4, "journal", json!({"kind": "day", "key": format!("day/{d}")}))
+            }
+            Kind::View | Kind::Query => {
+                let tab = screens::View::TABS.iter().position(|v| v.name() == p.target).unwrap_or(2);
+                if p.kind == Kind::Query {
+                    self.put("tasks_q", p.target.clone().into())?;
+                }
+                self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, key: None, tab: Some(tab) })?;
+                return Ok(());
+            }
+        };
+        if let Some(from) = from.filter(|f| *f != tab as u64 || back.is_object()) {
+            self.put("return_tab", from.into())?;
+            self.put("return_open", back.clone())?;
+        }
+        self.put(&format!("open_{view}"), open)?;
+        self.send(fictty::state::Msg::Set { id: "views".into(), selected: None, key: None, tab: Some(tab) })?;
+        self.send(fictty::state::Msg::Click { id: format!("{view}_doc"), row: None, tab: None })?;
+        Ok(())
+    }
+
     /// Write the stack, whether it shows, and whether it's beside the view (both: the detail pane
     /// and the Journal's calendar yield to it, §6.2).
     fn put_stack(&self, stack: &crate::sidebar::Stack, shown: bool) -> anyhow::Result<()> {
+        self.save_stack(stack);
         self.put("sidebar", stack.to_value())?;
         self.put("sidebar_shown", shown.into())?;
         self.put("sidebar_beside", (shown && !stack.open.is_empty()).into())
@@ -497,6 +676,13 @@ impl Host for ThcHost {
         if self.inner.watch {
             let host = self.clone();
             std::thread::spawn(move || host.watch());
+        }
+        // A kept panel whose page was deleted is said once (sidebar.md §11).
+        let gone = self.inner.dropped.lock().map(|mut d| std::mem::take(&mut *d)).unwrap_or_default();
+        if let Some(id) = gone.first() {
+            let title = self.inner.vault.lock().ok().and_then(|v| v.store.node(id).ok().flatten().map(|n| n.label())).unwrap_or_else(|| id.clone());
+            let more = if gone.len() > 1 { format!(" (and {} more)", gone.len() - 1) } else { String::new() };
+            let _ = self.toast(&format!("¶ {title} was deleted · removed from the sidebar{more}"), "text");
         }
     }
 

@@ -1301,22 +1301,27 @@ fn s3_to_s12_the_sidebar_keys() {
     let host = ThcHost::new(v).at(now());
     let mut s = screen(&host, View::Today, 140, 40);
     s.keys(&["o", "down", "o"]);
+    // The newest panel is the active one (§2 rule 1): ⌥S lands in ¶ Home's text.
+    let home_doc = format!("sidebar_today_panel-page-{home}");
     s.keys(&["a-s"]);
-    assert_eq!(s.state().focus.as_deref(), Some("sidebar_today"));
+    assert_eq!(s.state().focus.as_deref(), Some(home_doc.as_str()));
     s.keys(&["esc"]);
     assert_eq!(s.state().focus.as_deref(), Some("today"), "back to main");
-    // (The active panel is the one selected in the stack; ⌥K to ¶ Home on top.)
-    s.keys(&["a-s", "a-k", "a-c"]);
+    s.keys(&["a-s", "a-c"]);
     assert!(s.screen().contains("2 open"), "folded ¶ Home shows its count: {}", s.screen());
+    assert_eq!(s.state().focus.as_deref(), Some(format!("sidebar_today_head-page-{home}").as_str()), "folded: its header");
     s.keys(&["a-c", "a-p"]);
     assert!(s.screen().contains("pinned"));
     // The day under it: close it, reopen it.
-    s.keys(&["a-j", "a-w"]);
+    s.keys(&["a-j"]);
+    assert_eq!(s.state().focus.as_deref(), Some("sidebar_today_panel-day-2026-10-11"));
+    s.keys(&["a-w"]);
     assert_eq!(panels(&mut s), vec![format!("page:{home}")]);
     s.keys(&["a-s-t"]);
     assert_eq!(panels(&mut s), vec![format!("page:{home}"), "day:2026-10-11".into()], "reopened under the pinned one");
     // ⌥M on Home: the main view is ¶ Home to write in, and the panel is gone.
-    s.keys(&["a-k", "a-m"]);
+    assert_eq!(s.state().focus.as_deref(), Some(home_doc.as_str()), "the panel that took its place");
+    s.keys(&["a-m"]);
     assert_eq!(panels(&mut s), vec!["day:2026-10-11"]);
     assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
     assert!(s.screen().contains("¶ Home") && s.screen().contains("Water plants"), "{}", s.screen());
@@ -1333,8 +1338,8 @@ fn s16_s17_the_drawer_and_replace() {
     s.keys(&["o"]);
     let text = s.screen();
     assert!(text.lines().nth(2).unwrap().contains("§ Sun 11 Oct · today"), "the drawer, over the right: {text}");
-    s.keys(&["a-s"]);
-    assert_eq!(s.state().focus.as_deref(), Some("drawer_today"));
+    // The open put the focus in the drawer.
+    assert!(s.state().focus.as_deref().is_some_and(|f| f.starts_with("drawer_today_panel-")), "{:?}", s.state().focus);
     s.keys(&["esc"]);
     assert!(!s.screen().contains("§ Sun 11 Oct"), "closed");
     assert_eq!(panels(&mut s), vec!["day:2026-10-11"], "the stack stays");
@@ -1355,13 +1360,19 @@ fn s21_an_agents_aside_shows_who_and_leaves_the_focus() {
     let health = node_id(&root, "Health");
     let host = ThcHost::new(v).at(now());
     let mut s = screen(&host, View::Today, 140, 40);
-    let mut stack = thc_screen::sidebar::Stack::default();
-    let mut p = thc_screen::sidebar::Panel::new(thc_screen::sidebar::Kind::Page, &health);
-    p.opened_by = Some("agent:claude".into());
-    stack.open(p);
-    for (key, value) in [("sidebar", stack.to_value()), ("sidebar_shown", json!(true))] {
-        s.msg(fictty::state::Msg::Write { key: key.into(), write: fictty::store::Write::Put { value }, if_rev: None, by: "agent:claude".into(), for_ms: None });
+    // `thc ui aside Health` as claude, over the screen's socket: read, then the writes.
+    let read = s.request(json!({"op": "read", "key": "sidebar"}));
+    let store = open(&root, human());
+    let (key, _, reqs) = thc_screen::sidebar::aside_requests(&store.store, &read, "Health", Some("claude"), false, false, false, today()).unwrap();
+    assert_eq!(key, format!("page:{health}"));
+    for r in &reqs {
+        let reply = s.request(r.clone());
+        assert_ne!(reply["ok"], json!(false), "{r} → {reply}");
     }
+    // A stale write (the person changed the stack since the read) is refused.
+    let stale = s.request(reqs[0].clone());
+    assert_eq!(stale["ok"], json!(false), "{stale}");
+    // It shows at once, with who opened it, and its body; the focus didn't move.
     let text = s.screen();
     assert!(text.contains("¶ Health") && text.contains("◆ claude"), "{text}");
     assert_eq!(s.state().focus.as_deref(), Some("today"));
@@ -1379,7 +1390,7 @@ fn one_page_two_editors_one_text_one_undo() {
     let host = ThcHost::new(v).at(now());
     let editor = |id: &str| Node {
         id: Some(id.into()),
-        kind: Kind::Editor { text: String::new(), doc: Some(format!("page/{home}")), placeholder: None, syntax: Some("markdown".into()), readonly: false, tab: None, tasks: None, caret: Some("end".into()) },
+        kind: Kind::Editor { text: String::new(), doc: Some(format!("page/{home}")), placeholder: None, syntax: Some("markdown".into()), readonly: false, tab: None, tasks: None, caret: Some("end".into()), links: vec![] },
         ..Node::default()
     };
     let ui = Ui { root: Node { kind: Kind::Col { children: vec![editor("main"), editor("panel")], gap: None }, ..Node::default() }, focus: Some("main".into()), status_bar: Some(false), ..Ui::default() };
@@ -1392,5 +1403,299 @@ fn one_page_two_editors_one_text_one_undo() {
     s.keys(&["d-z"]);
     assert_eq!(s.screen().matches("Repot the fern").count(), 0, "one undo history: {}", s.screen());
     assert!(!kid_texts(&root, &home).contains(&"Repot the fern".to_string()));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §2 rule 1 and §6.4: narrow, an open opens the drawer and focuses it (wide, the focus stays);
+/// the drawer has its `│` left edge, 60 columns from the right.
+#[test]
+fn narrow_an_open_focuses_the_drawer_which_has_its_edge() {
+    let (root, v) = seeded("drawer-focus");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 100, 30);
+    s.keys(&["o"]);
+    assert_eq!(s.state().focus.as_deref(), Some("drawer_today_panel-day-2026-10-11"), "the drawer takes it");
+    let text = s.screen();
+    let edge: Vec<char> = text.lines().nth(4).unwrap().chars().collect();
+    assert_eq!(edge.get(40), Some(&'│'), "the edge at 100 - 60: {text}");
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"), "beside, the focus stays");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S14: a day panel changes day with `[` `]`, and `T` makes it the relative today.
+#[test]
+fn s14_a_day_panel_changes_day() {
+    let (root, v) = seeded("day-panel");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o", "a-s", "c-p"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-10"]);
+    assert!(s.screen().contains("§ Sat 10 Oct"), "{}", s.screen());
+    s.keys(&["c-n", "a-]"]);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-12"]);
+    s.keys(&["a-c", "T"]);
+    assert_eq!(panels(&mut s), vec!["day:today"]);
+    assert!(s.screen().contains("§ Sun 11 Oct · today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S20: the stack is kept in the vault's cache (per vault, per device) and comes back on the
+/// next run; a panel whose page was deleted is dropped, and the bar says so once.
+#[test]
+fn s20_the_stack_comes_back_and_a_deleted_page_goes() {
+    let (root, v) = seeded("persist");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o", "down", "o", "a-s", "a-p"]);
+    let before = panels(&mut s);
+    assert_eq!(before.len(), 2);
+    drop(s);
+    drop(host);
+    assert!(thc_screen::sidebar::file(&root.join("c")).exists(), "kept in the vault's cache");
+    let host = ThcHost::new(open(&root, human())).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert_eq!(panels(&mut s), before, "the same stack");
+    assert!(s.screen().contains("¶ Home") && s.screen().contains("pinned"), "{}", s.screen());
+    drop(s);
+    drop(host);
+    // Home deleted elsewhere: dropped on the next run, said once.
+    let mut other = open(&root, human());
+    other
+        .transact(|st| {
+            let mut b = TxBuilder::new(st, today());
+            b.delete(&home)?;
+            Ok((b.finish(), ()))
+        })
+        .unwrap();
+    drop(other);
+    let host = ThcHost::new(open(&root, human())).at(now()).persisting();
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert_eq!(panels(&mut s), vec!["day:2026-10-11"]);
+    assert!(toasts(&mut s).iter().any(|t| t == "¶ Home was deleted · removed from the sidebar"), "{:?}", toasts(&mut s));
+    // Snapshots and tests that don't persist neither read nor write it.
+    let host = ThcHost::new(open(&root, human())).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    assert!(panels(&mut s).is_empty());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S12: ⌥M is a step in the main view: Esc from the page comes back to the view ⌥M was
+/// pressed in, its list focused.
+#[test]
+fn s12_esc_after_open_in_main_comes_back() {
+    let (root, v) = seeded("to-main-back");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["down", "o", "a-s", "a-m"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
+    s.keys(&["esc"]);
+    let st = s.state();
+    assert_eq!(st.focus.as_deref(), Some("today"), "back in Today");
+    assert_eq!(st.local["views"].tab, 0);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §0 frame B: with the column showing, the bar still spans the screen under it.
+#[test]
+fn the_bar_spans_the_width_beside_the_column() {
+    let (root, v) = seeded("bar-width");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["o"]);
+    let text = s.screen();
+    let bar = text.lines().nth(39).unwrap();
+    let right = bar.chars().count();
+    assert!(bar.starts_with(" today ·") && right >= 138, "to the right edge: {bar:?}");
+    assert!(!bar.contains('│'), "{bar:?}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// N04 exactly as the harness runs it (scripts/e2e/scenarios/N04): a vault with only ¶ Health
+/// (and a note under it); `4`, type `Health`, Enter (the page to write in), Esc: the focus has
+/// left the page, and the Pages list's selected row is Health.
+#[test]
+fn n04_harness_repro_esc_lands_on_the_page_found() {
+    let root = thc_core::scratch::dir(&format!("thc-screen-n04-exact-{}", thc_core::id::new_id()));
+    vault::init(&root.join("v"), None, None).unwrap();
+    let mut v = open(&root, human());
+    v.transact(|s| {
+        let mut b = TxBuilder::new(s, today());
+        let health = b.create_page("Health", &[])?;
+        b.create_from_capture(Some(health), &thc_core::capture::parse("Schedule annual physical", today()).unwrap(), None)?;
+        Ok((b.finish(), ()))
+    })
+    .unwrap();
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["4"]);
+    type_in(&mut s, "Health");
+    s.keys(&["enter"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"));
+    s.keys(&["esc"]);
+    assert_ne!(s.state().focus.as_deref(), Some("pages_doc"));
+    let row = fictty::state::selected_item(s.state()).unwrap_or_default();
+    assert_eq!(row["text"], "Health", "the selected row: {row}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+// ---- container queries, panel bodies, height sharing, links ------------------------------------
+
+/// With the sidebar beside it at 140 columns, the main pane is 93 wide: Tasks lays itself out
+/// narrow (a list, not the table), by the pane's width, not the screen's.
+#[test]
+fn beside_the_sidebar_tasks_lays_out_by_its_pane() {
+    let (root, v) = seeded("container");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Tasks, 140, 40);
+    assert!(s.screen().contains("  id        task"), "the table at 140: {}", s.screen());
+    s.keys(&["o"]);
+    let text = s.screen();
+    assert!(!text.contains("  id        task") && text.contains("Call the bank"), "narrow beside the sidebar: {text}");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// Panels have bodies: a page panel is an editor on the page's own entry, so typing there
+/// writes the vault, and a list panel (`@today`) shows the view's rows, where `x` completes in
+/// place (S15).
+#[test]
+fn panels_show_their_bodies_and_write() {
+    let (root, v) = seeded("bodies");
+    let home = node_id(&root, "Home");
+    let bank = node_id(&root, "Call the bank");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["down", "o"]);
+    let text = s.screen();
+    assert!(text.contains("- [ ] Water plants #garden due:2026-10-11") && text.contains("- Wifi password is on the fridge"), "¶ Home's text in its panel: {text}");
+    s.keys(&["a-s", "d-down"]);
+    type_in(&mut s, "Fix the gate");
+    assert!(kid_texts(&root, &home).contains(&"Fix the gate".to_string()), "{:?}", kid_texts(&root, &home));
+    // A list panel: Today's rows; x on one completes it.
+    let read = s.request(json!({"op": "read", "key": "sidebar"}));
+    let store = open(&root, human());
+    let (_, _, reqs) = thc_screen::sidebar::aside_requests(&store.store, &read, "@today", None, false, false, false, today()).unwrap();
+    for r in &reqs {
+        s.request(r.clone());
+    }
+    s.keys(&["esc", "a-s"]);
+    assert_eq!(s.state().focus.as_deref(), Some("sidebar_today_rows-view-today"));
+    s.keys(&["x"]);
+    assert_eq!(open(&root, human()).store.node(&bank).unwrap().unwrap().status.as_deref(), Some("done"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// S11 (§6.3): when everything fits, each body is its natural height; when not, the panels other
+/// than the active one take at most 6 rows, the active one the rest (at least 3), and what's
+/// still too tall folds from the bottom.
+#[test]
+fn s11_panels_share_the_height() {
+    use thc_screen::feeds::share_height;
+    let p = |id: &str, h: usize| (id.to_string(), h);
+    assert_eq!(share_height(&[p("a", 4), p("b", 5)], "a", 40), vec![(4, 0), (5, 0)], "it fits");
+    assert_eq!(share_height(&[p("a", 30), p("b", 20), p("c", 10)], "b", 40), vec![(6, 24), (20, 0), (6, 4)]);
+    assert_eq!(share_height(&[p("a", 30), p("b", 40)], "b", 24), vec![(6, 24), (12, 28)], "the active takes what's left");
+    assert_eq!(share_height(&[p("a", 9), p("b", 9), p("c", 9), p("d", 9)], "a", 14).iter().filter(|(b, _)| *b == 0).count(), 3, "folded for room from the bottom");
+}
+
+/// Where `needle` is in an editor's text, as a click there sends it: the cell relative to the
+/// editor (`first` is the editor's first line, to find where it starts on screen).
+fn cell_of(s: &mut fictty::Headless, first: &str, needle: &str) -> (u16, u16) {
+    let text = s.screen();
+    let lines: Vec<&str> = text.lines().collect();
+    let top = lines.iter().position(|l| l.contains(first)).expect("the editor's first line");
+    let left = lines[top].chars().collect::<String>().find(first).map(|b| lines[top][..b].chars().count()).unwrap();
+    let row = lines.iter().position(|l| l.contains(needle)).expect("the needle");
+    let col = lines[row][..lines[row].find(needle).unwrap()].chars().count();
+    ((col - left) as u16 + 1, (row - top) as u16)
+}
+
+/// Today's journal day to write in, with `Morning run, see [[Home]]` in it.
+fn day_doc(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless) {
+    let (root, v) = seeded(name);
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Journal, 140, 40);
+    s.keys(&["enter"]);
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"));
+    (root, host, s)
+}
+
+fn point(s: &mut fictty::Headless, id: &str, (col, row): (u16, u16), shift: bool) {
+    s.msg(fictty::state::Msg::Point { id: id.into(), col, row, extend: shift });
+}
+
+/// E63: a click on a link's title follows it in the main view, and Esc comes back to the day.
+#[test]
+fn e63_a_click_on_a_link_follows_it() {
+    let (root, _host, mut s) = day_doc("e63");
+    let at = cell_of(&mut s, "- [ ] Call the bank", "Home]]");
+    point(&mut s, "journal_doc", at, false);
+    let st = s.state();
+    assert_eq!(st.focus.as_deref(), Some("pages_doc"), "followed: {:?}", st.status);
+    assert!(s.screen().contains("¶ Home") && s.screen().contains("Water plants"), "{}", s.screen());
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"), "back to the day");
+    assert_eq!(s.state().local["views"].tab, 4);
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// E64: a click on the `[[` places the caret there, with no navigation.
+#[test]
+#[ignore = "fictty: a wiki link's click area includes its `[[` `]]` (E64 wants the title only)"]
+fn e64_a_click_on_the_brackets_places_the_caret() {
+    let (root, _host, mut s) = day_doc("e64");
+    let at = cell_of(&mut s, "- [ ] Call the bank", "[[Home]]");
+    point(&mut s, "journal_doc", at, false);
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"), "no navigation");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// E66: arrows into a link never navigate; ⌃O follows it; ⌥O opens it aside.
+#[test]
+fn e66_arrows_into_a_link_then_ctrl_o_and_alt_o() {
+    let (root, _host, mut s) = day_doc("e66");
+    let home = node_id(&root, "Home");
+    // To the start of the Morning run line, then along it into the link.
+    let at = cell_of(&mut s, "- [ ] Call the bank", "Morning run");
+    point(&mut s, "journal_doc", at, false);
+    for _ in 0.."Morning run, see [[H".len() {
+        s.keys(&["right"]);
+    }
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"), "no navigation on arrows");
+    s.keys(&["a-o"]);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}")], "⌥O: aside");
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"), "the focus stays");
+    s.keys(&["c-o"]);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"), "⌃O follows");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// E67: a ⇧-click on a link's title opens it aside; the main page and its caret stay.
+#[test]
+fn e67_a_shift_click_on_a_link_opens_it_aside() {
+    let (root, _host, mut s) = day_doc("e67");
+    let home = node_id(&root, "Home");
+    let at = cell_of(&mut s, "- [ ] Call the bank", "Home]]");
+    point(&mut s, "journal_doc", at, true);
+    assert_eq!(panels(&mut s), vec![format!("page:{home}")]);
+    assert_eq!(s.state().focus.as_deref(), Some("journal_doc"), "main stays");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// E69: a click on a tag places the caret (tags don't navigate); a ⇧-click opens its list aside.
+#[test]
+fn e69_a_tag_click_places_the_caret_and_a_shift_click_opens_its_list() {
+    let (root, v) = seeded("e69");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = page(&host, &home);
+    let at = cell_of(&mut s, "- [ ] Water plants", "#garden");
+    point(&mut s, "pages_doc", at, false);
+    assert_eq!(s.state().focus.as_deref(), Some("pages_doc"), "no navigation");
+    assert!(panels(&mut s).is_empty());
+    point(&mut s, "pages_doc", at, true);
+    assert_eq!(panels(&mut s), vec!["query:#garden"], "the tag's list aside");
     let _ = std::fs::remove_dir_all(root);
 }

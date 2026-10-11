@@ -46,6 +46,24 @@ impl Panel {
         Panel { kind, target: target.into(), pinned: false, folded: false, opened_by: None }
     }
 
+    /// The key as an id: letters, digits and `-` only (`page-jxwp0`, `query--health`).
+    pub fn id(&self) -> String {
+        self.key().chars().map(|c| if c.is_ascii_alphanumeric() { c } else { '-' }).collect()
+    }
+
+    /// What in the panel takes the focus (the end of its node ids): its body, `panel-…` (a page
+    /// or day's editor) or `rows-…` (a list's rows), or its header, `head-…`, when it's folded.
+    pub fn target(&self) -> String {
+        let what = if self.folded {
+            "head"
+        } else if self.kind.is_doc() {
+            "panel"
+        } else {
+            "rows"
+        };
+        format!("{what}-{}", self.id())
+    }
+
     /// The panel's key, unique in the stack: `page:<id>`, `day:today`, `query:#health`.
     pub fn key(&self) -> String {
         format!("{}:{}", serde_json::to_value(self.kind).ok().and_then(|v| v.as_str().map(String::from)).unwrap_or_default(), self.target)
@@ -82,8 +100,38 @@ impl Stack {
         serde_json::from_value(v.clone()).unwrap_or_default()
     }
 
+    /// The stack as the store keeps it. Each panel carries a stable `id` (its key, as cells an id
+    /// can hold), so a node made per panel can be named by it.
     pub fn to_value(&self) -> serde_json::Value {
-        serde_json::to_value(self).unwrap_or_default()
+        let mut v = serde_json::to_value(self).unwrap_or_default();
+        for list in ["open", "closed"] {
+            for (p, panel) in v[list].as_array_mut().into_iter().flatten().zip(if list == "open" { &self.open } else { &self.closed }) {
+                p["id"] = panel.id().into();
+            }
+        }
+        v
+    }
+
+    /// A day panel to another day (sidebar.md §8.1: `[` `]` `T`): `by` days from the one it
+    /// shows, or None for the relative `today`. If that day is already a panel, nothing moves.
+    /// The key it ends on.
+    pub fn retarget_day(&mut self, key: &str, by: Option<i64>, today: chrono::NaiveDate) -> Option<String> {
+        let i = self.position(key)?;
+        let p = &self.open[i];
+        if p.kind != Kind::Day {
+            return Some(key.into());
+        }
+        let shown = if p.target == "today" { today } else { chrono::NaiveDate::parse_from_str(&p.target, "%Y-%m-%d").ok()? };
+        let to = match by {
+            Some(n) => (shown + chrono::Duration::days(n)).format("%Y-%m-%d").to_string(),
+            None => "today".into(),
+        };
+        let next = Panel::new(Kind::Day, &to);
+        if let Some(j) = self.position(&next.key()) {
+            return Some(self.open[j].key());
+        }
+        self.open[i].target = to;
+        Some(next.key())
     }
 
     pub fn position(&self, key: &str) -> Option<usize> {
@@ -192,6 +240,99 @@ impl Stack {
     }
 }
 
+/// Where the sidebar shows at a screen width (§6.1): the column, the drawer, or replace.
+pub fn place(width: u64) -> &'static str {
+    match width {
+        120.. => "sidebar",
+        90..=119 => "drawer",
+        _ => "replace",
+    }
+}
+
+/// What `thc ui aside <target>` opens (sidebar.md §10.3): `today` or a date is a day, `@today`
+/// (`inbox`, `tasks`, `log`) a view, `#tag` or any other query a list, a page id or title a page.
+pub fn panel_for_target(store: &thc_core::store::Store, target: &str, today: chrono::NaiveDate) -> anyhow::Result<Panel> {
+    let t = target.trim();
+    if t == "today" {
+        return Ok(Panel::new(Kind::Day, "today"));
+    }
+    if let Some(v) = t.strip_prefix('@').filter(|v| ["today", "inbox", "tasks", "log"].contains(v)) {
+        return Ok(Panel::new(Kind::View, v));
+    }
+    if t.starts_with('#') || t.starts_with('@') || t.contains(':') {
+        return Ok(Panel::new(Kind::Query, t));
+    }
+    if let Ok(id) = store.resolve(t) {
+        return Ok(Panel::new(Kind::Page, &id));
+    }
+    if let Some(id) = store.find_root_by_title(t, false)? {
+        return Ok(Panel::new(Kind::Page, &id));
+    }
+    if let Ok(d) = thc_core::dates::parse(t, today) {
+        return Ok(Panel::new(Kind::Day, &d.date().format("%Y-%m-%d").to_string()));
+    }
+    Err(thc_core::error::not_found(format!("no page or day {t:?}")))
+}
+
+/// One `thc ui aside` against a running screen, as the requests on its socket (sidebar.md
+/// §10.3): from the stack as `read` returned it (`{rev, value}`), the write of the next stack
+/// guarded by that revision (refused if the person changed it since: read again and retry),
+/// then whether it shows, the active panel (never the focus, §10.4) and, for an agent, the
+/// toast. An agent's panel says who opened it; `close` never closes a pinned one. The panel's
+/// key and the requests, in order.
+#[allow(clippy::too_many_arguments)]
+pub fn aside_requests(store: &thc_core::store::Store, read: &serde_json::Value, target: &str, agent: Option<&str>, pin: bool, fold: bool, close: bool, today: chrono::NaiveDate) -> anyhow::Result<(String, Stack, Vec<serde_json::Value>)> {
+    use serde_json::json;
+    let mut stack = Stack::from_value(&read["value"]);
+    let mut p = panel_for_target(store, target, today)?;
+    let key = p.key();
+    let by = agent.map(|a| format!("agent:{a}")).unwrap_or_else(|| "person".into());
+    if close {
+        if stack.open.iter().any(|q| q.key() == key && q.pinned) {
+            return Err(thc_core::error::invalid(format!("{target} is pinned: only the person can close it")));
+        }
+        stack.close(&key);
+    } else {
+        p.opened_by = agent.map(|_| by.clone());
+        stack.open(p);
+        if let Some(q) = stack.position(&key) {
+            if pin && !stack.open[q].pinned {
+                stack.toggle_pin(&key);
+            }
+            if fold && !stack.open[stack.position(&key).unwrap_or(q)].folded {
+                stack.toggle_fold(&key);
+            }
+        }
+    }
+    let put = |k: &str, value: serde_json::Value, if_rev: Option<u64>| json!({"op": "write", "key": k, "write": "put", "value": value, "if_rev": if_rev, "by": by});
+    let mut reqs = vec![put("sidebar", stack.to_value(), read["rev"].as_u64()), put("sidebar_shown", true.into(), None), put("sidebar_beside", (!stack.open.is_empty()).into(), None)];
+    if let Some(a) = stack.open.iter().find(|q| q.key() == key) {
+        reqs.push(put("sidebar_active", a.id().into(), None));
+        reqs.push(put("sidebar_target", a.target().into(), None));
+    }
+    if let (Some(a), false) = (agent, close) {
+        reqs.push(json!({"op": "toast", "text": format!("◆ {a} opened {target} beside you"), "tone": "agent", "ms": 4000}));
+    }
+    Ok((key, stack, reqs))
+}
+
+/// Where a vault's stack is kept on this device (sidebar.md §11): its cache. Not the TUI's
+/// `sidebar.json`, whose panels carry their editors' views.
+pub fn file(cache: &std::path::Path) -> std::path::PathBuf {
+    cache.join("screen-sidebar.json")
+}
+
+/// Keep the stack (atomically: a temp file, then a rename). The screen does on every change;
+/// `thc ui aside` does for an agent's open.
+pub fn save(cache: &std::path::Path, stack: &Stack) {
+    let f = file(cache);
+    let _ = std::fs::create_dir_all(cache);
+    let tmp = f.with_extension("json.tmp");
+    if serde_json::to_vec_pretty(&stack.to_value()).is_ok_and(|b| std::fs::write(&tmp, b).is_ok()) {
+        let _ = std::fs::rename(&tmp, &f);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -240,6 +381,23 @@ mod tests {
         }
         assert_eq!(all.open(page("more")), Opened::Refused);
         assert_eq!(all.open.len(), 8);
+    }
+
+    /// S14: a day panel moves to the day before or after, or to the relative today; a day that's
+    /// already a panel isn't opened twice. Every panel has a stable id.
+    #[test]
+    fn s14_day_panels_change_day() {
+        let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 11).unwrap();
+        let mut s = Stack::default();
+        s.open(Panel::new(Kind::Day, "2026-10-06"));
+        assert_eq!(s.retarget_day("day:2026-10-06", Some(1), today).as_deref(), Some("day:2026-10-07"));
+        assert_eq!(keys(&s), vec!["day:2026-10-07"]);
+        assert_eq!(s.retarget_day("day:2026-10-07", None, today).as_deref(), Some("day:today"));
+        assert_eq!(s.retarget_day("day:today", Some(-1), today).as_deref(), Some("day:2026-10-10"));
+        s.open(Panel::new(Kind::Day, "2026-10-09"));
+        assert_eq!(s.retarget_day("day:2026-10-10", Some(-1), today).as_deref(), Some("day:2026-10-09"), "that day is a panel already");
+        assert_eq!(keys(&s), vec!["day:2026-10-09", "day:2026-10-10"]);
+        assert_eq!(s.to_value()["open"][0]["id"], "day-2026-10-09");
     }
 
     /// S8, S9: a pinned panel stays at the top, survives close-all; reordering stays in a group.
