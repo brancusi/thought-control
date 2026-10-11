@@ -18,7 +18,7 @@ use thc_core::glyphs::UNICODE;
 use thc_core::vault::Vault;
 
 /// Every feed a screen can read; a vault change refetches the ones on screen.
-pub const FEEDS: [&str; 11] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc"];
+pub const FEEDS: [&str; 12] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc", "tx"];
 
 /// The vault behind a screen. Cloning shares it.
 #[derive(Clone)]
@@ -36,13 +36,15 @@ struct Inner {
     watch: bool,
     live: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
+    /// The route the screen starts on: its tab is shown when it starts (see `app`).
+    first: Mutex<Option<Route>>,
 }
 
 impl ThcHost {
     /// A host on an open vault. Its writes are the vault's actor's: open it as the person
     /// (`Actor { kind: "human" }`) for a screen a person drives.
     pub fn new(vault: Vault) -> ThcHost {
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, live: AtomicBool::new(false), notifier: Mutex::new(None), first: Mutex::new(None) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -76,6 +78,16 @@ impl ThcHost {
         screens::build(route, self.now().date())
     }
 
+    /// A fictty app on this vault, showing `route` in `theme`: run it (`run`) or draw it
+    /// (`headless`). Its first message shows the route's tab.
+    /// TODO(fictty): a tabs node's starting tab, so the UI says it and no message is needed.
+    pub fn app(&self, route: &Route, theme: &str) -> fictty::App {
+        if let Ok(mut f) = self.inner.first.lock() {
+            *f = Some(route.clone());
+        }
+        fictty::App::new(self.screen(route)).themes(crate::theme::themes()).theme(theme).host(self.clone())
+    }
+
     /// A feed's value: what `fetch` answers, callable directly (`thc screen --feed`).
     pub fn feed(&self, name: &str, args: &Value) -> anyhow::Result<Value> {
         let vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
@@ -83,11 +95,12 @@ impl ThcHost {
         let s = |k: &str| args.get(k).and_then(Value::as_str).filter(|v| !v.is_empty());
         Ok(match name {
             "frame" => {
-                let mut v = feeds::frame(&cx, args.get("tab").and_then(Value::as_u64).unwrap_or(0) as usize)?;
+                let mut v = feeds::frame(&cx)?;
                 v["live"] = self.live().into();
                 v
             }
             "today" => feeds::today(&cx)?,
+            "tx" => feeds::tx(&cx, s("id").unwrap_or(""))?,
             "inbox" => feeds::inbox(&cx)?,
             "tasks" => feeds::tasks(&cx, s("query").unwrap_or("status:open"))?,
             "pages" => feeds::pages(&cx)?,
@@ -99,9 +112,18 @@ impl ThcHost {
             "search" => feeds::search(&cx, s("query").unwrap_or(""))?,
             "log" => feeds::log(&cx)?,
             "doc" => feeds::doc(&cx, s("key").unwrap_or(""))?,
-            "detail" => feeds::detail(&cx, s("id").ok_or_else(|| anyhow::anyhow!("detail needs an id"))?)?,
+            "detail" => feeds::detail(&cx, s("id").unwrap_or(""))?,
             other => anyhow::bail!("no feed {other:?}"),
         })
+    }
+
+    /// A message into the screen, as from the socket.
+    fn send(&self, msg: fictty::state::Msg) -> anyhow::Result<()> {
+        let sent = self.inner.notifier.lock().ok().and_then(|n| n.as_ref().map(|n| n.msg(msg)));
+        if sent != Some(true) {
+            anyhow::bail!("the screen has gone");
+        }
+        Ok(())
     }
 
     /// A write as the vault's actor, in one transaction.
@@ -171,11 +193,44 @@ impl ThcHost {
                     anyhow::bail!("open {}: nothing selected", view.name());
                 }
                 let ui = self.screen(&route);
-                let sent = self.inner.notifier.lock().ok().and_then(|n| n.as_ref().map(|n| n.msg(fictty::state::Msg::Push { ui })));
-                if sent != Some(true) {
-                    anyhow::bail!("open: the screen has gone");
+                self.send(fictty::state::Msg::Push { ui })?;
+                for m in screens::show_tab(&route) {
+                    self.send(m)?;
                 }
                 Ok(json!({"ok": true, "view": view.name()}))
+            }
+            // Show a view's tab (keys 1–7): the views are already on screen, so nothing is pushed.
+            // TODO(fictty): an action that shows tab N would make this the screen's own.
+            "tab" => {
+                let n = args.get("n").and_then(Value::as_u64).ok_or_else(|| anyhow::anyhow!("tab needs n"))? as usize;
+                let view = *View::TABS.get(n).ok_or_else(|| anyhow::anyhow!("no tab {n}"))?;
+                for m in screens::show_tab(&Route::to(view)) {
+                    self.send(m)?;
+                }
+                Ok(json!({"ok": true, "tab": n}))
+            }
+            // Focus a node (a click focuses): the prompt going back to the list that asked.
+            "focus" => {
+                let id = id()?;
+                self.send(fictty::state::Msg::Click { id: id.clone(), row: None, tab: None })?;
+                Ok(json!({"ok": true, "focus": id}))
+            }
+            // The bar prompt's answer (`d` a date, `m` where to): `{"ask": "due"|"move", "id", "text"}`.
+            "answer" => {
+                let id = id()?;
+                let text = s("text").unwrap_or_default();
+                match s("ask").as_deref() {
+                    Some("due") => self.write(|b| b.set_props(&id, &[("due".into(), text.clone())])),
+                    Some("move") => {
+                        let to = {
+                            let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+                            let t = text.trim().trim_start_matches('¶').trim();
+                            v.store.find_root_by_title(t, false)?.ok_or_else(|| anyhow::anyhow!("no page {t:?}"))?
+                        };
+                        self.write(|b| b.move_to(&id, Some(to), None, None))
+                    }
+                    other => anyhow::bail!("nothing asked {other:?}"),
+                }
             }
             other => anyhow::bail!("no action {other:?}"),
         }
@@ -186,6 +241,11 @@ impl Host for ThcHost {
     fn start(&self, notifier: Notifier) {
         if let Ok(mut n) = self.inner.notifier.lock() {
             *n = Some(notifier.clone());
+        }
+        if let Some(r) = self.inner.first.lock().ok().and_then(|mut f| f.take()) {
+            for m in screens::show_tab(&r) {
+                notifier.msg(m);
+            }
         }
         if self.inner.watch {
             let host = self.clone();

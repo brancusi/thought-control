@@ -11,7 +11,7 @@
 //! - a section: `kind: "section"`, `title_m`, `count`, `note_m`, and its rows as `children`;
 //! - `blank`, and `empty` (`m`): the §8.1 empty states.
 
-use crate::markup::{self, esc, styled, tok};
+use crate::markup::{self, styled, tok};
 use anyhow::Result;
 use chrono::{Datelike, Duration, NaiveDate, NaiveDateTime, TimeZone};
 use serde_json::{Value, json};
@@ -184,16 +184,9 @@ fn node_row(cx: &Cx, n: &Node, c: Ctx) -> Value {
     })
 }
 
-/// A section of a tree: its rows are its children. With the cursor on it, the detail pane says
-/// what it holds.
+/// A section of a tree: its rows are its children.
 fn section(title: &str, tone: Token, count: usize, children: Vec<Value>) -> Value {
-    let title_m = styled(&format!("{}+b", tone.name()), title);
-    let lines = json!([
-        {"k": "line", "m": format!("{title_m}  {}", tok(Token::Muted, &count.to_string()))},
-        {"k": "blank"},
-        {"k": "line", "m": hints(&[("j", "first row"), ("space", "fold")], "  ")},
-    ]);
-    json!({"kind": "section", "id": format!("section:{title}"), "title": title, "title_m": title_m, "count": count, "children": children, "lines": lines})
+    json!({"kind": "section", "id": format!("section:{title}"), "title": title, "title_m": styled(&format!("{}+b", tone.name()), title), "count": count, "children": children})
 }
 
 /// The §8.1 empty state: two lines, the second's keys in `text` and words in `muted`.
@@ -233,52 +226,10 @@ fn inbox_nodes(store: &Store) -> Result<Vec<Node>> {
 
 // ---- the frame ----------------------------------------------------------------------------------
 
-/// The view tabs, in order (keys 1–7).
-pub const TABS: [&str; 7] = ["Today", "Inbox", "Tasks", "Pages", "Journal", "Search", "Log"];
-
-/// The header and the rule under it (§3.1–3.2), for the tab `active` (0–6): ` [•] thc   Today
-/// Inbox 2 …` with the date on the right, and `─` with the accent `━` one cell either side of the
-/// active label. `wide` (W ≥ 110) adds `thc` and the time; `narrow` starts the tabs at column 7.
-/// The labels' places depend on the inbox count, so the rule is data, not layout.
-/// TODO(fictty): tabs whose titles are templates (`Inbox {n}`), with a leading slot (the mark)
-/// and a trailing one (the date), would draw this with the theme's `tabs.underline`.
-pub fn frame(cx: &Cx, active: usize) -> Result<Value> {
-    let g = cx.g;
+/// The header's data (§3.1): the inbox count for its tab title, and the date.
+pub fn frame(cx: &Cx) -> Result<Value> {
     let inbox = inbox_nodes(cx.store)?.len();
-    let labels: Vec<String> = TABS.iter().map(|t| if *t == "Inbox" && inbox > 0 { format!("Inbox {inbox}") } else { t.to_string() }).collect();
-    let tabs_m: String = labels
-        .iter()
-        .enumerate()
-        .map(|(i, l)| {
-            if i == active {
-                styled("text+b", l)
-            } else if let Some(n) = l.strip_prefix("Inbox ") {
-                format!("{}{}", tok(Token::Muted, "Inbox "), tok(Token::Text, n))
-            } else {
-                tok(Token::Muted, l)
-            }
-        })
-        .collect::<Vec<_>>()
-        .join("   ");
-    let mark = format!(" {}{}{}", tok(Token::Muted, g.brand_l), styled("accent+b", g.brand_dot), tok(Token::Muted, g.brand_r));
-    let date = cx.now.format("%a %b %-d").to_string();
-    let rule = |start: usize| {
-        let before: usize = labels[..active].iter().map(|l| unicode_width::UnicodeWidthStr::width(l.as_str()) + 3).sum();
-        let at = start + before;
-        let len = unicode_width::UnicodeWidthStr::width(labels.get(active).map_or("", |l| l.as_str()));
-        // The rest of the line is the template's fill (`{*─}`).
-        format!("{}{}", tok(Token::Line, &g.rule.repeat(at.saturating_sub(1))), tok(Token::Accent, &g.rule_heavy.repeat(len + 2)))
-    };
-    Ok(json!({
-        // Left and right of the header line: a template's own tab right-aligns (a tab inside a
-        // value doesn't), so the screen writes `{wide|markup}\t{date_wide|markup}`.
-        "wide": format!("{mark} {}   {tabs_m}", tok(Token::Muted, "thc")),
-        "date_wide": format!("{} ", tok(Token::Muted, &format!("{date} {} {}", g.sep, cx.now.format("%H:%M")))),
-        "narrow": format!("{mark}   {tabs_m}"),
-        "date_narrow": format!("{} ", tok(Token::Muted, &date)),
-        "rule_wide": rule(11),
-        "rule_narrow": rule(7),
-    }))
+    Ok(json!({"inbox": if inbox > 0 { inbox.to_string() } else { String::new() }, "date": cx.now.format("%a %b %-d").to_string()}))
 }
 
 // ---- Today --------------------------------------------------------------------------------------
@@ -288,7 +239,7 @@ pub fn frame(cx: &Cx, active: usize) -> Result<Value> {
 pub fn today(cx: &Cx) -> Result<Value> {
     let s = thc_core::today::sections(cx.store, cx.today())?;
     let c = Ctx { context: true, ..Ctx::default() };
-    let rows_of = |ns: &[Node], c: Ctx| ns.iter().map(|n| with_detail(cx, node_row(cx, n, c), n)).collect::<Vec<_>>();
+    let rows_of = |ns: &[Node], c: Ctx| ns.iter().map(|n| node_row(cx, n, c)).collect::<Vec<_>>();
     let mut today_rows: Vec<Node> = s.today.clone();
     today_rows.extend(s.alerted.iter().cloned());
     let mut rows = Vec::new();
@@ -298,11 +249,7 @@ pub fn today(cx: &Cx) -> Result<Value> {
         }
     }
     if !s.done.is_empty() {
-        let mut sec = section("Done today", Token::Text, s.done.len(), rows_of(&s.done, Ctx { done_time: true, ..c }));
-        if s.done.len() > 3 {
-            sec["open"] = false.into();
-            sec["note_m"] = hints(&[("→", "show")], "").into();
-        }
+        let sec = section("Done today", Token::Text, s.done.len(), rows_of(&s.done, Ctx { done_time: true, ..c }));
         rows.push(sec);
     }
     let open = s.overdue.len() + today_rows.len() + s.doing.len() + s.next.len();
@@ -335,7 +282,7 @@ pub fn inbox(cx: &Cx) -> Result<Value> {
         rows.extend(empty("Inbox empty.", &[("A", "captures here")]));
     } else {
         rows.push(json!({"kind": "section", "title_m": styled("text+b", "Inbox"), "count": ns.len(), "note_m": tok(Token::Muted, "oldest first")}));
-        rows.extend(ns.iter().map(|n| with_detail(cx, node_row(cx, n, c), n)));
+        rows.extend(ns.iter().map(|n| node_row(cx, n, c)));
     }
     Ok(json!({"rows": rows, "bar_m": bar("inbox", &[(plural(ns.len(), "note", "notes"), Token::Muted)])}))
 }
@@ -626,9 +573,9 @@ pub fn search(cx: &Cx, query: &str) -> Result<Value> {
             let mut r = node_row(cx, n, c);
             r["status"] = "page".into();
             r["text_m"] = format!("<text+b>{}</>", markup::text(&n.label(), false, q)).into();
-            pages.push(with_detail(cx, r, n));
+            pages.push(r);
         } else {
-            nodes.push(with_detail(cx, node_row(cx, n, c), n));
+            nodes.push(node_row(cx, n, c));
         }
     }
     let counts = format!("{} {} {} {} {}", plural(nodes.len(), "node", "nodes"), cx.g.sep, plural(pages.len(), "page", "pages"), cx.g.sep, plural(tags.len(), "tag", "tags"));
@@ -668,8 +615,8 @@ pub fn log(cx: &Cx) -> Result<Value> {
             *agents.entry(a.to_string()).or_insert(0) += 1;
         }
         let who = match agent {
-            Some(a) => tok(Token::Agent, &format!("{:<8}", present::truncate_str(&format!("{}{}{a}", g.agent, g.agent_sep), 8, g.ellipsis))),
-            None => tok(Token::Muted, &format!("{:<8}", "  you")),
+            Some(a) => present::truncate_str(&format!("{}{}{a}", g.agent, g.agent_sep), 8, g.ellipsis),
+            None => "you".into(),
         };
         let Some((verb, target, n)) = present::tx_main(entries) else { continue };
         let label = cx.store.node(&target.entity).ok().flatten().map(|t| match t.journal.as_deref().and_then(DateVal::from_stored) {
@@ -688,12 +635,9 @@ pub fn log(cx: &Cx) -> Result<Value> {
         let detail = present::tx_detail(cx.store, entries, g, cx.today());
         let when = local(e.ms).map(|t| t.format("%H:%M").to_string()).unwrap_or_default();
         rows.push(json!({
-            "kind": "tx", "id": tx, "tx": suffix, "time": when, "who_m": who, "summary_m": summary,
-            "node": target.entity, "lines": tx_lines(cx, tx, entries),
+            "kind": if agent.is_some() { "agent" } else { "you" }, "id": tx, "tx": suffix, "time": when, "who": who,
+            "summary_m": summary, "detail": detail, "node": target.entity,
         }));
-        if !detail.is_empty() {
-            rows.push(json!({"kind": "txdetail", "m": tok(Token::Muted, &detail)}));
-        }
     }
     if txs.is_empty() {
         rows.extend(empty("No changes in the last 24h.", &[("", "thc log --since 7d")]));
@@ -706,9 +650,18 @@ pub fn log(cx: &Cx) -> Result<Value> {
 
 /// A transaction's detail pane (§5.7): its id, who, how, where and when, one op per line, and
 /// how to undo it.
+/// One transaction's detail pane (§5.7), for the Log's selected row.
+pub fn tx(cx: &Cx, tx: &str) -> Result<Value> {
+    let entries = cx.store.history_where("tx = ?1 ORDER BY okey DESC", &[&tx])?;
+    if entries.is_empty() {
+        return Ok(json!({"lines": []}));
+    }
+    Ok(json!({"lines": tx_lines(cx, tx, &entries)}))
+}
+
 fn tx_lines(cx: &Cx, tx: &str, entries: &[HistoryEntry]) -> Vec<Value> {
     let e = &entries[0];
-    let field = |k: &str, v: String| json!({"k": "field", "key": format!("{k:<9}"), "m": tok(Token::Text, &v)});
+    let field = |k: &str, v: String| json!({"k": "field", "key": k, "m": tok(Token::Text, &v)});
     let suffix = &tx[tx.len().saturating_sub(6)..];
     let mut lines = vec![
         json!({"k": "line", "m": format!("{} {}", styled("text+b", &format!("tx {suffix}")), tok(Token::Muted, tx))}),
@@ -731,16 +684,10 @@ fn tx_lines(cx: &Cx, tx: &str, entries: &[HistoryEntry]) -> Vec<Value> {
 
 // ---- Detail -------------------------------------------------------------------------------------
 
-fn with_detail(cx: &Cx, mut row: Value, n: &Node) -> Value {
-    if let Ok(d) = detail_lines(cx, n) {
-        row["lines"] = d.into();
-    }
-    row
-}
-
 /// The detail of one node (§5.8).
 pub fn detail(cx: &Cx, id: &str) -> Result<Value> {
-    let Some(n) = cx.store.node(id)? else { anyhow::bail!("no node {id}") };
+    // A section row or nothing selected: an empty pane.
+    let Some(n) = cx.store.node(id).ok().flatten() else { return Ok(json!({"lines": [], "bar_m": bar("detail", &[])})) };
     Ok(json!({"lines": detail_lines(cx, &n)?, "bar_m": bar("detail", &[(cx.store.short(id), Token::Muted)])}))
 }
 
@@ -766,7 +713,7 @@ fn detail_lines(cx: &Cx, n: &Node) -> Result<Vec<Value>> {
     crumbs.reverse();
     lines.push(json!({"k": "muted", "m": tok(Token::Muted, &crumbs.join(&format!(" {} ", "›")))}));
     lines.push(json!({"k": "blank"}));
-    let field = |k: &str, m: String| json!({"k": "field", "key": format!("{k:<11}"), "m": m});
+    let field = |k: &str, m: String| json!({"k": "field", "key": k, "m": m});
     let long = |raw: &str| -> Option<(String, NaiveDate)> {
         let dv = DateVal::from_stored(raw)?;
         let t = dv.time().map(|t| format!(" {}", t.format("%H:%M"))).unwrap_or_default();
@@ -836,11 +783,11 @@ fn detail_lines(cx: &Cx, n: &Node) -> Result<Vec<Value>> {
                 .and_then(|it| it.changes.iter().find(|c| c.node == n.id).map(|c| present::change_words(cx.store, c, g, today)))
                 .unwrap_or_default();
             let who = match agent_name(&e.actor) {
-                Some(a) => tok(Token::Agent, &format!("{:<8}", format!("{}{}{a}", g.agent, g.agent_sep))),
-                None => tok(Token::Muted, &format!("{:<8}", "you")),
+                Some(a) => tok(Token::Agent, &format!("{}{}{a}", g.agent, g.agent_sep)),
+                None => tok(Token::Muted, "you"),
             };
             let when = local(e.ms).map(|t| t.format("%H:%M").to_string()).unwrap_or_default();
-            lines.push(json!({"k": "hist", "m": format!("{}  {who}{}", tok(Token::Muted, &when), tok(Token::Muted, &esc(&what)))}));
+            lines.push(json!({"k": "hist", "time": when, "who_m": who, "m": tok(Token::Muted, &what)}));
         }
     }
     lines.push(json!({"k": "blank"}));

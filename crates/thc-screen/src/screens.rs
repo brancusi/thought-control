@@ -1,12 +1,14 @@
-//! Screens: each of thc's views as one fictty `Ui`, built from Rust types. A screen names its
-//! data (`source`, always a host source the feeds answer) and its actions (`act`, host actions
-//! ThcHost does), so the UI value never holds the data itself: the same value renders a snapshot
-//! (`App::headless`) and runs live (`App::run`).
+//! Screens: thc's views as one fictty `Ui`, built from Rust types. The seven views are the tabs
+//! of one tabs node (its titles over the `frame` feed, the mark as its lead and the date as its
+//! trail), so a click on a tab or a key switches views without a new UI. A Detail, an Outline, or a
+//! page or day being written in takes the place of its tab's view. Every source is a host source
+//! the feeds answer (`source`), every action a host action ThcHost does (`act`), so the UI value
+//! never holds data: the same value renders a snapshot (`App::headless`) and runs live (`App::run`).
 //!
-//! The frame (tui-handoff.md §3): header, rule, content, bar. Content splits list | detail at
-//! 120 columns and up (`when: "$screen.width>=120"`); below that the list has the width.
+//! The frame (tui-handoff.md §3): header and rule (the tabs), content, bar. Content splits
+//! list | detail at 120 columns and up (`when: "$screen.width>=120"`), the list min(60%, 96).
 
-use fictty::model::{Action, Column, Kind, Node, Pad, Size, Source, Ui};
+use fictty::model::{Action, Column, Float, Kind, Node, Pad, Rows, Size, Source, Ui};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use std::collections::BTreeMap;
@@ -16,16 +18,16 @@ use std::collections::BTreeMap;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct Route {
     pub view: View,
-    /// The node a Detail or Outline shows.
+    /// The node a Detail, an Outline or a Page shows.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    /// The Tasks filter or the Search words.
+    /// The Tasks filter or the Search words to start with.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub query: Option<String>,
     /// The Journal day (`2026-10-11`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub date: Option<String>,
-    /// Where Esc goes from a Detail or an Outline.
+    /// Where Esc goes from a Detail, an Outline, a Page or a Day.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub back: Option<View>,
 }
@@ -41,7 +43,7 @@ pub enum View {
     Journal,
     Search,
     Log,
-    /// One node, full width (Enter below 120 columns).
+    /// One node, full width.
     Detail,
     /// One page's outline, as rows (`o` on a page).
     Outline,
@@ -73,18 +75,6 @@ impl View {
             View::Day => "day",
         }
     }
-
-    /// The header tab lit for this view: a Detail under the view it came from, an Outline under
-    /// Pages.
-    fn tab(self, back: Option<View>) -> usize {
-        let v = match self {
-            View::Detail => back.unwrap_or(View::Today),
-            View::Outline | View::Page => View::Pages,
-            View::Day => back.unwrap_or(View::Journal),
-            v => v,
-        };
-        View::TABS.iter().position(|t| *t == v).unwrap_or(0)
-    }
 }
 
 impl Route {
@@ -92,26 +82,42 @@ impl Route {
         Route { view, ..Route::default() }
     }
 
-    /// The default Tasks filter.
-    pub fn query_or_default(&self) -> String {
-        match (&self.query, self.view) {
-            (Some(q), _) => q.clone(),
-            (None, View::Tasks) => "status:open".into(),
-            (None, _) => String::new(),
+    /// The tab this route shows in: a Detail under the view it came from, an Outline or a Page
+    /// under Pages, a Day under the Journal (or Pages, where it was picked).
+    pub fn tab(&self) -> usize {
+        let v = match self.view {
+            View::Detail => self.back.unwrap_or(View::Today),
+            View::Outline | View::Page => View::Pages,
+            View::Day => self.back.unwrap_or(View::Journal),
+            v => v,
+        };
+        View::TABS.iter().position(|t| *t == v).unwrap_or(0)
+    }
+
+    /// Where Esc goes, if anywhere.
+    fn back(&self) -> Option<Route> {
+        match self.view {
+            View::Outline | View::Page => Some(Route::to(self.back.unwrap_or(View::Pages))),
+            View::Day => Some(match self.back {
+                Some(View::Pages) => Route::to(View::Pages),
+                _ => Route { view: View::Journal, date: self.date.clone(), ..Route::default() },
+            }),
+            View::Detail => Some(Route::to(self.back.unwrap_or(View::Today))),
+            _ => None,
         }
     }
 }
 
 // ---- the one place sources and actions are named -------------------------------------------------
 
-/// A data source: the host's feed `name` with `args`. Every source on every screen goes through
-/// here.
+/// A data source: the host's feed `name` with `args` (templates: `{@today.id}` the selected
+/// row's id, `{store.search_q}` what's typed; refetched when they change).
 pub fn source(name: &str, args: Value) -> Source {
     Source { cmd: None, shell: None, stream: None, value: None, path: None, every: None, host: Some(name.into()), args }
 }
 
-/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `open`): args are templates over the
-/// selected row (`{id}`), the store (`{store.key}`) and `$id`.
+/// A host action (`done`, `reopen`, `set`, `add`, `mv`, `open`, `tab`, `answer`): args are
+/// templates over the selected row (`{id}`), the store (`{store.key}`) and `$id`.
 pub fn act(name: &str, args: Value) -> Action {
     Action::Host { host: name.into(), args }
 }
@@ -121,24 +127,32 @@ pub fn open(route: &Route) -> Action {
     act("open", serde_json::to_value(route).unwrap_or_default())
 }
 
-/// The keys that work everywhere: 1–7 the views, `/` Search, `t` the next theme.
-fn global_keys(route: &Route) -> BTreeMap<String, Action> {
-    let mut keys: BTreeMap<String, Action> = View::TABS.iter().enumerate().map(|(i, v)| ((i + 1).to_string(), open(&Route::to(*v)))).collect();
-    keys.insert("/".into(), open(&Route::to(View::Search)));
-    keys.insert("t".into(), Action::Theme { theme: "next".into() });
-    let back = match route.view {
-        View::Outline | View::Page => Some(Route::to(route.back.unwrap_or(View::Pages))),
-        // Back to the Journal on the same day (or to Pages, where the day was picked).
-        View::Day => Some(match route.back {
-            Some(View::Pages) => Route::to(View::Pages),
-            _ => Route { view: View::Journal, date: route.date.clone(), ..Route::default() },
-        }),
-        _ => route.back.map(Route::to),
-    };
-    if let Some(back) = back {
-        keys.insert("esc".into(), open(&back));
+/// Show a route's tab, and put the focus in its view: messages to the screen.
+/// TODO(fictty): the tabs node is focusable and first in focus order, so when a tab changes the
+/// focus lands on the tab bar instead of in the view; until a tab switch moves the focus into the
+/// shown child, the focus moves by a click on the view's first node (a click focuses).
+pub fn show_tab(route: &Route) -> Vec<fictty::state::Msg> {
+    let mut m = vec![fictty::state::Msg::Set { id: "views".into(), selected: None, tab: Some(route.tab()) }];
+    if let Some(id) = first_focus(route) {
+        m.push(fictty::state::Msg::Click { id: id.into(), row: None, tab: None });
     }
-    keys
+    m
+}
+
+/// What a view focuses first: its list, or its input where typing comes first (§6.3).
+pub fn first_focus(route: &Route) -> Option<&'static str> {
+    Some(match route.view {
+        View::Today => "today",
+        View::Inbox => "inbox",
+        View::Tasks => "tasks",
+        View::Pages => "pages_q",
+        View::Journal => "journal",
+        View::Search => "search_q",
+        View::Log => "log",
+        View::Detail => return None,
+        View::Outline => "outline",
+        View::Page | View::Day => "doc",
+    })
 }
 
 /// A page's or a day's store key (`page/<id>`, `day/<date>`): the host keeps those entries.
@@ -147,26 +161,6 @@ pub fn doc_key(route: &Route, today: chrono::NaiveDate) -> String {
         View::Day => format!("day/{}", route.date.clone().unwrap_or_else(|| today.format("%Y-%m-%d").to_string())),
         _ => format!("page/{}", route.id.clone().unwrap_or_default()),
     }
-}
-
-/// A page or a day as Markdown to write in (tui-editor.md): the host's entry for it, loaded
-/// when shown, saved half a second after the last change, reloaded when the vault changes.
-/// `- [ ]` items tick with Ctrl-T or a click on the box; the editing keys are the Mac's.
-fn editor_screen(route: &Route, today: chrono::NaiveDate) -> Ui {
-    let key = doc_key(route, today);
-    let mut doc = id(bound(node(Kind::Editor { text: String::new(), doc: None, placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false }), &key), "doc");
-    doc.pad = Some(Pad::X(1));
-    let back = if route.view == View::Day && route.back != Some(View::Pages) { "journal" } else { "pages" };
-    screen(route, ("doc", json!({"key": key})), doc, &[("esc", back), ("c-t", "tick"), ("⌘z", "undo")])
-}
-
-/// Keys on a list of nodes: x done, X reopen, Enter the node's detail (or what the row opens).
-fn node_keys(back: View) -> BTreeMap<String, Action> {
-    BTreeMap::from([
-        ("x".to_string(), act("done", json!({"id": "{id}"}))),
-        ("X".to_string(), act("reopen", json!({"id": "{id}"}))),
-        ("enter".to_string(), act("open", json!({"view": "detail", "id": "{id}", "back": back.name()}))),
-    ])
 }
 
 // ---- node helpers ---------------------------------------------------------------------------------
@@ -225,316 +219,357 @@ fn keys(mut n: Node, k: BTreeMap<String, Action>) -> Node {
     n
 }
 
+fn input(id_: &str, seed: &str, placeholder: &str) -> Node {
+    id(node(Kind::Input { text: seed.into(), placeholder: Some(placeholder.into()), accept: None }), id_)
+}
+
 const WIDE: &str = "$screen.width>=120";
-const NARROW: &str = "$screen.width<120";
 
 /// A status cell (§4): `[ ]` `[/]` `[w]` `[x]` `[-]`, a note's ` · `, and Search's ` ¶ ` / ` # `.
 const STATUS: &str = "{status|todo=<text>[ ]</> ;doing=<doing>[/]</> ;waiting=<waiting>[w]</> ;done=<done>[x]</> ;cancelled=<muted>[-]</> ;note=<muted> · </> ;page=<muted> ¶ </> ;tag=<muted> # </> }";
 
-/// A row of a tree (§4 as far as a tree draws it): a section's bold title and count, a node's id,
-/// status cell and text, an empty state's line; then the meta right-aligned, a cell from the edge.
-fn tree_item() -> String {
-    format!("{{title_m|markup}}{{count|?  <muted>$</>}}{{note_m|?  }}{{note_m|markup}}{{short|?<muted>$</>  }}{STATUS}{{text_m|markup}}{{m|markup}}\t{{meta_m|markup}} ")
-}
-
-/// A row of a flat list: the `▌` gutter is the list's mark, then the id, status cell and text.
-fn list_item() -> String {
+/// A node row (§4): id, status cell, text, and the meta right-aligned a cell from the edge.
+fn node_item() -> String {
     format!("<muted>{{short}}</>  {STATUS}{{text_m|markup}}\t{{meta_m|markup}} ")
 }
 
-fn tree(id_: &str, bind: &str, back: View) -> Node {
-    keys(id(bound(node(Kind::Tree { items: vec![], item: Some(tree_item()), nest: None, key: None, open: true, empty: None, filter: None }), bind), id_), node_keys(back))
+/// Rows of nodes, as every list and tree draws them: the `▌` gutter on the selected row, the
+/// selection on `selection` and following the row's id, the text keeping 24 cells (§4.2) before
+/// the meta gives way. Sections, empty states and blanks take no cursor.
+fn rows(item: String) -> Rows {
+    Rows {
+        item: Some(item),
+        variant: Some("kind".into()),
+        variants: [
+            ("section", "{title_m|markup}{count|?  <muted>$</>}\t{note_m|markup} "),
+            ("empty", "  {m|markup}"),
+            ("blank", ""),
+            ("line", "{m|markup}"),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .collect(),
+        skip: ["section", "empty", "blank", "line"].map(String::from).to_vec(),
+        mark: Some("<accent+b>▌</> ".into()),
+        lead: Some("  ".into()),
+        selected: Some("on-selection".into()),
+        key: Some("id".into()),
+        keep: Some(37),
+        ..Rows::default()
+    }
 }
 
-fn list(id_: &str, bind: &str, item: String, variants: &[(&str, &str)], skip: &[&str]) -> Node {
-    id(
-        bound(
-            node(Kind::List {
-                items: vec![],
-                item: Some(item),
-                empty: None,
-                variant: Some("kind".into()),
-                variants: variants.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(),
-                skip: skip.iter().map(|s| s.to_string()).collect(),
-                mark: Some("<accent+b>▌</> ".into()),
-                lead: Some("  ".into()),
-                selected: Some("on-selection".into()),
-                filter: None,
-            }),
-            bind,
-        ),
-        id_,
-    )
+fn tree(id_: &str, bind: &str) -> Node {
+    id(bound(node(Kind::Tree { items: vec![], nest: None, open: true, leaf: Some(String::new()), rows: rows(node_item()) }), bind), id_)
 }
 
-/// Section and empty-state rows in a flat list (§3.5, §8.1).
-const LIST_VARIANTS: [(&str, &str); 4] = [
-    ("section", " {title_m|markup}{count|?  <muted>$</>}\t{note_m|markup} "),
-    ("empty", "   {m|markup}"),
-    ("blank", ""),
-    ("line", " {m|markup}"),
-];
+fn list(id_: &str, bind: &str, rows: Rows) -> Node {
+    id(bound(node(Kind::List { items: vec![], rows }), bind), id_)
+}
 
-/// The detail pane (§5.8): lines of the selected row (`@list.lines`), each by kind.
-fn detail_pane(of: &str) -> Node {
-    let lines = node(Kind::List {
-        items: vec![],
+/// The keys on rows of nodes:
+/// - x done, X reopen, Enter the detail;
+/// - p then h, m, l or - the priority (§6.2);
+/// - d a due date and m a place, asked in the bar (the prompt recipe, `prompt`).
+fn node_keys(back: View) -> BTreeMap<String, Action> {
+    let mut k = BTreeMap::from([
+        ("x".to_string(), act("done", json!({"id": "{id}"}))),
+        ("X".to_string(), act("reopen", json!({"id": "{id}"}))),
+        ("enter".to_string(), act("open", json!({"view": "detail", "id": "{id}", "back": back.name()}))),
+    ]);
+    for (key, p) in [("h", "high"), ("m", "med"), ("l", "low"), ("-", "")] {
+        k.insert(format!("p {key}"), act("set", json!({"id": "{id}", "props": {"priority": p}})));
+    }
+    for (key, ask) in [("d", "due"), ("m", "move")] {
+        k.insert(
+            key.into(),
+            Action::Do {
+                steps: vec![
+                    Action::Put { put: "ask_id".into(), value: "{id}".into() },
+                    // The view's list (its id is the view's name), to go back to.
+                    Action::Put { put: "ask_from".into(), value: back.name().into() },
+                    Action::Put { put: "prompt".into(), value: ask.into() },
+                    Action::Focus { focus: "prompt_in".into() },
+                ],
+            },
+        );
+    }
+    k
+}
+
+/// The bar prompt (a recipe, §3.3's "bar prompts"): a line floated over the bar while the store's
+/// `prompt` is set, its input's Enter answering the host with what was typed and the row it was
+/// asked about, Esc closing it. Closing puts the focus back on the list that asked.
+/// TODO(fictty): `focus` takes no template, and hiding the focused input moves the focus to the
+/// tab bar, so the host moves it back (`focus` with `{store.ask_from}`).
+fn prompt() -> Node {
+    let clear = || {
+        vec![
+            Action::Put { put: "prompt".into(), value: "".into() },
+            Action::Put { put: "prompt_in".into(), value: "".into() },
+            act("focus", json!({"id": "{store.ask_from}"})),
+        ]
+    };
+    let mut answer = vec![act("answer", json!({"ask": "{store.prompt}", "id": "{store.ask_id}", "text": "{store.prompt_in}"}))];
+    answer.extend(clear());
+    let mut field = variant(input("prompt_in", "", "fri, +3d, 2026-10-20 · a page title"), "input");
+    field.keys.insert("enter".into(), Action::Do { steps: answer });
+    field.keys.insert("esc".into(), Action::Do { steps: clear() });
+    let label = sized(bound(text(" {.|due=<accent+b>due ›</>;move=<accent+b>move to ›</>} "), "prompt"), cells(11));
+    let mut line = variant(row(vec![variant(label, "input"), field]), "input");
+    line.when = Some("prompt".into());
+    line.float = Some(Float { width: None, height: Some(cells(1)), at: Some("bottom".into()), margin: Some(1) });
+    line
+}
+
+/// The detail pane (§5.8): the lines of the node selected in `of`, from the `detail` feed (or
+/// `tx` in the Log) with the selection's id as its argument.
+fn pane(of: &str, feed: &str, data: &mut BTreeMap<String, Source>) -> Node {
+    let name = format!("{of}_pane");
+    data.insert(name.clone(), source(feed, json!({"id": format!("{{@{of}.id}}")})));
+    let mut lines = list(&name, &format!("{name}.lines"), lines_rows());
+    // A pane shows; it takes no cursor.
+    lines.id = None;
+    lines.pad = Some(Pad::X(1));
+    lines
+}
+
+/// How a detail pane draws its lines, by kind.
+fn lines_rows() -> Rows {
+    Rows {
         item: Some("{m|markup}".into()),
         empty: Some(String::new()),
         variant: Some("k".into()),
         variants: [
             ("title", format!("{STATUS}{{text_m|markup}}")),
-            ("field", "<muted>{key}</>{m|markup}".into()),
+            ("field", "<muted>{key:11}</>{m|markup}".into()),
             ("sub", format!(" {STATUS}{{text_m|markup}}\t{{meta_m|markup}} ")),
+            ("hist", "<muted>{time}</>  {who_m|markup}  {m|markup}".into()),
             ("blank", String::new()),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v))
         .collect(),
-        skip: vec![],
         mark: Some(String::new()),
         lead: Some(String::new()),
-        selected: None,
-        filter: None,
-    });
-    let mut pane = bound(lines, &format!("@{of}.lines"));
-    pane.pad = Some(Pad::X(1));
-    pane
+        ..Rows::default()
+    }
 }
 
-/// A list | detail split (§3.4): at 120 columns and up a `│` and the detail pane take 40%.
-/// TODO(fictty): the design's list width is min(60%, 96); sizes have no min/max yet, so above
-/// 160 columns the list grows past 96.
-fn split(main: Node, side: Node, side_size: Size) -> Node {
+/// A list | detail split (§3.4): at 120 columns and up a `│` and the pane (40%) beside the list,
+/// the list at most 96; below that the list has the width. (The design's list is min(60%, 96):
+/// the list fills, so at 120 it's 71 and the pane 48, a cell off the artboard.)
+fn split(main: Node, side: Node) -> Node {
+    let mut main = sized(main, spec("*"));
+    main.max = Some(96);
     let rule = sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1));
-    id(row(vec![main, when(rule, WIDE), when(sized(side, side_size), WIDE)]), "split")
+    row(vec![main, when(rule, WIDE), when(sized(side, spec("40%")), WIDE)])
 }
 
-/// The size of the content's split side, if it has one (so the rule above can join it).
-fn side_of(content: &Node) -> Option<Size> {
-    let mut all = Vec::new();
-    content.walk(&mut all);
-    let split = all.into_iter().find(|n| n.id.as_deref() == Some("split"))?;
-    split.children().last().and_then(|n| n.size.clone())
-}
-
-// ---- the frame ------------------------------------------------------------------------------------
-
-/// Header and rule (§3.1–3.2), from the `frame` feed (which knows the lit tab). The rule's `┬`
-/// sits over the split when there is one: its row has the content row's sizes.
-fn header(side: Option<Size>) -> Vec<Node> {
-    let frame = |t: &str| bound(text(t), "frame");
-    let rule_wide = || frame("{rule_wide|markup}<line>{*─}</>");
-    // At 120 and up, a view with a split puts `┬` where the split's `│` is: a row with the
-    // content row's sizes, laid over the whole rule (empty text draws nothing), so the accent
-    // segment can sit on either side of it.
-    let split_rule = match side {
-        Some(size) => node(Kind::Stack { children: vec![rule_wide(), row(vec![text(""), sized(text("<line>┬</>"), cells(1)), sized(text(""), size)])] }),
-        None => rule_wide(),
-    };
-    vec![
-        sized(when(frame("{wide|markup}\t{date_wide|markup}"), "$screen.width>=110"), cells(1)),
-        sized(when(frame("{narrow|markup}\t{date_narrow|markup}"), "$screen.width<110"), cells(1)),
-        sized(
-            when(col(vec![sized(when(split_rule, WIDE), cells(1)), sized(when(rule_wide(), NARROW), cells(1))]), "$screen.width>=110"),
-            cells(1),
-        ),
-        sized(when(frame("{rule_narrow|markup}<line>{*─}</>"), "$screen.width<110"), cells(1)),
-    ]
-}
-
-/// The bar (§3.3): the view's name and counts on the left (`bar_m` of the view's feed), the
-/// daemon's dot and the view's hints on the right.
+/// The bar (§3.3): the view's name and counts on the left (`bar_m` of its feed), the daemon's
+/// dot and the view's hints on the right.
 fn bar(feed: &str, hints: &[(&str, &str)]) -> Node {
     let right = format!(" {{live|true=<done>●</> <muted>live</>;*=<muted>○ local</>}}   {} ", crate::feeds::hints(hints, "  "));
     let plain: String = hints.iter().map(|(k, w)| format!("{k} {w}")).collect::<Vec<_>>().join("  ");
     let width = unicode_width::UnicodeWidthStr::width(format!(" ○ local   {plain} ").as_str()) as u16;
     sized(
-        row(vec![
-            variant(bound(text(" {bar_m|markup}"), feed), "bar"),
-            variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar"),
-        ]),
+        row(vec![variant(bound(text(" {bar_m|markup}"), feed), "bar"), variant(sized(bound(text(&format!("\t{right}")), "frame"), cells(width)), "bar")]),
         cells(1),
     )
 }
 
-/// A whole screen: frame around `content`, the sources it reads, the keys.
-fn screen(route: &Route, feed: (&str, Value), content: Node, hints: &[(&str, &str)]) -> Ui {
-    let tab = route.view.tab(route.back);
-    let mut children = header(side_of(&content));
-    children.push(content);
-    children.push(bar(feed.0, hints));
-    let mut data = BTreeMap::new();
-    data.insert("frame".to_string(), source("frame", json!({"tab": tab})));
-    data.insert(feed.0.to_string(), source(feed.0, feed.1));
-    Ui { root: col(children), data, keys: global_keys(route), status_bar: Some(false), ..Ui::default() }
+/// One view's place in the tabs: its content above its bar.
+fn view(content: Node, feed: &str, hints: &[(&str, &str)]) -> Node {
+    col(vec![content, bar(feed, hints)])
 }
 
 // ---- the views ------------------------------------------------------------------------------------
 
-/// The `Ui` for a route. `today` resolves a Journal without a date.
+/// The `Ui` for a route: every view in its tab, the route's own content in its tab, the keys.
+/// `today` resolves a Journal or a Day without a date.
 pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
+    let mut data = BTreeMap::new();
+    data.insert("frame".to_string(), source("frame", json!({})));
+    let tab = route.tab();
+    let mut store = BTreeMap::new();
+    let children: Vec<Node> = View::TABS
+        .iter()
+        .enumerate()
+        .map(|(i, v)| tab_view(&if i == tab { route.clone() } else { Route::to(*v) }, today, &mut data, &mut store))
+        .collect();
+    let focus = first_focus(route).map(String::from);
+    let titles = ["Today", "Inbox{inbox|? $}", "Tasks", "Pages", "Journal", "Search", "Log"].map(String::from).to_vec();
+    let views = id(
+        bound(
+            node(Kind::Tabs {
+                tabs: titles,
+                children,
+                lead: Some(" <muted>[</><accent+b>•</><muted>]</> <muted>thc</> ".into()),
+                trail: Some("<muted>{date}</> ".into()),
+            }),
+            "frame",
+        ),
+        "views",
+    );
+    let root = node(Kind::Stack { children: vec![views, prompt()] });
+    let mut keys: BTreeMap<String, Action> = (0..View::TABS.len()).map(|i| ((i + 1).to_string(), act("tab", json!({"n": i})))).collect();
+    keys.insert("/".into(), act("tab", json!({"n": 5})));
+    keys.insert("t".into(), Action::Theme { theme: "next".into() });
+    if let Some(back) = route.back() {
+        keys.insert("esc".into(), open(&back));
+    }
+    // A Detail acts on its node from anywhere it has no row under the cursor.
+    if let (View::Detail, Some(id_)) = (route.view, &route.id) {
+        keys.insert("x".into(), act("done", json!({"id": id_})));
+        keys.insert("X".into(), act("reopen", json!({"id": id_})));
+    }
+    Ui { root, data, store, keys, focus, status_bar: Some(false), ..Ui::default() }
+}
+
+/// A tab's content for a route, the sources it reads and the store it seeds.
+fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String, Source>, store: &mut BTreeMap<String, Value>) -> Node {
+    let mut feed = |name: &str, args: Value| {
+        data.insert(name.to_string(), source(name, args));
+    };
     match route.view {
-        View::Today => screen(
-            route,
-            ("today", json!({})),
-            split(tree("today", "today.rows", View::Today), detail_pane("today"), spec("40%")),
-            &[("a", "add"), (":", "cmd"), ("?", "help")],
-        ),
-        View::Inbox => screen(
-            route,
-            ("inbox", json!({})),
-            split(keys(list("inbox", "inbox.rows", list_item(), &LIST_VARIANTS, &["section", "empty", "blank", "line"]), node_keys(View::Inbox)), detail_pane("inbox"), spec("40%")),
-            &[("m", "move"), ("t", "task"), ("x", "done")],
-        ),
-        View::Tasks => tasks(route),
-        View::Pages => pages(route),
-        View::Outline => {
-            let id_ = route.id.clone().unwrap_or_default();
-            let title = sized(bound(text(" {title_m|markup}\t{meta_m|markup} "), "outline"), cells(1));
-            let content = col(vec![title, sized(text(""), cells(1)), tree("outline", "outline.rows", View::Outline)]);
-            screen(route, ("outline", json!({"id": id_})), content, &[("x", "done"), ("space", "fold"), ("esc", "pages")])
+        View::Today => {
+            feed("today", json!({}));
+            let t = keys(tree("today", "today.rows"), node_keys(View::Today));
+            view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("p", "priority"), ("d", "date")])
         }
-        View::Journal => journal(route, today),
-        View::Page | View::Day => editor_screen(route, today),
-        View::Search => search(route),
-        View::Log => {
-            let title = sized(bound(text(" {title_m|markup}\t<muted>last 24h · everyone</> "), "log"), cells(1));
-            let log = list(
-                "log",
-                "log.rows",
-                "<muted>{time}</>  {who_m|markup}  <muted>{tx}</>   {summary_m|markup}".into(),
-                &[("txdetail", "                            {m|markup}"), ("empty", "   {m|markup}"), ("blank", "")],
-                &["txdetail", "empty", "blank"],
+        View::Inbox => {
+            feed("inbox", json!({}));
+            let l = keys(list("inbox", "inbox.rows", rows(node_item())), node_keys(View::Inbox));
+            view(split(l, pane("inbox", "detail", data)), "inbox", &[("m", "move"), ("x", "done"), ("d", "date")])
+        }
+        View::Tasks => {
+            // The filter is the query: the table follows what's typed (Tab to the rows).
+            store.insert("tasks_q".into(), route.query.clone().unwrap_or_else(|| "status:open".into()).into());
+            feed("tasks", json!({"query": "{store.tasks_q}"}));
+            let filter = variant(sized(row(vec![sized(text(" <accent+b>q›</> "), cells(4)), input("tasks_q", "", "a thc query"), sized(bound(text("\t<muted>{count}</> "), "tasks"), cells(12))]), cells(1)), "input");
+            let col_ = |title: &str, value: &str, size: Size| Column { title: title.into(), value: value.into(), size: Some(size), align: None, heat: None, total: None };
+            let table = keys(
+                id(
+                    bound(
+                        node(Kind::Table {
+                            columns: vec![
+                                col_("id", "<muted>{short}</>", cells(9)),
+                                col_("task", &format!("{STATUS}{{task_m|markup}}"), spec("*")),
+                                col_("due", "{due_m|markup}", cells(17)),
+                                col_("sched", "{sched_m|markup}", cells(11)),
+                                col_("pri", "{pri_m|markup}", cells(6)),
+                                col_("where", "{where_m|markup}", cells(14)),
+                                col_("by", "{by_m|markup}", cells(10)),
+                            ],
+                            items: vec![],
+                            filter: None,
+                        }),
+                        "tasks.rows",
+                    ),
+                    "tasks",
+                ),
+                node_keys(View::Tasks),
             );
-            let content = col(vec![title, sized(text(""), cells(1)), split(log, detail_pane("log"), spec("40%"))]);
-            screen(route, ("log", json!({})), content, &[("u", "undo"), ("enter", "open")])
+            let narrow = keys(list("tasks-list", "tasks.rows", rows(format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "))), node_keys(View::Tasks));
+            let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, "$screen.width<120")]);
+            view(content, "tasks", &[("tab", "rows"), ("x", "done"), ("enter", "open")])
+        }
+        View::Pages => {
+            feed("pages", json!({}));
+            let mut finder = variant(input("pages_q", "", "type to find a page, tag or day"), "input");
+            finder.keys.insert("enter".into(), Action::Focus { focus: "pages".into() });
+            finder.keys.insert("down".into(), Action::Focus { focus: "pages".into() });
+            let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), finder]), cells(1)), "input");
+            let mut r = rows("<muted>{short}</>  {title_m|markup}\t{meta_m|markup} ".into());
+            r.variants.insert("day".into(), "{title_m|markup}\t{meta_m|markup} ".into());
+            r.filter = Some("pages_q".into());
+            let mut l = list("pages", "pages.rows", r);
+            // Enter writes in the page or day; `o` shows a page's outline as rows.
+            l.keys.insert("enter".into(), act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"})));
+            l.keys.insert("o".into(), act("open", json!({"view": "outline", "id": "{id}"})));
+            // The preview: the highlighted page or day, read-only, from the same host entry its
+            // editor writes (`doc`), reloaded when the vault changes.
+            let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
+            preview.id = Some("preview".into());
+            preview.pad = Some(Pad::X(1));
+            let content = col(vec![finder_row, sized(text(""), cells(1)), split(l, preview)]);
+            view(content, "pages", &[("enter", "write"), ("o", "outline"), ("↓", "list")])
+        }
+        View::Journal => {
+            let date = route.date.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(today);
+            let day = |d: chrono::NaiveDate| open(&Route { view: View::Journal, date: Some(d.format("%Y-%m-%d").to_string()), ..Route::default() });
+            feed("journal", json!({"date": date.format("%Y-%m-%d").to_string()}));
+            let title = sized(bound(text("{title_m|markup}\t<text>[</> <muted>prev</>  <text>]</> <muted>next</>  <text>T</> <muted>today</> "), "journal"), cells(1));
+            let strip = sized(bound(text("  {strip_m|markup}"), "journal"), cells(1));
+            let mut calendar = list("", "journal.calendar", Rows { item: Some("{m|markup}".into()), mark: Some(String::new()), lead: Some(String::new()), ..Rows::default() });
+            calendar.id = None;
+            calendar.pad = Some(Pad::X(1));
+            // Enter writes in the day shown; x and X still act on the row; [ ] and T move the day.
+            let mut entries = keys(tree("journal", "journal.rows"), node_keys(View::Journal));
+            entries.keys.insert("enter".into(), open(&Route { view: View::Day, date: Some(date.format("%Y-%m-%d").to_string()), ..Route::default() }));
+            entries.keys.insert("[".into(), day(date - chrono::Duration::days(1)));
+            entries.keys.insert("]".into(), day(date + chrono::Duration::days(1)));
+            entries.keys.insert("T".into(), day(today));
+            let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar)]);
+            view(content, "journal", &[("enter", "write"), ("[", "prev"), ("]", "next")])
+        }
+        View::Search => {
+            // The results follow what's typed.
+            store.insert("search_q".into(), route.query.clone().unwrap_or_default().into());
+            feed("search", json!({"query": "{store.search_q}"}));
+            let mut field = variant(input("search_q", "", "search every note"), "input");
+            field.keys.insert("enter".into(), Action::Focus { focus: "search".into() });
+            field.keys.insert("down".into(), Action::Focus { focus: "search".into() });
+            let bar_row = variant(sized(row(vec![sized(text(" <accent+b>/</> "), cells(3)), field, sized(bound(text("\t{count_m|markup} "), "search"), cells(32))]), cells(1)), "input");
+            let results = keys(tree("search", "search.rows"), node_keys(View::Search));
+            let hint = sized(text(" <muted>deleted nodes are searchable too: add is:deleted</>"), cells(1));
+            let content = col(vec![bar_row, sized(text(""), cells(1)), split(results, pane("search", "detail", data)), hint]);
+            view(content, "search", &[("enter", "results"), ("x", "done")])
+        }
+        View::Log => {
+            feed("log", json!({}));
+            let title = sized(bound(text("{title_m|markup}\t<muted>last 24h · everyone</> "), "log"), cells(1));
+            // Two lines a transaction (§5.7): time, who, tx and summary; then what it did.
+            let line2 = "\n                          <muted>{detail}</>";
+            let mut r = Rows {
+                item: Some(format!("<muted>{{time}}</>  <muted>{{who:8}}</>  <muted>{{tx}}</>   {{summary_m|markup}}{line2}")),
+                lines: Some(2),
+                ..rows(String::new())
+            };
+            r.variants.insert("agent".into(), format!("<muted>{{time}}</>  <agent>{{who:8}}</>  <muted>{{tx}}</>   {{summary_m|markup}}{line2}"));
+            let l = list("log", "log.rows", r);
+            let content = col(vec![title, sized(text(""), cells(1)), split(l, pane("log", "tx", data))]);
+            view(content, "log", &[("u", "undo"), ("enter", "open")])
         }
         View::Detail => {
             let id_ = route.id.clone().unwrap_or_default();
-            let mut pane = detail_pane("detail");
-            pane.bind = Some("detail.lines".into());
-            let back = route.back.unwrap_or(View::Today);
-            let mut ui = screen(route, ("detail", json!({"id": id_})), pane, &[("x", "done"), ("X", "reopen"), ("esc", back.name())]);
-            ui.keys.insert("x".into(), act("done", json!({"id": id_})));
-            ui.keys.insert("X".into(), act("reopen", json!({"id": id_})));
-            ui
+            feed("detail", json!({"id": id_}));
+            let mut lines = list("", "detail.lines", lines_rows());
+            lines.id = None;
+            lines.pad = Some(Pad::X(1));
+            // Its x and X are the screen's keys (`route_keys`): the detail takes no cursor.
+            let back = route.back.unwrap_or(View::Today).name();
+            view(lines, "detail", &[("x", "done"), ("X", "reopen"), ("esc", back)])
+        }
+        View::Outline => {
+            let id_ = route.id.clone().unwrap_or_default();
+            feed("outline", json!({"id": id_}));
+            let title = sized(bound(text("{title_m|markup}\t{meta_m|markup} "), "outline"), cells(1));
+            let t = keys(tree("outline", "outline.rows"), node_keys(View::Outline));
+            view(col(vec![title, sized(text(""), cells(1)), t]), "outline", &[("x", "done"), ("space", "fold"), ("esc", "pages")])
+        }
+        // A page or a day as Markdown to write in (tui-editor.md): the host's entry for it,
+        // loaded when shown, saved half a second after the last change, reloaded when the vault
+        // changes. `- [ ]` items tick with Ctrl-T or a click on the box; the keys are the Mac's.
+        View::Page | View::Day => {
+            let key = doc_key(route, today);
+            feed("doc", json!({"key": key}));
+            let mut doc = id(bound(node(Kind::Editor { text: String::new(), doc: None, placeholder: Some("write here".into()), syntax: Some("markdown".into()), readonly: false }), &key), "doc");
+            doc.pad = Some(Pad::X(1));
+            let back = if route.view == View::Day && route.back != Some(View::Pages) { "journal" } else { "pages" };
+            view(doc, "doc", &[("esc", back), ("c-t", "tick"), ("⌘z", "undo")])
         }
     }
-}
-
-/// Tasks (§5.3): the filter row, then a table at 120 and up, a list below.
-fn tasks(route: &Route) -> Ui {
-    let q = route.query_or_default();
-    let filter = variant(sized(bound(text(" <accent+b>q›</> {filter_m|markup}\t<muted>{count}</> {error_m|markup}"), "tasks"), cells(1)), "input");
-    let col_ = |title: &str, value: &str, size: Size| Column { title: title.into(), value: value.into(), size: Some(size), align: None, heat: None, total: None };
-    let table = keys(
-        id(
-            bound(
-                node(Kind::Table {
-                    columns: vec![
-                        col_("id", "<muted>{short}</>", cells(9)),
-                        col_("task", &format!("{STATUS}{{task_m|markup}}"), spec("*")),
-                        col_("due", "{due_m|markup}", cells(17)),
-                        col_("sched", "{sched_m|markup}", cells(11)),
-                        col_("pri", "{pri_m|markup}", cells(6)),
-                        col_("where", "{where_m|markup}", cells(14)),
-                        col_("by", "{by_m|markup}", cells(10)),
-                    ],
-                    items: vec![],
-                    filter: None,
-                }),
-                "tasks.rows",
-            ),
-            "tasks",
-        ),
-        node_keys(View::Tasks),
-    );
-    let narrow = keys(list("tasks-list", "tasks.rows", format!("<muted>{{short}}</>  {STATUS}{{task_m|markup}}\t{{due_m|markup}} "), &[], &[]), node_keys(View::Tasks));
-    let content = col(vec![filter, sized(text(""), cells(1)), when(table, WIDE), when(narrow, NARROW)]);
-    screen(route, ("tasks", json!({"query": q})), content, &[("f", "filter"), ("x", "done"), ("enter", "open")])
-}
-
-/// Pages (§5.4): the finder (typing filters the list as you go), the pages, tags and recent
-/// days; at 120 and up the highlighted page beside it as Markdown, task boxes and all.
-fn pages(route: &Route) -> Ui {
-    let mut finder = id(node(Kind::Input { text: String::new(), placeholder: Some("type to find a page, tag or day".into()), accept: None }), "pages_q");
-    finder.keys.insert("enter".into(), Action::Focus { focus: "pages".into() });
-    finder.keys.insert("down".into(), Action::Focus { focus: "pages".into() });
-    let finder_row = variant(sized(row(vec![sized(text(" <accent+b>›</> "), cells(3)), variant(finder, "input")]), cells(1)), "input");
-    let mut l = list(
-        "pages",
-        "pages.rows",
-        "<muted>{short}</>  {title_m|markup}\t{meta_m|markup} ".into(),
-        &[
-            ("section", " {title_m|markup}{count|?  <muted>$</>}\t{note_m|markup} "),
-            ("day", "{title_m|markup}\t{meta_m|markup} "),
-            ("line", " {m|markup}"),
-            ("empty", "   {m|markup}"),
-            ("blank", ""),
-        ],
-        &["section", "line", "empty", "blank"],
-    );
-    if let Kind::List { filter, .. } = &mut l.kind {
-        *filter = Some("pages_q".into());
-    }
-    // Enter writes in the page or day; `o` shows a page's outline as rows.
-    l.keys.insert("enter".into(), act("open", json!({"view": "{open}", "id": "{id}", "date": "{date}", "back": "pages"})));
-    l.keys.insert("o".into(), act("open", json!({"view": "outline", "id": "{id}"})));
-    // The preview: the highlighted page or day, read-only, from the same host entry its editor
-    // writes (`doc`), so it's never stale: the host reloads it when the vault changes.
-    let mut preview = bound(node(Kind::Editor { text: String::new(), doc: Some("{doc}".into()), placeholder: Some(String::new()), syntax: Some("markdown".into()), readonly: true }), "@pages");
-    preview.id = Some("preview".into());
-    preview.pad = Some(Pad::X(1));
-    let content = col(vec![finder_row, sized(text(""), cells(1)), split(l, preview, spec("70%"))]);
-    screen(route, ("pages", json!({})), content, &[("enter", "open"), ("tab", "list"), ("esc", "clear")])
-}
-
-/// Journal (§5.5): the day's title, the day strip, its entries; the month beside it at 120 and up.
-fn journal(route: &Route, today: chrono::NaiveDate) -> Ui {
-    let date = route.date.as_deref().and_then(|d| chrono::NaiveDate::parse_from_str(d, "%Y-%m-%d").ok()).unwrap_or(today);
-    let day = |d: chrono::NaiveDate| open(&Route { view: View::Journal, date: Some(d.format("%Y-%m-%d").to_string()), ..Route::default() });
-    let title = sized(bound(text(" {title_m|markup}\t<text>[</> <muted>prev</>  <text>]</> <muted>next</>  <text>T</> <muted>today</> "), "journal"), cells(1));
-    let strip = sized(bound(text("   {strip_m|markup}"), "journal"), cells(1));
-    let calendar = node(Kind::List {
-        items: vec![],
-        item: Some("{m|markup}".into()),
-        empty: None,
-        variant: None,
-        variants: BTreeMap::new(),
-        skip: vec![],
-        mark: Some(String::new()),
-        lead: Some(String::new()),
-        selected: None,
-        filter: None,
-    });
-    let mut calendar = bound(calendar, "journal.calendar");
-    calendar.pad = Some(Pad::X(1));
-    // Enter writes in the day shown (its lines as Markdown); x and X still act on the row.
-    let mut entries = tree("journal", "journal.rows", View::Journal);
-    entries.keys.insert("enter".into(), open(&Route { view: View::Day, date: Some(date.format("%Y-%m-%d").to_string()), ..Route::default() }));
-    let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar, cells(36))]);
-    let mut ui = screen(route, ("journal", json!({"date": date.format("%Y-%m-%d").to_string()})), content, &[("[", "prev"), ("]", "next"), ("T", "today")]);
-    ui.keys.insert("[".into(), day(date - chrono::Duration::days(1)));
-    ui.keys.insert("]".into(), day(date + chrono::Duration::days(1)));
-    ui.keys.insert("T".into(), day(today));
-    ui
-}
-
-/// Search (§5.6): the words, then Pages, Tags and Nodes; the match's detail beside them.
-fn search(route: &Route) -> Ui {
-    let q = route.query_or_default();
-    let mut input = id(node(Kind::Input { text: q.clone(), placeholder: Some("search every note".into()), accept: None }), "search_q");
-    // Enter searches: the screen opens again with the words in the store as its query.
-    input.keys.insert("enter".into(), open(&Route { view: View::Search, query: Some("{store.search_q}".into()), ..Route::default() }));
-    input.keys.insert("down".into(), Action::Focus { focus: "search".into() });
-    let bar_row = variant(
-        sized(row(vec![sized(text(" <accent+b>/</> "), cells(3)), variant(input, "input"), variant(sized(bound(text("\t{count_m|markup} "), "search"), cells(32)), "input")]), cells(1)),
-        "input",
-    );
-    let hint = sized(text(" <muted>deleted nodes are searchable too: add is:deleted</>"), cells(1));
-    let content = col(vec![bar_row, sized(text(""), cells(1)), split(tree("search", "search.rows", View::Search), detail_pane("search"), spec("40%")), hint]);
-    screen(route, ("search", json!({"query": q})), content, &[("enter", "search"), ("tab", "results")])
 }
 
 #[cfg(test)]
@@ -544,14 +579,14 @@ mod tests {
     #[test]
     fn every_view_builds_and_round_trips_as_json() {
         let today = chrono::NaiveDate::from_ymd_opt(2026, 10, 11).unwrap();
-        for v in [View::Today, View::Inbox, View::Tasks, View::Pages, View::Journal, View::Search, View::Log, View::Detail, View::Outline] {
-            let ui = build(&Route::to(v), today);
-            // A UI pushed over the socket or restored is the same UI (a list's row field is
-            // `row_variant`, apart from the node's theme `variant`).
+        for v in [View::Today, View::Inbox, View::Tasks, View::Pages, View::Journal, View::Search, View::Log, View::Detail, View::Outline, View::Page, View::Day] {
+            let ui = build(&Route { view: v, id: Some("x".into()), ..Route::default() }, today);
+            // A UI pushed over the socket or restored is the same UI.
             let back: Ui = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
             assert_eq!(ui, back, "{v:?}");
             assert!(ui.data.values().all(|s| s.host.is_some()), "{v:?}: every source is the host's");
         }
         assert_eq!(View::parse("Journal"), Some(View::Journal));
+        assert_eq!(Route { view: View::Day, back: Some(View::Pages), ..Route::default() }.tab(), 3);
     }
 }

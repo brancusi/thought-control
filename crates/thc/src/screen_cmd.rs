@@ -88,5 +88,5 @@ fn run(cli: &Cli, paths: &Paths, a: ScreenArgs) -> Result<()> {
         paths.vault.hash(&mut h);
         std::env::temp_dir().join(format!("thc-screen-{:08x}.sock", h.finish() as u32))
     });
-    fictty::App::new(host.screen(&route)).themes(thc_screen::theme::themes()).theme(a.theme).host(host).socket(socket).run()
+    host.app(&route, &a.theme).socket(socket).run()
 }

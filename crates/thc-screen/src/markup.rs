@@ -5,24 +5,10 @@
 use thc_core::palette::Token;
 use thc_core::present::{self, Piece};
 
-/// A value made safe to read as markup: a `<word>` that fictty would take for a style is shown
-/// with `‹` instead, and tabs (which right-align the rest of a line) become spaces.
-/// TODO(fictty): an escape for `<` in markup values; until then `‹` stands in.
+/// A value made safe to read as markup: `<` is written `<<` (a literal `<`), and a tab (which
+/// would right-align the rest of the line) is a space.
 pub fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    let mut rest = s;
-    while let Some(i) = rest.find('<') {
-        out.push_str(&rest[..i]);
-        let after = &rest[i + 1..];
-        let tag_like = after.find('>').is_some_and(|j| {
-            let spec = &after[..j];
-            spec == "/" || (!spec.is_empty() && spec.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '+' | '-' | '#' | '_' | '=')))
-        });
-        out.push(if tag_like { '‹' } else { '<' });
-        rest = after;
-    }
-    out.push_str(rest);
-    out.replace('\t', " ")
+    s.replace('<', "<<").replace('\t', " ")
 }
 
 /// `text` in a style (a token name, then modifiers: `text+b`).
@@ -103,8 +89,9 @@ mod tests {
     fn text_spans_tags_links_and_escapes() {
         assert_eq!(text("Call #health about [[Q4 Planning]]", false, ""), "Call <tag>#health</> about <=muted>[[</><link+u>Q4 Planning</><=muted>]]</>");
         assert_eq!(text("done #x", true, ""), "done #x");
-        assert_eq!(esc("a <b> c <3 x\ty"), "a ‹b> c <3 x y");
+        assert_eq!(esc("a <b> c <3 x\ty"), "a <<b> c <<3 x y");
         assert_eq!(text("Water plants", false, "plant"), "Water <b+on-accent-tint>plant</>s");
-        assert_eq!(fictty::model::fill(&format!("{{x|markup}}"), &serde_json::json!({"x": text("a <b> #t", false, "")})), "a ‹b> #t");
+        // Data can't restyle the screen: its angle brackets come out as written.
+        assert_eq!(fictty::model::fill("{x|markup}", &serde_json::json!({"x": text("a <b> #t", false, "")})), "a <b> #t");
     }
 }

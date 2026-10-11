@@ -21,7 +21,7 @@ pub use screens::{Route, View};
 /// A frame of `route` without a terminal: `width`×`height` cells after `keys`, as text, or as
 /// ANSI escapes with `ansi`.
 pub fn render(host: &ThcHost, route: &Route, theme: &str, width: u16, height: u16, keys: &[&str], ansi: bool) -> anyhow::Result<String> {
-    let mut screen = fictty::App::new(host.screen(route)).themes(theme::themes()).theme(theme).host(host.clone()).headless(width, height)?;
+    let mut screen = host.app(route, theme).headless(width, height)?;
     screen.keys(keys);
     Ok(if ansi { screen.ansi() } else { screen.screen() })
 }

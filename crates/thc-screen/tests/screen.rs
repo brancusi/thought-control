@@ -104,8 +104,9 @@ fn today_has_its_sections_rows_and_meta() {
     assert_eq!(row(3, 0)["kind"], "done");
     assert_eq!(row(3, 0)["text_m"], "<muted>Renew passport</>");
     assert_eq!(t["bar_m"], "<text>today</><muted> · </><muted>3 open</><muted> · </><overdue>1 overdue</><muted> · </><muted>1 inbox</>");
-    // The detail pane's lines: title, where, fields, subtasks.
-    let lines = row(1, 0)["lines"].clone();
+    // The detail pane's lines (the `detail` feed, for the selected row's id): title, where,
+    // fields, subtasks.
+    let lines = feeds::detail(&cx, row(1, 0)["id"].as_str().unwrap()).unwrap()["lines"].clone();
     assert_eq!(lines[0]["k"], "title");
     assert!(lines[1]["m"].as_str().unwrap().contains("¶ Home ›"), "{}", lines[1]);
     assert!(lines.as_array().unwrap().iter().any(|l| l["k"] == "sub" && l["text_m"] == "Buy a watering can"), "{lines:#}");
@@ -134,17 +135,18 @@ fn every_feed_answers_for_the_seeded_vault() {
     assert_eq!(texts(&search["rows"]), vec!["Nodes", "  Call the bank"]);
     assert!(search["rows"][0]["children"][0]["text_m"].as_str().unwrap().contains("<b+on-accent-tint>bank</>"));
     let log = host.feed("log", &json!({})).unwrap();
-    assert!(log["rows"].as_array().unwrap().iter().any(|r| r["who_m"].as_str().is_some_and(|w| w.contains("◆ claude"))), "{log:#}");
-    // The frame: the inbox count in the tabs, the accent under the lit one.
-    let frame = host.feed("frame", &json!({"tab": 1})).unwrap();
-    assert!(frame["narrow"].as_str().unwrap().contains("<text+b>Inbox 1</>"), "{frame:#}");
-    assert_eq!(frame["rule_narrow"], format!("<line>{}</><accent>{}</>", "─".repeat(14), "━".repeat(9)));
+    let agent = log["rows"].as_array().unwrap().iter().find(|r| r["kind"] == "agent").expect("the agent's transaction").clone();
+    assert_eq!(agent["who"], "◆ claude");
+    let tx = host.feed("tx", &json!({"id": agent["id"]})).unwrap();
+    assert!(tx["lines"][0]["m"].as_str().unwrap().contains(agent["tx"].as_str().unwrap()), "{tx:#}");
+    // The frame: what the tab titles and the date read.
+    assert_eq!(host.feed("frame", &json!({})).unwrap(), json!({"inbox": "1", "date": "Sun Oct 11", "live": false}));
     assert!(host.feed("nope", &json!({})).is_err());
     let _ = std::fs::remove_dir_all(root);
 }
 
 fn screen(host: &ThcHost, view: View, w: u16, h: u16) -> fictty::Headless {
-    fictty::App::new(host.screen(&Route::to(view))).themes(thc_screen::theme::themes()).theme("ember-dark").host(host.clone()).headless(w, h).unwrap()
+    host.app(&Route::to(view), "ember-dark").headless(w, h).unwrap()
 }
 
 #[test]
@@ -155,9 +157,9 @@ fn x_on_a_today_row_marks_it_done_in_the_vault() {
     let frame = s.screen();
     assert!(frame.contains("Today   Inbox 1   Tasks"), "{frame}");
     assert!(frame.contains("[ ] Call the bank"), "{frame}");
-    assert!(frame.contains("│ [ ] Call the bank") || frame.contains("Overdue  1"), "{frame}");
-    // The cursor starts on the Overdue section; j is its first row.
-    s.keys(&["j", "x"]);
+    // The cursor starts on the first row (sections take none), and the pane shows it.
+    assert!(frame.contains("│ [ ] Call the bank"), "{frame}");
+    s.keys(&["x"]);
     let frame = s.screen();
     assert!(frame.contains("Done today  2"), "the row moved to Done today: {frame}");
     assert!(!frame.contains("Overdue"), "{frame}");
@@ -182,13 +184,15 @@ fn keys_switch_views_and_the_split_follows_the_width() {
     s.keys(&["2"]);
     let inbox = s.screen();
     assert!(inbox.contains("Inbox  1") && inbox.contains("Look into a standing desk"), "{inbox}");
-    // The rule lights the new tab: one cell either side of `Inbox 1` (tabs from column 7).
-    assert!(inbox.lines().nth(1).unwrap().starts_with(&format!("{}{}─", "─".repeat(14), "━".repeat(9))), "{inbox}");
+    // The rule lights the new tab: one cell either side of `Inbox 1` (after ` [•] thc ` and Today).
+    assert!(inbox.lines().nth(1).unwrap().starts_with(&format!("{}{}─", "─".repeat(18), "━".repeat(9))), "{inbox}");
     s.keys(&["4"]);
     assert!(s.screen().contains("¶ Home"), "pages");
+    // A click on a tab title (what the runtime makes of the mouse there) switches too.
+    s.msg(fictty::state::Msg::Click { id: "views".into(), row: Some(1002), tab: Some(2) });
+    assert!(s.screen().contains("q› "), "tasks by click: {}", s.screen());
     let mut wide = screen(&host, View::Inbox, 120, 32);
     let frame = wide.screen();
-    assert!(frame.contains("┬"), "the rule joins the split: {frame}");
     assert!(frame.contains("│  ·  Look into a standing desk"), "the detail pane: {frame}");
     let _ = std::fs::remove_dir_all(root);
 }
@@ -212,10 +216,22 @@ fn actions_write_as_the_person_and_say_why_when_they_cant() {
     assert_eq!(flu.due.as_deref(), Some("2026-10-13"));
     assert_eq!(check.store.node(flu.parent.as_deref().unwrap()).unwrap().unwrap().journal.as_deref(), Some("2026-10-11"));
     assert!(host.perform("done", &json!({})).unwrap_err().to_string().contains("done needs an id"));
-    // On screen, a failed action says why on the status line.
-    let mut s = screen(&host, View::Detail, 80, 24);
-    s.keys(&["x"]);
-    assert!(s.state().status.as_deref().is_some_and(|st| st.contains("done needs an id")), "{:?}", s.state().status);
+    // On screen: `d` asks for a date in the bar; one thc can't read says why, in a toast.
+    let mut s = screen(&host, View::Today, 80, 24);
+    s.keys(&["d"]);
+    assert!(s.screen().contains("due ›"), "the prompt: {}", s.screen());
+    type_in(&mut s, "fryday");
+    s.keys(&["enter"]);
+    let said: Vec<String> = s.state().toasts.iter().map(|t| t.text.clone()).collect();
+    assert!(said.iter().any(|t| t.contains("fryday")), "{said:?}");
+    assert!(!s.screen().contains("due ›"), "the prompt closed");
+    // And one it can read sets the date on the row the prompt was asked about (the first row:
+    // Call the bank moved out of Today above).
+    let first = host.feed("today", &json!({})).unwrap()["rows"][0]["children"][0]["id"].as_str().unwrap().to_string();
+    s.keys(&["d"]);
+    type_in(&mut s, "2026-10-30");
+    s.keys(&["enter"]);
+    assert_eq!(open(&root, human()).store.node(&first).unwrap().unwrap().due.as_deref(), Some("2026-10-30"));
     let _ = std::fs::remove_dir_all(root);
 }
 
@@ -285,7 +301,7 @@ fn node_id(root: &Path, text: &str) -> String {
 
 fn page(host: &ThcHost, id: &str) -> fictty::Headless {
     let route = Route { view: View::Page, id: Some(id.into()), ..Route::default() };
-    fictty::App::new(host.screen(&route)).themes(thc_screen::theme::themes()).theme("ember-dark").host(host.clone()).headless(120, 32).unwrap()
+    host.app(&route, "ember-dark").headless(120, 32).unwrap()
 }
 
 /// Typed text as key names.
@@ -372,9 +388,11 @@ fn a_journal_day_opens_as_text_and_a_new_line_lands_in_the_day() {
     let (root, v) = seeded("day");
     let host = ThcHost::new(v).at(now());
     let mut s = screen(&host, View::Journal, 120, 32);
+    let focus = s.state().focus.clone();
     s.keys(&["enter"]);
     let text = s.screen();
-    assert!(text.contains("# 2026-10-11 (journal)") && text.contains("- [ ] Call the bank due:2026-10-08 !high"), "{text}");
+    let st = s.state();
+    assert!(text.contains("# 2026-10-11 (journal)") && text.contains("- [ ] Call the bank due:2026-10-08 !high"), "focus {focus:?} → {:?}, status {:?}\n{text}", st.focus, st.status);
     s.keys(&["d-down", "bs"]);
     type_in(&mut s, "\n- Lunch with Sam");
     let check = open(&root, human());
