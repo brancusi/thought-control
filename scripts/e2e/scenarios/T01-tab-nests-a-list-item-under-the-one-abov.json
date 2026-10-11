@@ -1,0 +1,89 @@
+{
+ "id": "T01",
+ "title": "tab nests a list item under the one above",
+ "spec": "editing.md §3 E22 · writing.md (nesting), against the vault",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Nest",
+   "notes": [
+    {
+     "text": "first item",
+     "id": "aaaa1111aaaa"
+    },
+    {
+     "text": "second item",
+     "id": "bbbb2222bbbb"
+    }
+   ]
+  }
+ ],
+ "steps_by_target": {
+  "thc-tui": [
+   {
+    "key": "4"
+   },
+   {
+    "type": "Nest"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "tab"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ],
+  "thc-screen": [
+   {
+    "click": "Pages"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "tab"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ]
+ },
+ "expect": {
+  "vault": [
+   {
+    "q": "parent:aaaa1111aaaa",
+    "count": 1,
+    "id": "bbbb2222bbbb",
+    "text": "second item"
+   }
+  ]
+ },
+ "note": "the caret on the second item; Tab, then Esc saves and leaves"
+}

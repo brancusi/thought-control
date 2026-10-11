@@ -76,8 +76,5 @@
   "thc-screen": {
    "rule_under": "Inbox"
   }
- },
- "known": {
-  "thc-screen": "thc-screen: Tab moves focus between nodes (fictty's default focus_next) instead of cycling views (navigation.md §6)"
  }
 }

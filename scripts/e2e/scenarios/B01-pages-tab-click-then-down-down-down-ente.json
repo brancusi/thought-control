@@ -47,9 +47,12 @@
  ],
  "expect": {
   "screen": [
-   "# Q4 Planning",
+   "Q4 Planning",
    "Planning kickoff agenda"
-  ]
+  ],
+  "fictty_state": {
+   "focus": "pages_doc"
+  }
  },
- "note": "Pages: focus starts on the finder and ↓ moves into the list"
+ "note": "Pages: focus starts on the finder and ↓ moves into the list; the title is a heading row above the editor (from 18b2762)"
 }

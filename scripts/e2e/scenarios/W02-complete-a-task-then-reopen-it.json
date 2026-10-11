@@ -63,8 +63,5 @@
     "count": 1
    }
   ]
- },
- "known": {
-  "thc-screen": "thc-screen: a task done with x leaves the Tasks list at once (navigation.md §8 keeps it in place), so X can't reopen it"
  }
 }

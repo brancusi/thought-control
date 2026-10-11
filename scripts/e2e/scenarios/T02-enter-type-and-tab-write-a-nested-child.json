@@ -1,0 +1,98 @@
+{
+ "id": "T02",
+ "title": "enter, type and tab write a nested child",
+ "spec": "writing.md (Enter, Tab), against the vault",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Plan",
+   "notes": [
+    {
+     "text": "Parent item",
+     "id": "cccc3333cccc"
+    }
+   ]
+  }
+ ],
+ "steps_by_target": {
+  "thc-tui": [
+   {
+    "key": "4"
+   },
+   {
+    "type": "Plan"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "end"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "type": "Child item"
+   },
+   {
+    "key": "tab"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ],
+  "thc-screen": [
+   {
+    "click": "Pages"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "key": "c-home"
+   },
+   {
+    "key": "end"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "type": "Child item"
+   },
+   {
+    "key": "tab"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ]
+ },
+ "expect": {
+  "vault": [
+   {
+    "q": "parent:cccc3333cccc",
+    "count": 1,
+    "text": "Child item"
+   }
+  ]
+ },
+ "known": {
+  "thc-screen/real": "thc-screen: Enter at the end of `- Parent item` starts a plain line, not `- `, so the typed child (then Tab) saves as text in the parent (`  Child item`), not a child note"
+ }
+}

@@ -16,6 +16,6 @@
   "doc": "- o⟦ne ‖   - tw▮⟧o"
  },
  "known": {
-  "thc-screen": "fictty: an editor never takes Tab (it moves focus), so Tab can't indent the selected lines (editing.md §3)"
+  "thc-screen": "thc-screen: Tab indents the first selected item too, which has nothing above to nest under (`  - one`); the golden nests only the second"
  }
 }

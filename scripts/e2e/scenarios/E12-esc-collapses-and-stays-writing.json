@@ -22,5 +22,8 @@
     "doc_write": true
    }
   }
+ },
+ "known": {
+  "thc-screen": "thc-screen: Esc with a selection leaves it selected (the editor never sees Esc); it should collapse and keep writing (E12). Passed on 1697cb4"
  }
 }

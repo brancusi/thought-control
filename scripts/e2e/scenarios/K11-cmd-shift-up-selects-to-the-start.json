@@ -10,8 +10,5 @@
  ],
  "expect": {
   "doc": "⟦▮one ‖ tw⟧o"
- },
- "known": {
-  "thc-screen": "thc-screen: the page's heading (`# title`) is text in its editor, so ⌘A / ⌘↑ / ⇧⌘↑ reach into it (thc's TUI keeps the title out of the document); spec question"
  }
 }

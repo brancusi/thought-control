@@ -331,7 +331,6 @@
   "no_screen": "Task 01 "
  },
  "known": {
-  "thc-tui/real": "thc: the wheel over a list moves the row cursor and never scrolls the list (mouse.md §4)",
-  "thc-screen/real": "fictty: the wheel over a list steps its selection (runtime Scroll → step) instead of scrolling the view (mouse.md §4)"
+  "thc-tui/real": "thc: the wheel over a list moves the row cursor and never scrolls the list (mouse.md §4)"
  }
 }

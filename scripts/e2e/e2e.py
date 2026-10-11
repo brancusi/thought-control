@@ -123,8 +123,13 @@ def targets_of(s):
     return s.get("targets", EDITOR_TARGETS if "setup" in s else ["thc-tui"])
 
 
+def steps_of(s, target):
+    """A scenario's steps for a target: its own (`steps_by_target`) where opening a page differs."""
+    return s.get("steps_by_target", {}).get(target, s.get("steps", []))
+
+
 def needs_terminal(s):
-    return any("bytes" in st for st in s.get("steps", []))
+    return any("bytes" in st for st in s.get("steps", []) + [x for v in s.get("steps_by_target", {}).values() for x in v])
 
 
 def for_target(e, target):
@@ -260,6 +265,15 @@ def check_common(e, screen, clip=None, osc52=None):
 
 def fictty_rev():
     return os.environ.get("FICTTY_REV") or subprocess.run(["git", "-C", str(FICTTY_DIR), "rev-parse", "--short", "main"], capture_output=True, text=True, check=True).stdout.strip()
+
+
+def setup_thc():
+    """The thc whose `thc setup wezterm` writes the terminal's keys: E2E_SETUP_THC, else thc
+    screen's build (the newest modules: thc_keys chained to fictty's), else the thc under test."""
+    if os.environ.get("E2E_SETUP_THC"):
+        return Path(os.environ["E2E_SETUP_THC"])
+    b = build_screen()[0]
+    return b or thc_bin()
 
 
 def fictty_cli():
@@ -433,19 +447,24 @@ local function press(window, pane, key, mods)
   return how
 end
 
+-- WezTerm reloads this config when a file it read changes (thc rewrites thc_keys.lua when its
+-- copy differs), and a reload drops the old Lua state's timers: the poll starts again on
+-- `window-config-reloaded`, and an older chain stops when it sees a newer generation.
+
 local function poll()
   local f = io.open(root .. '/keyq', 'r')
   if f then
     local body = f:read('*a')
     f:close()
     os.remove(root .. '/keyq')
-    local w = wezterm.gui.gui_windows()[1]
+    local w = wezterm.gui and wezterm.gui.gui_windows()[1]
     local seq, hows = '0', {}
     for line in body:gmatch('[^\n]+') do
       local s, k, m = line:match('^(%d+)\t(.-)\t(.*)$')
       if s then
         seq = s
-        table.insert(hows, press(w, w:active_pane(), k, m))
+        local ok, how = pcall(press, w, w:active_pane(), k, m)
+        table.insert(hows, ok and how or ("error: " .. tostring(how):gsub("[\t\n]", " ")))
       end
     end
     local a = io.open(root .. '/keyack.tmp', 'w')
@@ -453,12 +472,28 @@ local function poll()
     a:close()
     os.rename(root .. '/keyack.tmp', root .. '/keyack')
   end
-  wezterm.time.call_after(0.02, poll)
 end
+
+local function start()
+  wezterm.GLOBAL.e2e_gen = (wezterm.GLOBAL.e2e_gen or 0) + 1
+  local gen = wezterm.GLOBAL.e2e_gen
+  local function tick()
+    if wezterm.GLOBAL.e2e_gen ~= gen then
+      return
+    end
+    pcall(poll)
+    wezterm.time.call_after(0.02, tick)
+  end
+  wezterm.time.call_after(0.05, tick)
+end
+
+wezterm.on('window-config-reloaded', function(window, pane)
+  start()
+end)
 
 wezterm.on('gui-startup', function(cmd)
   wezterm.mux.spawn_window(cmd or {})
-  wezterm.time.call_after(0.2, poll)
+  start()
 end)
 
 return config
@@ -487,7 +522,7 @@ done
 class Terminal:
     """One WezTerm process with its own config, class, HOME and socket."""
 
-    def __init__(self, target, keep=False, fictty=None):
+    def __init__(self, target, keep=False, fictty=None, setup=None):
         # A short path: WezTerm's and thc's sockets live under it (sun_path is 104 bytes).
         self.root = Path(tempfile.mkdtemp(prefix="thce2e.", dir="/tmp"))
         self.home = self.root / "h"
@@ -500,14 +535,18 @@ class Terminal:
         (self.root / "env.json").write_text(json.dumps(self.env))
         cfg = self.home / ".config/wezterm/wezterm.lua"
         cfg.write_text(LUA)
-        # thc's own forwards, exactly as `thc setup wezterm --yes` writes them for a user.
-        r = subprocess.run([str(thc_bin()), "setup", "wezterm", "--yes"], env=dict(self.sandbox_env(), WEZTERM_CONFIG_FILE=str(cfg)), capture_output=True, text=True)
+        # The keys exactly as `thc setup wezterm --yes` writes them for a user: thc_keys.lua, and
+        # (from the screens branch on) fictty.lua beside it, which thc_keys chains to in a pane
+        # showing a fictty screen. `setup` is the thc whose setup runs (default: thc screen's).
+        r = subprocess.run([str(setup or thc_bin()), "setup", "wezterm", "--yes"], env=dict(self.sandbox_env(), WEZTERM_CONFIG_FILE=str(cfg)), capture_output=True, text=True)
         if r.returncode or "thc: begin" not in cfg.read_text():
             raise RuntimeError(f"thc setup wezterm failed: {r.stdout}{r.stderr}")
-        # fictty's ⌘ forwards (`fictty setup wezterm`), wired in after thc's block as its own
-        # comment says: `require('fictty').apply(config)`. Both modules bind the same keys, and
-        # WezTerm keeps the later one, so fictty's decides; that's the setup a user of both has.
-        self.modules = ["thc_keys"]
+        self.modules = [f"thc_keys ({Path(str(setup or thc_bin())).parent.parent.parent.name or 'thc'})"]
+        if (self.home / ".config/wezterm/fictty.lua").exists():
+            self.modules.append("fictty.lua (written and chained by thc setup)")
+            fictty = None
+        # Older thc: fictty's own `fictty setup wezterm`, wired in after thc's block as its
+        # comment says (`require('fictty').apply(config)`); WezTerm keeps the later binding.
         if fictty:
             r = subprocess.run([str(fictty), "setup", "wezterm"], env=dict(self.sandbox_env(), WEZTERM_CONFIG_FILE=str(cfg)), capture_output=True, text=True)
             mod = self.home / ".config/wezterm/fictty.lua"
@@ -837,7 +876,7 @@ class FicttyNotes:
             ui_file = tmp / "notes.json"
             ui_file.write_text(json.dumps(ui))
             plan = {"ui": str(ui_file), "dir": str(self.show), "size": [100, 30], "themes": "themes.json",
-                    "steps": setup_steps + fictty_headless_steps(s.get("steps", []), origin=(text or "").split("\n")[0] or None)}
+                    "steps": setup_steps + fictty_headless_steps(steps_of(s, self.name), origin=(text or "").split("\n")[0] or None)}
             r = subprocess.run([str(self.probe)], input=json.dumps(plan), capture_output=True, text=True)
             if r.returncode:
                 raise Fail(f"probe: {r.stderr.strip()[-1500:]}")
@@ -927,7 +966,7 @@ class FicttyNotes:
                 time.sleep(0.3)
                 got = notation.show_plain(*fictty_doc(state()))
                 check(got == notation.norm_plain(s["setup"]), f"setup: want {notation.norm_plain(s['setup'])}, got {got}")
-            run_steps_real(term, s.get("steps", []), sent, between=lambda a: self.assert_fictty(a, state(), term.text(), None, osc52=clipboard.get() if "clip" in a else None))
+            run_steps_real(term, steps_of(s, self.name), sent, between=lambda a: self.assert_fictty(a, state(), term.text(), None, osc52=clipboard.get() if "clip" in a else None))
             time.sleep(0.3)
             self.assert_fictty(e, state(), term.text(), None, osc52=clipboard.get() if "clip" in e else None)
         finally:
@@ -1040,7 +1079,7 @@ class ThcTui:
                 b, a, h, _ = self.doc_now(term, page, None)
                 got = notation.show_notes(*self.trim(b, a, h))
                 check(got == notation.norm_notes(s["setup"]), f"setup: want {notation.norm_notes(s['setup'])}\n       got  {got}")
-            run_steps_real(term, s.get("steps", []), sent, between=lambda a: self.assert_thc(term, for_target(a, self.name), page, clip_file, clipboard),
+            run_steps_real(term, steps_of(s, self.name), sent, between=lambda a: self.assert_thc(term, for_target(a, self.name), page, clip_file, clipboard),
                            thc=lambda args, actor: self.thc(term, *args, actor=actor))
             time.sleep(0.3)
             within(lambda: self.assert_thc(term, e, page, clip_file, clipboard), s.get("within", GRACE))
@@ -1107,12 +1146,12 @@ class ThcTui:
 
 def build_screen():
     """thc with `thc screen`: THC_SCREEN_BIN, or built from THC_SCREEN_REV (the screens branch,
-    default 1697cb4, PR #95) against an export of the fictty commit it was written for
-    (THC_SCREEN_FICTTY_REV, default da34390), all under target/e2e."""
+    default f8af743, PR #95) against an export of the fictty commit it was written for
+    (THC_SCREEN_FICTTY_REV, default 197ea78), all under target/e2e."""
     if os.environ.get("THC_SCREEN_BIN"):
-        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "da34390"), os.environ.get("THC_SCREEN_PROBE")
-    rev = os.environ.get("THC_SCREEN_REV", "1697cb4")
-    frev = os.environ.get("THC_SCREEN_FICTTY_REV", "da34390")
+        return Path(os.environ["THC_SCREEN_BIN"]), os.environ.get("THC_SCREEN_FICTTY_REV", "197ea78"), os.environ.get("THC_SCREEN_PROBE")
+    rev = os.environ.get("THC_SCREEN_REV", "f8af743")
+    frev = os.environ.get("THC_SCREEN_FICTTY_REV", "197ea78")
     fd, _, _, _ = build_fictty(frev, probe_too=False)
     d = BUILD / f"screen-{rev}-on-{frev}"
     src = d / "src"
@@ -1173,8 +1212,10 @@ class ThcScreen(FicttyNotes):
         return f"g{re.sub('[^a-z0-9]', '', s['id'].lower())}z"
 
     def header(self, s):
-        """What the page's text starts with: its heading and a blank line."""
-        return f"# {self.title(s)}\n\n"
+        """What the page's text starts with: up to 1697cb4 its heading and a blank line (the title
+        was text in the editor); from 18b2762 on, nothing (the title is a heading row outside)."""
+        old = os.environ.get("THC_SCREEN_REV", "f8af743") in ("5ca8d24", "1697cb4")
+        return f"# {self.title(s)}\n\n" if old else ""
 
     def doc_of(self, state, s=None):
         """(text, anchor, head) of the page editor, its heading left out (offsets shift with it)."""
@@ -1186,9 +1227,12 @@ class ThcScreen(FicttyNotes):
         text = (entry.get("doc") or {}).get("text")
         if text is None:
             raise Fail(f"store entry {key} isn't a text: {json.dumps(entry)[:200]}")
-        view = state["local"].get("doc", {}).get("editors", {}).get(key)
-        if view is None:
-            raise Fail(f"the doc editor has no view of {key}: local.doc = {json.dumps(state['local'].get('doc'))[:300]}")
+        # The page's editor: `doc` up to 1697cb4, `<tab>_doc` after (pages_doc, journal_doc).
+        views = [(nid, l["editors"][key]) for nid, l in state["local"].items() if key in (l.get("editors") or {})]
+        if not views:
+            raise Fail(f"no editor has a view of {key} (editors: {[n for n, l in state['local'].items() if l.get('editors')]})")
+        focus = state.get("focus")
+        view = next((v for n, v in views if n == focus), views[0][1])
         sel = view["selection"]
         r = sel["ranges"][sel.get("primary_index", 0)]
         h = self.header(s)
@@ -1201,6 +1245,17 @@ class ThcScreen(FicttyNotes):
             raise Fail(f"the {'caret' if r['anchor'] == r['head'] else 'selection'} reaches into the page heading "
                        f"(anchor {r['anchor'] - n}, caret {r['head'] - n} from the body's start): {body}")
         return text[n:], r["anchor"] - n, r["head"] - n
+
+    def editor_id(self):
+        old = os.environ.get("THC_SCREEN_REV", "f8af743") in ("5ca8d24", "1697cb4")
+        return "doc" if old else "pages_doc"
+
+    def origin(self, s):
+        """The text the editor's first row shows, for headless pointer cells."""
+        if self.header(s):
+            return f"# {self.title(s)}"
+        text, _, _ = notation.plain(s["setup"])
+        return text.split("\n")[0] or None
 
     def page_text(self, s):
         text, _, _ = notation.plain(s["setup"])
@@ -1238,7 +1293,7 @@ class ThcScreen(FicttyNotes):
             pid = self.new_page(s, thc)
             steps = [{"msg": {"msg": "write", "key": f"page/{pid}", "write": "put", "value": self.page_text(s), "by": "agent"}}]
             steps += [{"key": k} for k in self.place_keys(s)] + [{"snap": "setup"}]
-            steps += fictty_headless_steps(s.get("steps", []), editor="doc", origin=f"# {self.title(s)}")
+            steps += fictty_headless_steps(steps_of(s, self.name), editor=self.editor_id(), origin=self.origin(s))
             plan = {"vault": str(root / "vault"), "view": "page", "id": pid, "size": [120, 32], "steps": steps}
             r = subprocess.run([str(self.probe)], input=json.dumps(plan), capture_output=True, text=True, env=env, cwd=root / "w")
             if r.returncode:
@@ -1296,7 +1351,7 @@ class ThcScreen(FicttyNotes):
             term.send("".join(SETUP_BYTES[k] for k in self.place_keys(s)))
             within(lambda: check(notation.show_plain(*self.doc_of(state(), s)) == notation.norm_plain(s["setup"]),
                                  f"setup: want {notation.norm_plain(s['setup'])}\n       got  {notation.show_plain(*self.doc_of(state(), s))}"), GRACE)
-            run_steps_real(term, s.get("steps", []), sent,
+            run_steps_real(term, steps_of(s, self.name), sent,
                            between=lambda a: self.assert_fictty(for_target(a, self.name), state(), term.text(), None, osc52=clipboard.get() if "clip" in a else None))
             time.sleep(0.3)
             within(lambda: self.assert_fictty(e, state(), term.text(), None, osc52=clipboard.get() if "clip" in e else None), s.get("within", GRACE))
@@ -1318,7 +1373,7 @@ class ThcScreen(FicttyNotes):
         if "setup" in s:
             return self.headless_editor(s)
         keys = []
-        for st in s.get("steps", []):
+        for st in steps_of(s, self.name):
             if "key" in st:
                 keys.append(fictty_key(st["key"]))
             elif "type" in st:
@@ -1341,7 +1396,7 @@ class ThcScreen(FicttyNotes):
             if r.returncode:
                 raise Fail(f"thc screen --render: {r.stderr.strip()}")
             e = expect_for(s, self.name)
-            if {"fictty_state", "selected_row"} & set(e):
+            if {"fictty_state", "selected_row", "focus_not"} & set(e):
                 raise Fail("skip: asserts on the live screen's state (--render has none)")
             check_common(e, r.stdout)
             if "rule_under" in e:
@@ -1381,6 +1436,9 @@ class ThcScreen(FicttyNotes):
             if "fictty_state" in a:
                 probs = subset(a["fictty_state"], state())
                 check(not probs, "state: " + "; ".join(probs))
+            if "focus_not" in a:
+                f = state().get("focus")
+                check(f != a["focus_not"], f"focus: want anything but {a['focus_not']!r}, it's {f!r}")
             if "selected_row" in a:
                 row = selected_row(state(), a["selected_row"].get("list"))
                 for k, v in a["selected_row"].items():
@@ -1395,7 +1453,7 @@ class ThcScreen(FicttyNotes):
             time.sleep(0.05)
         time.sleep(0.5)
         try:
-            run_steps_real(term, s.get("steps", []), sent, between=lambda a: assert_all(for_target(a, self.name)), thc=lambda args, actor: thc(*args, actor=actor))
+            run_steps_real(term, steps_of(s, self.name), sent, between=lambda a: assert_all(for_target(a, self.name)), thc=lambda args, actor: thc(*args, actor=actor))
             time.sleep(0.3)
             within(lambda: assert_all(e), s.get("within", GRACE))
         except Fail as f:
@@ -1475,7 +1533,7 @@ def pane_env(root, home):
     return {
         "E2E_ROOT": str(root), "HOME": str(home), "TMPDIR": str(root / "t") + "/", "THC_VAULT": str(root / "vault"),
         "THC_CONFIG_DIR": str(root / "cfg"), "THC_CACHE_DIR": str(root / "cache"), "THC_SOCKET": str(root / "d.sock"),
-        "XDG_CACHE_HOME": str(root / "xdg"), "XDG_CONFIG_HOME": str(root / "xdgc"), "THC_NO_UPDATE_CHECK": "1",
+        "XDG_CACHE_HOME": str(root / "xdg"), "XDG_CONFIG_HOME": str(home / ".config"), "THC_NO_UPDATE_CHECK": "1",
         "THC_TEST": "1", "THC_TEST_ROOT": str(root), "THC_SETUP_APP": "none", "THC_SETUP_LOGIN": "skip",
         "THC_NOTIFY": "log", "PATH": f"{shims}:/usr/bin:/bin:/usr/sbin:/sbin", "TERM_PROGRAM": "WezTerm",
         "THC_ACTOR": "human", "FICTTY_SOCKET": str(root / "f.sock"),
@@ -1525,7 +1583,7 @@ def run_real(target, scenarios, keep, clip_on):
         sys.exit(f"no WezTerm at {WEZ} (set WEZTERM)")
     # fictty's forwards for fictty's targets (E2E_FICTTY_KEYS=1 adds them to any, =0 leaves them out).
     want = os.environ.get("E2E_FICTTY_KEYS", "1" if target.kind == "fictty" else "0") == "1"
-    term = Terminal(target.name, keep, fictty=fictty_cli() if want else None)
+    term = Terminal(target.name, keep, fictty=fictty_cli() if want else None, setup=setup_thc())
     print(f"   WezTerm key modules: {', '.join(term.modules)}")
     root = term.root
     clipboard = Clipboard(clip_on)
@@ -1583,7 +1641,7 @@ def run_keys(keys, keep):
     """What WezTerm sends for each key, to a program named thc and to any other, for the kitty
     flags thc (1) and fictty (1|4) push. The truth table the forwards and decoders must agree on."""
     bins = build_keydump()
-    term = Terminal("keys", keep, fictty=fictty_cli() if os.environ.get("E2E_FICTTY_KEYS", "1") == "1" else None)
+    term = Terminal("keys", keep, fictty=fictty_cli() if os.environ.get("E2E_FICTTY_KEYS", "1") == "1" else None, setup=setup_thc())
     print(f"WezTerm key modules: {', '.join(term.modules)}")
     table = {}
     try:

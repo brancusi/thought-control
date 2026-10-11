@@ -13,8 +13,5 @@
  ],
  "expect": {
   "doc": "- [ ] o⟦ne ‖ - [ ] tw▮⟧o"
- },
- "known": {
-  "thc-screen": "thc-screen: ⌃T (its `tick`) only ticks `- [ ]` lines; it doesn't turn list items into tasks (writing.md §3)"
  }
 }

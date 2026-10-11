@@ -26,7 +26,21 @@
   },
   {
    "assert": {
-    "screen": "Schedule annual physical"
+    "thc-tui": {
+     "thc_state": {
+      "document": {
+       "target": {
+        "kind": "page",
+        "title": "Health"
+       }
+      }
+     }
+    },
+    "thc-screen": {
+     "fictty_state": {
+      "focus": "pages_doc"
+     }
+    }
    }
   },
   {
@@ -40,11 +54,15 @@
    }
   },
   "thc-screen": {
-   "no_screen": "Schedule annual physical"
+   "focus_not": "pages_doc",
+   "selected_row": {
+    "list": "pages",
+    "text": "Health"
+   }
   }
  },
- "note": "thc's TUI previews the page beside the Pages list, so its check is the state, not the screen",
+ "note": "checked in the state: Pages previews the selected page beside the list, so the screen shows its notes either way",
  "known": {
-  "thc-screen": "thc-screen: Esc on an opened page doesn't go back to the Pages list (navigation.md §2)"
+  "thc-screen/real": "thc-screen: Esc from a page opened through the finder (typed name, Enter) leaves the Pages selection on the list's `Pages` section row, not the page (N1); from the list (B02) it's right"
  }
 }

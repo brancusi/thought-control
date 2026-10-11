@@ -106,8 +106,5 @@
   "thc-screen": {
    "rule_under": "Today"
   }
- },
- "known": {
-  "thc-screen": "thc-screen: arriving on Pages focuses its find prompt (pages_q), so the next digit types into it instead of switching views (navigation.md §6)"
  }
 }

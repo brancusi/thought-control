@@ -70,8 +70,5 @@
    "text": "Q4 Planning"
   }
  },
- "note": "Esc goes back to Pages with the page just left selected (navigation.md §2 N1)",
- "known": {
-  "thc-screen/real": "thc-screen: Esc back to Pages selects the first page (Garden), not the page just left (navigation.md §2 N1)"
- }
+ "note": "Esc goes back to Pages with the page just left selected (navigation.md §2 N1)"
 }

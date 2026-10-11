@@ -50,8 +50,5 @@
     "count": 1
    }
   ]
- },
- "known": {
-  "thc-screen": "thc-screen: `a` opens a prompt that reads what you type as a page to open (\"answer: no page ...\"), so nothing is captured"
  }
 }

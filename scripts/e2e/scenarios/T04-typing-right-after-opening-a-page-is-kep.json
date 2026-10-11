@@ -1,0 +1,71 @@
+{
+ "id": "T04",
+ "title": "typing right after opening a page is kept",
+ "spec": "milestone 1: typing works from the first keystroke",
+ "targets": [
+  "thc-tui",
+  "thc-screen"
+ ],
+ "vault": [
+  {
+   "page": "Typing",
+   "notes": [
+    "An earlier note"
+   ]
+  }
+ ],
+ "steps_by_target": {
+  "thc-tui": [
+   {
+    "key": "4"
+   },
+   {
+    "type": "Typing"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "type": "Quick words"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ],
+  "thc-screen": [
+   {
+    "click": "Pages"
+   },
+   {
+    "key": "down"
+   },
+   {
+    "key": "enter"
+   },
+   {
+    "type": "Quick words"
+   },
+   {
+    "wait": 700
+   },
+   {
+    "key": "esc"
+   }
+  ]
+ },
+ "expect": {
+  "vault": [
+   {
+    "q": "text:Quick",
+    "count": 1,
+    "text": "Quick words"
+   }
+  ]
+ },
+ "known": {
+  "thc-screen/real": "thc-screen: typing right after opening a page goes to the very start of the text, before the first note's `- ` (`Quick words- An earlier note`), not onto a line of its own"
+ }
+}
