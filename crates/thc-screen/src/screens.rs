@@ -108,7 +108,14 @@ pub fn source(name: &str, args: Value) -> Source {
 /// A host action (`done`, `reopen`, `set`, `add`, `mv`, `answer`, `day`, `keys`): args are
 /// templates over the selected row (`{id}`), the store (`{store.key}`) and `$id`.
 pub fn act(name: &str, args: Value) -> Action {
-    Action::Host { host: name.into(), args }
+    Action::Host { host: name.into(), args, wait: false }
+}
+
+/// A host action that changes the sidebar's stack (open, close, fold, pin, move, reopen, a day
+/// panel's day, to main): what the next key acts on is what it leaves, so keys typed while it's
+/// in flight wait for it and the rows it refreshes, then go in order (fictty's `wait`).
+fn stack_act(name: &str, args: Value) -> Action {
+    Action::Host { host: name.into(), args, wait: true }
 }
 
 /// What a route focuses first: its list (arriving never takes the caret, navigation.md §6: a
@@ -966,12 +973,12 @@ const BESIDE: &str = "sidebar.open & sidebar_shown";
 /// An act on the stack (sidebar.md §3): `op` on a panel (`{$item.…}`: the one its node is in),
 /// against the stack as it is, from tab `v` (the focus follows the panel there).
 fn panel_op(v: View, op: &str) -> Action {
-    act("panel", json!({"op": op, "key": "{$item.key}", "at": "{$item.at}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
+    stack_act("panel", json!({"op": op, "key": "{$item.key}", "at": "{$item.at}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
 }
 
 /// A day panel to another day: `by` days, or null for today.
 fn day_op(v: View, by: Value) -> Action {
-    act("panel", json!({"op": "day", "by": by, "key": "{$item.key}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
+    stack_act("panel", json!({"op": "day", "by": by, "key": "{$item.key}", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}", "view": v.name()}))
 }
 
 /// `⌥S`: the sidebar shows and its active panel has the focus, both at once, here in the UI
@@ -1004,7 +1011,7 @@ fn aside_row(v: View) -> Action {
     Action::Do {
         steps: vec![
             Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
-            act("aside", json!({"id": "{id}", "stack": "{store.sidebar}", "view": v.name()})),
+            stack_act("aside", json!({"id": "{id}", "stack": "{store.sidebar}", "view": v.name()})),
         ],
     }
 }
@@ -1014,8 +1021,8 @@ fn aside_row(v: View) -> Action {
 fn everywhere_binds(v: View) -> Vec<Bind> {
     vec![
         b("a-s", "sidebar", to_sidebar(v)),
-        b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
-        b("a-\\", "sidebar hide / show", act("panel", json!({"op": "toggle", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+        b("a-s-t", "reopen a panel", stack_act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+        b("a-\\", "sidebar hide / show", stack_act("panel", json!({"op": "toggle", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
     ]
 }
 
@@ -1046,8 +1053,8 @@ fn panel_binds(v: View, place: &str) -> Vec<Bind> {
         b("a-p", "pin / unpin", panel_op(v, "pin")),
         b("a-s-k", "move up", panel_op(v, "up")),
         b("a-s-j", "move down", panel_op(v, "down")),
-        b("a-m", "to main", act("to_main", json!({"key": "{$item.key}", "stack": "{store.sidebar}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)}))),
-        b("a-s-t", "reopen a panel", act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
+        b("a-m", "to main", stack_act("to_main", json!({"key": "{$item.key}", "stack": "{store.sidebar}", "from": View::TABS.iter().position(|t| *t == v).unwrap_or(0)}))),
+        b("a-s-t", "reopen a panel", stack_act("panel", json!({"op": "reopen", "stack": "{store.sidebar}", "shown": "{store.sidebar_shown}"}))),
         // A day panel to the day before or after (§8.1: ⌃P ⌃N, ⌥[ ⌥]).
         b("c-p", "the day before", day_op(v, json!(-1))),
         b("c-n", "the day after", day_op(v, json!(1))),
@@ -1169,7 +1176,7 @@ fn aside_title(v: View, kind: &str, title: &str) -> Action {
     Action::Do {
         steps: vec![
             Action::Put { put: "sidebar_shown".into(), value: true.into(), for_ms: None },
-            act("aside", json!({"title": title, "as": kind, "stack": "{store.sidebar}", "view": v.name()})),
+            stack_act("aside", json!({"title": title, "as": kind, "stack": "{store.sidebar}", "view": v.name()})),
         ],
     }
 }
