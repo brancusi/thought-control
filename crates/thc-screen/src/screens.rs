@@ -1033,8 +1033,8 @@ fn panel_template(v: View, place: &str) -> Node {
     for (k, by) in [("[", json!(-1)), ("]", json!(1)), ("T", Value::Null)] {
         head.keys.insert(k.into(), day_op(v, by));
     }
-    // TODO(fictty): a click on the header should fold it (§12), but the host moves the focus with
-    // a click message, which would run it too: that needs a focus message without the click.
+    // A click on the header folds it (§12).
+    head.click = Some(panel_op(v, "fold"));
     let head = sized(head, cells(1));
     // A page or a day: the editor (Tab nests, ⌃T cycles a line, links as in the main view).
     let editor = Kind::Editor { text: String::new(), doc: Some("{$item.doc}".into()), placeholder: Some("Type to start.".into()), syntax: Some("markdown".into()), readonly: false, tab: Some("indent-lines".into()), tasks: Some("cycle".into()), caret: None, links: doc_links(v) };

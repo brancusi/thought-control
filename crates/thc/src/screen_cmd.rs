@@ -81,7 +81,147 @@ fn run(cli: &Cli, paths: &Paths, a: ScreenArgs) -> Result<()> {
     }
     let host = ThcHost::new(vault).watching().persisting();
     let socket = a.socket.unwrap_or_else(|| default_socket(paths));
+    advertise(paths, &socket);
     host.app(&route, &a.theme).socket(socket).run()
+}
+
+/// Say where this screen listens, beside the TUIs (`$TMPDIR/thc-ui/<pid>.json`, `kind:
+/// "screen"`), so `thc ui` finds it the same way. Gone when the screen exits; a dead one's file
+/// is pruned by the next lookup.
+fn advertise(paths: &Paths, socket: &std::path::Path) {
+    let dir = thc_tui::ui_discovery_dir();
+    let _ = std::fs::create_dir_all(&dir);
+    let pid = std::process::id();
+    let file = dir.join(format!("{pid}.json"));
+    let tty = unsafe {
+        let p = libc::ttyname(libc::STDIN_FILENO);
+        (!p.is_null()).then(|| std::ffi::CStr::from_ptr(p).to_string_lossy().into_owned())
+    };
+    let vault_path = std::fs::canonicalize(&paths.vault).unwrap_or_else(|_| paths.vault.clone());
+    let info = serde_json::json!({
+        "pid": pid,
+        "kind": "screen",
+        "socket": socket,
+        "vault": vault_path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default(),
+        "vault_path": vault_path,
+        "tty": tty,
+        "proto": "fictty",
+        "version": env!("CARGO_PKG_VERSION"),
+        "started_ms": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0),
+    });
+    if std::fs::write(&file, info.to_string() + "\n").is_ok() {
+        thc_core::scratch::remove_at_exit(&file);
+    }
+}
+
+// ---- `thc ui` against a screen ---------------------------------------------------------------------
+
+/// The `thc ui` operations a screen answers, through fictty's socket.
+pub const SCREEN_OPS: [&str; 5] = ["hello", "state.get", "render", "keys", "aside"];
+
+/// One `thc ui` request (docs/ui-protocol.md) answered by a running `thc screen`, in the TUI
+/// protocol's shape (`{"result"}` or `{"error": {kind, message}}`): `state.get` is fictty's
+/// state, `render` its frame (as text, at its own size), `keys` a key script sent as fictty
+/// keys. What a screen can't do says so (`unsupported`).
+pub fn ui_request(socket: &std::path::Path, req: &serde_json::Value) -> Result<serde_json::Value> {
+    use serde_json::json;
+    let unsupported = |why: String| Ok(json!({"id": req["id"], "error": {"kind": "unsupported", "message": why}}));
+    let op = req["op"].as_str().unwrap_or("");
+    let state = |s: &std::path::Path| ask(s, &json!({"op": "state"}));
+    // A screen's revision: every store write and push moves it.
+    let rev = |st: &serde_json::Value| st["version"].as_u64().unwrap_or(0) + st["store"].as_object().map_or(0, |m| m.values().filter_map(|e| e["rev"].as_u64()).sum());
+    let size = |st: &serde_json::Value| (st["data"]["$screen"]["value"]["width"].as_u64().unwrap_or(0), st["data"]["$screen"]["value"]["height"].as_u64().unwrap_or(0));
+    let result = |r: serde_json::Value| Ok(json!({"id": req["id"], "result": r}));
+    match op {
+        "hello" => {
+            let st = state(socket)?;
+            let (w, h) = size(&st);
+            result(json!({"proto": "fictty", "kind": "screen", "version": env!("CARGO_PKG_VERSION"), "rev": rev(&st), "ops": SCREEN_OPS, "size": [w, h]}))
+        }
+        "state.get" => {
+            let st = state(socket)?;
+            result(json!({"rev": rev(&st), "state": st}))
+        }
+        "render" => {
+            let st = state(socket)?;
+            let (w, h) = size(&st);
+            let format = req["format"].as_str().unwrap_or("text");
+            let asked = (req["w"].as_u64().unwrap_or(w), req["h"].as_u64().unwrap_or(h));
+            if format != "text" {
+                return unsupported(format!("thc screen draws its frame as text only (asked for {format})"));
+            }
+            if asked != (w, h) {
+                return unsupported(format!("thc screen draws at its own size, {w}x{h} (asked for {}x{})", asked.0, asked.1));
+            }
+            let frame = ask(socket, &json!({"op": "screen"}))?;
+            result(json!({"rev": rev(&st), "w": w, "h": h, "format": "text", "cursor": null, "frame": frame["screen"]}))
+        }
+        "keys" => {
+            let keys = match fictty_keys(req["keys"].as_str().unwrap_or("")) {
+                Ok(k) => k,
+                Err(e) => return Ok(json!({"id": req["id"], "error": {"kind": "bad_keys", "message": e}})),
+            };
+            for k in &keys {
+                ask(socket, &json!({"op": "key", "key": k}))?;
+            }
+            let st = state(socket)?;
+            result(json!({"rev": rev(&st), "msgs": keys.iter().map(|k| json!({"msg": "key", "key": k})).collect::<Vec<_>>(), "effects": []}))
+        }
+        other => unsupported(format!("thc screen doesn't take `{other}`: it answers {}", SCREEN_OPS.join(", "))),
+    }
+}
+
+/// A `thc ui` key script (`gg<cr>`, `<c-o>`, `<m-s>`, `<s-tab>`) as fictty's key names
+/// (`g`, `enter`, `c-o`, `a-s`, `s-tab`). Pastes, clicks and fixtures aren't keys.
+pub fn fictty_keys(script: &str) -> std::result::Result<Vec<String>, String> {
+    let mut out = Vec::new();
+    let mut rest = script;
+    while let Some(c) = rest.chars().next() {
+        if c != '<' {
+            out.push(if c == ' ' { "space".to_string() } else { c.to_string() });
+            rest = &rest[c.len_utf8()..];
+            continue;
+        }
+        let end = rest.find('>').ok_or_else(|| format!("unclosed token: {rest}"))?;
+        let inner = &rest[1..end];
+        rest = &rest[end + 1..];
+        // `<lt>` is the `<` key itself.
+        if inner == "lt" {
+            out.push("<".into());
+            continue;
+        }
+        let parts: Vec<&str> = inner.split('-').collect();
+        let (mods, base) = match parts.split_last() {
+            Some((b, m)) if !b.is_empty() => (m.to_vec(), b.to_string()),
+            // `<c-->`: the key is `-`.
+            _ => (parts[..parts.len().saturating_sub(2)].to_vec(), "-".to_string()),
+        };
+        let base = match base.as_str() {
+            "cr" | "enter" | "return" => "enter".to_string(),
+            "esc" => "esc".into(),
+            "tab" => "tab".into(),
+            "bs" | "backspace" => "bs".into(),
+            "space" => "space".into(),
+            "del" | "delete" => "del".into(),
+            "up" | "down" | "left" | "right" | "home" | "end" | "pgup" | "pgdn" => base.clone(),
+            f if f.starts_with('f') && f[1..].parse::<u8>().is_ok() => base.clone(),
+            s if s.chars().count() == 1 => s.to_string(),
+            _ => return Err(format!("thc screen has no key <{inner}>")),
+        };
+        let mut name = String::new();
+        // fictty's order: c- a- d- s-.
+        for (m, p) in [("c", "c-"), ("m", "a-"), ("a", "a-"), ("d", "d-"), ("s", "s-")] {
+            if mods.contains(&m) && !name.contains(p) {
+                name.push_str(p);
+            }
+        }
+        if mods.iter().any(|m| !["c", "m", "a", "d", "s"].contains(m)) {
+            return Err(format!("thc screen has no key <{inner}>"));
+        }
+        name.push_str(&base);
+        out.push(name);
+    }
+    Ok(out)
 }
 
 /// The control socket of `thc screen` on this vault: one per vault, in the temp dir (or `/tmp`
@@ -106,13 +246,11 @@ fn ask(socket: &std::path::Path, req: &serde_json::Value) -> Result<serde_json::
 /// `thc ui aside` against a running `thc screen` (no TUI on this vault): the same rules
 /// (thc_screen::sidebar::aside_requests), as store writes on the screen's socket, the stack's
 /// guarded by its revision and retried when the person changed it in between. `ls` reads.
-pub fn aside(paths: &Paths, actor: Option<&str>, target: Option<&str>, pin: bool, fold: bool, close: bool, ls: bool) -> Result<Option<serde_json::Value>> {
+#[allow(clippy::too_many_arguments)]
+pub fn aside(paths: &Paths, socket: &std::path::Path, actor: Option<&str>, target: Option<&str>, pin: bool, fold: bool, close: bool, ls: bool) -> Result<Option<serde_json::Value>> {
     use serde_json::json;
     use thc_screen::sidebar::Stack;
-    let socket = default_socket(paths);
-    if !socket.exists() {
-        return Ok(None);
-    }
+    let socket = socket.to_path_buf();
     let vault = Vault::open(paths.clone(), Actor { kind: "human".into(), name: None }, "screen")?;
     for _ in 0..5 {
         let cur = ask(&socket, &json!({"op": "read", "key": "sidebar"}))?;
@@ -140,4 +278,18 @@ pub fn aside(paths: &Paths, actor: Option<&str>, target: Option<&str>, pin: bool
         return Ok(Some(json!({"ok": true, "panel": key, "sidebar": stack.to_value(), "rev": r["rev"]})));
     }
     Err(thc_core::error::invalid("the stack kept changing under the write; try again".to_string()))
+}
+
+#[cfg(test)]
+mod tests {
+    /// `thc ui send keys` scripts as fictty's key names.
+    #[test]
+    fn key_scripts_become_fictty_keys() {
+        let k = |s: &str| super::fictty_keys(s).unwrap();
+        assert_eq!(k("gg<cr>"), vec!["g", "g", "enter"]);
+        assert_eq!(k("<c-o><m-s><s-tab><esc> a"), vec!["c-o", "a-s", "s-tab", "esc", "space", "a"]);
+        assert_eq!(k("<c-m-s-k><d-z><up><f2><lt>"), vec!["c-a-s-k", "d-z", "up", "f2", "<"]);
+        assert!(super::fictty_keys("<sclick:1,2>").is_err(), "a click isn't a key");
+        assert!(super::fictty_keys("<cr").is_err());
+    }
 }

@@ -386,7 +386,13 @@ readable only by its user, and the TUI checks the peer's uid. Each TUI also writ
 `$TMPDIR/thc-ui/<pid>.json` with its pid, socket, vault name and path, tty, protocol and start
 time. Both files go when the TUI exits. `THC_TUI_NO_LISTEN=1` turns the socket off.
 
-`thc ui` finds TUIs through those files, **restricted to the current vault**. With one TUI on
+`thc screen` (the fictty-based UI) advertises in the same folder, with `kind: "screen"` and
+`proto: "fictty"` (a TUI's record says `kind: "tui"`). Its socket speaks fictty's protocol, and
+`thc ui` bridges to it: `hello`, `state.get` (fictty's state), `render` (its frame, as text, at
+its own size), `keys` (a key script, sent as fictty's keys) and `aside`. Anything else, or a
+render at another size or format, answers `unsupported` (exit 2) and says why.
+
+`thc ui` finds TUIs and screens through those files, **restricted to the current vault**. With one TUI on
 the vault, it's used. With none, the command exits 3. With several, it exits 5 and lists the
 candidates; pass `--session PID`. `thc ui ls --all` lists every vault's.
 

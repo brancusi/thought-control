@@ -1643,7 +1643,6 @@ fn e63_a_click_on_a_link_follows_it() {
 
 /// E64: a click on the `[[` places the caret there, with no navigation.
 #[test]
-#[ignore = "fictty: a wiki link's click area includes its `[[` `]]` (E64 wants the title only)"]
 fn e64_a_click_on_the_brackets_places_the_caret() {
     let (root, _host, mut s) = day_doc("e64");
     let at = cell_of(&mut s, "- [ ] Call the bank", "[[Home]]");
@@ -1697,5 +1696,44 @@ fn e69_a_tag_click_places_the_caret_and_a_shift_click_opens_its_list() {
     assert!(panels(&mut s).is_empty());
     point(&mut s, "pages_doc", at, true);
     assert_eq!(panels(&mut s), vec!["query:#garden"], "the tag's list aside");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// In a sidebar panel, Esc with a selection drops it and keeps writing there; a second Esc
+/// returns to the main view (sidebar.md §5.1, editing.md E12).
+#[test]
+fn esc_in_a_panel_drops_a_selection_then_returns_to_main() {
+    let (root, v) = seeded("panel-esc");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["down", "o", "a-s"]);
+    let panel = format!("sidebar_today_panel-page-{home}");
+    assert_eq!(s.state().focus.as_deref(), Some(panel.as_str()));
+    s.keys(&["d-up", "s-right", "s-right"]);
+    let sel = serde_json::to_value(&fictty::state::field_view(s.state(), &panel).unwrap().1.selection).unwrap();
+    assert_ne!(sel["ranges"][0]["anchor"], sel["ranges"][0]["head"], "a selection");
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some(panel.as_str()), "still in the panel");
+    let after = serde_json::to_value(&fictty::state::field_view(s.state(), &panel).unwrap().1.selection).unwrap();
+    assert_eq!(after["ranges"][0]["anchor"], after["ranges"][0]["head"], "collapsed");
+    s.keys(&["esc"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"), "back to main");
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §12: a click on a panel's header folds it (and again unfolds it).
+#[test]
+fn a_click_on_a_panels_header_folds_it() {
+    let (root, v) = seeded("head-click");
+    let home = node_id(&root, "Home");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 140, 40);
+    s.keys(&["down", "o"]);
+    let head = format!("sidebar_today_head-page-{home}");
+    s.msg(fictty::state::Msg::Click { id: head.clone(), row: Some(0), tab: None });
+    assert!(s.screen().contains("▸ ¶ Home") && s.screen().contains("2 open"), "{}", s.screen());
+    s.msg(fictty::state::Msg::Click { id: head, row: Some(0), tab: None });
+    assert!(s.screen().contains("▾ ¶ Home"), "{}", s.screen());
     let _ = std::fs::remove_dir_all(root);
 }

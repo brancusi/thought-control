@@ -1046,6 +1046,12 @@ pub fn ui_sessions() -> Vec<serde_json::Value> {
     ui_server::sessions()
 }
 
+/// Where running UIs advertise themselves (`<pid>.json`): the TUI, and `thc screen` with
+/// `kind: "screen"`, so `thc ui` finds both.
+pub fn ui_discovery_dir() -> std::path::PathBuf {
+    ui_server::discovery_dir()
+}
+
 /// The UI protocol's version.
 pub const UI_PROTO: u32 = ui_proto::PROTO;
 
