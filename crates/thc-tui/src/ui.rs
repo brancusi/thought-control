@@ -20,10 +20,7 @@ fn w(s: &str) -> usize {
     UnicodeWidthStr::width(s)
 }
 
-pub fn truncate_str(s: &str, max: usize, ell: &str) -> String {
-    let spans = node_row::truncate_spans(&[Span::raw(s.to_string())], max, ell);
-    spans.iter().map(|s| s.content.as_ref()).collect()
-}
+pub use thc_core::present::truncate_str;
 
 /// List width when the screen splits, per view (§3.4). None = single pane.
 /// A document, with the rail of pages or days beside it when it fits (navigation.md §3).
@@ -2122,65 +2119,22 @@ pub fn text_spans(th: &Theme, text: &str, base: Style, highlight: &str) -> Vec<S
         // Done and cancelled rows: everything muted, tags and links included.
         return vec![Span::styled(text.to_string(), base)];
     }
-    // Quoted text is never parsed (writing.md §1): quoted runs are plain text.
-    let quoted = thc_core::capture::quoted_ranges(text);
-    if !quoted.is_empty() {
-        let mut out = Vec::new();
-        let mut from = 0;
-        for (a, b) in quoted {
-            if a > from {
-                out.extend(text_spans(th, &text[from..a], base, ""));
-            }
-            out.push(Span::styled(text[a..b].to_string(), base));
-            from = b;
-        }
-        if from < text.len() {
-            out.extend(text_spans(th, &text[from..], base, ""));
-        }
-        return if highlight.trim().is_empty() || th.is_ansi() && highlight.is_empty() { out } else { highlight_words(th, out, highlight) };
-    }
-    let mut out = Vec::new();
-    let mut rest = text;
-    while !rest.is_empty() {
-        if let Some(start) = rest.find("[[") {
-            if let Some(end) = rest[start..].find("]]") {
-                out.extend(tag_spans(th, &rest[..start], base));
-                out.push(Span::styled("[[", th.s(Token::Muted)));
-                out.push(Span::styled(rest[start + 2..start + end].to_string(), th.s(Token::Link).patch(Style::default().add_modifier(base.add_modifier))));
-                out.push(Span::styled("]]", th.s(Token::Muted)));
-                rest = &rest[start + end + 2..];
-                continue;
-            }
-        }
-        out.extend(tag_spans(th, rest, base));
-        break;
-    }
+    // The pieces (quotes, links, tags) are thc_core::present's; the styles are this theme's.
+    use thc_core::present::Piece;
+    let mods = Style::default().add_modifier(base.add_modifier);
+    let out: Vec<Span<'static>> = thc_core::present::text_pieces(text)
+        .into_iter()
+        .map(|(t, p)| match p {
+            Piece::Text => Span::styled(t, base),
+            Piece::Tag => Span::styled(t, th.s(Token::Tag).patch(mods)),
+            Piece::Bracket => Span::styled(t, th.s(Token::Muted)),
+            Piece::Link => Span::styled(t, th.s(Token::Link).patch(mods)),
+        })
+        .collect();
     if highlight.trim().is_empty() || th.is_ansi() && highlight.is_empty() {
         return out;
     }
     highlight_words(th, out, highlight)
-}
-
-fn tag_spans(th: &Theme, s: &str, base: Style) -> Vec<Span<'static>> {
-    let mut out = Vec::new();
-    let mut buf = String::new();
-    for (i, word) in s.split(' ').enumerate() {
-        if i > 0 {
-            buf.push(' ');
-        }
-        if thc_core::capture::tag_of(word).is_some() {
-            if !buf.is_empty() {
-                out.push(Span::styled(std::mem::take(&mut buf), base));
-            }
-            out.push(Span::styled(word.to_string(), th.s(Token::Tag).patch(Style::default().add_modifier(base.add_modifier))));
-        } else {
-            buf.push_str(word);
-        }
-    }
-    if !buf.is_empty() {
-        out.push(Span::styled(buf, base));
-    }
-    out
 }
 
 /// Bold + accent-tint on case-insensitive occurrences of each search word.
@@ -2221,46 +2175,14 @@ fn highlight_words(th: &Theme, spans: Vec<Span<'static>>, terms: &str) -> Vec<Sp
 
 /// One date meta item. Under an agenda day heading (`under_day`), the date part is dropped:
 /// `due` / `sched` / the time remain, and a lone scheduled date disappears entirely.
+#[allow(clippy::too_many_arguments)]
 fn date_label(th: &Theme, today: NaiveDate, raw: &str, is_due: bool, open: bool, alert: bool, under_day: Option<NaiveDate>, has_other: bool) -> Option<Vec<Span<'static>>> {
-    let g = th.glyphs();
-    let Some(dv) = DateVal::from_stored(raw) else { return Some(vec![Span::raw(raw.to_string())]) };
-    let d = dv.date();
-    let days = (d - today).num_days();
-    let time = dv.time().map(|t| t.format("%H:%M").to_string());
-    let text = if under_day == Some(d) {
-        match (is_due, has_other, &time) {
-            (true, _, Some(t)) => format!("due {t}"),
-            (true, _, None) => "due".into(),
-            (false, true, Some(t)) => format!("sched {t}"),
-            (false, true, None) => "sched".into(),
-            (false, false, Some(t)) => t.clone(),
-            (false, false, None) => {
-                return if alert { Some(vec![Span::styled(g.alert.to_string(), th.s(Token::Muted))]) } else { None };
-            }
-        }
-    } else {
-        let t = time.map(|t| format!(" {t}")).unwrap_or_default();
-        let body = if (0..7).contains(&days) {
-            format!("{}{t}", dates::relative(d, today))
-        } else if days < 0 {
-            format!("{}{t} ({})", d.format("%b %-d"), dates::relative(d, today))
-        } else {
-            format!("{}{t} (in {days}d)", d.format("%b %-d"))
-        };
-        if is_due { format!("due {body}") } else { body }
-    };
-    let st = if open && is_due && d < today {
-        th.s(Token::Overdue)
-    } else if open && d == today {
-        th.s(Token::Today)
-    } else {
-        th.s(Token::Muted)
-    };
-    let mut v = vec![Span::styled(text, st)];
-    if alert {
-        v.push(Span::styled(format!(" {}", g.alert), th.s(Token::Muted)));
+    let parts = thc_core::present::date_item(th.glyphs(), today, raw, is_due, open, alert, under_day, has_other)?;
+    // An unreadable stored date is shown raw, unstyled (as before the words moved to core).
+    if DateVal::from_stored(raw).is_none() {
+        return Some(vec![Span::raw(raw.to_string())]);
     }
-    Some(v)
+    Some(parts.into_iter().map(|(t, tok)| Span::styled(t, th.s(tok))).collect())
 }
 
 /// `14:02` for an epoch-ms time, local.
@@ -2415,18 +2337,10 @@ fn context_label(render: &RenderOutput, app: &App, n: &Node, include_today: bool
     if app.view == View::Pages && app.page_open.as_deref() == Some(root.id.as_str()) {
         return None;
     }
-    let today = app.today.format("%Y-%m-%d").to_string();
     match &root.journal {
         Some(j) if app.view == View::Journal && *j == app.journal_date.format("%Y-%m-%d").to_string() => None,
-        Some(j) if *j == today => include_today.then(|| format!("{} today", g.journal)),
-        Some(j) => DateVal::from_stored(j).map(|d| format!("{} {}", g.journal, d.date().format("%b %-d"))),
-        None if root.title.is_some() => Some(format!("{} {}", root_glyph(&root, g), root.label())),
-        None => None,
+        _ => thc_core::present::root_label(g, root, app.today, include_today),
     }
-}
-
-fn root_glyph(_n: &Node, g: &crate::theme::Glyphs) -> &'static str {
-    g.page
 }
 
 /// Tasks table `where`: the direct parent (as the canvas draws it).
@@ -2658,38 +2572,14 @@ fn row_line(render: &mut RenderOutput, app: &App, row: &Row, selected: bool, foc
 /// First log line: verb + short id + text.
 fn tx_summary(app: &App, entries: &[thc_core::model::HistoryEntry]) -> Vec<Span<'static>> {
     let th = app.theme;
-    let main = entries.iter().rev().find(|e| e.op.starts_with("node.")).unwrap_or(&entries[0]);
-    let verb = match main.op.as_str() {
-        "node.create" if main.body.get("title").is_some() && main.body.get("props").and_then(|p| p.get("tag")).is_some() => "tagged",
-        "node.create" => "created",
-        "node.text" => "edited",
-        "node.set" => "set",
-        "node.move" => "moved",
-        "node.complete" => "completed",
-        "node.skip" => "skipped",
-        "node.delete" => "deleted",
-        "node.restore" => "restored",
-        "alert.add" => "alert",
-        "alert.snooze" => "snoozed",
-        "alert.ack" => "acked",
-        "edge.add" | "edge.remove" if main.body.get("rel").and_then(|r| r.as_str()) == Some("tag") => "tagged",
-        "edge.add" | "edge.remove" => "linked",
-        _ => "changed",
-    };
-    // Prefer the node the user cares about (not tag nodes).
-    let target = entries
-        .iter()
-        .rev()
-        .find(|e| e.op == "node.create" && e.body.get("props").and_then(|p| p.get("tag")).is_none())
-        .or_else(|| entries.iter().rev().find(|e| e.entity.len() == 12))
-        .unwrap_or(main);
+    // The verb and the node a person cares about (not tag nodes): thc_core::present.
+    let Some((verb, target, n)) = thc_core::present::tx_main(entries) else { return vec![] };
     let label = app.derived.data.rows.node(&app.vault.paths.vault, &target.entity).map(|data| {
         match data.node.journal.as_deref().and_then(DateVal::from_stored) {
             Some(d) => format!("{} {}", th.glyphs().journal, d.date().format("%b %-d")),
             None => data.label.clone(),
         }
     }).unwrap_or_default();
-    let n = entries.iter().filter(|e| e.op.starts_with("node.")).map(|e| &e.entity).collect::<std::collections::HashSet<_>>().len();
     let mut v = vec![
         Span::styled(format!("{verb} "), th.s(Token::Text)),
         Span::styled(format!("{} ", if target.entity.len() == 12 { app.derived.data.rows.short(&app.vault.paths.vault, &target.entity) } else { String::new() }), th.s(Token::Muted)),
@@ -2726,14 +2616,11 @@ fn place(cells: &[(usize, Vec<Span<'static>>)], wd: usize) -> Vec<Span<'static>>
 /// Table dates fit the 11-cell column: `yesterday`, `today`, `tue 09:00`, else `Oct 15`.
 /// The `(in 12d)` / `1d ago` detail belongs to the list view.
 fn table_date(th: &Theme, today: NaiveDate, raw: &str, is_due: bool, open: bool) -> Vec<Span<'static>> {
-    let Some(dv) = DateVal::from_stored(raw) else { return vec![Span::raw(raw.to_string())] };
-    let d = dv.date();
-    let days = (d - today).num_days();
-    let word = if (-1..7).contains(&days) { dates::relative(d, today) } else if d.year() == today.year() { d.format("%b %-d").to_string() } else { d.format("%b %-d %y").to_string() };
-    let t = dv.time().map(|t| format!(" {}", t.format("%H:%M"))).unwrap_or_default();
-    let text = if w(&word) + w(&t) <= 11 { format!("{word}{t}") } else { word };
-    let st = if open && is_due && d < today { th.s(Token::Overdue) } else if open && d == today { th.s(Token::Today) } else { th.s(Token::Muted) };
-    vec![Span::styled(text, st)]
+    if DateVal::from_stored(raw).is_none() {
+        return vec![Span::raw(raw.to_string())];
+    }
+    let (text, tone) = thc_core::present::table_date(today, raw, is_due, open);
+    vec![Span::styled(text, th.s(tone))]
 }
 
 /// Under `group:parent`, the group heading a table row sits under.
