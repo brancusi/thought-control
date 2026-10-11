@@ -84,13 +84,13 @@ fn run(cli: &Cli, paths: &Paths, a: ScreenArgs) -> Result<()> {
     host.app(&route, &a.theme).socket(socket).run()
 }
 
-/// The control socket of `thc screen` on this vault. A Unix socket path must stay short (about
-/// 100 bytes), so it's per vault in the temp dir rather than under the vault's cache.
+/// The control socket of `thc screen` on this vault: one per vault, in the temp dir (or `/tmp`
+/// when that's too deep to bind), since a Unix socket path must stay short.
 pub fn default_socket(paths: &Paths) -> std::path::PathBuf {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
     paths.vault.hash(&mut h);
-    std::env::temp_dir().join(format!("thc-screen-{:08x}.sock", h.finish() as u32))
+    thc_core::proto::screen_socket("thc-screen", &format!("{:08x}", h.finish() as u32))
 }
 
 /// One request on a screen's socket, its reply.
