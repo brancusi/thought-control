@@ -555,6 +555,17 @@ pub fn sidebar(cx: &Cx, stack: &crate::sidebar::Stack, active: &str, height: usi
     }
     // Sharing the height (§6.3): each panel a header and its body, a blank row between them.
     let sizes = share_height(&naturals, active, height);
+    // ⌥J ⌥K (§5.3): the next and previous panel, so the UI moves the focus there itself, at
+    // once, and keys pressed right after act in that panel (S02c). `target` ends its node ids.
+    let n = stack.open.len();
+    for (i, row) in rows.iter_mut().enumerate() {
+        let (next, prev) = (&stack.open[(i + 1).min(n - 1)], &stack.open[i.saturating_sub(1)]);
+        row["target"] = stack.open[i].target().into();
+        row["next"] = next.target().into();
+        row["next_key"] = next.key().into();
+        row["prev"] = prev.target().into();
+        row["prev_key"] = prev.key().into();
+    }
     for (row, (body, more)) in rows.iter_mut().zip(sizes) {
         row["h"] = body.into();
         row["total"] = (body + 1).into();

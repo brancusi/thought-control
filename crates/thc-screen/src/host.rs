@@ -7,6 +7,7 @@ use crate::feeds::{self, Cx};
 use std::collections::HashMap;
 use thc_core::edit::Rendered;
 use crate::screens::{self, Route};
+use crate::sidebar::{OVER, PLACES};
 use chrono::{NaiveDate, NaiveDateTime};
 use fictty::{Host, Notifier};
 use serde_json::{Value, json};
@@ -38,11 +39,11 @@ struct Inner {
     persist: bool,
     /// Panels dropped on load because their page is gone: said once, at the start.
     dropped: Mutex<Vec<String>>,
-    /// The screen's width as the sidebar's source last read it (`$screen.width`): which place
-    /// the sidebar shows in (column, drawer, replace), for the acts that move the focus there.
-    width: std::sync::atomic::AtomicU64,
     live: AtomicBool,
     notifier: Mutex<Option<Notifier>>,
+    /// The size the screen last read the sidebar's rows at (`width`, `height`): only to lay out
+    /// the rows an act sends with its change (`activate`), which the screen's own read replaces.
+    sidebar_size: Mutex<Value>,
 }
 
 impl ThcHost {
@@ -51,7 +52,7 @@ impl ThcHost {
     pub fn new(mut vault: Vault) -> ThcHost {
         // What happened before the screen opened isn't news to it (no toast, no live marks).
         let _ = vault.take_news();
-        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), width: std::sync::atomic::AtomicU64::new(120), live: AtomicBool::new(false), notifier: Mutex::new(None) }) }
+        ThcHost { inner: Arc::new(Inner { vault: Mutex::new(vault), docs: Mutex::new(HashMap::new()), at: None, watch: false, persist: false, dropped: Mutex::new(Vec::new()), live: AtomicBool::new(false), notifier: Mutex::new(None), sidebar_size: Mutex::new(json!({})) }) }
     }
 
     /// Draw as of this time instead of the clock's.
@@ -172,11 +173,11 @@ impl ThcHost {
             "context" => feeds::context(cx, s("id").unwrap_or(""), s("query").unwrap_or(""))?,
             "sidebar" => {
                 let stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
-                let height = args.get("height").and_then(Value::as_u64).unwrap_or(40) as usize;
-                if let Some(w) = args.get("width").and_then(Value::as_u64) {
-                    self.inner.width.store(w, Ordering::Relaxed);
+                let (width, height) = (args.get("width").and_then(Value::as_u64), args.get("height").and_then(Value::as_u64));
+                if let (Some(w), Some(h), Ok(mut size)) = (width, height, self.inner.sidebar_size.lock()) {
+                    *size = json!({"width": w, "height": h});
                 }
-                feeds::sidebar(cx, &stack, s("active").unwrap_or(""), height, self.inner.width.load(Ordering::Relaxed) as usize)?
+                feeds::sidebar(cx, &stack, s("active").unwrap_or(""), height.unwrap_or(40) as usize, width.unwrap_or(120) as usize)?
             }
             "dest" => feeds::dest(cx, s("query").unwrap_or(""))?,
             "tx" => feeds::tx(cx, s("id").unwrap_or(""))?,
@@ -389,11 +390,11 @@ impl ThcHost {
                 let opened = stack.open(panel);
                 // Opening shows it (the column, or the drawer below 120), and it's the active
                 // panel (§2 rule 1). Narrow, the drawer (or replace) takes the focus too; beside,
-                // the focus stays where it was.
+                // the focus stays where it was. Which of them shows is the UI's `when` on the
+                // screen's width: the focus goes to both, and only the one showing takes it.
                 self.put_stack(&stack, true)?;
-                let narrow = self.inner.width.load(Ordering::Relaxed) < 120;
                 let view = s("view");
-                self.activate(&stack, Some(&title), if narrow { view.as_deref() } else { None })?;
+                self.activate(&stack, Some(&title), view.as_deref().map(|v| (v, OVER)))?;
                 match opened {
                     crate::sidebar::Opened::Evicted(p) => self.toast(&format!("{} closed to make room · ⌥⇧T reopen", p.key()), "text")?,
                     crate::sidebar::Opened::Refused => self.toast("8 panels pinned · unpin one to open another", "neg")?,
@@ -406,7 +407,7 @@ impl ThcHost {
             "panel" => {
                 let mut stack = crate::sidebar::Stack::from_value(args.get("stack").unwrap_or(&Value::Null));
                 // The panel: its key, or its id (the active one's, `sidebar_active`).
-                let mut key = s("key").or_else(|| s("id").and_then(|id| stack.open.iter().find(|p| p.id() == id).map(|p| p.key()))).unwrap_or_default();
+                let key = s("key").filter(|k| !k.is_empty()).or_else(|| s("id").and_then(|id| stack.open.iter().find(|p| p.id() == id).map(|p| p.key()))).unwrap_or_default();
                 let mut shown = match args.get("shown") {
                     Some(Value::Bool(b)) => *b,
                     Some(Value::String(v)) => !v.is_empty() && v != "false",
@@ -439,15 +440,16 @@ impl ThcHost {
                         let by = args.get("by").and_then(Value::as_i64);
                         stack.retarget_day(&key, by, self.now().date());
                     }
-                    // ⌥S (by 0: the active panel, else the top one), ⌥J / ⌥K (by 1, -1).
+                    // ⌥S, ⌥J, ⌥K: the UI moved the focus to the panel already (so keys pressed
+                    // right after act there, S02c); the active panel follows it. Without one it
+                    // knows (none yet, or it's gone), the top panel, and the focus goes there.
                     Some("focus") => {
-                        shown = true;
-                        let by = args.get("by").and_then(Value::as_i64).unwrap_or(0);
-                        let n = stack.open.len() as i64;
-                        if n > 0 {
-                            let i = stack.position(&key).map_or(0, |i| i as i64);
-                            key = stack.open[(i + by).clamp(0, n - 1) as usize].key();
+                        if stack.position(&key).is_some() {
+                            self.activate(&stack, Some(&key), None)?;
+                        } else {
+                            self.activate(&stack, None, s("view").as_deref().map(|v| (v, PLACES)))?;
                         }
+                        return Ok(json!({"ok": true}));
                     }
                     // ⌥S showed it; ⌥\ hides or shows it.
                     Some("show") => shown = true,
@@ -461,7 +463,7 @@ impl ThcHost {
                 let at = s("at").and_then(|a| a.parse::<usize>().ok());
                 let keep = if stack.position(&key).is_some() { Some(key.clone()) } else { at.and_then(|i| stack.open.get(i.min(stack.open.len().saturating_sub(1)))).map(|p| p.key()) };
                 let refocus = s("op").is_some_and(|o| o != "toggle" && o != "reopen");
-                self.activate(&stack, keep.as_deref(), if refocus && !stack.open.is_empty() { view.as_deref() } else { None })?;
+                self.activate(&stack, keep.as_deref(), if refocus && !stack.open.is_empty() { view.as_deref().map(|v| (v, PLACES)) } else { None })?;
                 Ok(json!({"ok": true}))
             }
             // `⌥M` (§3.4): the main view goes to this panel's page or day, and the panel closes.
@@ -570,18 +572,36 @@ impl ThcHost {
     }
 
     /// Make a panel the active one (`sidebar_active`, its id; `sidebar_target`, what in it takes
-    /// the focus): `key`, else the top panel. With `focus` (the tab whose instance has the keys),
-    /// the focus goes to it, wherever the sidebar shows at the screen's width.
-    fn activate(&self, stack: &crate::sidebar::Stack, key: Option<&str>, focus: Option<&str>) -> anyhow::Result<()> {
+    /// the focus): `key`, else the top panel. With `focus` (the tab whose instance has the keys,
+    /// and the places that may take it), the focus goes to it in whichever of those places shows:
+    /// fictty focuses only a node that shows, and what shows at the screen's width is the UI's
+    /// `when`, so the host never needs to know the width.
+    fn activate(&self, stack: &crate::sidebar::Stack, key: Option<&str>, focus: Option<(&str, &[&str])>) -> anyhow::Result<()> {
         let p = key.and_then(|k| stack.open.iter().find(|p| p.key() == k)).or(stack.open.first());
         let (id, target) = p.map(|p| (p.id(), p.target())).unwrap_or_default();
-        self.put("sidebar_active", id.into())?;
+        self.put("sidebar_active", id.clone().into())?;
         self.put("sidebar_target", target.clone().into())?;
-        if let (Some(view), false) = (focus, target.is_empty()) {
-            let place = crate::sidebar::place(self.inner.width.load(Ordering::Relaxed));
-            self.send(fictty::state::Msg::Focus { id: format!("{place}_{view}_{target}") })?;
+        if let (Some((view, places)), false) = (focus, target.is_empty()) {
+            for m in self.panel_focus(stack, &id, view, places) {
+                self.send(m)?;
+            }
         }
         Ok(())
+    }
+
+    /// The messages that put the focus on panel `id` (the stack's, active) in tab `view`, in
+    /// whichever of `places` shows. The sidebar's rows with this stack go first: a real screen
+    /// reads them again on its own thread after the stack changes, and a focus that came before
+    /// them would find no panel there to take it (a new panel's nodes come from its row).
+    pub fn panel_focus(&self, stack: &crate::sidebar::Stack, id: &str, view: &str, places: &[&str]) -> Vec<fictty::state::Msg> {
+        let Some(p) = stack.open.iter().find(|p| p.id() == id) else { return vec![] };
+        let mut args = self.inner.sidebar_size.lock().map(|s| s.clone()).unwrap_or_default();
+        args["stack"] = stack.to_value();
+        args["active"] = id.into();
+        let rows = self.feed("sidebar", &args).map_err(|e| format!("{e:#}"));
+        let mut out = vec![fictty::state::Msg::Data { name: "sidebar_rows".into(), result: rows }];
+        out.extend(places.iter().map(|place| fictty::state::Msg::Focus { id: format!("{place}_{view}_{}", p.target()) }));
+        out
     }
 
     /// A page or day in the main view (§3.4, §12): its tab, its layer open to write in, the focus
