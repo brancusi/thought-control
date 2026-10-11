@@ -18,7 +18,7 @@ use thc_core::glyphs::UNICODE;
 use thc_core::vault::Vault;
 
 /// Every feed a screen can read; a vault change refetches the ones on screen.
-pub const FEEDS: [&str; 12] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc", "tx"];
+pub const FEEDS: [&str; 14] = ["frame", "today", "inbox", "tasks", "pages", "outline", "journal", "search", "log", "detail", "doc", "tx", "context", "dest"];
 
 /// The vault behind a screen. Cloning shares it.
 #[derive(Clone)]
@@ -89,7 +89,7 @@ impl ThcHost {
         let vault = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
         let cx = Cx { store: &vault.store, g: &UNICODE, now: self.now() };
         let mut out = self.feed_rows(&cx, name, args)?;
-        if !matches!(name, "frame" | "doc" | "detail" | "tx") {
+        if !matches!(name, "frame" | "doc" | "detail" | "tx" | "context" | "dest") {
             // The screen's `live` entry (the ids an agent just changed) and the open conflicts mark
             // the rows' gutters.
             let live: std::collections::HashSet<String> = args.get("live").and_then(Value::as_object).map(|m| m.keys().cloned().collect()).unwrap_or_default();
@@ -108,7 +108,11 @@ impl ThcHost {
                 v["live"] = self.live().into();
                 v
             }
+            // Today's sections, or with `mode: agenda` (`w`) the agenda.
+            "today" if s("mode") == Some("agenda") => feeds::agenda(cx)?,
             "today" => feeds::today(cx)?,
+            "context" => feeds::context(cx, s("id").unwrap_or(""), s("query").unwrap_or(""))?,
+            "dest" => feeds::dest(cx, s("query").unwrap_or(""))?,
             "tx" => feeds::tx(cx, s("id").unwrap_or(""))?,
             "inbox" => feeds::inbox(cx)?,
             "tasks" => {
@@ -162,6 +166,27 @@ impl ThcHost {
             "done" => {
                 let id = id()?;
                 self.write(|b| b.complete(&id).map(|_| ()))
+            }
+            // `t`: a task, or a task no more (§6.2).
+            "task" => {
+                let id = id()?;
+                let on = {
+                    let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+                    v.store.must_node(&id)?.status.is_none()
+                };
+                self.write(|b| b.set_props(&id, &[("status".into(), if on { "todo".into() } else { String::new() })]))
+            }
+            // `D`, confirmed: delete it (and what's under it); the bar says so, `u` in the Log
+            // brings it back.
+            "delete" => {
+                let id = id()?;
+                let (short, label) = {
+                    let v = self.inner.vault.lock().map_err(|_| anyhow::anyhow!("the vault lock was poisoned"))?;
+                    (v.store.short(&id), v.store.must_node(&id)?.label())
+                };
+                let r = self.write(|b| b.delete(&id).map(|_| ()))?;
+                self.toast(&format!("deleted {short}  {}", thc_core::present::truncate_str(&label, 40, UNICODE.ellipsis)), "text")?;
+                Ok(r)
             }
             "reopen" => {
                 let id = id()?;
@@ -273,11 +298,14 @@ impl ThcHost {
                 self.toast(&format!("{verb}  tx {} · {who} · {n}   {next}", suffix(&of)), "text")?;
                 Ok(r)
             }
-            // The Log's `@`: agents' transactions only, or everyone's again.
-            "who" => {
-                let to = if s("by").as_deref() == Some("agents") { "" } else { "agents" };
-                self.put("log_by", to.into())?;
-                Ok(json!({"ok": true, "by": to}))
+            // `{"key", "now", "a", "b"}`: the screen's entry `key` to whichever of a and b it isn't
+            // (`w` sections / agenda, `\` the detail pane, the Log's `@`).
+            "flip" => {
+                let key = s("key").ok_or_else(|| anyhow::anyhow!("flip needs a key"))?;
+                let raw = |k: &str| args.get(k).and_then(Value::as_str).unwrap_or_default().to_string();
+                let to = if s("now").unwrap_or_default() == raw("b") { raw("a") } else { raw("b") };
+                self.put(&key, to.clone().into())?;
+                Ok(json!({"ok": true, key: to}))
             }
             // `{"keys": "p h"}`: press a command's keys (the palette runs a command this way, so it
             // does just what its key does).

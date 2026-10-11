@@ -50,6 +50,8 @@ struct Ctx<'s> {
     captured: bool,
     /// Words to highlight (Search).
     terms: &'s str,
+    /// Under an agenda day heading: that day's date part goes from the meta (§5.1).
+    under_day: Option<NaiveDate>,
 }
 
 // ---- rows ---------------------------------------------------------------------------------------
@@ -137,10 +139,10 @@ fn metas(cx: &Cx, n: &Node, c: Ctx) -> Vec<String> {
         let timed = n.scheduled.as_deref().is_some_and(|s| s.contains('T'));
         let both = n.scheduled.is_some() && n.due.is_some();
         if let Some(s) = &n.scheduled {
-            items.extend(present::date_item(g, today, s, false, open, alert && (timed || n.due.is_none()), None, both).map(spec));
+            items.extend(present::date_item(g, today, s, false, open, alert && (timed || n.due.is_none()), c.under_day, both).map(spec));
         }
         if let Some(d) = &n.due {
-            items.extend(present::date_item(g, today, d, true, n.is_open(), alert && !timed && n.scheduled.is_none(), None, both).map(spec));
+            items.extend(present::date_item(g, today, d, true, n.is_open(), alert && !timed && n.scheduled.is_none(), c.under_day, both).map(spec));
         }
         if alert && n.scheduled.is_none() && n.due.is_none() {
             items.push(vec![(g.alert.to_string(), "muted".into())]);
@@ -314,6 +316,63 @@ pub fn today(cx: &Cx) -> Result<Value> {
         counts.push((format!("{inbox} inbox"), Token::Muted));
     }
     Ok(json!({"rows": rows, "bar_m": bar("today", &counts)}))
+}
+
+/// Agenda (§5.1, `w` on Today): a heading, Overdue, then a bold line per day for seven days
+/// with its rows under it (their meta without that day's date), runs of empty days as one muted
+/// line, then Later (the seven days after). The TUI's agenda (thc-tui app.rs `rows_agenda`).
+pub fn agenda(cx: &Cx) -> Result<Value> {
+    let s = cx.store;
+    let today = cx.today();
+    let ymd = |d: NaiveDate| d.format("%Y-%m-%d").to_string();
+    let c = Ctx { context: true, ..Ctx::default() };
+    let mut rows = vec![json!({"kind": "section", "id": "section:Agenda", "title_m": styled("text+b", "Agenda"), "note_m": format!("{}   {}", tok(Token::Muted, "7 days"), hints(&[("w", "sections")], ""))})];
+    let mut items = 0;
+    let overdue = s.nodes_where("n.status IN ('todo','doing','waiting') AND n.deleted=0 AND substr(n.due,1,10) < ?1 ORDER BY n.due", &[&ymd(today)])?;
+    if !overdue.is_empty() {
+        items += overdue.len();
+        rows.push(section("Overdue", Token::Overdue, overdue.len(), overdue.iter().map(|n| node_row(cx, n, c)).collect()));
+    }
+    let day_sql = "n.deleted=0 AND n.is_tag=0 AND (n.status IS NULL OR n.status IN ('todo','doing','waiting')) AND \
+                   (substr(n.scheduled,1,10) = ?1 OR substr(n.due,1,10) = ?1) ORDER BY coalesce(n.scheduled, n.due)";
+    let mut empty_run: Vec<NaiveDate> = Vec::new();
+    let flush = |run: &mut Vec<NaiveDate>, rows: &mut Vec<Value>| {
+        if let (Some(first), false) = (run.first(), run.is_empty()) {
+            let label = run.iter().map(|d| d.format("%a %b %-d").to_string()).collect::<Vec<_>>().join(&format!(" {} ", cx.g.sep));
+            rows.push(json!({"kind": "gap", "id": format!("gap:{first}"), "m": tok(Token::Muted, &label), "note_m": tok(Token::Muted, "nothing scheduled")}));
+            run.clear();
+        }
+    };
+    for i in 0..7 {
+        let d = today + Duration::days(i);
+        let ns = s.nodes_where(day_sql, &[&ymd(d)])?;
+        if ns.is_empty() && i > 0 {
+            empty_run.push(d);
+            continue;
+        }
+        flush(&mut empty_run, &mut rows);
+        let rel = thc_core::dates::relative(d, today);
+        let title = match i {
+            0 => format!("{}{}", styled("text+b", &d.format("%a %b %-d").to_string()), tok(Token::Today, &format!(" {} {rel}", cx.g.sep))),
+            1 => format!("{}{}", styled("text+b", &d.format("%a %b %-d").to_string()), tok(Token::Muted, &format!(" {} {rel}", cx.g.sep))),
+            _ => styled("text+b", &d.format("%a %b %-d").to_string()),
+        };
+        items += ns.len();
+        let kids: Vec<Value> = ns.iter().map(|n| node_row(cx, n, Ctx { under_day: Some(d), ..c })).collect();
+        rows.push(json!({"kind": "section", "id": format!("day:{}", ymd(d)), "title_m": title, "children": kids}));
+    }
+    flush(&mut empty_run, &mut rows);
+    let later = s.nodes_where(
+        "n.deleted=0 AND n.is_tag=0 AND (n.status IS NULL OR n.status IN ('todo','doing','waiting')) AND \
+         min(coalesce(substr(n.scheduled,1,10),'9'), coalesce(substr(n.due,1,10),'9')) BETWEEN ?1 AND ?2 \
+         ORDER BY min(coalesce(n.scheduled,'9'), coalesce(n.due,'9'))",
+        &[&ymd(today + Duration::days(7)), &ymd(today + Duration::days(13))],
+    )?;
+    if !later.is_empty() {
+        items += later.len();
+        rows.push(json!({"kind": "section", "id": "section:Later", "title_m": styled("text+b", "Later"), "children": later.iter().map(|n| node_row(cx, n, c)).collect::<Vec<_>>()}));
+    }
+    Ok(json!({"rows": rows, "bar_m": bar("agenda", &[("7 days".into(), Token::Muted), (plural(items, "item", "items"), Token::Muted)])}))
 }
 
 // ---- Inbox --------------------------------------------------------------------------------------
@@ -554,22 +613,36 @@ pub fn journal(cx: &Cx, date: NaiveDate) -> Result<Value> {
         };
     }
     let written = days_written(cx.store)?;
-    // The strip: seven days centred on the shown one, `•` on days with entries.
-    let strip: Vec<String> = (-3..=3)
-        .map(|k| {
-            let d = date + Duration::days(k);
-            let label = d.format("%a %-d").to_string();
-            let dot = if written.contains(&d) { format!(" {}", if d == date { tok(Token::Accent, g.live) } else { tok(Token::Muted, g.live) }) } else { String::new() };
-            let l = if d == date { styled("text+b", &label) } else { tok(Token::Muted, &label) };
-            format!("{l}{dot}")
-        })
-        .collect();
+    // The strip (§5.5, row 3): seven days centred on the shown one from column 3, three spaces
+    // apart, `•` on days with entries (`accent` on the shown day, which is bold); under it (row
+    // 4) a `━` in `accent` under the shown day's label, a cell either side.
+    let (mut strip, mut under, mut col) = (Vec::new(), String::new(), STRIP_COL);
+    for k in -3..=3 {
+        let d = date + Duration::days(k);
+        let label = d.format("%a %-d").to_string();
+        let w = label.chars().count();
+        let dot = if written.contains(&d) { format!(" {}", if d == date { tok(Token::Accent, g.live) } else { tok(Token::Muted, g.live) }) } else { String::new() };
+        if d == date {
+            under = format!("{}{}", " ".repeat(col - 1), tok(Token::Accent, &"━".repeat(w + 2)));
+        }
+        strip.push(format!("{}{dot}", if d == date { styled("text+b", &label) } else { tok(Token::Muted, &label) }));
+        col += w + if dot.is_empty() { 0 } else { 2 } + 3;
+    }
+    // The month, then a legend and the shown day in short (§5.5).
+    let mut cal = calendar(g, date, today, &written);
+    let entries = cx.store.journal_entries(&key)?;
+    let open = entries.iter().filter(|n| n.is_open()).count();
+    cal.push(json!({"m": ""}));
+    cal.push(json!({"m": format!("{} {}   {} {}", tok(Token::Muted, g.live), tok(Token::Muted, "written"), tok(Token::Today, "[ ]"), tok(Token::Muted, "today"))}));
+    cal.push(json!({"m": ""}));
+    cal.push(json!({"m": format!("{}{}", styled("text+b", &date.format("%a %b %-d").to_string()), tok(Token::Muted, &format!(" {} {} {} {open} open", g.sep, plural(entries.len(), "entry", "entries"), g.sep)))}));
     let rel = if date == today { format!(" {}", tok(Token::Today, "· today")) } else { tok(Token::Muted, &format!(" · {}", thc_core::dates::relative(date, today))) };
     Ok(json!({
         "rows": rows,
         "title_m": format!("{}{rel}", styled("text+b", &format!("{} {}", g.journal, date.format("%A, %B %-d %Y")))),
-        "strip_m": strip.join("   "),
-        "calendar": calendar(g, date, today, &written),
+        "strip_m": format!("{}{}", " ".repeat(STRIP_COL), strip.join("   ")),
+        "under_m": under,
+        "calendar": cal,
         "date": key,
         "prev": (date - Duration::days(1)).format("%Y-%m-%d").to_string(),
         "next": (date + Duration::days(1)).format("%Y-%m-%d").to_string(),
@@ -583,24 +656,58 @@ fn days_written(store: &Store) -> Result<HashSet<NaiveDate>> {
     Ok(days.iter().filter_map(|d| DateVal::from_stored(d).map(|v| v.date())).collect())
 }
 
-/// The month around `date` (§5.5): its name, the weekday row, and a line per week, each day two
-/// wide with `•` after days with entries and today as `[3•]` in `today`.
+/// The column the Journal's day strip starts at (§5.5).
+const STRIP_COL: usize = 3;
+
+/// The month around `date` (§5.5), as the TUI draws it (thc-tui ui.rs `draw_calendar`): its
+/// name, a blank, the weekday row in `muted`, and a 21-cell line per week, each day two wide
+/// (right-aligned) and a cell for `•` after days with entries (`accent` on the shown day). Days
+/// with entries are `text`, the rest `muted`, the shown day bold and underlined, and today
+/// `[3•]` in `today`, its brackets taking the cells beside it.
 fn calendar(g: &Glyphs, date: NaiveDate, today: NaiveDate, written: &HashSet<NaiveDate>) -> Vec<Value> {
     let first = date.with_day(1).unwrap_or(date);
-    let mut lines = vec![json!({"m": styled("text+b", &first.format("%B %Y").to_string())}), json!({"m": tok(Token::Muted, "Mo Tu We Th Fr Sa Su")})];
-    let mut line = "   ".repeat(first.weekday().num_days_from_monday() as usize);
+    let mut lines = vec![json!({"m": styled("text+b", &first.format("%B %Y").to_string())}), json!({"m": ""}), json!({"m": tok(Token::Muted, "Mo Tu We Th Fr Sa Su")})];
+    let blank = || vec![(" ".to_string(), String::new()); 21];
+    let mut week = blank();
+    let flush = |week: &mut Vec<(String, String)>, lines: &mut Vec<Value>| {
+        let m: String = week.iter().map(|(c, st)| if st.is_empty() { c.clone() } else { styled(st, c) }).collect();
+        lines.push(json!({"m": m.trim_end()}));
+        *week = blank();
+    };
     let mut d = first;
     while d.month() == first.month() {
-        let mark = if written.contains(&d) { g.live } else { " " };
-        let cell = format!("{:>2}{mark}", d.day());
-        line.push_str(&if d == today { tok(Token::Today, &cell) } else if d == date { styled("text+b", &cell) } else { tok(Token::Text, &cell) });
+        let col = d.weekday().num_days_from_monday() as usize * 3;
+        let has = written.contains(&d);
+        let num = if d == today {
+            "today+b"
+        } else if d == date {
+            "text+b+u"
+        } else if has {
+            "text"
+        } else {
+            "muted"
+        };
+        for (i, ch) in format!("{:>2}", d.day()).chars().enumerate() {
+            if ch != ' ' {
+                week[col + i] = (ch.to_string(), num.into());
+            }
+        }
+        if has {
+            week[col + 2] = (g.live.to_string(), if d == date { "accent" } else { "muted" }.into());
+        }
+        if d == today {
+            week[if d.day() < 10 { col } else { col.saturating_sub(1) }] = ("[".into(), "today".into());
+            if col + 3 < 21 {
+                week[col + 3] = ("]".into(), "today".into());
+            }
+        }
         if d.weekday() == chrono::Weekday::Sun {
-            lines.push(json!({"m": std::mem::take(&mut line)}));
+            flush(&mut week, &mut lines);
         }
         d += Duration::days(1);
     }
-    if !line.is_empty() {
-        lines.push(json!({"m": line}));
+    if week.iter().any(|(c, _)| c != " ") {
+        flush(&mut week, &mut lines);
     }
     lines
 }
@@ -643,6 +750,85 @@ pub fn search(cx: &Cx, query: &str) -> Result<Value> {
         rows.extend(empty(&format!("No matches for \"{q}\"."), &[("", "add is:deleted to include deleted")]));
     }
     Ok(json!({"rows": rows, "count_m": tok(Token::Muted, &counts), "query": q, "bar_m": bar("search", &[(counts.clone(), Token::Muted)])}))
+}
+
+/// Search's preview (§5.6, 120+): the selected match among its siblings, under where it lives,
+/// the words found in bold on `accent-tint`, the match itself marked. A page or a tag shows its
+/// own children instead.
+pub fn context(cx: &Cx, id: &str, query: &str) -> Result<Value> {
+    let Some(n) = cx.store.node(id).ok().flatten() else { return Ok(json!({"lines": []})) };
+    let g = cx.g;
+    let c = Ctx { terms: query, ..Ctx::default() };
+    let (head, sibs) = match &n.parent {
+        Some(p) if n.title.is_none() => {
+            let parent = cx.store.must_node(p)?;
+            let head = match parent.journal.as_deref().and_then(DateVal::from_stored) {
+                Some(d) => format!("{} {}", g.journal, d.date().format("%a %b %-d")),
+                None if parent.title.is_some() => format!("{} {}", g.page, parent.label()),
+                None => one_line(cx, &parent),
+            };
+            (head, cx.store.children(p)?)
+        }
+        _ => (format!("{} {}", g.page, n.label()), cx.store.children(&n.id)?),
+    };
+    let mut lines = vec![json!({"k": "line", "m": styled("text+b", &head)}), json!({"k": "blank"})];
+    for s in &sibs {
+        let row = node_row(cx, s, c);
+        let here = s.id == n.id;
+        lines.push(json!({
+            "k": "sub", "status": row["status"], "meta_m": row["meta_m"],
+            "text_m": if here { format!("<accent+b>{}</> {}", g.cursor, row["text_m"].as_str().unwrap_or("")) } else { format!("  {}", row["text_m"].as_str().unwrap_or("")) },
+        }));
+    }
+    if sibs.is_empty() {
+        lines.push(json!({"k": "line", "m": tok(Token::Muted, "nothing under it")}));
+    }
+    Ok(json!({"lines": lines}))
+}
+
+/// The move picker's places (§7.2): every page, best match first for what's typed (fuzzy: its
+/// letters in order, tighter and earlier is better), the inbox last.
+pub fn dest(cx: &Cx, query: &str) -> Result<Value> {
+    let g = cx.g;
+    let q: Vec<char> = query.trim().to_lowercase().chars().filter(|c| !c.is_whitespace()).collect();
+    // A subsequence match's cost: the span it takes and where it starts; None if it doesn't match.
+    let score = |title: &str| -> Option<(usize, usize)> {
+        if q.is_empty() {
+            return Some((0, 0));
+        }
+        let t: Vec<char> = title.to_lowercase().chars().collect();
+        let mut best: Option<(usize, usize)> = None;
+        for start in 0..t.len() {
+            if t[start] != q[0] {
+                continue;
+            }
+            let (mut i, mut j) = (start, 0);
+            while i < t.len() && j < q.len() {
+                if t[i] == q[j] {
+                    j += 1;
+                }
+                i += 1;
+            }
+            if j == q.len() {
+                let cost = (i - start, start);
+                best = Some(best.map_or(cost, |b: (usize, usize)| b.min(cost)));
+            }
+        }
+        best
+    };
+    let mut found: Vec<((usize, usize), Value)> = thc_core::outline::pages(cx.store)?
+        .into_iter()
+        .filter_map(|p| {
+            let s = score(&p.title)?;
+            Some((s, json!({"id": p.id, "short": cx.store.short(&p.id), "label_m": format!("{} {}", g.page, markup::text(&p.title, false, query)), "where": "page"})))
+        })
+        .collect();
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    let mut rows: Vec<Value> = found.into_iter().map(|(_, r)| r).collect();
+    if score("inbox").is_some() {
+        rows.push(json!({"id": "", "short": "", "label_m": tok(Token::Muted, "inbox"), "where": "inbox"}));
+    }
+    Ok(json!({"rows": rows}))
 }
 
 // ---- Log ----------------------------------------------------------------------------------------

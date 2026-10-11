@@ -1040,3 +1040,183 @@ fn t02_enter_continues_the_list_and_tab_makes_a_child() {
     assert_eq!(kid_texts(&root, &parent.1), vec!["Child note"]);
     let _ = std::fs::remove_dir_all(root);
 }
+
+// ---- Inbox triage, Agenda, panes, Journal, Search, themes --------------------------------------
+
+/// The Inbox with four notes, oldest first: desk, a, b, c.
+fn inbox_of_four(name: &str) -> (std::path::PathBuf, ThcHost, fictty::Headless) {
+    let (root, v) = seeded(name);
+    let host = ThcHost::new(v).at(now());
+    for t in ["Note a", "Note b", "Note c"] {
+        host.perform("add", &json!({"text": t, "inbox": true})).unwrap();
+    }
+    let s = screen(&host, View::Inbox, 120, 32);
+    (root, host, s)
+}
+
+/// The selected row's id in a list.
+fn selected(s: &mut fictty::Headless, list: &str) -> String {
+    s.state().local[list].key.clone().unwrap_or_default()
+}
+
+/// §5.2: `t` a task and `x` done, each moving the cursor to the next row; `m` the move picker
+/// (fuzzy: `q4` finds Q4 Planning), Enter moves it; `D` asks first, `n` keeps it, `y` deletes it.
+/// After each the cursor is on the next row.
+#[test]
+fn inbox_triage_moves_on_after_each_action() {
+    let (root, _host, mut s) = inbox_of_four("triage");
+    let (desk, a, b, c) = (node_id(&root, "Look into a standing desk"), node_id(&root, "Note a"), node_id(&root, "Note b"), node_id(&root, "Note c"));
+    let status = |id: &str| open(&root, human()).store.node(id).unwrap().unwrap().status;
+    assert_eq!(selected(&mut s, "inbox"), desk);
+    s.keys(&["t"]);
+    assert_eq!(status(&desk).as_deref(), Some("todo"));
+    assert_eq!(selected(&mut s, "inbox"), a, "t: on to the next row");
+    s.keys(&["x"]);
+    assert_eq!(status(&a).as_deref(), Some("done"));
+    assert_eq!(selected(&mut s, "inbox"), b, "x: on to the next row");
+    // m: the picker, fuzzy.
+    s.keys(&["m"]);
+    assert_eq!(s.state().focus.as_deref(), Some("inbox_move_q"));
+    // (A frame first, as a terminal draws one: the field learns its width.)
+    let _ = s.screen();
+    type_in(&mut s, "q4");
+    let text = s.screen();
+    assert!(text.contains("› q4") && text.contains("move to") && text.contains("¶ Q4 Planning") && !text.contains("¶ Atomic Habits"), "{text}");
+    s.keys(&["enter"]);
+    let q4 = node_id(&root, "Q4 Planning");
+    assert_eq!(open(&root, human()).store.node(&b).unwrap().unwrap().parent.as_deref(), Some(q4.as_str()), "moved under Q4 Planning");
+    assert_eq!(s.state().focus.as_deref(), Some("inbox"));
+    assert_eq!(selected(&mut s, "inbox"), c, "m: the next row is under the cursor");
+    // D: n keeps it, y deletes it.
+    s.keys(&["D"]);
+    assert!(s.screen().contains("Delete “Note c”?"), "{}", s.screen());
+    s.keys(&["n"]);
+    assert!(!deleted(&root, &c));
+    s.keys(&["D", "y"]);
+    assert!(deleted(&root, &c), "deleted after y");
+    assert!(toasts(&mut s).iter().any(|t| t.starts_with("deleted ")), "{:?}", toasts(&mut s));
+    // At 120 the detail pane lists the Triage keys, from the rows' own bindings.
+    let text = s.screen();
+    for want in ["Triage", "m    move to a page", "t    task on / off", "D    delete"] {
+        assert!(text.contains(want), "{want:?}\n{text}");
+    }
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §5.1 `w`: the agenda (a heading, days in bold with their rows, empty days as one muted line,
+/// Later), and `w` again the sections.
+#[test]
+fn w_swaps_today_for_the_agenda_and_back() {
+    let (root, v) = seeded("agenda");
+    let host = ThcHost::new(v).at(now());
+    outside_add(&root, None, "[ ] Book the dentist due:2026-10-20");
+    host.poll(false);
+    let mut s = screen(&host, View::Today, 120, 32);
+    s.keys(&["w"]);
+    let text = s.screen();
+    for want in ["Agenda", "7 days   w sections", "Sun Oct 11 · today", "Mon Oct 12 · tomorrow", "Tue Oct 13 · Wed Oct 14 · Thu Oct 15", "nothing scheduled", "Later", "Book the dentist", "agenda · 7 days"] {
+        assert!(text.contains(want), "{want:?}\n{text}");
+    }
+    // Under its day a row's meta drops the date: `due`, not `due today`.
+    let water = text.lines().find(|l| l.contains("Water plants")).unwrap();
+    assert!(water.contains(" due ") && !water.contains("due today"), "{water}");
+    s.keys(&["w"]);
+    assert!(s.screen().contains("Overdue  1") && !s.screen().contains("Agenda"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §3.4: `\` takes the detail pane away and back; ⌃W moves the focus to it and back. The other
+/// pane's cursor row shows only `▌` (no selection background).
+#[test]
+fn backslash_and_ctrl_w_work_the_detail_pane() {
+    let (root, v) = seeded("panes");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    let has_pane = |s: &mut fictty::Headless| s.screen().lines().nth(4).is_some_and(|l| l.contains('│'));
+    assert!(has_pane(&mut s));
+    s.keys(&["\\"]);
+    assert!(!has_pane(&mut s), "{}", s.screen());
+    s.keys(&["\\"]);
+    assert!(has_pane(&mut s));
+    let sel_bg = |s: &mut fictty::Headless| {
+        let ansi = s.ansi();
+        let line = ansi.lines().find(|l| l.contains("Call the bank") && l.contains('▌')).unwrap().to_string();
+        line.contains(&format!("48;2;{}", rgb(palette_hex("ember-dark", thc_core::palette::Token::Selection))))
+    };
+    assert!(sel_bg(&mut s), "the focused list's row on `selection`");
+    s.keys(&["c-w"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today_pane"));
+    assert!(!sel_bg(&mut s), "the other pane: only ▌");
+    s.keys(&["c-w"]);
+    assert_eq!(s.state().focus.as_deref(), Some("today"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+fn palette_hex(theme: &str, t: thc_core::palette::Token) -> String {
+    thc_screen::theme::theme(theme).unwrap().tokens[t.name()].clone()
+}
+
+/// `#1B1916` as `27;25;22`, the way an SGR says it.
+fn rgb(hex: String) -> String {
+    let n = |i: usize| u8::from_str_radix(&hex[i..i + 2], 16).unwrap();
+    format!("{};{};{}", n(1), n(3), n(5))
+}
+
+/// §5.5: the title on row 2, the strip on row 3 from column 3, the `━` under the shown day on
+/// row 4, entries from row 6; the calendar with today as `[11•`; `[` `]` `T` move the day.
+#[test]
+fn the_journal_matches_its_spec() {
+    let (root, v) = seeded("journal-spec");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Journal, 120, 32);
+    let text = s.screen();
+    let lines: Vec<&str> = text.lines().collect();
+    assert!(lines[2].starts_with("§ Sunday, October 11 2026 · today"), "{}", lines[2]);
+    assert!(lines[3].starts_with("   Thu 8"), "{:?}", lines[3]);
+    let sun = lines[3].find("Sun 11").unwrap();
+    let rule = lines[4].find('━').unwrap();
+    assert_eq!(lines[4][..rule].chars().count() + 1, lines[3][..sun].chars().count(), "a cell before the label: {:?}", lines[4]);
+    assert_eq!(lines[4].matches('━').count(), "Sun 11".len() + 2);
+    assert!(lines[5].trim().is_empty() && lines[6].contains("Call the bank"), "{text}");
+    assert!(text.contains("October 2026") && text.contains("Mo Tu We Th Fr Sa Su") && text.contains("[11•"), "{text}");
+    s.keys(&["["]);
+    assert!(s.screen().contains("§ Saturday, October 10 2026"));
+    s.keys(&["T"]);
+    assert!(s.screen().contains("§ Sunday, October 11 2026"));
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// §5.6: matches in bold on `accent-tint`, the preview with the match among its siblings, and
+/// ⌃Q the search as a Tasks filter.
+#[test]
+fn search_previews_in_context_and_ctrl_q_makes_a_tasks_filter() {
+    let (root, v) = seeded("search-spec");
+    let host = ThcHost::new(v).at(now());
+    let mut s = host.app(&Route { view: View::Search, query: Some("bank".into()), ..Route::default() }, "ember-dark").headless(120, 32).unwrap();
+    let text = s.screen();
+    // The preview: today's journal, the match marked among the day's other entries.
+    assert!(text.contains("│ § Sun Oct 11") && text.contains("▌ Call the b") && text.contains("Morning run"), "{text}");
+    let ansi = s.ansi();
+    let tint = rgb(palette_hex("ember-dark", thc_core::palette::Token::AccentTint));
+    assert!(ansi.contains(&format!("1;38;2;{};48;2;{tint}m", rgb(palette_hex("ember-dark", thc_core::palette::Token::Text)))) || ansi.contains(&format!("48;2;{tint}mbank")), "bold on accent-tint");
+    s.keys(&["c-q"]);
+    let st = s.state();
+    assert_eq!(st.store["tasks_q"].read()["text"], "text:bank");
+    assert!(s.screen().contains("q› text:bank") && s.screen().contains("Call the bank"), "{}", s.screen());
+    let _ = std::fs::remove_dir_all(root);
+}
+
+/// `~` cycles the four themes (in fictty's order: by name), each drawn in its own palette.
+#[test]
+fn tilde_cycles_the_four_themes() {
+    let (root, v) = seeded("themes");
+    let host = ThcHost::new(v).at(now());
+    let mut s = screen(&host, View::Today, 120, 32);
+    for name in ["ember-dark", "ember-light", "newsprint", "redacted", "ember-dark"] {
+        assert_eq!(s.state().theme.as_deref(), Some(name));
+        let bg = rgb(palette_hex(name, thc_core::palette::Token::Bg));
+        assert!(s.ansi().contains(&format!("48;2;{bg}m")), "{name}'s background");
+        s.keys(&["~"]);
+    }
+    let _ = std::fs::remove_dir_all(root);
+}

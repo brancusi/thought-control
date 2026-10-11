@@ -214,7 +214,7 @@ fn tab_keys(mut n: Node, i: usize) -> Node {
 /// `?` and `:` in a view: its help, its palette.
 fn overlay_binds(v: View) -> Vec<(String, Action)> {
     let open = |flag: &str, focus: String| Action::Do { steps: vec![Action::Put { put: flag.into(), value: true.into(), for_ms: None }, Action::Focus { focus }] };
-    vec![("?".into(), open("help", format!("{}_help", v.name()))), (":".into(), open("palette", "palette_q".into()))]
+    vec![("?".into(), open("help", format!("{}_help", v.name()))), (":".into(), open("palette", format!("{}_palette_q", v.name())))]
 }
 
 /// What a view's main list is: where the focus goes back to from its help and palette.
@@ -228,7 +228,7 @@ fn close_overlay(v: View) -> Action {
         steps: vec![
             Action::Put { put: "help".into(), value: false.into(), for_ms: None },
             Action::Put { put: "palette".into(), value: false.into(), for_ms: None },
-            Action::Put { put: "palette_q".into(), value: "".into(), for_ms: None },
+            Action::Put { put: format!("{}_palette_q", v.name()), value: "".into(), for_ms: None },
             Action::Focus { focus: main_id(v) },
         ],
     }
@@ -269,7 +269,7 @@ fn palette_overlay(v: View) -> Node {
         mark: Some("<accent+b>▌</> ".into()),
         lead: Some("  ".into()),
         selected: Some("on-selection".into()),
-        filter: Some("palette_q".into()),
+        filter: Some(format!("{}_palette_q", v.name())),
         ..Rows::default()
     };
     let run = |from_list: bool| {
@@ -281,7 +281,7 @@ fn palette_overlay(v: View) -> Node {
     let mut l = list(&lid, &format!("cmds_{}", v.name()), r);
     l.keys.insert("enter".into(), run(true));
     l.keys.insert("esc".into(), close_overlay(v));
-    let mut field = variant(input("palette_q", "", "a command"), "input");
+    let mut field = variant(input(&format!("{}_palette_q", v.name()), "", "a command"), "input");
     field.keys.insert("enter".into(), run(false));
     field.keys.insert("esc".into(), close_overlay(v));
     for key in ["down", "up"] {
@@ -294,6 +294,75 @@ fn palette_overlay(v: View) -> Node {
     c.pad = Some(Pad::X(1));
     let mut c = variant(when(c, "palette"), "overlay");
     c.float = Some(Float { width: Some(cells(74)), height: Some(cells(9)), at: Some("top".into()), margin: Some(4) });
+    c.modal = true;
+    c
+}
+
+/// Close the move picker or the delete question: back on the view's list.
+fn close_ask(v: View) -> Action {
+    Action::Do {
+        steps: vec![
+            Action::Put { put: "move".into(), value: false.into(), for_ms: None },
+            Action::Put { put: "confirm".into(), value: false.into(), for_ms: None },
+            Action::Put { put: format!("{}_move_q", v.name()), value: "".into(), for_ms: None },
+            Action::Focus { focus: main_id(v) },
+        ],
+    }
+}
+
+/// The move picker (§7.2: min(W-6, 60) wide, six rows down): what's typed finds a page (the
+/// host's fuzzy `dest`), Enter moves the row `m` was pressed on there. The row leaves the list,
+/// so the cursor is on the next one.
+fn move_overlay(v: View, data: &mut BTreeMap<String, Source>) -> Node {
+    let lid = format!("{}_move", v.name());
+    let name = format!("{}_dest", v.name());
+    data.insert(name.clone(), source("dest", json!({"query": format!("{{store.{}_move_q}}", v.name())})));
+    let r = Rows { item: Some("{label_m|markup}\t<muted>{short}</> ".into()), mark: Some("<accent+b>▌</> ".into()), lead: Some("  ".into()), key: Some("id".into()), ..Rows::default() };
+    let go = |from_list: bool| {
+        let mut steps = if from_list { vec![] } else { vec![Action::Focus { focus: lid.clone() }] };
+        steps.push(act("mv", json!({"id": "{store.ask_id}", "under": "{id}"})));
+        steps.push(close_ask(v));
+        Action::Do { steps }
+    };
+    let mut l = list(&lid, &format!("{name}.rows"), r);
+    l.keys.insert("enter".into(), go(true));
+    l.keys.insert("esc".into(), close_ask(v));
+    let mut field = variant(input(&format!("{}_move_q", v.name()), "", "a page"), "input");
+    field.keys.insert("enter".into(), go(false));
+    field.keys.insert("esc".into(), close_ask(v));
+    for key in ["down", "up"] {
+        field.keys.insert(key.into(), Action::Do { steps: vec![Action::Focus { focus: lid.clone() }, Action::Named(key.into())] });
+    }
+    let what = sized(bound(text("<muted>{.}</>"), "ask_text"), cells(1));
+    let line = sized(row(vec![sized(text("<accent+b>›</> "), cells(2)), field]), cells(1));
+    let mut c = col(vec![what, line, l]);
+    c.title = Some(" move to ".into());
+    c.border = true;
+    c.pad = Some(Pad::X(1));
+    let mut c = variant(when(c, "move"), "overlay");
+    c.float = Some(Float { width: Some(cells(60)), height: Some(cells(14)), at: Some("top".into()), margin: Some(6) });
+    c.modal = true;
+    c
+}
+
+/// `D`'s question: y (or Enter) deletes the row it was pressed on, n or Esc doesn't.
+fn confirm_overlay(v: View) -> Node {
+    let id_ = format!("{}_confirm", v.name());
+    let yes = Action::Do { steps: vec![act("delete", json!({"id": "{store.ask_id}"})), close_ask(v)] };
+    let mut q = id(bound(node(Kind::Button { label: "Delete “{.}”?".into() }), "ask_text"), &id_);
+    for k in ["y", "enter"] {
+        q.keys.insert(k.into(), yes.clone());
+    }
+    for k in ["n", "esc"] {
+        q.keys.insert(k.into(), close_ask(v));
+    }
+    let hint = sized(text(&format!(" {}", crate::feeds::hints(&[("y", "delete"), ("n", "keep it")], "  "))), cells(1));
+    let mut c = col(vec![sized(q, cells(1)), hint]);
+    c.border = true;
+    c.title = Some(" delete ".into());
+    c.pad = Some(Pad::X(1));
+    let mut c = variant(when(c, "confirm"), "overlay");
+    c.float = Some(Float { width: Some(cells(60)), height: Some(cells(4)), at: Some("top".into()), margin: Some(6) });
     c.modal = true;
     c
 }
@@ -379,8 +448,10 @@ fn node_item() -> String {
 }
 
 /// Rows of nodes, as every list and tree draws them: the `▌` gutter on the selected row, the
-/// selection on `selection` and following the row's id, the text keeping 24 cells (§4.2) before
-/// the meta gives way. Sections, empty states and blanks take no cursor.
+/// selection following the row's id, the text keeping 24 cells (§4.2) before the meta gives
+/// way. The focused pane's cursor row is on `selection`, the other pane's shows only `▌` (§3.4:
+/// the theme's `row.selected` and `row.selected.blur`). Sections, empty states, blanks and an
+/// agenda's empty days take no cursor.
 fn rows(item: String) -> Rows {
     Rows {
         item: Some(item),
@@ -390,16 +461,16 @@ fn rows(item: String) -> Rows {
             ("empty", "  {m|markup}"),
             ("blank", ""),
             ("line", "{m|markup}"),
+            ("gap", "{m|markup}\t{note_m|markup} "),
         ]
         .into_iter()
         .map(|(k, v)| (k.to_string(), v.to_string()))
         .collect(),
-        skip: ["section", "empty", "blank", "line"].map(String::from).to_vec(),
+        skip: ["section", "empty", "blank", "line", "gap"].map(String::from).to_vec(),
         // The gutter (§4): `≠` on a conflict, else the cursor, else `•` while an agent's change
         // is live. The row's `gutter` says which (the host's `feeds::gutter`).
         mark: Some(GUTTER_CURSOR.into()),
         lead: Some(GUTTER.into()),
-        selected: Some("on-selection".into()),
         key: Some("id".into()),
         keep: Some(37),
         ..Rows::default()
@@ -453,34 +524,55 @@ type Groups = Vec<(String, Vec<Bind>)>;
 /// - p then h, m, l or - the priority (§6.2);
 /// - d a due date and m a place, asked in the bar (the prompt recipe, `prompt`).
 fn node_binds(v: View) -> Vec<Bind> {
+    // In the Inbox, triage moves on: after `x` or `t` the cursor goes to the next row (§5.2); `m`
+    // and `D` take the row away, so the next one is under the cursor already.
+    let then_next = |a: Action| if v == View::Inbox { Action::Do { steps: vec![a, Action::Named("down".into())] } } else { a };
     let mut k = vec![
         // Done stays on screen where it was until you leave (navigation.md §8): the id joins
         // `done_here`, which the lists' feeds keep.
-        b("x", "done", Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] }),
+        b("x", "done", then_next(Action::Do { steps: vec![act("done", json!({"id": "{id}"})), Action::Append { append: "done_here".into(), value: "{id}".into() }] })),
         b("X", "reopen", act("reopen", json!({"id": "{id}"}))),
+        b("t", "task on / off", then_next(act("task", json!({"id": "{id}"})))),
         b("enter", "open", open_over(v, json!({"kind": "detail", "id": "{id}"}), &format!("{}_detail", v.name()))),
     ];
     for (key, p, words) in [("h", "high", "priority high"), ("m", "med", "priority medium"), ("l", "low", "priority low"), ("-", "", "no priority")] {
         k.push(b(&format!("p {key}"), words, act("set", json!({"id": "{id}", "props": {"priority": p}}))));
     }
-    for (key, ask, words) in [("d", "due", "due date"), ("m", "move", "move to a page")] {
-        k.push(b(
-            key,
-            words,
-            Action::Do {
-                steps: vec![
-                    Action::Put { put: "ask_id".into(), value: "{id}".into(), for_ms: None },
-                    Action::Put { put: "prompt".into(), value: ask.into(), for_ms: None },
-                    Action::Focus { focus: "prompt_in".into() },
-                ],
-            },
-        ));
-    }
+    k.push(b(
+        "d",
+        "due date",
+        Action::Do {
+            steps: vec![
+                Action::Put { put: "ask_id".into(), value: "{id}".into(), for_ms: None },
+                Action::Put { put: "prompt".into(), value: "due".into(), for_ms: None },
+                Action::Focus { focus: "prompt_in".into() },
+            ],
+        },
+    ));
+    // `m`: the move picker (§7.2) for this row; `D`: delete it, once you've said yes.
+    let ask = |flag: &str, focus: String| {
+        Action::Do {
+            steps: vec![
+                Action::Put { put: "ask_id".into(), value: "{id}".into(), for_ms: None },
+                Action::Put { put: "ask_text".into(), value: "{text}".into(), for_ms: None },
+                Action::Put { put: flag.into(), value: true.into(), for_ms: None },
+                Action::Focus { focus },
+            ],
+        }
+    };
+    k.push(b("m", "move to a page", ask("move", format!("{}_move_q", v.name()))));
+    k.push(b("D", "delete", ask("confirm", format!("{}_confirm", v.name()))));
     k
 }
 
 fn node_keys(v: View) -> BTreeMap<String, Action> {
     key_map(&node_binds(v))
+}
+
+/// Flip a store entry between two values (`w` agenda / sections, `\` the detail pane, `@` who):
+/// the host writes the other one.
+fn flip(key: &str, a: &str, b_: &str) -> Action {
+    act("flip", json!({"key": key, "now": format!("{{store.{key}}}"), "a": a, "b": b_}))
 }
 
 /// `U`: undo the last undo (a redo), or the last redo, naming the change first undone.
@@ -503,7 +595,9 @@ fn global_binds() -> Vec<Bind> {
     k.push(b("u", "undo the agent's change", act("undo", json!({"tx": "{store.agent_tx}"}))));
     k.push(b("U", "redo", redo()));
     k.push(b("L", "review agents' changes", Action::Do { steps: vec![Action::Put { put: "log_by".into(), value: "agents".into(), for_ms: None }, show(6)] }));
-    k.push(b("t", "next theme", Action::Theme { theme: "next".into() }));
+    // `t` is a row's (task on / off, §6.2); the themes cycle on `~` (`--theme` picks one).
+    k.push(b("~", "next theme", Action::Theme { theme: "next".into() }));
+    k.push(b("\\", "detail pane on / off", flip("no_detail", "", "off")));
     k.push(b("esc", "close the page or day", close_documents()));
     k
 }
@@ -534,11 +628,15 @@ fn prompt() -> Node {
 /// The detail pane (§5.8): the lines of the node selected in `of`, from the `detail` feed (or
 /// `tx` in the Log) with the selection's id as its argument.
 fn pane(of: &str, feed: &str, data: &mut BTreeMap<String, Source>) -> Node {
+    pane_with(of, feed, json!({"id": format!("{{@{of}.id}}")}), data)
+}
+
+/// A pane over a feed with its own args (Search's preview reads the query too). ⌃W moves the
+/// focus into it and back (`split`).
+fn pane_with(of: &str, feed: &str, args: Value, data: &mut BTreeMap<String, Source>) -> Node {
     let name = format!("{of}_pane");
-    data.insert(name.clone(), source(feed, json!({"id": format!("{{@{of}.id}}")})));
+    data.insert(name.clone(), source(feed, args));
     let mut lines = list(&name, &format!("{name}.lines"), lines_rows());
-    // A pane shows; it takes no cursor.
-    lines.id = None;
     lines.pad = Some(Pad::X(1));
     lines
 }
@@ -569,10 +667,18 @@ fn lines_rows() -> Rows {
 /// the list at most 96; below that the list has the width. (The design's list is min(60%, 96):
 /// the list fills, so at 120 it's 71 and the pane 48, a cell off the artboard.)
 fn split(main: Node, side: Node) -> Node {
+    let (mut main, mut side) = (main, side);
+    // ⌃W: the focus to the other pane (§3.4).
+    if let (Some(m), Some(s)) = (main.id.clone(), side.id.clone()) {
+        main.keys.insert("c-w".into(), Action::Focus { focus: s });
+        side.keys.insert("c-w".into(), Action::Focus { focus: m });
+    }
     let mut main = sized(main, spec("*"));
     main.max = Some(96);
     let rule = sized(node(Kind::Rule { glyph: Some("│".into()) }), cells(1));
-    row(vec![main, when(rule, WIDE), when(sized(side, spec("40%")), WIDE)])
+    // `\` takes the pane away (and puts it back).
+    let shown = format!("{WIDE} & !no_detail");
+    row(vec![main, when(rule, &shown), when(sized(side, spec("40%")), &shown)])
 }
 
 /// The bar (§3.3): the view's name and counts on the left (`bar_m` of its feed), the daemon's
@@ -717,6 +823,13 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
     store.insert("redo_of".into(), "".into());
     store.insert("redo_word".into(), "redo".into());
     store.insert("log_by".into(), "".into());
+    // Today's sections or agenda (`w`), the detail pane on or off (`\`), and what the move
+    // picker and the delete question are about.
+    store.insert("today_mode".into(), "".into());
+    store.insert("no_detail".into(), "".into());
+    for k in ["ask_id", "ask_text"] {
+        store.insert(k.into(), "".into());
+    }
     if let Some((v, what)) = opened(route, today) {
         store.insert(open_key(v), what);
     }
@@ -740,7 +853,7 @@ pub fn build(route: &Route, today: chrono::NaiveDate) -> Ui {
             let (help, cmds) = help_rows(&groups);
             store.insert(format!("keys_{}", v.name()), help);
             store.insert(format!("cmds_{}", v.name()), cmds);
-            node(Kind::Stack { children: vec![content, help_overlay(*v), palette_overlay(*v)] })
+            node(Kind::Stack { children: vec![content, help_overlay(*v), palette_overlay(*v), move_overlay(*v, &mut data), confirm_overlay(*v)] })
         })
         .collect();
     let focus = first_focus(route);
@@ -788,9 +901,30 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
     match route.view {
         View::Inbox => {
             feed("inbox", json!({}));
-            groups.push(("on a row".into(), node_binds(v)));
+            let binds = node_binds(v);
+            // The Triage keys (§5.2), under the detail at 120+: the same bindings the rows have.
+            let triage: Vec<Value> = ["m", "t", "d", "x", "D"]
+                .iter()
+                .filter_map(|k| binds.iter().find(|x| x.key == *k))
+                .map(|x| json!({"id": format!("triage:{}", x.key), "key": x.key, "words": x.words}))
+                .collect();
+            store.insert("triage".into(), Value::Array(triage));
+            groups.push(("on a row".into(), binds));
             let l = keys(list("inbox", "inbox.rows", rows(node_item())), node_keys(View::Inbox));
-            view(split(l, pane("inbox", "detail", data)), "inbox", &[("m", "move"), ("x", "done"), ("d", "date")])
+            let tri = Rows { item: Some("<text>{key:5}</><muted>{words:18}</>".into()), mark: Some(String::new()), lead: Some(String::new()), ..Rows::default() };
+            let mut triage = bound(node(Kind::List { items: vec![], rows: tri }), "triage");
+            triage.pad = Some(Pad::X(1));
+            let head = sized(text(" <text+b>Triage</>"), cells(1));
+            // ⌃W goes into the detail lines and back.
+            let mut lines = pane("inbox", "detail", data);
+            lines.keys.insert("c-w".into(), Action::Focus { focus: "inbox".into() });
+            let mut l = l;
+            l.keys.insert("c-w".into(), Action::Focus { focus: "inbox_pane".into() });
+            // The node (as far as 14 rows of it), then Triage right under it.
+            let mut lines = sized(lines, spec("*"));
+            lines.max = Some(14);
+            let side = col(vec![lines, head, sized(triage, cells(6)), sized(text(""), spec("*"))]);
+            view(split(l, side), "inbox", &[("m", "move"), ("t", "task"), ("d", "date"), ("x", "done"), ("D", "delete")])
         }
         View::Tasks => {
             // The filter is the query: the table follows what's typed. The rows have the focus;
@@ -862,7 +996,9 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // the feed follows; no new UI.
             feed("journal", json!({"date": "{store.journal_date}"}));
             let title = sized(bound(text("{title_m|markup}\t<text>[</> <muted>prev</>  <text>]</> <muted>next</>  <text>T</> <muted>today</> "), "journal"), cells(1));
-            let strip = sized(bound(text("  {strip_m|markup}"), "journal"), cells(1));
+            // Row 3 the day strip, row 4 the accent under the shown day, entries from row 6 (§5.5).
+            let strip = sized(bound(text("{strip_m|markup}"), "journal"), cells(1));
+            let under = sized(bound(text("{under_m|markup}"), "journal"), cells(1));
             let mut calendar = list("", "journal.calendar", Rows { item: Some("{m|markup}".into()), mark: Some(String::new()), lead: Some(String::new()), ..Rows::default() });
             calendar.id = None;
             calendar.pad = Some(Pad::X(1));
@@ -876,7 +1012,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             groups.push(("Journal".into(), own));
             groups.push(("on a row".into(), node_binds(v).into_iter().filter(|x| x.key != "enter").collect()));
             let _ = today;
-            let content = col(vec![title, strip, sized(text(""), cells(1)), split(entries, calendar)]);
+            let content = col(vec![title, strip, under, sized(text(""), cells(1)), split(entries, calendar)]);
             view(content, "journal", &[("enter", "write"), ("[", "prev"), ("]", "next")])
         }
         View::Search => {
@@ -886,13 +1022,16 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             // A finder: letters find, so the rows have no single-letter commands (§6).
             let open_row = open_over(View::Search, json!({"kind": "detail", "id": "{id}"}), "search_detail");
             let mut results = tree("search", "search.rows");
-            let own = vec![b("enter", "open", open_row.clone())];
+            // ⌃Q: the search as a Tasks filter (§5.6).
+            let as_query = Action::Do { steps: vec![Action::Put { put: "tasks_q".into(), value: "text:{store.search_q}".into(), for_ms: None }, show(2)] };
+            let own = vec![b("enter", "open", open_row.clone()), b("c-q", "as a Tasks filter", as_query.clone())];
             results.keys.extend(key_map(&own));
-            let (results, field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
+            let (results, mut field) = finder(results, variant(input("search_q", "", "search every note"), "input"), open_row);
+            field.keys.insert("c-q".into(), as_query);
             groups.push(("Search".into(), own));
             let bar_row = variant(sized(row(vec![sized(text(" <accent+b>/</> "), cells(3)), field, sized(bound(text("\t{count_m|markup} "), "search"), cells(32))]), cells(1)), "input");
             let hint = sized(text(" <muted>deleted nodes are searchable too: add is:deleted</>"), cells(1));
-            let content = over_list(bar_row, col(vec![sized(text(""), cells(2)), split(results, pane("search", "detail", data)), hint]));
+            let content = over_list(bar_row, col(vec![sized(text(""), cells(2)), split(results, pane_with("search", "context", json!({"id": "{@search.id}", "query": "{store.search_q}"}), data)), hint]));
             view(content, "search", &[("type", "find"), ("enter", "open"), ("tab", "next view")])
         }
         View::Log => {
@@ -912,7 +1051,7 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
             let own = vec![
                 b("u", "undo this transaction", act("undo", json!({"tx": "{id}"}))),
                 b("U", "redo", redo()),
-                b("@", "agents / everyone", act("who", json!({"by": "{store.log_by}"}))),
+                b("@", "agents / everyone", flip("log_by", "", "agents")),
             ];
             l.keys.extend(key_map(&own));
             groups.push(("Log".into(), own));
@@ -921,10 +1060,14 @@ fn tab_view(route: &Route, today: chrono::NaiveDate, data: &mut BTreeMap<String,
         }
         // Today, and anything that isn't a tab of its own.
         _ => {
-            feed("today", json!({}));
+            // `w` swaps the sections for the agenda (§5.1); one list, its feed says which.
+            feed("today", json!({"mode": "{store.today_mode}"}));
+            let own = vec![b("w", "agenda / sections", flip("today_mode", "", "agenda"))];
+            groups.push(("Today".into(), own.clone()));
             groups.push(("on a row".into(), node_binds(View::Today)));
-            let t = keys(tree("today", "today.rows"), node_keys(View::Today));
-            view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("p", "priority"), ("d", "date")])
+            let mut t = keys(tree("today", "today.rows"), node_keys(View::Today));
+            t.keys.extend(key_map(&own));
+            view(split(t, pane("today", "detail", data)), "today", &[("a", "add"), ("w", "agenda"), ("p", "priority"), ("d", "date")])
         }
     }
 }
@@ -942,6 +1085,14 @@ mod tests {
             let back: Ui = serde_json::from_value(serde_json::to_value(&ui).unwrap()).unwrap();
             assert_eq!(ui, back, "{v:?}");
             assert!(ui.data.values().all(|s| s.host.is_some()), "{v:?}: every source is the host's");
+            // Ids are unique: a key, a focus or a store entry names one node (per-tab overlays
+            // name theirs by view).
+            let mut all = Vec::new();
+            ui.root.walk(&mut all);
+            let mut seen = std::collections::HashSet::new();
+            for id in all.iter().filter_map(|n| n.id.as_deref()) {
+                assert!(seen.insert(id), "{v:?}: id {id} twice");
+            }
         }
         assert_eq!(View::parse("Journal"), Some(View::Journal));
         assert_eq!(Route { view: View::Day, back: Some(View::Pages), ..Route::default() }.tab(), 3);
