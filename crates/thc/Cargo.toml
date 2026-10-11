@@ -27,3 +27,5 @@ sha2.workspace = true
 thc-core = { path = "../thc-core" }
 thc-tui = { path = "../thc-tui" }
 thc-daemon = { path = "../thc-daemon" }
+thc-screen = { path = "../thc-screen" }
+fictty = { git = "https://github.com/brancusi/fictty", rev = "56fbdff45177422055af3ec8b11c3201d784a92d" }

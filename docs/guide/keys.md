@@ -350,6 +350,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌥7` | Log | `go.log` |  |
 | `⌥:` | commands | `palette.open` |  |
 | `⌃D` `Del` `⇧Del` | delete | `edit.delete_forward` |  |
+| `⌘Del` `⌃⌥K` | delete to line end | `edit.delete_to_line_end` |  |
 | `⌘V` `⌃V` | paste (screenshots too) | `clip.paste_system` |  |
 | `←` `⇧←` | left (⇧ selects) | `move.left` |  |
 | `→` `⇧→` | right (⇧ selects) | `move.right` |  |
@@ -367,6 +368,7 @@ Your remaps show here too: `thc keys` prints the keymap in effect.
 | `⌃↓` `⌃⇧↓` | block down (⇧ selects) | `move.para_down` |  |
 | `⌫` `⇧⌫` `⌃H` | backspace | `edit.backspace` |  |
 | `⌥⌫` `⌃⌫` `⌃W` | delete word | `edit.delete_word` |  |
+| `⌥Del` `⌃Del` `⌥D` | delete word forward | `edit.delete_word_forward` |  |
 | `⌘⌫` `⌃U` | delete to line start | `edit.kill_to_start` |  |
 | `⌃K` | kill line | `edit.kill_to_end` |  |
 

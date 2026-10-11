@@ -166,36 +166,7 @@ pub fn meta_text(b: &Block, today: chrono::NaiveDate) -> String {
 /// A repeat in the meta's short form (`↻ monthly`, `↻ 3d`, `↻ 3mo!`, `↻ weekdays`), in lists
 /// and documents alike; the full rule is in the detail pane. `!`
 /// marks a repeat counted from completion; months are `mo` (`m` reads as minutes).
-pub fn short_repeat(rule: &str) -> String {
-    let rule = rule.trim();
-    let from_done = rule.starts_with("every!");
-    let short = short_repeat_rule(rule.trim_start_matches("every!").trim_start_matches("every").trim());
-    if from_done { format!("{short}!") } else { short }
-}
-
-fn short_repeat_rule(r: &str) -> String {
-    let words: Vec<&str> = r.split_whitespace().collect();
-    let unit = |w: &str| -> Option<&'static str> {
-        Some(match w.trim_end_matches('s') {
-            "day" => "d",
-            "week" => "w",
-            "month" => "mo",
-            "year" => "y",
-            _ => return None,
-        })
-    };
-    match words.as_slice() {
-        [] => "repeats".into(),
-        ["day", ..] | ["daily", ..] => "daily".into(),
-        ["weekday", ..] | ["weekdays", ..] => "weekdays".into(),
-        ["week", ..] | ["weekly", ..] => "weekly".into(),
-        ["month", ..] | ["monthly", ..] => "monthly".into(),
-        ["year", ..] | ["yearly", ..] => "yearly".into(),
-        [n, u, ..] if n.parse::<u32>().is_ok() && unit(u).is_some() => format!("{n}{}", unit(u).unwrap()),
-        [one] if one.len() <= 10 => (*one).to_string(),
-        _ => r.chars().take(12).collect(),
-    }
-}
+pub use thc_core::present::short_repeat;
 
 /// What the document is.
 #[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]

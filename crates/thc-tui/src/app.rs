@@ -596,14 +596,7 @@ pub struct PaletteEntry {
 }
 
 /// One vault's Today, by section (App::today_secs).
-struct TodaySecs {
-    overdue: Vec<Node>,
-    today: Vec<Node>,
-    alerted: Vec<Node>,
-    doing: Vec<Node>,
-    next: Vec<Node>,
-    done: Vec<Node>,
-}
+use thc_core::today::Sections as TodaySecs;
 
 /// Another registered vault, as the cross-vault views read it.
 pub struct OtherVault {
@@ -1763,47 +1756,6 @@ impl App {
 
     /// One vault's Today sections (views.md §3.3): overdue, today (and the rows only an alert
     /// puts there, by time), doing, next 7 days, done today.
-    fn today_secs(s: &thc_core::store::Store, day: NaiveDate) -> Result<TodaySecs> {
-        let t = ymd(day);
-        let horizon = ymd(day + Duration::days(7));
-        let open = "n.status IN ('todo','doing','waiting') AND n.deleted=0";
-        let overdue = s.nodes_where(&format!("{open} AND substr(n.due,1,10) < ?1 ORDER BY n.due"), &[&t])?;
-        // ISO ranges so each branch uses an index (as in the CLI and daemon).
-        let t1 = ymd(day + Duration::days(1));
-        let today = s.nodes_where(
-            "n.deleted=0 AND n.is_tag=0 AND (n.status IS NULL OR n.status IN ('todo','waiting')) \
-             AND NOT (n.due IS NOT NULL AND n.due < ?1) AND n.id IN ( \
-               SELECT id FROM nodes WHERE status IN ('todo','doing','waiting') AND deleted=0 AND scheduled < ?2 \
-               UNION SELECT id FROM nodes WHERE due >= ?1 AND due < ?2 \
-               UNION SELECT id FROM nodes WHERE status IS NULL AND scheduled >= ?1 AND scheduled < ?2) \
-             ORDER BY n.scheduled IS NULL, n.scheduled, CASE n.priority WHEN 'high' THEN 0 WHEN 'med' THEN 1 ELSE 2 END",
-            &[&t, &t1],
-        )?;
-        let doing = s.nodes_where(
-            "n.status='doing' AND n.deleted=0 AND NOT (n.due IS NOT NULL AND substr(n.due,1,10) < ?1) ORDER BY n.updated_ms DESC",
-            &[&t],
-        )?;
-        // Dates as ranges (`> today` is `>= tomorrow`, `<= horizon` is `< the day after`) so the
-        // due and scheduled indexes serve it: substr() forced a scan of every note.
-        let h1 = ymd(day + Duration::days(8));
-        let next = s.nodes_where(
-            "n.deleted=0 AND n.is_tag=0 AND (n.status IS NULL OR n.status IN ('todo','waiting')) AND n.id IN ( \
-               SELECT id FROM nodes WHERE scheduled >= ?1 AND scheduled < ?2 \
-               UNION SELECT id FROM nodes WHERE due >= ?1 AND due < ?2) \
-             AND NOT (n.status IS NOT NULL AND coalesce(n.scheduled,'9999') < ?1) \
-             ORDER BY min(coalesce(n.scheduled,'9'), coalesce(n.due,'9')), n.rowid",
-            &[&t1, &h1],
-        )?;
-        let _ = &horizon;
-        // In Today only because an alert fires today: Today rows, by alert time, and no longer
-        // under Next 7 days (views.md §3.3).
-        let shown: std::collections::HashSet<String> = overdue.iter().chain(today.iter()).chain(doing.iter()).map(|n| n.id.clone()).collect();
-        let alerted: Vec<Node> = s.alert_rows(day, &shown)?.into_iter().map(|(n, _)| n).collect();
-        let next: Vec<Node> = next.into_iter().filter(|n| !today.iter().chain(alerted.iter()).any(|t| t.id == n.id)).collect();
-        let done = s.nodes_where("n.deleted=0 AND n.status='done' AND n.done_at >= ?1 AND n.done_at < ?2 ORDER BY n.done_at", &[&t, &t1])?;
-        Ok(TodaySecs { overdue, today, alerted, doing, next, done })
-    }
-
     /// Your @today (`thc view set today --section …`), from the home vault (or here).
     fn edited_today(&self) -> Option<thc_core::views::Sectioned> {
         let mine = thc_core::views::sectioned(&self.vault.store, "today").ok().flatten().filter(|v| v.edited);
@@ -1869,7 +1821,7 @@ impl App {
         let names = self.scope_vaults();
         let reg = thc_core::registry::Registry::load();
         let in_scope_other = |o: &OtherVault| names.iter().any(|n| reg.by_path(&o.path).is_some_and(|e| &e.name == n));
-        let mut cur = Self::today_secs(s, self.today)?;
+        let mut cur = thc_core::today::sections(s, self.today)?;
         if !self.others.is_empty() && !names.contains(&self.vault_name) {
             cur = TodaySecs { overdue: vec![], today: vec![], alerted: vec![], doing: vec![], next: vec![], done: vec![] };
         }
@@ -1881,7 +1833,7 @@ impl App {
             .iter()
             .map(|o| {
                 if in_scope_other(o) {
-                    Self::today_secs(&o.vault.store, self.today)
+                    thc_core::today::sections(&o.vault.store, self.today)
                 } else {
                     Ok(TodaySecs { overdue: vec![], today: vec![], alerted: vec![], doing: vec![], next: vec![], done: vec![] })
                 }
@@ -3973,111 +3925,12 @@ fn same_target(a: &MoveTarget, b: &MoveTarget) -> bool {
     }
 }
 
-/// Second log line: what the transaction did, in words a person would say.
-/// e.g. `in § today · due tomorrow · links ¶ Reading List · tagged #reading`
+/// Second log line (thc_core::present::tx_detail), relative to today.
 pub fn tx_detail(store: &thc_core::store::Store, entries: &[HistoryEntry], g: &crate::theme::Glyphs) -> String {
-    let today = thc_core::dates::today();
-    let place = |id: &str| -> String {
-        match store.node(id).ok().flatten() {
-            Some(p) if p.journal.is_some() => {
-                let d = p.journal.as_deref().and_then(thc_core::dates::DateVal::from_stored).map(|d| d.date());
-                match d {
-                    Some(d) if d == today => format!("{} today", g.journal),
-                    Some(d) => format!("{} {}", g.journal, d.format("%b %-d")),
-                    None => g.journal.to_string(),
-                }
-            }
-            Some(p) if p.parent.is_none() && p.title.is_some() => format!("{} {}", g.page, p.label()),
-            Some(p) => crate::ui::truncate_str(&store.render_text(&p.label()), 24, g.ellipsis),
-            None => "?".into(),
-        }
-    };
-    let pretty = |v: &str| -> String {
-        thc_core::dates::DateVal::from_stored(v)
-            .map(|d| {
-                let rel = thc_core::dates::relative(d.date(), today);
-                let t = d.time().map(|t| format!(" {}", t.format("%H:%M"))).unwrap_or_default();
-                if (0..7).contains(&(d.date() - today).num_days()) { format!("{rel}{t}") } else { format!("{}{t}", d.date().format("%b %-d")) }
-            })
-            .unwrap_or_else(|| v.to_string())
-    };
-    let prop_words = |k: &str, v: &serde_json::Value| -> Option<String> {
-        let val = match v {
-            serde_json::Value::Null => return Some(format!("{k} cleared")),
-            serde_json::Value::String(s) => s.clone(),
-            serde_json::Value::Object(o) => o.get("text").and_then(|t| t.as_str()).unwrap_or("").to_string(),
-            serde_json::Value::Bool(_) => return None,
-            o => o.to_string(),
-        };
-        Some(match k {
-            "due" => format!("due {}", pretty(&val)),
-            "scheduled" => format!("scheduled {}", pretty(&val)),
-            "status" => format!("status {val}"),
-            "priority" => format!("!{val}"),
-            "repeat" => format!("{} {val}", g.repeat),
-            "done_at" | "journal" | "tag" => return None,
-            "title" => format!("title “{val}”"),
-            _ => format!("{k} {} {val}", g.arrow),
-        })
-    };
-    let mut parts: Vec<String> = Vec::new();
-    for e in entries.iter().rev() {
-        match e.op.as_str() {
-            "node.create" => {
-                if e.body.get("props").and_then(|p| p.get("tag")).is_some() || e.body.get("props").and_then(|p| p.get("journal")).is_some() {
-                    continue;
-                }
-                if let Some(p) = e.body.get("parent").and_then(|v| v.as_str()) {
-                    parts.push(format!("in {}", place(p)));
-                } else if e.body.get("title").is_some() {
-                    parts.push("new page".into());
-                } else {
-                    parts.push("in inbox".into());
-                }
-                if let Some(props) = e.body.get("props").and_then(|v| v.as_object()) {
-                    for (k, v) in props {
-                        if k != "status" {
-                            parts.extend(prop_words(k, v));
-                        }
-                    }
-                }
-            }
-            "node.set" => {
-                if let Some(props) = e.body.get("props").and_then(|v| v.as_object()) {
-                    for (k, v) in props {
-                        parts.extend(prop_words(k, v));
-                    }
-                }
-            }
-            "node.move" => {
-                let dest = e.body.get("parent").and_then(|v| v.as_str()).map(place).unwrap_or_else(|| "inbox".into());
-                parts.push(format!("{} {dest}", g.arrow));
-            }
-            "node.complete" => {
-                if let Some(n) = e.body.get("next").and_then(|n| n.get("scheduled").or(n.get("due"))).and_then(|v| v.as_str()) {
-                    parts.push(format!("{} next {}", g.repeat, pretty(n)));
-                }
-            }
-            "edge.add" | "edge.remove" => {
-                let rel = e.body.get("rel").and_then(|v| v.as_str()).unwrap_or("");
-                let dst = e.body.get("dst").and_then(|v| v.as_str()).unwrap_or("");
-                let label = store.node(dst).ok().flatten().map(|n| n.label()).unwrap_or_default();
-                let add = e.op == "edge.add";
-                parts.push(match rel {
-                    "tag" if add => format!("tagged #{label}"),
-                    "tag" => format!("untagged #{label}"),
-                    "mention" if add => format!("links {} {label}", g.page),
-                    "mention" => format!("unlinks {} {label}", g.page),
-                    r => format!("{} {r} {label}", if add { "+" } else { "-" }),
-                });
-            }
-            "alert.add" => parts.push(format!("{} alert", g.alert)),
-            _ => {}
-        }
-    }
-    parts.dedup();
-    parts.join(&format!(" {} ", g.sep))
+    thc_core::present::tx_detail(store, entries, g, thc_core::dates::today())
 }
+
+pub use thc_core::present::{change_words, review_field_lines, review_marker, review_summary};
 
 /// Make core errors read like the product (tui-handoff §8.2).
 pub fn friendly_error(e: &anyhow::Error) -> String {
@@ -4144,148 +3997,6 @@ fn base64(data: &[u8]) -> String {
         }
     }
     out
-}
-
-/// A review value in words: dates relative, `!high`, `↻ every week`, `§ today`.
-pub fn review_value(v: &serde_json::Value, key: &str, g: &crate::theme::Glyphs, today: NaiveDate) -> String {
-    use serde_json::Value;
-    match (key, v) {
-        (_, Value::Null) => "—".into(),
-        ("priority", Value::String(p)) => format!("!{p}"),
-        ("repeat", Value::String(t)) => format!("{} {t}", g.repeat),
-        ("parent", Value::String(p)) => match p.strip_prefix("§ ").and_then(thc_core::dates::DateVal::from_stored) {
-            Some(d) if d.date() == today => format!("{} today", g.journal),
-            Some(d) => format!("{} {}", g.journal, d.date().format("%b %-d")),
-            None => p.replacen("§ ", &format!("{} ", g.journal), 1).replacen("¶ ", &format!("{} ", g.page), 1),
-        },
-        (_, Value::String(s)) => match thc_core::dates::DateVal::from_stored(s) {
-            Some(d) => {
-                let rel = thc_core::dates::relative(d.date(), today);
-                let t = d.time().map(|t| format!(" {}", t.format("%H:%M"))).unwrap_or_default();
-                if (0..7).contains(&(d.date() - today).num_days()) { format!("{rel}{t}") } else { format!("{}{t}", d.date().format("%b %-d")) }
-            }
-            None => s.clone(),
-        },
-        (_, other) => other.to_string(),
-    }
-}
-
-fn review_set(f: &serde_json::Value, prefix: &str, minus: &str) -> String {
-    let mut parts = Vec::new();
-    for (side, sign) in [("add", "+"), ("remove", minus)] {
-        for v in f.get(side).and_then(|a| a.as_array()).into_iter().flatten() {
-            parts.push(format!("{sign}{prefix}{}", v.as_str().unwrap_or("")));
-        }
-    }
-    parts.join(" ")
-}
-
-/// `(key, old, new)` lines for one change, in display order (agents.md §1.6 detail pane).
-pub fn review_field_lines(c: &thc_core::review::Change, g: &crate::theme::Glyphs, today: NaiveDate) -> Vec<(String, Option<String>, String)> {
-    let mut keys: Vec<&String> = c.fields.keys().filter(|k| k.as_str() != "done_at").collect();
-    keys.sort_by_key(|k| thc_core::review::field_rank(k));
-    if c.change == "create" {
-        keys.sort_by_key(|k| k.as_str() != "parent");
-    }
-    keys.into_iter()
-        .map(|k| {
-            let f = &c.fields[k];
-            let label = match k.as_str() {
-                "parent" => "in".to_string(),
-                "scheduled" => "sched".to_string(),
-                _ => k.clone(),
-            };
-            if k == "tags" || k == "links" {
-                let minus = if g.arrow == "→" { "−" } else { "-" };
-                return (label, None, review_set(f, if k == "tags" { "#" } else { "" }, minus));
-            }
-            let old = match f.get("from") {
-                Some(v) => Some(review_value(v, k, g, today)),
-                None if c.change != "create" => Some(review_value(&serde_json::Value::Null, k, g, today)),
-                None => None,
-            };
-            let new = review_value(f.get("to").unwrap_or(&serde_json::Value::Null), k, g, today);
-            (label, old, new)
-        })
-        .collect()
-}
-
-/// The second line of a review row: the first change's marker, node and what changed.
-pub fn review_summary(store: &thc_core::store::Store, it: &thc_core::review::Item, g: &crate::theme::Glyphs, today: NaiveDate) -> String {
-    let Some(c) = it.changes.first() else { return String::new() };
-    if it.changes.len() > 1 {
-        // A batch: `+ 3 created · ~ 1 changed · ✓ 1 done · → 1 moved`.
-        let mut parts: Vec<String> = thc_core::review::counts(&it.changes).iter().map(|(k, n)| format!("{} {n} {}", review_marker(k, g), thc_core::review::count_word(k))).collect();
-        let links = thc_core::review::link_count(&it.changes);
-        if links > 0 {
-            parts.push(format!("{links} link{}", if links == 1 { "" } else { "s" }));
-        }
-        return parts.join(&format!(" {} ", g.sep));
-    }
-    let mark = review_marker(c.change, g);
-    let more = if it.changes.len() > 1 { format!(" {} +{} more", g.sep, it.changes.len() - 1) } else { String::new() };
-    let flag = if it.conflict { format!(" {} {} conflict", g.sep, g.conflict) } else if it.later_changed_by_human { format!(" {} you changed it afterwards", g.sep) } else { String::new() };
-    // The node ID only when the transaction touched several nodes.
-    let id = if it.changes.len() > 1 { format!("{} ", c.short) } else { String::new() };
-    format!("{mark} {id}{}{more}{flag}", change_words(store, c, g, today))
-}
-
-/// `done · ↻ next Tue Oct 6`, `moved from … to …`, or the field lines joined.
-pub fn change_words(store: &thc_core::store::Store, c: &thc_core::review::Change, g: &crate::theme::Glyphs, today: NaiveDate) -> String {
-    let to = |k: &str| c.fields.get(k).and_then(|f| f.get("to")).cloned().unwrap_or(serde_json::Value::Null);
-    match c.change {
-        "complete" => {
-            // A repeating completion moves its dates (status stays todo).
-            {
-                let next = ["scheduled", "due"].iter().find_map(|k| to(k).as_str().and_then(thc_core::dates::DateVal::from_stored)).map(|d| d.date());
-                match next {
-                    Some(d) => format!("done {} {} next {}", g.sep, g.repeat, d.format("%a %b %-d")),
-                    None => "done".into(),
-                }
-            }
-        }
-        "delete" => match c.children.filter(|k| *k > 0) {
-            Some(k) => format!("deleted with {k} children"),
-            None => "deleted".into(),
-        },
-        "restore" => "restored".into(),
-        _ => review_fields_text(store, c, g, today),
-    }
-}
-
-fn review_fields_text(store: &thc_core::store::Store, c: &thc_core::review::Change, g: &crate::theme::Glyphs, today: NaiveDate) -> String {
-    let create = c.change == "create";
-    let mut lines = review_field_lines(c, g, today);
-    if create {
-        // `in § today · due tomorrow · #reading`: place first, no status (the checkbox shows it).
-        lines.retain(|(k, _, _)| k != "text" && k != "status");
-    }
-    let fields: Vec<String> = lines
-        .into_iter()
-        .map(|(k, old, new)| {
-            let (old, new) = if k == "text" { (old.map(|o| store.render_text(&o)), store.render_text(&new)) } else { (old, new) };
-            match old {
-                Some(o) => format!("{k} {o} {} {new}", g.arrow),
-                None if k == "in" => format!("in {new}"),
-                None if create && k == "tags" => new.replace('+', ""),
-                None if create && matches!(k.as_str(), "priority" | "repeat") => new,
-                None => format!("{k} {new}"),
-            }
-        })
-        .collect();
-    fields.join(&format!(" {} ", g.sep))
-}
-
-pub fn review_marker(change: &str, g: &crate::theme::Glyphs) -> &'static str {
-    let ascii = g.arrow != "→";
-    match change {
-        "create" | "restore" => "+",
-        "move" => if ascii { ">" } else { "→" },
-        "complete" => if ascii { "x" } else { "✓" },
-        "delete" => if ascii { "-" } else { "−" },
-        "alert" => if ascii { "(o)" } else { "◎" },
-        _ => "~",
-    }
 }
 
 // ---- in-place update (tui-editor.md §11) ---------------------------------------------------

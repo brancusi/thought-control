@@ -127,6 +127,7 @@ pub const ALL: &[&Spec] = &[
     &crate::inspect::DIFF,
     &crate::ocr_cmd::SPEC,
     &crate::ui_cmd::SPEC,
+    &crate::screen_cmd::SPEC,
     &crate::demo::SPEC,
 ];
 

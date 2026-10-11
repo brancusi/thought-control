@@ -45,7 +45,10 @@ pub const ACTIONS: &[(&str, &str)] = &[
     ("edit.backspace", "edit.backspace"),
     ("edit.delete_forward", "edit.delete_forward"),
     ("edit.delete_word", "edit.delete_word"),
+    // ⌥Del and ⌘Del (editing.md §11): the word after the caret, the rest of the row.
+    ("edit.delete_word_forward", "edit.delete_word_forward"),
     ("edit.delete_to_line_start", "edit.kill_to_start"),
+    ("edit.delete_to_line_end", "edit.delete_to_line_end"),
     ("edit.kill_line", "edit.kill_to_end"),
     ("structure.indent", "line.indent"),
     ("structure.outdent", "line.outdent"),
