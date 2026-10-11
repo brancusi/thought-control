@@ -250,7 +250,7 @@ def run_pty(a, line, env, try_home, second) -> bool:
         checks = [
             "thc ui ls --json | grep -q pid",
             # The agent API reaches the running screen: its state, and keys (Today again).
-            "thc ui state --raw | grep -q focus",
+            "thc ui state --raw | grep focus >/dev/null",
             "thc ui send keys 1",
             live,
             *a.second,
